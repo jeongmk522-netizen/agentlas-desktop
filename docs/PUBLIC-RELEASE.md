@@ -66,9 +66,29 @@ The last command writes the verified release metadata to Railway production so:
 
 ## 4. GitHub Actions Release
 
-The workflow template is `docs/release.workflow.yml`. Install it as `.github/workflows/release.yml` only from an account or token with GitHub `workflow` permission.
+There are two release workflows, by design:
 
-Required GitHub secrets on `jeongmk522-netizen/agentlas-desktop`:
+1. **`.github/workflows/release.yml` (active, default).** Cross-platform matrix
+   (macOS + Windows + Linux), **unsigned**, uses only the built-in `GITHUB_TOKEN`.
+   This is what populates the public Releases page — no Apple/Windows certificates
+   or org secrets required. Trigger it by pushing a tag:
+
+   ```bash
+   # bump package.json "version" to match, then:
+   git tag v0.0.3 && git push origin v0.0.3
+   ```
+
+   Artifacts uploaded to the release: `Agentlas-<v>-arm64.dmg`, `Agentlas-<v>-x64.dmg`,
+   `Agentlas-Setup-<v>.exe`, `Agentlas-<v>-portable.exe`, `Agentlas-<v>.AppImage`,
+   `Agentlas-<v>.deb`, plus the `latest*.yml` auto-update feeds.
+
+2. **Signed + notarized macOS (optional upgrade).** The template is
+   `docs/release.workflow.yml`. Install it as `.github/workflows/release-signed-mac.yml`
+   only from an account or token with GitHub `workflow` permission, once the Apple
+   certificate secrets below are configured. Until then, the unsigned workflow above
+   is the public path and macOS users follow the one-time Gatekeeper step in the README.
+
+Required GitHub secrets for the **signed macOS** workflow on `jeongmk522-netizen/agentlas-desktop`:
 
 - `APPLE_ID`
 - `APPLE_APP_SPECIFIC_PASSWORD`

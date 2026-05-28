@@ -299,6 +299,60 @@ export interface UpdaterState {
   error?: string;
 }
 
+// ── 마이그레이션 (OpenClaw / Hermes → Agentlas) ──────────────
+// 기존 터미널형 에이전트 런처에서 페르소나·API 키·자동화·메모리를 가져온다.
+// 값(시크릿)은 절대 renderer로 넘기지 않는다 — preview는 키 "이름"만.
+export type MigrationSourceKind = "openclaw" | "hermes";
+
+export interface MigrationApiKeyPreview {
+  /** 소스에서 발견된 env 변수 이름 (예: OPENAI_API_KEY) — 값은 포함 안 함 */
+  envKey: string;
+  /** 인식된 BYOK 백엔드. null이면 글로벌 env vault로 들어감 */
+  backend: RuntimeBackend | null;
+}
+
+export interface MigrationSourcePreview {
+  kind: MigrationSourceKind;
+  /** UI 라벨 ("OpenClaw" / "Hermes") */
+  label: string;
+  /** 디스크에 설정 디렉토리가 있는지 */
+  available: boolean;
+  /** 스캔한 절대 경로 — 무엇을 읽었는지 사용자에게 투명하게 */
+  rootPath: string;
+  /** 가져올 페르소나/에이전트. 없으면 null */
+  agent: { name: string; personaBytes: number } | null;
+  /** 발견된 API 키 (이름만 — 값은 main에만 머묾) */
+  apiKeys: MigrationApiKeyPreview[];
+  /** 발견된 예약 작업 수 */
+  automations: number;
+  /** 발견된 메모리/워크스페이스 파일 수 */
+  memories: number;
+}
+
+export interface MigrationOptions {
+  source: MigrationSourceKind;
+  /** preview만 — 아무것도 쓰지 않음 */
+  dryRun?: boolean;
+  /** 이미 가져온 적 있어도 다시 가져옴 (에이전트를 제자리 업데이트) */
+  overwrite?: boolean;
+  /** API 키를 OS 키체인으로 가져오기 (기본 true) */
+  importKeys?: boolean;
+}
+
+export interface MigrationResult {
+  source: MigrationSourceKind;
+  dryRun: boolean;
+  agentImported: boolean;
+  agentId: string | null;
+  agentSlug: string | null;
+  /** 실제로 저장한 env 키 이름들 (값 아님) */
+  keysImported: string[];
+  automationsImported: number;
+  projectId: string | null;
+  /** UI에 노출할 비치명적 경고 */
+  warnings: string[];
+}
+
 export interface AgentlasIpc {
   /** Electron 메인이 알려주는 OS 환경 정보 (Apple/Codex/Claude 데스크톱과 동일 패턴) */
   app: {
@@ -411,6 +465,14 @@ export interface AgentlasIpc {
     create: (input: Omit<Automation, "id" | "createdAt" | "lastRunAt" | "enabled">) => Promise<Automation>;
     toggle: (id: string, enabled: boolean) => Promise<Automation>;
     remove: (id: string) => Promise<void>;
+  };
+  /** OpenClaw / Hermes에서 페르소나·키·자동화·메모리를 가져온다.
+   *  scan은 디스크를 읽어 preview(이름/개수만) 반환, import는 실제 적용. */
+  migration: {
+    /** ~/.openclaw, ~/.hermes를 스캔해 가져올 수 있는 것들의 preview */
+    scan: () => Promise<MigrationSourcePreview[]>;
+    /** preview를 실제 적용 (dryRun이면 적용 없이 결과 형태만) */
+    import: (opts: MigrationOptions) => Promise<MigrationResult>;
   };
   /** invoke:run의 chatId가 firm 채팅인지 일반 채팅인지로 자동 라우팅 */
   invoke: {

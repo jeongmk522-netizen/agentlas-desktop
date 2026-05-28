@@ -1,0 +1,90 @@
+# Cross-platform release — builds macOS / Windows / Linux installers and uploads
+# them to the GitHub Release for the pushed tag. Uses only the built-in
+# GITHUB_TOKEN, so it works on a fresh public fork with no extra secrets.
+#
+# Builds are UNSIGNED (no Apple/Windows certificate required). The first launch
+# shows a one-time OS prompt — see README "Opening the app the first time".
+# For the signed + notarized macOS pipeline, see docs/PUBLIC-RELEASE.md.
+#
+# Trigger:
+#   git tag v0.0.3 && git push origin v0.0.3      # version comes from the tag
+#   or run "Release" manually from the Actions tab (workflow_dispatch).
+name: Release
+
+on:
+  push:
+    tags:
+      - "v[0-9]+.[0-9]+.[0-9]+"
+      - "v[0-9]+.[0-9]+.[0-9]+-*" # pre-releases: v0.0.3-beta.1
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag (e.g. v0.0.3). Must match package.json version."
+        required: true
+        default: "v0.0.3"
+
+# electron-builder's GitHub publisher needs write access to create the release
+# and upload assets using the default GITHUB_TOKEN.
+permissions:
+  contents: write
+
+jobs:
+  release:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            builder_args: --mac -c.mac.notarize=false -c.mac.identity=null
+          - os: windows-latest
+            builder_args: --win
+          - os: ubuntu-latest
+            builder_args: --linux
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    env:
+      # electron-builder reads the GitHub token from GH_TOKEN to publish.
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      # keytar links against libsecret on Linux.
+      - name: Install Linux build deps
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libsecret-1-dev
+
+      # Tag must match package.json version so the auto-update feed is consistent.
+      - name: Verify tag matches package.json version
+        shell: bash
+        run: |
+          tag="${{ github.event.inputs.tag || github.ref_name }}"
+          version="${tag#v}"
+          pkgver=$(node -p "require('./package.json').version")
+          if [ "$pkgver" != "$version" ]; then
+            echo "::error::Tag $tag implies version=$version but package.json is $pkgver. Bump package.json before tagging."
+            exit 1
+          fi
+          echo "Releasing $tag (version $version)"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck
+        if: runner.os == 'Linux'
+        run: npm run typecheck
+
+      - name: Build renderer + electron
+        run: npm run build
+
+      # --publish always uploads the artifacts (and the per-platform update feed:
+      # latest.yml / latest-mac.yml / latest-linux.yml) to the tag's release.
+      - name: Package and publish
+        run: npx electron-builder ${{ matrix.builder_args }} --publish always

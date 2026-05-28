@@ -32,9 +32,8 @@ mac:
   notarize: true
   # zip is REQUIRED for macOS auto-update (Squirrel.Mac updates from a .zip, not the .dmg).
   # dmg stays for first-time manual download/install.
-  # ORDER MATTERS: electron-builder writes latest-mac.yml from the LAST target, so zip must
-  # be last — otherwise the feed points at the .dmg and electron-updater throws
-  # "ZIP file not provided".
+  # NOTE: electron-builder 25.x writes latest-mac.yml referencing the .dmg even with both
+  # targets, so scripts/fix-mac-latest-zip.mjs rewrites it to point at the .zip after build.
   target:
     - target: dmg
       arch:

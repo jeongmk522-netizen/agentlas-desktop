@@ -126,6 +126,10 @@ mkdir -p "$project_dir/release"
 COPYFILE_DISABLE=1 ditto "$local_release" "$project_dir/release"
 cleanup_appledouble "$project_dir/release"
 
+# electron-builder는 latest-mac.yml을 .dmg로 써버린다. 자동업데이트(Squirrel.Mac)는
+# .zip만 적용 가능하므로 zip 기준으로 재작성한다.
+node "$project_dir/scripts/fix-mac-latest-zip.mjs"
+
 if [[ "${AGENTLAS_PUBLIC_RELEASE:-0}" == "1" ]]; then
   prepare_dmg_signing_identity
   while IFS= read -r dmg_path; do

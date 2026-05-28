@@ -30,7 +30,8 @@ mac:
   entitlementsInherit: build-resources/entitlements.mac.plist
   notarize: true
   # zip is REQUIRED for macOS auto-update (Squirrel.Mac). dmg is for manual install.
-  # zip must be LAST: electron-builder writes latest-mac.yml from the last target.
+  # electron-builder 25.x still writes the .dmg into latest-mac.yml, so the mac pipeline
+  # runs scripts/fix-mac-latest-zip.mjs to repoint the feed at the .zip after build.
   target:
     - target: dmg
       arch:

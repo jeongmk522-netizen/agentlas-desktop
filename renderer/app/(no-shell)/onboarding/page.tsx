@@ -290,21 +290,25 @@ function Highlight({
   );
 }
 
-// ── Step 2: 백엔드 연결 ────────────────────────────────────
+// BYOK는 클라우드 키 3종 (Ollama는 로컬이라 키 입력 없음 — 감지된 LLM 목록에 자동 표시).
+type ByokBackend = "anthropic" | "openai" | "google";
+
+// ── Step 2: LLM 연결 ───────────────────────────────────────
 function StepBackend() {
+  const { t } = useT();
   const [statuses, setStatuses] = useState<RuntimeStatus[]>([]);
   const [loading, setLoading] = useState(true);
-  const [draft, setDraft] = useState<Record<RuntimeBackend, string>>({
+  const [draft, setDraft] = useState<Record<ByokBackend, string>>({
     anthropic: "",
     openai: "",
     google: "",
   });
-  const [savedKey, setSavedKey] = useState<Record<RuntimeBackend, boolean>>({
+  const [savedKey, setSavedKey] = useState<Record<ByokBackend, boolean>>({
     anthropic: false,
     openai: false,
     google: false,
   });
-  const [saving, setSaving] = useState<RuntimeBackend | null>(null);
+  const [saving, setSaving] = useState<ByokBackend | null>(null);
 
   async function refresh() {
     const api = ipc();
@@ -326,7 +330,7 @@ function StepBackend() {
     void refresh();
   }, []);
 
-  async function saveKey(backend: RuntimeBackend) {
+  async function saveKey(backend: ByokBackend) {
     const api = ipc();
     if (!api || !draft[backend].trim()) return;
     setSaving(backend);
@@ -352,14 +356,16 @@ function StepBackend() {
           fontWeight: 700,
         }}
       >
-        백엔드 연결
+        {t("onb.backend.title")}
       </h2>
       <p style={{ color: "var(--muted-deep)", fontSize: 14, lineHeight: 1.6, marginTop: 8 }}>
-        Agentlas는 LLM을 호스팅하지 않습니다. <strong>당신의 머신에서 당신의 구독/키로</strong> 직접 호출합니다.
+        {t("onb.backend.desc")}
       </p>
 
       {loading ? (
-        <div style={{ marginTop: 24, color: "var(--muted-deep)" }}>감지 중…</div>
+        <div style={{ marginTop: 24, color: "var(--muted-deep)" }}>
+          {t("onb.backend.detecting")}
+        </div>
       ) : (
         <>
           {/* 감지된 CLI */}
@@ -373,7 +379,8 @@ function StepBackend() {
               color: "var(--muted-deep)",
             }}
           >
-            감지된 CLI {statuses.filter((s) => s.kind !== "byok").length > 0 && "✓"}
+            {t("onb.backend.detected_cli")}{" "}
+            {statuses.filter((s) => s.kind !== "byok").length > 0 && "✓"}
           </h3>
           {statuses.filter((s) => s.kind !== "byok").length === 0 ? (
             <div
@@ -387,9 +394,7 @@ function StepBackend() {
                 marginTop: 8,
               }}
             >
-              로컬에 Claude Code / Codex / Gemini CLI가 설치되어 있지 않습니다.
-              <br />
-              CLI 없이도 아래에서 API 키로 연결할 수 있어요.
+              {t("onb.backend.no_cli")}
             </div>
           ) : (
             <ul
@@ -456,9 +461,9 @@ function StepBackend() {
               color: "var(--muted-deep)",
             }}
           >
-            또는 API 키 (BYOK)
+            {t("onb.backend.byok_title")}
           </h3>
-          {(["anthropic", "openai", "google"] as RuntimeBackend[]).map((b) => (
+          {(["anthropic", "openai", "google"] as ByokBackend[]).map((b) => (
             <div
               key={b}
               style={{
@@ -477,7 +482,7 @@ function StepBackend() {
                 type="password"
                 value={draft[b]}
                 onChange={(e) => setDraft((d) => ({ ...d, [b]: e.target.value }))}
-                placeholder={savedKey[b] ? "✓ 저장됨" : "sk-..."}
+                placeholder={savedKey[b] ? `✓ ${t("onb.backend.saved")}` : "sk-..."}
                 style={{
                   flex: 1,
                   padding: "6px 10px",
@@ -502,10 +507,22 @@ function StepBackend() {
                   border: "none",
                 }}
               >
-                저장
+                {t("onb.backend.byok_save")}
               </button>
             </div>
           ))}
+
+          <p
+            style={{
+              marginTop: 14,
+              fontSize: 11,
+              color: "var(--muted-deep)",
+              lineHeight: 1.5,
+            }}
+          >
+            <strong style={{ color: "var(--ink-soft)" }}>{t("onb.backend.ollama_title")}</strong>{" "}
+            — {t("onb.backend.ollama_hint")}
+          </p>
 
           <p
             style={{
@@ -516,8 +533,8 @@ function StepBackend() {
             }}
           >
             {hasAnyBackend
-              ? "연결 준비 완료. 다음 단계로 진행하세요."
-              : "CLI 1개 또는 API 키 1개만 있으면 시작할 수 있습니다."}
+              ? t("onb.backend.ready")
+              : t("onb.backend.tip")}
           </p>
         </>
       )}
@@ -526,55 +543,63 @@ function StepBackend() {
 }
 
 function labelOf(kind: string) {
-  return { "claude-code": "Claude Code", codex: "Codex", gemini: "Gemini", byok: "API" }[
-    kind as "claude-code" | "codex" | "gemini" | "byok"
-  ];
+  return (
+    { "claude-code": "Claude Code", codex: "Codex", gemini: "Gemini", byok: "API", ollama: "Ollama" }[
+      kind as "claude-code" | "codex" | "gemini" | "byok" | "ollama"
+    ] ?? kind
+  );
 }
 function backendLabel(b: RuntimeBackend) {
-  return { anthropic: "Anthropic (Claude)", openai: "OpenAI", google: "Google" }[b];
+  return {
+    anthropic: "Anthropic (Claude)",
+    openai: "OpenAI",
+    google: "Google",
+    ollama: "로컬 모델",
+  }[b];
 }
 
 // ── Step 3: 메뉴 투어 ─────────────────────────────────────
 function StepTour() {
+  const { t } = useT();
   const items = [
     {
       icon: <IconChat size={18} />,
-      title: "채팅",
-      desc: "어시스턴트와 일대일 대화. 메시지는 로컬 SQLite에만 저장돼요.",
+      title: t("onb.tour.chat.title"),
+      desc: t("onb.tour.chat.desc"),
     },
     {
       icon: <IconFolder size={18} />,
-      title: "프로젝트",
-      desc: "관련 채팅을 묶고 공통 컨텍스트 노트를 자동으로 적용합니다.",
+      title: t("onb.tour.projects.title"),
+      desc: t("onb.tour.projects.desc"),
     },
     {
       icon: <IconBolt size={18} />,
-      title: "자동화",
-      desc: "정기 실행되는 에이전트 작업 (V1에 풀 가동, 지금은 UI 미리보기).",
+      title: t("onb.tour.automations.title"),
+      desc: t("onb.tour.automations.desc"),
     },
     {
       icon: <IconLibrary size={18} />,
-      title: "라이브러리",
-      desc: "설치된 에이전트·스킬·MCP를 한 곳에서 관리합니다.",
+      title: t("onb.tour.library.title"),
+      desc: t("onb.tour.library.desc"),
     },
     {
       icon: <IconSettings size={18} />,
-      title: "설정",
-      desc: "백엔드 연결, API 키 추가/변경. 좌측 하단 톱니바퀴 또는 ⌘,",
+      title: t("onb.tour.settings.title"),
+      desc: t("onb.tour.settings.desc"),
     },
     {
       icon: <IconSparkles size={18} />,
-      title: "단축키",
-      desc: "⌘↵ 메시지 보내기 · ⌘[ 사이드바 접기 · ⌘N 새 채팅 (예정)",
+      title: t("onb.tour.shortcuts.title"),
+      desc: t("onb.tour.shortcuts.desc"),
     },
   ];
   return (
     <div>
       <h2 style={{ margin: 0, fontFamily: "var(--font-head)", fontSize: 26, fontWeight: 700 }}>
-        메뉴 안내
+        {t("onb.tour.title")}
       </h2>
       <p style={{ color: "var(--muted-deep)", fontSize: 14, marginTop: 8 }}>
-        왼쪽 사이드바에 있는 항목들이에요. ⌘[로 접고 펼 수 있습니다.
+        {t("onb.tour.desc")}
       </p>
       <div
         style={{
@@ -626,6 +651,7 @@ function StepTour() {
 
 // ── Step 4: 시작 ──────────────────────────────────────────
 function StepDone() {
+  const { t } = useT();
   return (
     <div style={{ textAlign: "center" }}>
       <div
@@ -644,12 +670,14 @@ function StepDone() {
         <IconCheck size={36} />
       </div>
       <h2 style={{ margin: 0, fontFamily: "var(--font-head)", fontSize: 28, fontWeight: 700 }}>
-        준비 완료
+        {t("onb.done.title")}
       </h2>
       <p style={{ color: "var(--ink-soft)", fontSize: 15, lineHeight: 1.6, marginTop: 12 }}>
-        다음 화면에서 어시스턴트 팀을 골라 설치하세요.
+        {t("onb.done.desc")}
         <br />
-        <strong>쇼핑몰 사장</strong>, <strong>1인 마케터</strong>, <strong>크리에이터</strong> 페르소나별 추천이 준비돼 있어요.
+        {t("onb.done.personas.before")} <strong>{t("persona.shop")}</strong>,{" "}
+        <strong>{t("persona.marketer")}</strong>, <strong>{t("persona.creator")}</strong>{" "}
+        {t("onb.done.personas.after")}
       </p>
     </div>
   );

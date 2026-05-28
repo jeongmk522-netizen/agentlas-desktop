@@ -1,9 +1,11 @@
-# Cross-platform release — builds macOS / Windows / Linux installers and uploads
+# Cross-platform preview release — builds Windows / Linux installers and uploads
 # them to the GitHub Release for the pushed tag. Uses only the built-in
 # GITHUB_TOKEN, so it works on a fresh public fork with no extra secrets.
 #
-# Builds are UNSIGNED (no Apple/Windows certificate required). The first launch
-# shows a one-time OS prompt — see README "Opening the app the first time".
+# These builds are UNSIGNED (no Windows certificate required). macOS is
+# intentionally excluded here: public Mac releases must come from
+# scripts/package-mac.sh with Developer ID signing + notarization, otherwise
+# users can get a "newer" DMG that cannot safely auto-update.
 # For the signed + notarized macOS pipeline, see docs/PUBLIC-RELEASE.md.
 #
 # Trigger:
@@ -34,8 +36,6 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: macos-latest
-            builder_args: --mac -c.mac.notarize=false -c.mac.identity=null
           - os: windows-latest
             builder_args: --win
           - os: ubuntu-latest

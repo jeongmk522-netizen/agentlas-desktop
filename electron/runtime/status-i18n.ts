@@ -44,6 +44,10 @@ const DICT = {
     errCliMissingCodex: "codex CLI를 찾지 못했습니다. `npm i -g @openai/codex` 후 다시 시도하세요.",
     errCliMissingGemini:
       "gemini CLI를 찾지 못했습니다. `npm i -g @google/gemini-cli` 후 다시 시도하세요.",
+    errOllamaUnreachable:
+      "로컬 Ollama 서버에 연결하지 못했습니다 ({host}). `ollama serve`가 실행 중인지 확인하세요.",
+    errOllamaNoModel:
+      "사용할 Ollama 모델이 없습니다. 터미널에서 `ollama pull gemma3` 등으로 모델을 받은 뒤 설정에서 선택하세요.",
     sysGuide: "사용자는 한국어로 대화합니다. 답변도 한국어로 합니다 (영어 요청이면 영어).",
     sysHeader: "당신은 Agentlas Desktop에서 사용자가 설치한 전문 어시스턴트입니다.",
     sysToolsOff:
@@ -84,6 +88,10 @@ const DICT = {
     errCliMissingCodex: "codex CLI not found. Install with `npm i -g @openai/codex` and try again.",
     errCliMissingGemini:
       "gemini CLI not found. Install with `npm i -g @google/gemini-cli` and try again.",
+    errOllamaUnreachable:
+      "Couldn't reach the local Ollama server ({host}). Make sure `ollama serve` is running.",
+    errOllamaNoModel:
+      "No Ollama model available. Pull one in your terminal (e.g. `ollama pull gemma3`), then select it in Settings.",
     sysGuide: "The user speaks English. Reply in English (or match the user's input language).",
     sysHeader: "You are a specialist assistant installed by the user in Agentlas Desktop.",
     sysToolsOff:

@@ -9,7 +9,7 @@ import { app } from "electron";
 
 let _db: Database.Database | null = null;
 
-const SCHEMA_VERSION = 8;
+const SCHEMA_VERSION = 10;
 
 export function initStore(): void {
   if (_db) return;
@@ -194,6 +194,44 @@ export function initStore(): void {
     if (!chatCols.some((c) => c.name === "working_folder")) {
       _db.exec("ALTER TABLE chats ADD COLUMN working_folder TEXT");
     }
+  }
+
+  // ── v8 → v9: active_runtime.model (Ollama 등 로컬 LLM의 활성 모델) ─
+  if (userVersion < 9) {
+    const runtimeCols = _db
+      .prepare("PRAGMA table_info(active_runtime)")
+      .all() as Array<{ name: string }>;
+    if (!runtimeCols.some((c) => c.name === "model")) {
+      _db.exec("ALTER TABLE active_runtime ADD COLUMN model TEXT");
+    }
+  }
+
+  // ── v9 → v10: 외부 MCP 툴 서버 + 에이전트별 연결 ────────
+  if (userVersion < 10) {
+    _db.exec(`
+      CREATE TABLE IF NOT EXISTS mcp_servers (
+        id TEXT PRIMARY KEY,
+        catalog_id TEXT,
+        name TEXT NOT NULL,
+        name_en TEXT NOT NULL DEFAULT '',
+        transport TEXT NOT NULL,
+        command TEXT,
+        args_json TEXT NOT NULL DEFAULT '[]',
+        url TEXT,
+        env_keys_json TEXT NOT NULL DEFAULT '[]',
+        enabled INTEGER NOT NULL DEFAULT 1,
+        installed_at TEXT NOT NULL
+      );
+
+      CREATE TABLE IF NOT EXISTS agent_mcp_servers (
+        agent_id TEXT NOT NULL,
+        server_id TEXT NOT NULL,
+        PRIMARY KEY (agent_id, server_id),
+        FOREIGN KEY(agent_id) REFERENCES installed_agents(id) ON DELETE CASCADE,
+        FOREIGN KEY(server_id) REFERENCES mcp_servers(id) ON DELETE CASCADE
+      );
+      CREATE INDEX IF NOT EXISTS idx_agent_mcp_agent ON agent_mcp_servers(agent_id);
+    `);
   }
 
   _db.pragma(`user_version = ${SCHEMA_VERSION}`);

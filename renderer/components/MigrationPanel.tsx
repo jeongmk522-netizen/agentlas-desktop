@@ -3,6 +3,7 @@
 "use client";
 import { useCallback, useEffect, useState } from "react";
 import { ipc } from "@/lib/ipc";
+import { useT } from "@/lib/i18n";
 import type {
   MigrationResult,
   MigrationSourceKind,
@@ -10,6 +11,7 @@ import type {
 } from "@/lib/types";
 
 export function MigrationPanel() {
+  const { t } = useT();
   const [sources, setSources] = useState<MigrationSourcePreview[]>([]);
   const [loading, setLoading] = useState(true);
   const [overwrite, setOverwrite] = useState(false);
@@ -52,14 +54,14 @@ export function MigrationPanel() {
   return (
     <>
       <h2 style={{ fontFamily: "var(--font-head)", fontSize: 15, margin: "32px 0 4px" }}>
-        다른 도구에서 가져오기
+        {t("migration.title")}
       </h2>
       <p style={{ fontSize: 12, color: "var(--muted-deep)", margin: "0 0 12px" }}>
-        OpenClaw / Hermes의 SOUL·API 키·자동화를 Agentlas로 옮깁니다. 키는 OS 키체인에만 저장됩니다.
+        {t("migration.desc")}
       </p>
 
       {loading ? (
-        <div style={{ fontSize: 13, color: "var(--muted-deep)" }}>스캔 중…</div>
+        <div style={{ fontSize: 13, color: "var(--muted-deep)" }}>{t("migration.scanning")}</div>
       ) : available.length === 0 ? (
         <div
           style={{
@@ -70,9 +72,9 @@ export function MigrationPanel() {
             fontSize: 13,
           }}
         >
-          가져올 수 있는 OpenClaw / Hermes 설치를 찾지 못했습니다.
+          {t("migration.empty")}
           <br />
-          (~/.openclaw, ~/.hermes 를 확인했어요.)
+          {t("migration.empty.paths")}
         </div>
       ) : (
         <>
@@ -91,7 +93,7 @@ export function MigrationPanel() {
               checked={overwrite}
               onChange={(e) => setOverwrite(e.target.checked)}
             />
-            이미 가져온 에이전트가 있으면 덮어쓰기
+            {t("migration.overwrite")}
           </label>
 
           {available.map((s) => (
@@ -123,11 +125,11 @@ export function MigrationPanel() {
                 }}
               >
                 <li>
-                  • 에이전트: <strong>{s.agent?.name ?? "—"}</strong>
+                  • {t("migration.agent")}: <strong>{s.agent?.name ?? "—"}</strong>
                   {s.agent ? ` (${Math.round(s.agent.personaBytes / 1024)}KB)` : ""}
                 </li>
                 <li>
-                  • API 키 {s.apiKeys.length}개
+                  • {t("migration.api_keys", { count: s.apiKeys.length })}
                   {s.apiKeys.length > 0 && (
                     <span style={{ color: "var(--muted-deep)" }}>
                       {" "}
@@ -135,7 +137,12 @@ export function MigrationPanel() {
                     </span>
                   )}
                 </li>
-                <li>• 자동화 {s.automations}개 · 메모리 {s.memories}개</li>
+                <li>
+                  • {t("migration.automation_memory", {
+                    automations: s.automations,
+                    memories: s.memories,
+                  })}
+                </li>
               </ul>
 
               <button
@@ -151,7 +158,9 @@ export function MigrationPanel() {
                   border: "none",
                 }}
               >
-                {busy === s.kind ? "가져오는 중…" : `${s.label}에서 가져오기`}
+                {busy === s.kind
+                  ? t("migration.importing")
+                  : t("migration.import_from", { label: s.label })}
               </button>
 
               {results[s.kind] && <ResultNote result={results[s.kind]} />}
@@ -164,6 +173,7 @@ export function MigrationPanel() {
 }
 
 function ResultNote({ result }: { result: MigrationResult }) {
+  const { t } = useT();
   const ok = result.agentImported || result.keysImported.length > 0;
   return (
     <div
@@ -178,11 +188,14 @@ function ResultNote({ result }: { result: MigrationResult }) {
       }}
     >
       <div style={{ fontWeight: 600 }}>
-        {ok ? "가져오기 완료" : "변경 없음"}
+        {ok ? t("migration.complete") : t("migration.no_changes")}
       </div>
       <div style={{ color: "var(--muted-deep)", marginTop: 2 }}>
-        에이전트 {result.agentImported ? "1" : "0"}개 · 키 {result.keysImported.length}개 · 자동화{" "}
-        {result.automationsImported}개
+        {t("migration.result", {
+          agents: result.agentImported ? 1 : 0,
+          keys: result.keysImported.length,
+          automations: result.automationsImported,
+        })}
       </div>
       {result.warnings.map((w, i) => (
         <div key={i} style={{ color: "var(--amber-deep, var(--muted-deep))", marginTop: 4 }}>

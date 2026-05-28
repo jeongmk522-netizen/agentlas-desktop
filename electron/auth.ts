@@ -17,7 +17,8 @@
 //   - cookie value 포맷: base64url({ userId, workspaceId, exp }).<HMAC>
 //   - 성공 redirect 형태: /account?auth=google (POST /api/auth/google 응답의 redirectTo)
 //   - 사용자 메타(email, name) 조회 endpoint: /api/account/me (없으면 cookie payload만 표시)
-import { BrowserWindow, session as electronSession } from "electron";
+import { BrowserWindow, session as electronSession, shell } from "electron";
+import http from "node:http";
 import keytar from "keytar";
 import type { AuthSession } from "../shared/types";
 
@@ -131,6 +132,27 @@ export function getAuthSession(): AuthSession {
   };
 }
 
+/** cookie value를 keytar + 메모리 캐시에 영구화하고 메타를 채운다. 두 로그인 경로(창/브라우저)가 공유. */
+async function persistSession(value: string): Promise<AuthSession> {
+  try {
+    await keytar.setPassword(KEYTAR_SERVICE, KEYTAR_ACCOUNT, value);
+  } catch (err) {
+    console.warn("[auth] keytar set failed — keeping session in memory only", err);
+  }
+  const decoded = decodeSessionCookie(value);
+  _cache = {
+    cookieValue: value,
+    userId: decoded.userId,
+    workspaceId: decoded.workspaceId,
+    expiresAt: decoded.expiresAt,
+  };
+  const meta = await fetchAccountMeta(value);
+  if (meta && _cache) {
+    _cache = { ..._cache, email: meta.email, name: meta.name };
+  }
+  return getAuthSession();
+}
+
 /** 마켓플레이스 fetch에 첨부할 cookie 헤더 값 — 미로그인이면 null. */
 export function getSessionCookieHeader(): string | null {
   if (!_cache) return null;
@@ -172,29 +194,13 @@ export async function signInWithGoogle(parent: BrowserWindow | null): Promise<Au
       const cookie = cookies[0];
       const value = cookie.value;
       settled = true;
-      try {
-        await keytar.setPassword(KEYTAR_SERVICE, KEYTAR_ACCOUNT, value);
-      } catch (err) {
-        console.warn("[auth] keytar set failed — keeping session in memory only", err);
-      }
-      const decoded = decodeSessionCookie(value);
-      _cache = {
-        cookieValue: value,
-        userId: decoded.userId,
-        workspaceId: decoded.workspaceId,
-        expiresAt: decoded.expiresAt,
-      };
-      // 메타 채우기 — 실패해도 resolve는 진행
-      const meta = await fetchAccountMeta(value);
-      if (meta && _cache) {
-        _cache = { ..._cache, email: meta.email, name: meta.name };
-      }
+      const session = await persistSession(value);
       try {
         win.close();
       } catch {
         // ignore
       }
-      resolve(getAuthSession());
+      resolve(session);
     }
 
     // 사용자가 그냥 창을 닫으면 reject
@@ -226,6 +232,77 @@ export async function signInWithGoogle(parent: BrowserWindow | null): Promise<Au
       reject(err);
     });
   });
+}
+
+/**
+ * 시스템 기본 브라우저(이미 로그인된 크롬 등)로 로그인 — 그 브라우저의 기존 세션을 재사용해
+ * 가능하면 클릭 한 번으로 끝낸다. loopback(127.0.0.1) 콜백으로 세션 값을 돌려받는다.
+ *
+ * 흐름:
+ *   1. 127.0.0.1의 임의 포트로 임시 http 서버를 띄운다.
+ *   2. shell.openExternal로 agentlas.cloud 로그인 페이지를 기본 브라우저에서 연다.
+ *      (callback=http://127.0.0.1:<port>/callback 을 쿼리로 전달)
+ *   3. 웹앱이 로그인 완료 후 callback?session=<cookie> 로 리다이렉트하면 값을 받아 저장.
+ *   4. 180초 내 콜백이 없으면 {signedIn:false} 로 resolve (호출측이 창 로그인으로 폴백).
+ *
+ * 주의: 끝까지 매끄러우려면 웹앱(agentlas.cloud)이 desktop callback 쿼리를 존중해야 한다.
+ *       그렇지 않으면 타임아웃 후 폴백된다 — 안전(기존 동작 비파괴).
+ */
+export async function signInWithBrowser(): Promise<AuthSession> {
+  return new Promise<AuthSession>((resolve) => {
+    let settled = false;
+    const finish = (session: AuthSession, server?: http.Server) => {
+      if (settled) return;
+      settled = true;
+      try {
+        server?.close();
+      } catch {
+        // ignore
+      }
+      resolve(session);
+    };
+
+    const server = http.createServer((req, res) => {
+      let url: URL;
+      try {
+        url = new URL(req.url ?? "/", "http://127.0.0.1");
+      } catch {
+        res.writeHead(400).end("bad request");
+        return;
+      }
+      if (!url.pathname.startsWith("/callback")) {
+        res.writeHead(404).end("not found");
+        return;
+      }
+      const value = url.searchParams.get("session") ?? url.searchParams.get("token") ?? "";
+      res.writeHead(value ? 200 : 400, { "content-type": "text/html; charset=utf-8" });
+      res.end(callbackHtml(!!value));
+      if (!value) return;
+      void persistSession(value).then((session) => finish(session, server));
+    });
+
+    server.on("error", () => finish({ signedIn: false }));
+
+    server.listen(0, "127.0.0.1", () => {
+      const addr = server.address();
+      const port = typeof addr === "object" && addr ? addr.port : 0;
+      if (!port) {
+        finish({ signedIn: false }, server);
+        return;
+      }
+      const callback = `http://127.0.0.1:${port}/callback`;
+      const loginUrl = `${webBaseUrl()}/account?desktop=1&callback=${encodeURIComponent(callback)}`;
+      void shell.openExternal(loginUrl);
+      setTimeout(() => finish({ signedIn: false }, server), 180000);
+    });
+  });
+}
+
+function callbackHtml(ok: boolean): string {
+  const msg = ok
+    ? "Signed in. You can close this tab and return to Agentlas."
+    : "Sign-in could not be completed. Please return to Agentlas and try again.";
+  return `<!doctype html><html><head><meta charset="utf-8"><title>Agentlas</title></head><body style="font-family:-apple-system,system-ui,sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;color:#1a1a1a"><div style="text-align:center"><h2 style="font-weight:700">Agentlas</h2><p>${msg}</p></div></body></html>`;
 }
 
 export async function signOut(): Promise<void> {

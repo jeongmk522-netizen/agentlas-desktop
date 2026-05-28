@@ -1,0 +1,58 @@
+# Signed macOS stable channel.
+# This intentionally duplicates the small base config instead of using
+# `extends`, because electron-builder merges publish arrays in a way that can
+# leave the app-update feed pointed at the public preview repository.
+appId: com.agentlas.desktop
+productName: Agentlas
+copyright: © 2026 Agentlas
+
+directories:
+  output: release
+  buildResources: build-resources
+
+afterPack: build-resources/after-pack-clean.cjs
+
+files:
+  - dist/electron/**/*
+  - dist/renderer/**/*
+  - package.json
+  - "!**/*.map"
+
+asar: true
+asarUnpack:
+  - "**/node_modules/better-sqlite3/**/*"
+  - "**/node_modules/keytar/**/*"
+
+mac:
+  category: public.app-category.productivity
+  hardenedRuntime: true
+  gatekeeperAssess: false
+  entitlements: build-resources/entitlements.mac.plist
+  entitlementsInherit: build-resources/entitlements.mac.plist
+  notarize: true
+  target:
+    - target: dmg
+      arch:
+        - arm64
+        - x64
+  icon: build-resources/icon.icns
+  artifactName: "Agentlas-${version}-${arch}.${ext}"
+
+dmg:
+  title: "${productName} ${version}"
+  icon: build-resources/icon.icns
+  iconSize: 96
+  contents:
+    - x: 130
+      y: 220
+    - x: 410
+      y: 220
+      type: link
+      path: /Applications
+
+publish:
+  - provider: github
+    owner: Masonleenf
+    repo: agentlas-desktop
+    private: false
+    releaseType: release

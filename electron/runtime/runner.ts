@@ -9,8 +9,10 @@ export interface RunnerRequest {
   userPrompt: string;
   /** 첨부 이미지 — BYOK 멀티모달에만 사용, CLI는 무시 */
   images?: ImageAttachment[];
-  /** 사용자에게 보일 라벨 — "Claude Code CLI" / "Anthropic API" */
+  /** 사용자에게 보일 라벨 — "Claude Code CLI" / "Anthropic API" / "Ollama · llama3.1" */
   backendLabel: string;
+  /** ollama 등 모델 선택이 필요한 LLM의 활성 모델 이름. 그 외엔 미설정 */
+  model?: string;
   /** 상태/오류 메시지 i18n에 사용. renderer가 동봉, fallback "en" */
   locale: RuntimeLocale;
 }

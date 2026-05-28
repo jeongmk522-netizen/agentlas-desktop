@@ -1,25 +1,32 @@
 // Main 프로세스 ↔ Renderer 간 공유 타입.
 // renderer/lib/types.ts에서 re-export.
 
-export type RuntimeKind = "claude-code" | "codex" | "gemini" | "byok";
+export type RuntimeKind = "claude-code" | "codex" | "gemini" | "byok" | "ollama";
 
-export type RuntimeBackend = "anthropic" | "openai" | "google";
+/** LLM 제공자. "ollama"는 로컬 머신에서 도는 오픈 모델(gemma/deepseek 등). */
+export type RuntimeBackend = "anthropic" | "openai" | "google" | "ollama";
 
 export interface RuntimeSelection {
   kind: RuntimeKind;
   backend?: RuntimeBackend;
   source?: string;
+  /** ollama 등 모델을 골라야 하는 LLM에서 활성 모델 이름 (예: "llama3.1", "deepseek-r1") */
+  model?: string;
 }
 
 export interface RuntimeStatus {
   kind: RuntimeKind;
   backend: RuntimeBackend;
-  /** CLI 경로 또는 "byok:<backend>" */
+  /** CLI 경로 또는 "byok:<backend>" 또는 "ollama" */
   source: string;
-  /** CLI 감지된 버전 — BYOK은 null */
+  /** CLI 감지된 버전 — BYOK은 null. ollama는 서버 버전 */
   version: string | null;
-  /** 사용자가 현재 이 백엔드를 활성으로 선택했는지 */
+  /** 사용자가 현재 이 LLM을 활성으로 선택했는지 */
   active: boolean;
+  /** ollama 활성 모델 이름. 모델 개념 없는 LLM은 미설정 */
+  model?: string | null;
+  /** ollama가 로컬에 받아둔 모델 목록 (설정 화면의 모델 선택용). 그 외 LLM은 미설정 */
+  availableModels?: string[];
 }
 
 /**
@@ -111,6 +118,61 @@ export interface MarketplaceSourceStatus {
   usingFallback: boolean;
   lastError: string | null;
   lastCheckedAt: string | null;
+}
+
+// ── 외부 MCP 툴 플러그인 (Slack / Discord / GitHub 등 — Codex 스타일) ──
+// 에이전트의 mcpServers(문자열 ID)와 별개. 이것은 "실제로 연결되는 외부 MCP 서버"다.
+// @modelcontextprotocol/sdk로 stdio(npx) 또는 SSE/HTTP로 붙는다.
+export type McpTransport = "stdio" | "sse" | "http";
+
+/** 연결 가능한 외부 MCP 툴 카탈로그 항목 — 설정 가이드(setting_guide)의 외부 툴. */
+export interface McpToolCatalogEntry {
+  id: string; // "slack" | "discord" | "github" | "notion" ...
+  name: string;
+  nameEn: string;
+  description: string;
+  descriptionEn: string;
+  category: "communication" | "dev" | "productivity" | "data" | "web" | "custom";
+  transport: McpTransport;
+  /** stdio 실행 명령 (예: "npx") */
+  command?: string;
+  /** stdio 인자 (예: ["-y", "@modelcontextprotocol/server-github"]) */
+  args?: string[];
+  /** sse/http 엔드포인트 URL */
+  url?: string;
+  /** 이 서버가 동작하려면 필요한 env — 글로벌 vault 키와 매핑된다 */
+  envRequirements: AgentEnvRequirement[];
+  /** "공식 MCP 서버" 배지 */
+  trust: "official" | "community";
+  docsUrl?: string;
+}
+
+/** 사용자가 설치/구성한 MCP 서버 (SQLite에 영구화). */
+export interface InstalledMcpServer {
+  id: string;
+  /** 카탈로그 출신이면 카탈로그 id, 커스텀이면 null */
+  catalogId: string | null;
+  name: string;
+  nameEn: string;
+  transport: McpTransport;
+  command: string | null;
+  args: string[];
+  url: string | null;
+  /** 이 서버가 쓰는 글로벌 env 키 목록 (값은 keychain) */
+  envKeys: string[];
+  enabled: boolean;
+  installedAt: string;
+}
+
+/** 연결 상태 + 노출하는 툴 목록. test() / status()가 반환. */
+export interface McpServerStatus {
+  id: string;
+  connected: boolean;
+  tools: Array<{ name: string; description?: string }>;
+  error: string | null;
+  /** 아직 값이 없는 필수 env 키 — 연결 막힘 원인 */
+  missingEnv: string[];
+  checkedAt: string;
 }
 
 // ── Firm = 위계 조직을 가진 에이전트 회사 풀패키지 ──────────
@@ -378,6 +440,9 @@ export interface AgentlasIpc {
     getSession: () => Promise<AuthSession>;
     /** Google 로그인 시작 — BrowserWindow를 띄우고 사용자가 끝낼 때까지 await */
     signInWithGoogle: () => Promise<AuthSession>;
+    /** 시스템 기본 브라우저(이미 로그인된 크롬 등)로 로그인 — loopback 콜백으로 세션 수신.
+     *  웹앱이 desktop callback을 지원하지 않거나 180초 타임아웃 시 signedIn=false (창 방식으로 폴백). */
+    signInWithBrowser: () => Promise<AuthSession>;
     signOut: () => Promise<void>;
   };
   /** 자동 업데이트 — electron-updater 래퍼. broadcast는 window.agentlasUpdater.onState로 받음. */
@@ -392,6 +457,14 @@ export interface AgentlasIpc {
   runtime: {
     detect: () => Promise<RuntimeStatus[]>;
     setActive: (selection: RuntimeSelection) => Promise<RuntimeStatus[]>;
+    /** CLI 미설치 사용자용 — 고정 명령으로 `npm i -g <pkg>` 실행. 성공 후 detect()로 재인식. */
+    installCli: (
+      kind: "claude-code" | "codex" | "gemini",
+    ) => Promise<{ ok: boolean; message: string; command?: string }>;
+    /** 시스템 터미널을 열어 CLI 로그인 실행 — 사용자는 브라우저 로그인만 하면 됨. */
+    openCliLogin: (
+      kind: "claude-code" | "codex" | "gemini",
+    ) => Promise<{ ok: boolean; message: string; command?: string }>;
   };
   secrets: {
     saveApiKey: (backend: RuntimeBackend, key: string) => Promise<void>;
@@ -413,13 +486,52 @@ export interface AgentlasIpc {
   team: {
     list: () => Promise<InstalledAgent[]>;
     install: (slug: string) => Promise<InstalledAgent>;
+    /** 내 에이전트(cargo) 설치 — 로그인 사용자가 agentlas.cloud에서 만든 것 */
+    installMine: (id: string) => Promise<InstalledAgent>;
     uninstall: (id: string) => Promise<void>;
+  };
+  /** 에이전트 폴더 파일 — 라이브러리 우측 패널의 파일 목록 + 에디터.
+   *  폴더(userData/agents/<slug>/) 내부로만 접근 제한. system-prompt.md 편집은 즉시 적용. */
+  agentFiles: {
+    /** 폴더를 보장(materialize)하고 최상위 엔트리를 반환 */
+    list: (agentId: string) => Promise<DirListing>;
+    /** 폴더 내부 파일 본문 읽기 */
+    read: (agentId: string, absPath: string) => Promise<TextFilePreview>;
+    /** 폴더 내부 파일 저장 (system-prompt.md면 동작 프롬프트도 갱신) */
+    write: (agentId: string, absPath: string, content: string) => Promise<{ ok: boolean }>;
+  };
+  /** 외부 MCP 툴 플러그인 — Slack/Discord/GitHub 등을 실제로 연결한다.
+   *  env 값은 글로벌 vault(env)에서 가져와 stdio 자식 프로세스에 주입. */
+  mcpTools: {
+    /** 연결 가능한 외부 툴 카탈로그 (setting_guide) */
+    listCatalog: () => Promise<McpToolCatalogEntry[]>;
+    /** 설치/구성된 서버 목록 */
+    listInstalled: () => Promise<InstalledMcpServer[]>;
+    /** 카탈로그 id로 설치 (env 요구는 vault에 자동 등록) */
+    install: (catalogId: string) => Promise<InstalledMcpServer>;
+    /** 커스텀 서버 직접 등록 */
+    installCustom: (def: {
+      name: string;
+      transport: McpTransport;
+      command?: string;
+      args?: string[];
+      url?: string;
+      envKeys?: string[];
+    }) => Promise<InstalledMcpServer>;
+    remove: (id: string) => Promise<void>;
+    setEnabled: (id: string, enabled: boolean) => Promise<InstalledMcpServer>;
+    /** 실제로 붙어서 tools/list 해보고 상태 반환 */
+    test: (id: string) => Promise<McpServerStatus>;
+    /** 활성화된 모든 서버 상태 (env 부족분 포함) */
+    status: () => Promise<McpServerStatus[]>;
   };
   marketplace: {
     listBundles: () => Promise<TeamBundle[]>;
     search: (q: string) => Promise<MarketplaceListing[]>;
     listFirms: () => Promise<FirmListing[]>;
     status: () => Promise<MarketplaceSourceStatus>;
+    /** 로그인 사용자가 agentlas.cloud에서 만든 내 에이전트 목록. 미로그인/오프라인이면 [] */
+    listMine: () => Promise<MarketplaceListing[]>;
   };
   firms: {
     list: () => Promise<InstalledFirm[]>;

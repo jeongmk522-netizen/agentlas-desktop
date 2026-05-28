@@ -70,4 +70,15 @@ export class McpSource implements MarketplaceSource {
       slug,
     });
   }
+
+  // ── cargo.* — 로그인한 사용자가 만든 자기 에이전트 (인증 필요) ──────────
+  /** 내 에이전트 목록 (cookieProvider가 세션 쿠키 첨부). */
+  listMyAgents(): Promise<MarketplaceListing[]> {
+    return this.call<MarketplaceListing[]>("cargo.list_agents", {});
+  }
+
+  /** 내 에이전트 풀 매니페스트 (설치용). slug 또는 "cargo:<id>" 모두 허용. */
+  getMyAgentManifest(id: string): Promise<(SeedListingFull & MarketplaceListing) | null> {
+    return this.call<(SeedListingFull & MarketplaceListing) | null>("cargo.get_manifest", { id });
+  }
 }

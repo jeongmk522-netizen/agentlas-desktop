@@ -10,7 +10,6 @@ export default function LibraryLayout({ children }: { children: React.ReactNode 
   const TABS = [
     { href: "/library/agents", label: t("sidebar.agents") },
     { href: "/library/env", label: t("env.title") },
-    { href: "/library/skills", label: t("sidebar.skills") },
     { href: "/library/mcps", label: t("sidebar.mcps") },
   ];
   return (

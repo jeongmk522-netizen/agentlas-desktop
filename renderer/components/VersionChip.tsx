@@ -46,7 +46,7 @@ export function VersionChip() {
       case "error":
         return "check failed";
       case "not-available":
-        return "up to date";
+        return null;
       default:
         return null;
     }
@@ -65,9 +65,11 @@ export function VersionChip() {
         display: "inline-flex",
         alignItems: "baseline",
         gap: 4,
+        flex: "0 0 auto",
         fontSize: 10,
         fontFamily: "var(--font-mono)",
         color: "var(--muted-deep)",
+        whiteSpace: "nowrap",
         background: "transparent",
         border: "none",
         padding: 0,

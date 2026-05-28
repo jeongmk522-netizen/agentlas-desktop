@@ -3,6 +3,7 @@
 import { app, BrowserWindow, ipcMain } from "electron";
 import { randomUUID } from "node:crypto";
 import { detectRuntimes, setActiveRuntime } from "./runtime/detect";
+import { installCli, openCliLogin, type InstallableCli } from "./runtime/install-cli";
 import { runMigration, scanMigrationSources } from "./migrate";
 import {
   deleteApiKey,
@@ -15,20 +16,35 @@ import {
 } from "./secrets/vault";
 import {
   installAgent,
+  installMyAgent,
   listInstalledAgents,
   uninstallAgent,
 } from "./mcp/registry";
-import { getSource as getMarketSource, getSourceStatus as getMarketSourceStatus } from "./marketplace";
+import { MCP_TOOL_CATALOG, getCatalogEntry } from "./mcp-tools/catalog";
+import {
+  installCustomServer,
+  installFromCatalog,
+  listInstalledServers,
+  removeServer,
+  setServerEnabled,
+} from "./mcp-tools/registry";
+import { statusAllServers, testServerById } from "./mcp-tools/client";
+import {
+  getSource as getMarketSource,
+  getSourceStatus as getMarketSourceStatus,
+  getCargoSource,
+} from "./marketplace";
 import {
   getFirm,
   installFirm,
   listFirms,
   uninstallFirm,
 } from "./store/firms";
+import { listAgentFiles, readAgentFile, writeAgentFile } from "./agents/files";
 import { runMcpInvocation } from "./mcp/client";
 import { checkSafely as updaterCheck, getUpdaterState, quitAndInstall as updaterInstall } from "./updater";
 import { listDirectory, pickDirectory, readTextFilePreview } from "./fs/workspace";
-import { getAuthSession, signInWithGoogle, signOut } from "./auth";
+import { getAuthSession, signInWithBrowser, signInWithGoogle, signOut } from "./auth";
 import {
   createProject,
   getProject,
@@ -62,6 +78,7 @@ import {
 import type {
   Automation,
   McpInvocationRequest,
+  McpTransport,
   MigrationOptions,
   Project,
   RuntimeBackend,
@@ -104,6 +121,7 @@ export function registerIpcHandlers(): void {
     const win = BrowserWindow.fromWebContents(e.sender);
     return signInWithGoogle(win);
   });
+  ipcMain.handle("auth:signInWithBrowser", () => signInWithBrowser());
   ipcMain.handle("auth:signOut", () => signOut());
 
   // ── runtime ─────────────────────────────────────────────
@@ -111,6 +129,8 @@ export function registerIpcHandlers(): void {
   ipcMain.handle("runtime:setActive", (_e, selection: RuntimeSelection) =>
     setActiveRuntime(selection),
   );
+  ipcMain.handle("runtime:installCli", (_e, kind: InstallableCli) => installCli(kind));
+  ipcMain.handle("runtime:openCliLogin", (_e, kind: InstallableCli) => openCliLogin(kind));
 
   // ── secrets (macOS Keychain) ────────────────────────────
   ipcMain.handle("secrets:saveApiKey", (_e, backend: RuntimeBackend, key: string) =>
@@ -155,6 +175,24 @@ export function registerIpcHandlers(): void {
         map.set(req.key, entry);
       }
     }
+    // 설치된 외부 MCP 서버가 요구하는 env도 합친다 — "어느 도구가 이 키를 쓰는지" 표시.
+    for (const server of listInstalledServers()) {
+      const catalog = server.catalogId ? getCatalogEntry(server.catalogId) : null;
+      for (const key of server.envKeys) {
+        const req = catalog?.envRequirements.find((r) => r.key === key);
+        const entry = map.get(key) ?? { hasValue: false, requiredBy: [] };
+        entry.requiredBy.push({
+          agentId: `mcp:${server.id}`,
+          agentName: `${server.name} (MCP)`,
+          agentNameEn: `${server.nameEn || server.name} (MCP)`,
+          label: req?.label,
+          labelEn: req?.labelEn,
+          hint: req?.hint,
+          hintEn: req?.hintEn,
+        });
+        map.set(key, entry);
+      }
+    }
     // 사용자가 직접 추가한 키도 포함 (요구하는 에이전트 없음)
     for (const k of stored) {
       if (!map.has(k)) map.set(k, { hasValue: true, requiredBy: [] });
@@ -175,13 +213,58 @@ export function registerIpcHandlers(): void {
   // ── team (설치된 에이전트) ─────────────────────────────
   ipcMain.handle("team:list", () => listInstalledAgents());
   ipcMain.handle("team:install", (_e, slug: string) => installAgent(slug));
+  ipcMain.handle("team:installMine", (_e, id: string) => installMyAgent(id));
   ipcMain.handle("team:uninstall", (_e, id: string) => uninstallAgent(id));
+
+  // ── agentFiles (에이전트 폴더 파일 — 우측 패널 에디터) ──
+  ipcMain.handle("agentFiles:list", (_e, agentId: string) => listAgentFiles(agentId));
+  ipcMain.handle("agentFiles:read", (_e, agentId: string, absPath: string) =>
+    readAgentFile(agentId, absPath),
+  );
+  ipcMain.handle("agentFiles:write", (_e, agentId: string, absPath: string, content: string) =>
+    writeAgentFile(agentId, absPath, content),
+  );
+
+  // ── mcpTools (외부 MCP 툴 플러그인 — Slack/Discord/GitHub 등) ─
+  ipcMain.handle("mcpTools:listCatalog", () => MCP_TOOL_CATALOG);
+  ipcMain.handle("mcpTools:listInstalled", () => listInstalledServers());
+  ipcMain.handle("mcpTools:install", (_e, catalogId: string) => installFromCatalog(catalogId));
+  ipcMain.handle(
+    "mcpTools:installCustom",
+    (
+      _e,
+      def: {
+        name: string;
+        transport: McpTransport;
+        command?: string;
+        args?: string[];
+        url?: string;
+        envKeys?: string[];
+      },
+    ) => installCustomServer(def),
+  );
+  ipcMain.handle("mcpTools:remove", (_e, id: string) => removeServer(id));
+  ipcMain.handle("mcpTools:setEnabled", (_e, id: string, enabled: boolean) =>
+    setServerEnabled(id, enabled),
+  );
+  ipcMain.handle("mcpTools:test", (_e, id: string) => testServerById(id));
+  ipcMain.handle("mcpTools:status", () => statusAllServers());
 
   // ── marketplace (agentlas.cloud MCP 또는 in-memory fallback) ─
   ipcMain.handle("marketplace:listBundles", () => getMarketSource().listBundles());
   ipcMain.handle("marketplace:search", (_e, q: string) => getMarketSource().searchAgents(q));
   ipcMain.handle("marketplace:listFirms", () => getMarketSource().listFirms());
   ipcMain.handle("marketplace:status", () => getMarketSourceStatus());
+  // 내 에이전트(cargo) — 미로그인/오프라인/실패면 빈 배열(팝업이 안내 처리).
+  ipcMain.handle("marketplace:listMine", async () => {
+    const source = getCargoSource();
+    if (!source) return [];
+    try {
+      return await source.listMyAgents();
+    } catch {
+      return [];
+    }
+  });
 
   // ── firms (설치된 회사) ────────────────────────────────
   ipcMain.handle("firms:list", () => listFirms());

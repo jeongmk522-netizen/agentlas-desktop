@@ -15,6 +15,7 @@ const envFile = resolve(desktopRoot, String(args.get("--env-file") || "release/d
 const apply = args.has("--apply");
 const service = String(args.get("--service") || "agentlas-web");
 const environment = String(args.get("--environment") || "production");
+const railwayCwd = resolve(desktopRoot, String(args.get("--railway-cwd") || process.env.AGENTLAS_RAILWAY_CWD || "."));
 
 if (!existsSync(envFile)) {
   throw new Error(`Missing release env file: ${envFile}. Run npm run release:mac:verify first.`);
@@ -59,13 +60,13 @@ const command = [
 ];
 
 if (!apply) {
-  console.log(command.map(shellQuote).join(" "));
+  console.log(`(cd ${shellQuote(railwayCwd)} && ${command.map(shellQuote).join(" ")})`);
   console.log("Dry run only. Re-run with --apply after confirming the release is public.");
   process.exit(0);
 }
 
 const result = spawnSync(command[0], command.slice(1), {
-  cwd: desktopRoot,
+  cwd: railwayCwd,
   stdio: "inherit",
   env: process.env,
 });

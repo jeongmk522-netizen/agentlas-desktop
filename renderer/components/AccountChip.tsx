@@ -48,6 +48,24 @@ export function AccountChip() {
     }
   }
 
+  // 이미 로그인된 시스템 브라우저(크롬 등)로 로그인. 미완료(타임아웃/미지원) 시 창 방식으로 폴백.
+  async function signInBrowser() {
+    const api = ipc();
+    if (!api || busy) return;
+    setBusy(true);
+    try {
+      const next = await api.auth.signInWithBrowser();
+      if (next.signedIn) {
+        setSession(next);
+        return;
+      }
+      const fallback = await api.auth.signInWithGoogle();
+      setSession(fallback);
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function signOut() {
     const api = ipc();
     if (!api) return;
@@ -62,30 +80,49 @@ export function AccountChip() {
   return (
     <div ref={rootRef} className="titlebar-nodrag" style={{ position: "relative" }}>
       {!session.signedIn ? (
-        <button
-          onClick={() => void signIn()}
-          disabled={busy}
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: 8,
-            width: "100%",
-            padding: "8px 10px",
-            background: "var(--paper-2)",
-            border: "1px solid var(--paper-edge)",
-            borderRadius: 10,
-            fontSize: 12,
-            fontWeight: 600,
-            color: "var(--ink)",
-            cursor: busy ? "default" : "pointer",
-            textAlign: "left",
-          }}
-        >
-          <GoogleGlyph />
-          <span style={{ flex: 1, minWidth: 0 }}>
-            {busy ? t("account.signing_in") : t("account.sign_in")}
-          </span>
-        </button>
+        <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+          <button
+            onClick={() => void signIn()}
+            disabled={busy}
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 8,
+              width: "100%",
+              padding: "8px 10px",
+              background: "var(--paper-2)",
+              border: "1px solid var(--paper-edge)",
+              borderRadius: 10,
+              fontSize: 12,
+              fontWeight: 600,
+              color: "var(--ink)",
+              cursor: busy ? "default" : "pointer",
+              textAlign: "left",
+            }}
+          >
+            <GoogleGlyph />
+            <span style={{ flex: 1, minWidth: 0 }}>
+              {busy ? t("account.signing_in") : t("account.sign_in")}
+            </span>
+          </button>
+          <button
+            onClick={() => void signInBrowser()}
+            disabled={busy}
+            title={t("account.sign_in_browser_hint")}
+            style={{
+              background: "transparent",
+              border: "none",
+              color: "var(--muted-deep)",
+              fontSize: 11,
+              fontWeight: 500,
+              cursor: busy ? "default" : "pointer",
+              textAlign: "left",
+              padding: "0 4px",
+            }}
+          >
+            {t("account.sign_in_browser")}
+          </button>
+        </div>
       ) : (
         <button
           onClick={() => setPopoverOpen((v) => !v)}

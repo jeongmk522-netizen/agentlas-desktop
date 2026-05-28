@@ -197,7 +197,11 @@ export default function HomePage() {
           <button
             onClick={() => setMode("firm")}
             disabled={firms.length === 0}
-            title={firms.length === 0 ? "회사를 먼저 설치하세요" : "회사 CEO에게 명령"}
+            title={
+              firms.length === 0
+                ? locale === "en" ? "Install a firm first" : "회사를 먼저 설치하세요"
+                : locale === "en" ? "Command the firm's CEO" : "회사 CEO에게 명령"
+            }
             style={{
               padding: "6px 14px",
               borderRadius: 999,
@@ -282,7 +286,11 @@ export default function HomePage() {
                 borderRadius: 999,
                 border: "1px solid var(--paper-edge)",
               }}
-              title={mode === "firm" ? "더 많은 회사" : "더 많은 에이전트"}
+              title={
+                mode === "firm"
+                  ? locale === "en" ? "More firms" : "더 많은 회사"
+                  : locale === "en" ? "More agents" : "더 많은 에이전트"
+              }
             >
               <IconStore size={12} />
               {t("home.market_link")}

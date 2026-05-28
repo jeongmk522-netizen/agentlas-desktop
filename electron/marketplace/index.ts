@@ -135,6 +135,14 @@ class FallbackSource implements MarketplaceSource {
 }
 
 let _source: MarketplaceSource | null = null;
+// cargo.*(내 에이전트)는 인증 필수 + in-memory 폴백 금지 → raw McpSource를 따로 들고 있는다.
+let _cargoSource: McpSource | null = null;
+
+/** 내 에이전트(cargo) 호출용 raw 소스. memory 모드면 null. */
+export function getCargoSource(): McpSource | null {
+  getSource();
+  return _cargoSource;
+}
 
 export function getSource(): MarketplaceSource {
   if (_source) return _source;
@@ -148,6 +156,7 @@ export function getSource(): MarketplaceSource {
       timeoutMs: 15000,
       cookieProvider: () => getSessionCookieHeader(),
     });
+    _cargoSource = mcp;
     setStatus({
       mode: "mcp",
       baseUrl,

@@ -3,6 +3,7 @@
 import { probeClaudeCode } from "./claude-code";
 import { probeCodex } from "./codex";
 import { probeGemini } from "./gemini";
+import { probeOllama } from "./ollama";
 import { hasApiKey } from "../secrets/vault";
 import { getDb } from "../store/db";
 import type {
@@ -16,10 +17,13 @@ type ActiveRuntimeRow = {
   kind: RuntimeKind;
   backend: RuntimeBackend | null;
   source: string | null;
+  model: string | null;
 };
 
 function isActiveRuntime(status: RuntimeStatus, active: ActiveRuntimeRow | null): boolean {
   if (!active) return false;
+  // ollama는 단일 런타임 — kind만 맞으면 활성. 모델은 status.model로 따로 반영.
+  if (status.kind === "ollama") return active.kind === "ollama";
   if (active.source) {
     return (
       status.kind === active.kind &&
@@ -36,9 +40,9 @@ function isActiveRuntime(status: RuntimeStatus, active: ActiveRuntimeRow | null)
 function saveActiveRuntime(status: RuntimeStatus | RuntimeSelection): void {
   getDb()
     .prepare(
-      "INSERT OR REPLACE INTO active_runtime(id, kind, backend, source) VALUES (1, ?, ?, ?)",
+      "INSERT OR REPLACE INTO active_runtime(id, kind, backend, source, model) VALUES (1, ?, ?, ?, ?)",
     )
-    .run(status.kind, status.backend ?? null, status.source ?? null);
+    .run(status.kind, status.backend ?? null, status.source ?? null, status.model ?? null);
 }
 
 /**
@@ -48,14 +52,15 @@ function saveActiveRuntime(status: RuntimeStatus | RuntimeSelection): void {
 export async function detectRuntimes(): Promise<RuntimeStatus[]> {
   const db = getDb();
   const activeRow = db
-    .prepare("SELECT kind, backend, source FROM active_runtime WHERE id = 1")
+    .prepare("SELECT kind, backend, source, model FROM active_runtime WHERE id = 1")
     .get() as ActiveRuntimeRow | undefined;
   const active = activeRow ?? null;
 
-  const [cc, cx, gm, anthropicByok, openaiByok, googleByok] = await Promise.all([
+  const [cc, cx, gm, ollama, anthropicByok, openaiByok, googleByok] = await Promise.all([
     probeClaudeCode(),
     probeCodex(),
     probeGemini(),
+    probeOllama(),
     hasApiKey("anthropic"),
     hasApiKey("openai"),
     hasApiKey("google"),
@@ -88,6 +93,22 @@ export async function detectRuntimes(): Promise<RuntimeStatus[]> {
       source: gm.path,
       version: gm.version,
       active: false,
+    });
+  }
+  if (ollama) {
+    // 활성 모델: 이전에 고른 모델이 아직 존재하면 그대로, 아니면 첫 모델로 폴백.
+    const preferred =
+      active?.kind === "ollama" && active.model && ollama.models.includes(active.model)
+        ? active.model
+        : ollama.models[0] ?? null;
+    list.push({
+      kind: "ollama",
+      backend: "ollama",
+      source: "ollama",
+      version: ollama.version,
+      active: false,
+      model: preferred,
+      availableModels: ollama.models,
     });
   }
   if (anthropicByok) {

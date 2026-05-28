@@ -1,12 +1,17 @@
 // 설치된 에이전트 레지스트리 — SQLite-backed. 다국어 + envRequirements 지원.
 import { randomUUID } from "node:crypto";
 import { getDb } from "../store/db";
-import { getSource as getMarketSource } from "../marketplace";
+import { getSource as getMarketSource, getCargoSource } from "../marketplace";
+import { materializeAgentFiles } from "../agents/files";
+import type { SeedListingFull } from "../marketplace/source";
 import type {
   AgentEnvRequirement,
   InstalledAgent,
+  MarketplaceListing,
   RuntimeBackend,
 } from "../../shared/types";
+
+type FullListing = SeedListingFull & MarketplaceListing;
 
 interface AgentRow {
   id: string;
@@ -72,6 +77,22 @@ export async function installAgent(slug: string): Promise<InstalledAgent> {
     );
   }
 
+  return persistListing(slug, listing);
+}
+
+/**
+ * 내 에이전트(cargo) 설치 — 로그인 사용자가 agentlas.cloud에서 만든 draft.
+ * 본인 소유라 trust 게이트는 건너뛴다(서버가 세션으로 소유권 확인).
+ */
+export async function installMyAgent(id: string): Promise<InstalledAgent> {
+  const source = getCargoSource();
+  if (!source) throw new Error("Agentlas marketplace is not connected (memory mode).");
+  const listing = await source.getMyAgentManifest(id);
+  if (!listing) throw new Error(`Your agent was not found: ${id}`);
+  return persistListing(listing.slug, listing);
+}
+
+function persistListing(slug: string, listing: FullListing): InstalledAgent {
   const envReqsJson = JSON.stringify(listing.envRequirements ?? []);
 
   const db = getDb();
@@ -93,6 +114,7 @@ export async function installAgent(slug: string): Promise<InstalledAgent> {
       envReqsJson,
       slug,
     );
+    materializeAgentFiles(existing.id);
     return toAgent({
       ...existing,
       system_prompt: listing.systemPrompt,
@@ -126,6 +148,8 @@ export async function installAgent(slug: string): Promise<InstalledAgent> {
     now,
     listing.tone,
   );
+
+  materializeAgentFiles(id);
 
   return {
     id,

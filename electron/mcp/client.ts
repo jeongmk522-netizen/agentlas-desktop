@@ -19,6 +19,7 @@ import {
   runGoogleByok,
   runOpenAIByok,
 } from "../runtime/byok";
+import { runOllama } from "../runtime/ollama";
 import type { Runner } from "../runtime/runner";
 import { pickLocale, tStatus } from "../runtime/status-i18n";
 import type {
@@ -42,6 +43,8 @@ function pickRunner(active: RuntimeStatus): { runner: Runner; label: string } | 
   if (active.kind === "claude-code") return { runner: runClaudeCode, label: RUNNER_LABEL["claude-code"] };
   if (active.kind === "codex") return { runner: runCodex, label: RUNNER_LABEL.codex };
   if (active.kind === "gemini") return { runner: runGemini, label: RUNNER_LABEL.gemini };
+  if (active.kind === "ollama")
+    return { runner: runOllama, label: `Ollama${active.model ? ` · ${active.model}` : ""}` };
   if (active.kind === "byok") {
     if (active.backend === "anthropic")
       return { runner: runAnthropicByok, label: RUNNER_LABEL["byok:anthropic"] };
@@ -151,6 +154,7 @@ export async function runMcpInvocation(
         userPrompt: req.userPrompt,
         images: req.images,
         backendLabel: picked.label,
+        model: active.model ?? undefined,
         locale,
       },
       {

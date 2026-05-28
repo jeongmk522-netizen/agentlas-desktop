@@ -567,10 +567,6 @@ function SidebarInner({ refreshKey: refreshKeyProp = 0 }: { refreshKey?: number 
             <IconKey size={13} style={{ color: "var(--peach-ink)" }} />
             <span style={{ flex: 1 }}>{t("env.title")}</span>
           </SidebarLink>
-          <SidebarLink href="/library/skills" active={pathname.startsWith("/library/skills")}>
-            <IconSparkles size={13} style={{ color: "var(--blue-deep)" }} />
-            <span style={{ flex: 1 }}>{t("sidebar.skills")}</span>
-          </SidebarLink>
           <SidebarLink href="/library/mcps" active={pathname.startsWith("/library/mcps")}>
             <IconSparkles size={13} style={{ color: "var(--purple-deep)" }} />
             <span style={{ flex: 1 }}>{t("sidebar.mcps")}</span>
@@ -627,11 +623,22 @@ function SidebarInner({ refreshKey: refreshKeyProp = 0 }: { refreshKey?: number 
                   display: "flex",
                   alignItems: "baseline",
                   gap: 8,
+                  minWidth: 0,
+                  flexWrap: "nowrap",
                   fontSize: 10,
                   color: "var(--muted-deep)",
                 }}
               >
-                <span>{t("sidebar.byoc_free")}</span>
+                <span
+                  style={{
+                    minWidth: 0,
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                    whiteSpace: "nowrap",
+                  }}
+                >
+                  {t("sidebar.byoc_free")}
+                </span>
                 <span style={{ flex: "0 0 auto" }}>·</span>
                 <VersionChip />
               </div>
@@ -761,16 +768,22 @@ function RuntimeDot({ status }: { status: RuntimeStatus | null }) {
 }
 
 function labelOfRuntime(s: RuntimeStatus): string {
+  // Ollama는 "Ollama · <model>"로 단독 표기 (백엔드 라벨 중복 회피).
+  if (s.kind === "ollama") {
+    return s.model ? `Ollama · ${s.model}` : "Ollama";
+  }
   const kind = {
     "claude-code": "Claude Code",
     codex: "Codex",
     gemini: "Gemini",
     byok: "API",
+    ollama: "Ollama",
   }[s.kind];
   const backend = {
     anthropic: "Anthropic",
     openai: "OpenAI",
     google: "Google",
+    ollama: "Ollama",
   }[s.backend];
   return `${kind} · ${backend}`;
 }

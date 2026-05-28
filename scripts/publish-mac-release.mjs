@@ -13,7 +13,7 @@ const args = new Map(
 
 const pkg = JSON.parse(readFileSync(join(desktopRoot, "package.json"), "utf8"));
 const version = String(args.get("--version") || pkg.version);
-const repo = String(args.get("--repo") || process.env.AGENTLAS_DESKTOP_GITHUB_REPO || "jeongmk522-netizen/agentlas-desktop");
+const repo = String(args.get("--repo") || process.env.AGENTLAS_DESKTOP_GITHUB_REPO || "Masonleenf/agentlas-desktop");
 const tag = String(args.get("--tag") || process.env.AGENTLAS_DESKTOP_RELEASE_TAG || `v${version}`);
 const releaseDir = resolve(desktopRoot, String(args.get("--release-dir") || "release"));
 const draft = args.has("--draft");
@@ -38,7 +38,16 @@ function requireFile(file) {
   return file;
 }
 
+function cleanupAppleDouble() {
+  if (!existsSync(releaseDir)) return;
+  run("find", [releaseDir, "-name", "._*", "-delete"]);
+  if (process.platform === "darwin") {
+    run("/usr/bin/dot_clean", ["-m", releaseDir]);
+  }
+}
+
 run("node", ["scripts/verify-mac-release.mjs", "--write-env", `--repo=${repo}`, `--tag=${tag}`, `--version=${version}`]);
+cleanupAppleDouble();
 
 const notesPath = join(releaseDir, "github-release-notes.md");
 writeFileSync(
@@ -56,6 +65,7 @@ writeFileSync(
     "",
   ].join("\n"),
 );
+cleanupAppleDouble();
 
 const files = [
   requireFile(join(releaseDir, `Agentlas-${version}-arm64.dmg`)),
@@ -82,4 +92,5 @@ if (releaseExists.status === 0) {
 }
 
 run("gh", ["release", "upload", tag, "--repo", repo, "--clobber", ...files], { stdio: "inherit" });
+cleanupAppleDouble();
 console.log(JSON.stringify({ ok: true, repo, tag, uploaded: files.map((file) => file.replace(`${releaseDir}/`, "")) }, null, 2));

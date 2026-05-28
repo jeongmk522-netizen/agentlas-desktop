@@ -7,6 +7,7 @@ cleaner_pid=""
 dmg_signing_keychain=""
 dmg_signing_identity=""
 original_keychains=()
+stable_repo="${AGENTLAS_DESKTOP_GITHUB_REPO:-Masonleenf/agentlas-desktop}"
 
 cleanup_appledouble() {
   for target in "$@"; do
@@ -115,7 +116,10 @@ while true; do
 done &
 cleaner_pid=$!
 
-COPYFILE_DISABLE=1 electron-builder --mac --arm64 --x64 --config electron-builder.yml --config.directories.output="$local_release"
+COPYFILE_DISABLE=1 electron-builder \
+  --mac --arm64 --x64 \
+  --config electron-builder.mac-stable.yml \
+  --config.directories.output="$local_release"
 
 rm -rf "$project_dir/release"
 mkdir -p "$project_dir/release"
@@ -128,7 +132,7 @@ if [[ "${AGENTLAS_PUBLIC_RELEASE:-0}" == "1" ]]; then
     sign_dmg "$dmg_path"
     notarize_dmg "$dmg_path"
   done < <(find "$project_dir/release" -maxdepth 1 -type f -name 'Agentlas-*.dmg' | sort)
-  node scripts/verify-mac-release.mjs --write-env
+  node scripts/verify-mac-release.mjs --write-env "--repo=${stable_repo}"
 else
-  node scripts/verify-mac-release.mjs --write-env --allow-unnotarized
+  node scripts/verify-mac-release.mjs --write-env --allow-unnotarized "--repo=${stable_repo}"
 fi

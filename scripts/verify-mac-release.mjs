@@ -16,7 +16,7 @@ const args = new Map(
 const releaseDir = resolve(desktopRoot, String(args.get("--release-dir") || "release"));
 const allowUnnotarized = args.has("--allow-unnotarized");
 const writeEnv = args.has("--write-env");
-const repo = String(args.get("--repo") || process.env.AGENTLAS_DESKTOP_GITHUB_REPO || "jeongmk522-netizen/agentlas-desktop");
+const repo = String(args.get("--repo") || process.env.AGENTLAS_DESKTOP_GITHUB_REPO || "Masonleenf/agentlas-desktop");
 const version = String(args.get("--version") || JSON.parse(readFileSync(join(desktopRoot, "package.json"), "utf8")).version);
 const tag = String(args.get("--tag") || process.env.AGENTLAS_DESKTOP_RELEASE_TAG || `v${version}`);
 const arches = ["arm64", "x64"];
@@ -40,6 +40,10 @@ function sha256(file) {
   return createHash("sha256").update(readFileSync(file)).digest("hex");
 }
 
+function sha512(file) {
+  return createHash("sha512").update(readFileSync(file)).digest("base64");
+}
+
 function envLine(key, value) {
   return `${key}=${String(value).replace(/\n/g, " ")}`;
 }
@@ -52,6 +56,40 @@ function cleanupAppleDouble() {
   if (!existsSync(releaseDir)) return;
   run("find", [releaseDir, "-name", "._*", "-delete"]);
   run("/usr/bin/dot_clean", ["-m", releaseDir]);
+}
+
+function writeLatestMacYml(artifacts) {
+  const byArch = Object.fromEntries(artifacts.map((artifact) => [artifact.arch, artifact]));
+  if (!byArch.x64?.exists || !byArch.arm64?.exists) return null;
+
+  const releaseDate = new Date().toISOString();
+  const ordered = [byArch.x64, byArch.arm64];
+  const lines = [
+    `version: ${version}`,
+    "files:",
+    ...ordered.flatMap((artifact) => [
+      `  - url: ${artifact.fileName}`,
+      `    sha512: ${artifact.sha512}`,
+      `    size: ${artifact.sizeBytes}`,
+    ]),
+    `path: ${byArch.x64.fileName}`,
+    `sha512: ${byArch.x64.sha512}`,
+    `releaseDate: '${releaseDate}'`,
+    "",
+  ];
+
+  const file = join(releaseDir, "latest-mac.yml");
+  writeFileSync(file, lines.join("\n"));
+  return {
+    file,
+    releaseDate,
+    files: ordered.map((artifact) => ({
+      arch: artifact.arch,
+      fileName: artifact.fileName,
+      sizeBytes: artifact.sizeBytes,
+      sha512: artifact.sha512,
+    })),
+  };
 }
 
 cleanupAppleDouble();
@@ -72,6 +110,7 @@ const artifacts = arches.map((arch) => {
     exists,
     sizeBytes: exists ? statSync(file).size : null,
     sha256: exists ? sha256(file) : null,
+    sha512: exists ? sha512(file) : null,
     hdiutil,
     stapler,
     spctl,
@@ -94,6 +133,7 @@ if (appleDouble.output) {
 }
 
 const ready = failures.length === 0;
+const latestMac = writeLatestMacYml(artifacts);
 const summary = {
   generatedAt: new Date().toISOString(),
   releaseDir,
@@ -102,11 +142,13 @@ const summary = {
   version,
   ready,
   allowUnnotarized,
+  latestMac,
   artifacts: artifacts.map((artifact) => ({
     arch: artifact.arch,
     fileName: artifact.fileName,
     sizeBytes: artifact.sizeBytes,
     sha256: artifact.sha256,
+    sha512: artifact.sha512,
     notarized: artifact.notarized,
     gatekeeperAccepted: artifact.gatekeeperAccepted,
     url: artifactUrl(artifact.arch),
@@ -157,13 +199,14 @@ cleanupAppleDouble();
 console.log(JSON.stringify({
   ready,
   releaseDir,
-  verification: join(releaseDir, "desktop-release-verification.json"),
-  envFile: summary.envFile || null,
-  artifacts: summary.artifacts.map(({ arch, fileName, sizeBytes, sha256, notarized, gatekeeperAccepted }) => ({
+    verification: join(releaseDir, "desktop-release-verification.json"),
+    envFile: summary.envFile || null,
+  artifacts: summary.artifacts.map(({ arch, fileName, sizeBytes, sha256, sha512, notarized, gatekeeperAccepted }) => ({
     arch,
     fileName,
     sizeBytes,
     sha256,
+    sha512,
     notarized,
     gatekeeperAccepted,
   })),

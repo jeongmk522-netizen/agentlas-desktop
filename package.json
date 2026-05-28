@@ -1,6 +1,6 @@
 {
   "name": "agentlas-desktop",
-  "version": "0.0.6",
+  "version": "0.0.7",
   "description": "Agentlas Desktop — AI 에이전트의 런처 (Steam for AI agents). BYOC: 사용자 Claude/ChatGPT/Gemini 구독 그대로.",
   "private": true,
   "license": "Apache-2.0",
@@ -27,6 +27,7 @@
     "prebuild:renderer": "node -e \"require('fs').rmSync('dist/renderer',{recursive:true,force:true})\"",
     "postinstall": "electron-rebuild --force",
     "package:mac": "bash scripts/package-mac.sh",
+    "install:mac:stable": "bash scripts/install-stable-mac.sh",
     "dist:mac:unsigned": "npm run build && electron-builder --mac -c.mac.notarize=false -c.mac.identity=null",
     "dist:win": "npm run build && electron-builder --win",
     "dist:linux": "npm run build && electron-builder --linux",

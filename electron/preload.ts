@@ -32,6 +32,7 @@ const api: AgentlasIpc = {
   auth: {
     getSession: () => ipcRenderer.invoke("auth:getSession"),
     signInWithGoogle: () => ipcRenderer.invoke("auth:signInWithGoogle"),
+    signInWithBrowser: () => ipcRenderer.invoke("auth:signInWithBrowser"),
     signOut: () => ipcRenderer.invoke("auth:signOut"),
   },
   updater: {
@@ -43,6 +44,10 @@ const api: AgentlasIpc = {
     detect: () => ipcRenderer.invoke("runtime:detect"),
     setActive: (selection: RuntimeSelection) =>
       ipcRenderer.invoke("runtime:setActive", selection),
+    installCli: (kind: "claude-code" | "codex" | "gemini") =>
+      ipcRenderer.invoke("runtime:installCli", kind),
+    openCliLogin: (kind: "claude-code" | "codex" | "gemini") =>
+      ipcRenderer.invoke("runtime:openCliLogin", kind),
   },
   secrets: {
     saveApiKey: (backend: RuntimeBackend, key: string) =>
@@ -61,13 +66,33 @@ const api: AgentlasIpc = {
   team: {
     list: () => ipcRenderer.invoke("team:list"),
     install: (slug: string) => ipcRenderer.invoke("team:install", slug),
+    installMine: (id: string) => ipcRenderer.invoke("team:installMine", id),
     uninstall: (id: string) => ipcRenderer.invoke("team:uninstall", id),
+  },
+  agentFiles: {
+    list: (agentId: string) => ipcRenderer.invoke("agentFiles:list", agentId),
+    read: (agentId: string, absPath: string) =>
+      ipcRenderer.invoke("agentFiles:read", agentId, absPath),
+    write: (agentId: string, absPath: string, content: string) =>
+      ipcRenderer.invoke("agentFiles:write", agentId, absPath, content),
+  },
+  mcpTools: {
+    listCatalog: () => ipcRenderer.invoke("mcpTools:listCatalog"),
+    listInstalled: () => ipcRenderer.invoke("mcpTools:listInstalled"),
+    install: (catalogId: string) => ipcRenderer.invoke("mcpTools:install", catalogId),
+    installCustom: (def) => ipcRenderer.invoke("mcpTools:installCustom", def),
+    remove: (id: string) => ipcRenderer.invoke("mcpTools:remove", id),
+    setEnabled: (id: string, enabled: boolean) =>
+      ipcRenderer.invoke("mcpTools:setEnabled", id, enabled),
+    test: (id: string) => ipcRenderer.invoke("mcpTools:test", id),
+    status: () => ipcRenderer.invoke("mcpTools:status"),
   },
   marketplace: {
     listBundles: () => ipcRenderer.invoke("marketplace:listBundles"),
     search: (q: string) => ipcRenderer.invoke("marketplace:search", q),
     listFirms: () => ipcRenderer.invoke("marketplace:listFirms"),
     status: () => ipcRenderer.invoke("marketplace:status"),
+    listMine: () => ipcRenderer.invoke("marketplace:listMine"),
   },
   firms: {
     list: () => ipcRenderer.invoke("firms:list"),

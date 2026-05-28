@@ -16,6 +16,7 @@ import { buildAppMenu } from "./menu";
 import { initStore } from "./store/db";
 import { initAutoUpdater } from "./updater";
 import { bootAuthFromKeychain } from "./auth";
+import { materializeAllAgents } from "./agents/files";
 
 const isDev = process.env.NODE_ENV === "development";
 
@@ -158,6 +159,8 @@ app.whenReady().then(async () => {
   registerRendererProtocol();
   applyDockIcon();
   initStore();
+  // 설치된 에이전트 폴더의 파일을 보장 — 라이브러리 우측 패널이 즉시 보여줄 수 있게.
+  materializeAllAgents();
   // 키체인에서 저장된 세션 복원 — 메인 윈도우가 뜨자마자 getSession()이 정상 값을 반환하도록 await
   await bootAuthFromKeychain();
   registerIpcHandlers();

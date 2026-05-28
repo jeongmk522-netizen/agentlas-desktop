@@ -1,16 +1,21 @@
 // 설치된 에이전트 라이브러리.
 "use client";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { ipc } from "@/lib/ipc";
 import { pickLocalized, useT } from "@/lib/i18n";
+import { localFolderPersistence } from "@/lib/repo-persistence";
 import type { InstalledAgent } from "@/lib/types";
 import { AgentAvatar } from "@/components/AgentAvatar";
-import { IconTrash } from "@/components/Icon";
+import { WorkspacePanel } from "@/components/WorkspacePanel";
+import { IconFolder, IconTrash } from "@/components/Icon";
 
 export default function LibraryAgentsPage() {
   const { t, locale } = useT();
   const [agents, setAgents] = useState<InstalledAgent[]>([]);
+  // 우측 레포/폴더 트리 패널 — 이 화면용 폴더를 localStorage에 기억.
+  const [repoOpen, setRepoOpen] = useState(true);
+  const repoPersistence = useMemo(() => localFolderPersistence("library-agents"), []);
 
   async function refresh() {
     const api = ipc();
@@ -30,11 +35,29 @@ export default function LibraryAgentsPage() {
   }
 
   return (
+    <div style={{ height: "100%", display: "flex", minWidth: 0, minHeight: 0, overflow: "hidden" }}>
+      <div style={{ flex: 1, minWidth: 0, overflowY: "auto" }}>
     <section style={{ padding: "24px 32px" }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
-        <p style={{ margin: 0, color: "var(--muted-deep)", fontSize: 13 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16, gap: 8 }}>
+        <p style={{ margin: 0, color: "var(--muted-deep)", fontSize: 13, flex: 1, minWidth: 0 }}>
           {t("library.agents.subtitle")}
         </p>
+        <button
+          onClick={() => setRepoOpen((v) => !v)}
+          aria-label={t("workspace.title")}
+          title={t("workspace.title")}
+          style={{
+            color: repoOpen ? "var(--accent)" : "var(--muted-deep)",
+            background: repoOpen ? "var(--fill-1)" : "transparent",
+            padding: 7,
+            borderRadius: "var(--radius-md)",
+            border: "none",
+            cursor: "pointer",
+            display: "inline-flex",
+          }}
+        >
+          <IconFolder size={16} />
+        </button>
         <Link
           href="/marketplace"
           style={{
@@ -117,5 +140,10 @@ export default function LibraryAgentsPage() {
         </div>
       )}
     </section>
+      </div>
+      {repoOpen && (
+        <WorkspacePanel chatId="library-agents" persistence={repoPersistence} onClose={() => setRepoOpen(false)} />
+      )}
+    </div>
   );
 }

@@ -23,14 +23,24 @@ const DEFAULT_WIDTH = 360;
 const WIDTH_STORAGE_KEY = "agentlas.workspace.width";
 
 interface Props {
-  /** 현재 채팅 id — null이면 패널을 렌더하지 않음 */
+  /** 스코프 id — 채팅이면 chatId, firm/agents 화면이면 그 화면의 식별자.
+   *  null이면 패널을 렌더하지 않음. 이 값이 바뀌면 트리 상태가 초기화된다. */
   chatId: string | null;
   /** 닫기 버튼 콜백 */
   onClose: () => void;
+  /** 선택한 폴더의 영속화 어댑터. 없으면 채팅 working_folder(IPC)에 저장한다.
+   *  firm/agents 화면은 localStorage 기반 어댑터를 넘겨 채팅 없이도 폴더를 기억한다. */
+  persistence?: {
+    load: () => Promise<string | null>;
+    save: (path: string | null) => Promise<void>;
+  };
 }
 
-export function WorkspacePanel({ chatId, onClose }: Props) {
+export function WorkspacePanel({ chatId, onClose, persistence }: Props) {
   const { t } = useT();
+  // persistence를 ref로 들고 effect 의존성을 [chatId]로 유지 (인라인 객체 재생성으로 인한 루프 방지).
+  const persistRef = useRef(persistence);
+  persistRef.current = persistence;
   const [width, setWidth] = useState<number>(DEFAULT_WIDTH);
   const [rootPath, setRootPath] = useState<string | null>(null);
   const [rootListing, setRootListing] = useState<DirListing | null>(null);
@@ -63,7 +73,9 @@ export function WorkspacePanel({ chatId, onClose }: Props) {
     }
     let cancelled = false;
     void (async () => {
-      const folder = await api.workspace.get(chatId);
+      const folder = persistRef.current
+        ? await persistRef.current.load()
+        : await api.workspace.get(chatId);
       if (cancelled) return;
       if (folder) {
         setRootPath(folder);
@@ -93,7 +105,8 @@ export function WorkspacePanel({ chatId, onClose }: Props) {
     setExpanded(new Map());
     setSelected(null);
     setPreview(null);
-    await api.workspace.set(chatId, picked);
+    if (persistRef.current) await persistRef.current.save(picked);
+    else await api.workspace.set(chatId, picked);
   }, [chatId]);
 
   const refresh = useCallback(async () => {

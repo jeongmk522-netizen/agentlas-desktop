@@ -1,14 +1,16 @@
 // 회사 상세 — 헤더(이름·CEO 채팅 버튼) + 조직도 시각화 + 회사 내 채팅 목록.
 "use client";
-import { Suspense, useCallback, useEffect, useState } from "react";
+import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { ipc } from "@/lib/ipc";
 import { pickLocalized, useT, type Locale } from "@/lib/i18n";
 import { navigate } from "@/lib/navigation";
+import { localFolderPersistence } from "@/lib/repo-persistence";
 import type { Chat, InstalledAgent, InstalledFirm } from "@/lib/types";
 import { AgentAvatar } from "@/components/AgentAvatar";
-import { IconBuilding, IconChat, IconPlus, IconTrash, IconUsers } from "@/components/Icon";
+import { WorkspacePanel } from "@/components/WorkspacePanel";
+import { IconBuilding, IconChat, IconFolder, IconPlus, IconTrash, IconUsers } from "@/components/Icon";
 
 export default function FirmDetailWrapper() {
   return (
@@ -25,6 +27,9 @@ function FirmDetailPage() {
   const [firm, setFirm] = useState<InstalledFirm | null>(null);
   const [agents, setAgents] = useState<InstalledAgent[]>([]);
   const [chats, setChats] = useState<Chat[]>([]);
+  // 우측 레포/폴더 트리 패널 — firm별 폴더를 localStorage에 기억.
+  const [repoOpen, setRepoOpen] = useState(true);
+  const repoPersistence = useMemo(() => localFolderPersistence(`firm.${id}`), [id]);
 
   const refresh = useCallback(async () => {
     const api = ipc();
@@ -67,7 +72,8 @@ function FirmDetailPage() {
   const firmLoc = pickLocalized(firm, locale);
 
   return (
-    <div style={{ flex: 1, background: "var(--paper-2)", overflowY: "auto" }}>
+    <div style={{ flex: 1, display: "flex", minWidth: 0, minHeight: 0, overflow: "hidden" }}>
+      <div style={{ flex: 1, minWidth: 0, background: "var(--paper-2)", overflowY: "auto" }}>
       <header
         className="titlebar-drag"
         style={{
@@ -140,6 +146,22 @@ function FirmDetailPage() {
         >
           <IconChat size={14} />
           {t("firm.ceo.command")}
+        </button>
+        <button
+          onClick={() => setRepoOpen((v) => !v)}
+          className="titlebar-nodrag"
+          aria-label={t("workspace.title")}
+          title={t("workspace.title")}
+          style={{
+            color: repoOpen ? "var(--accent)" : "var(--muted-deep)",
+            background: repoOpen ? "var(--fill-1)" : "transparent",
+            padding: 6,
+            borderRadius: 6,
+            border: "none",
+            cursor: "pointer",
+          }}
+        >
+          <IconFolder size={16} />
         </button>
         <button
           onClick={() => void uninstall()}
@@ -218,6 +240,10 @@ function FirmDetailPage() {
           </ul>
         )}
       </section>
+      </div>
+      {repoOpen && (
+        <WorkspacePanel chatId={firm.id} persistence={repoPersistence} onClose={() => setRepoOpen(false)} />
+      )}
     </div>
   );
 }

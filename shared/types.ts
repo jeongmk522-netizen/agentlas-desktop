@@ -68,6 +68,12 @@ export interface InstalledAgent {
   trustGrade: "A" | "B" | "C" | "unknown";
   installedAt: string;
   tone: "blue" | "green" | "purple" | "amber" | "peach";
+  /** 로컬 폴더에서 임포트한 경우: 전용 CLI 런타임 라벨 (claude-code/codex/gemini/cursor/generic) */
+  runtimeLabel?: "claude-code" | "codex" | "gemini" | "cursor" | "generic";
+  /** 로컬 임포트 원본 폴더 절대경로 (있으면 파일 패널이 이 폴더를 사용) */
+  localPath?: string;
+  /** 단일 에이전트 / 팀 */
+  kind?: "agent" | "team";
 }
 
 /**
@@ -145,6 +151,12 @@ export interface McpToolCatalogEntry {
   /** "공식 MCP 서버" 배지 */
   trust: "official" | "community";
   docsUrl?: string;
+  /** 키/토큰을 발급받는 페이지 (UI에 "키 발급 →" 링크) */
+  setupUrl?: string;
+  /** 로고 타일 배경색 (브랜드 컬러) */
+  brandColor?: string;
+  /** 로고 타일 모노그램 (1–2자) */
+  mark?: string;
 }
 
 /** 사용자가 설치/구성한 MCP 서버 (SQLite에 영구화). */
@@ -489,6 +501,8 @@ export interface AgentlasIpc {
     /** 내 에이전트(cargo) 설치 — 로그인 사용자가 agentlas.cloud에서 만든 것 */
     installMine: (id: string) => Promise<InstalledAgent>;
     uninstall: (id: string) => Promise<void>;
+    /** 로컬 폴더(기존 에이전트/팀)를 임포트 — 런타임 감지·라벨링 후 라우팅 저장. */
+    importLocalFolder: (absPath: string) => Promise<InstalledAgent>;
   };
   /** 에이전트 폴더 파일 — 라이브러리 우측 패널의 파일 목록 + 에디터.
    *  폴더(userData/agents/<slug>/) 내부로만 접근 제한. system-prompt.md 편집은 즉시 적용. */

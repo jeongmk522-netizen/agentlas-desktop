@@ -167,8 +167,11 @@ export async function signInWithGoogle(parent: BrowserWindow | null): Promise<Au
     width: 480,
     height: 720,
     parent: parent ?? undefined,
-    modal: !!parent,
-    title: "Agentlas — 로그인",
+    // 비모달 — 메인 앱을 막지 않아 "닫기 못 함" 상황을 방지. 표준 프레임(좌상단 닫기) 유지.
+    modal: false,
+    closable: true,
+    minimizable: true,
+    title: "Agentlas — 로그인 (Esc 또는 ⌘W로 닫기)",
     backgroundColor: "#ffffff",
     autoHideMenuBar: true,
     webPreferences: {
@@ -177,6 +180,20 @@ export async function signInWithGoogle(parent: BrowserWindow | null): Promise<Au
       nodeIntegration: false,
       sandbox: true,
     },
+  });
+
+  // 어떤 페이지 상태에서도 확실히 닫을 수 있게: Esc / ⌘W → 창 닫기.
+  win.webContents.on("before-input-event", (_event, input) => {
+    if (input.type !== "keyDown") return;
+    const isEsc = input.key === "Escape";
+    const isCmdW = (input.meta || input.control) && input.key.toLowerCase() === "w";
+    if (isEsc || isCmdW) {
+      try {
+        win.close();
+      } catch {
+        // ignore
+      }
+    }
   });
 
   const loginUrl = `${webBaseUrl()}/account?desktop=1`;

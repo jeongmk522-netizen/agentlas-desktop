@@ -72,10 +72,11 @@ nsis:
   oneClick: false
   perMachine: false
   allowToChangeInstallationDirectory: true
-  artifactName: "Agentlas-Setup-${version}.${ext}"
+  # 사람이 알아보기 쉬운 이름: OS + 아키텍처 + 종류
+  artifactName: "Agentlas-${version}-Windows-x64-Setup.${ext}"
 
 portable:
-  artifactName: "Agentlas-${version}-portable.${ext}"
+  artifactName: "Agentlas-${version}-Windows-x64-Portable.${ext}"
 
 # Linux — unsigned. AppImage runs on any x64 distro (chmod +x then run);
 # .deb for Debian/Ubuntu.
@@ -89,7 +90,7 @@ linux:
         - x64
   category: Development
   icon: build-resources/icon-1024.png
-  artifactName: "Agentlas-${version}.${ext}"
+  artifactName: "Agentlas-${version}-Linux-x64.${ext}"
 
 publish:
   - provider: github

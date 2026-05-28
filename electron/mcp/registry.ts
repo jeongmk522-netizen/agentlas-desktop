@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import { getDb } from "../store/db";
 import { getSource as getMarketSource, getCargoSource } from "../marketplace";
 import { materializeAgentFiles } from "../agents/files";
+import { getRoute, removeRoute } from "../agents/routes";
 import type { SeedListingFull } from "../marketplace/source";
 import type {
   AgentEnvRequirement,
@@ -36,6 +37,8 @@ function toAgent(row: AgentRow): InstalledAgent {
   } catch {
     envReqs = [];
   }
+  // 로컬 임포트 라우팅이 있으면 런타임 라벨/원본 경로/종류를 병합.
+  const route = getRoute(row.id);
   return {
     id: row.id,
     slug: row.slug,
@@ -50,6 +53,9 @@ function toAgent(row: AgentRow): InstalledAgent {
     trustGrade: row.trust_grade,
     installedAt: row.installed_at,
     tone: row.tone as InstalledAgent["tone"],
+    ...(route
+      ? { runtimeLabel: route.runtime, localPath: route.path, kind: route.kind }
+      : {}),
   };
 }
 
@@ -170,6 +176,8 @@ function persistListing(slug: string, listing: FullListing): InstalledAgent {
 
 export function uninstallAgent(id: string): void {
   getDb().prepare("DELETE FROM installed_agents WHERE id = ?").run(id);
+  // 로컬 임포트 라우팅도 정리 (원본 폴더는 건드리지 않음).
+  removeRoute(id);
 }
 
 // chat history는 electron/store/chats.ts로 이동했음 (chat_id FK 기반)

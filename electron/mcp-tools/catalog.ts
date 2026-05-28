@@ -4,7 +4,8 @@
 // 대부분 stdio 트랜스포트로 `npx -y <패키지>` 형태. 연결 시 글로벌 vault의 env가
 // 자식 프로세스에 주입된다. URL형(sse/http) MCP 서버도 지원.
 //
-// 이 목록은 "추천 큐레이션"일 뿐 — 사용자는 installCustom으로 임의 서버도 붙일 수 있다.
+// 각 항목의 envRequirements는 해당 MCP 서버 README 기준으로 맞춘 값이다(아래 주석 참고).
+// docsUrl(서버 문서) + setupUrl(키 발급 페이지)을 함께 제공해 정확성/편의를 높였다.
 import type { McpToolCatalogEntry } from "../../shared/types";
 
 export const MCP_TOOL_CATALOG: McpToolCatalogEntry[] = [
@@ -21,6 +22,10 @@ export const MCP_TOOL_CATALOG: McpToolCatalogEntry[] = [
     args: ["-y", "@modelcontextprotocol/server-slack"],
     trust: "official",
     docsUrl: "https://github.com/modelcontextprotocol/servers/tree/main/src/slack",
+    setupUrl: "https://api.slack.com/apps",
+    brandColor: "#4A154B",
+    mark: "S",
+    // server-slack README: SLACK_BOT_TOKEN(xoxb-) + SLACK_TEAM_ID 필수
     envRequirements: [
       {
         key: "SLACK_BOT_TOKEN",
@@ -52,14 +57,17 @@ export const MCP_TOOL_CATALOG: McpToolCatalogEntry[] = [
     args: ["-y", "mcp-discord"],
     trust: "community",
     docsUrl: "https://github.com/barryyip0625/mcp-discord",
+    setupUrl: "https://discord.com/developers/applications",
+    brandColor: "#5865F2",
+    mark: "D",
     envRequirements: [
       {
         key: "DISCORD_TOKEN",
         label: "Discord 봇 토큰",
         labelEn: "Discord Bot Token",
         required: true,
-        hint: "discord.com/developers → Bot → Reset Token",
-        hintEn: "discord.com/developers → Bot → Reset Token",
+        hint: "discord.com/developers → 앱 생성 → Bot → Reset Token",
+        hintEn: "discord.com/developers → create app → Bot → Reset Token",
       },
     ],
   },
@@ -77,6 +85,10 @@ export const MCP_TOOL_CATALOG: McpToolCatalogEntry[] = [
     args: ["-y", "@modelcontextprotocol/server-github"],
     trust: "official",
     docsUrl: "https://github.com/modelcontextprotocol/servers/tree/main/src/github",
+    setupUrl: "https://github.com/settings/tokens",
+    brandColor: "#24292F",
+    mark: "GH",
+    // server-github README: GITHUB_PERSONAL_ACCESS_TOKEN
     envRequirements: [
       {
         key: "GITHUB_PERSONAL_ACCESS_TOKEN",
@@ -92,14 +104,17 @@ export const MCP_TOOL_CATALOG: McpToolCatalogEntry[] = [
     id: "filesystem",
     name: "파일 시스템",
     nameEn: "Filesystem",
-    description: "허용한 로컬 폴더의 파일 읽기·쓰기·검색 (env 불필요)",
-    descriptionEn: "Read/write/search files in folders you allow (no env)",
+    description: "허용한 로컬 폴더의 파일 읽기·쓰기·검색 (키 불필요)",
+    descriptionEn: "Read/write/search files in folders you allow (no key)",
     category: "dev",
     transport: "stdio",
     command: "npx",
     args: ["-y", "@modelcontextprotocol/server-filesystem", "~"],
     trust: "official",
     docsUrl: "https://github.com/modelcontextprotocol/servers/tree/main/src/filesystem",
+    brandColor: "#6B7280",
+    mark: "FS",
+    // 키 없음 — 허용 폴더 경로를 인자로 받음 (위 args의 "~")
     envRequirements: [],
   },
   {
@@ -114,14 +129,17 @@ export const MCP_TOOL_CATALOG: McpToolCatalogEntry[] = [
     args: ["-y", "@modelcontextprotocol/server-postgres"],
     trust: "official",
     docsUrl: "https://github.com/modelcontextprotocol/servers/tree/main/src/postgres",
+    brandColor: "#336791",
+    mark: "PG",
+    // 참고: 이 서버는 연결 문자열을 실행 인자로 받는다. 앱은 DATABASE_URL 값을 실행 시 인자로 전달.
     envRequirements: [
       {
         key: "DATABASE_URL",
         label: "PostgreSQL 연결 문자열",
         labelEn: "PostgreSQL connection string",
         required: true,
-        hint: "postgres://user:pass@host:5432/dbname",
-        hintEn: "postgres://user:pass@host:5432/dbname",
+        hint: "postgres://user:pass@host:5432/dbname (실행 시 인자로 전달됨)",
+        hintEn: "postgres://user:pass@host:5432/dbname (passed as a launch argument)",
       },
     ],
   },
@@ -139,14 +157,18 @@ export const MCP_TOOL_CATALOG: McpToolCatalogEntry[] = [
     args: ["-y", "@notionhq/notion-mcp-server"],
     trust: "official",
     docsUrl: "https://github.com/makenotion/notion-mcp-server",
+    setupUrl: "https://www.notion.so/my-integrations",
+    brandColor: "#191919",
+    mark: "N",
+    // 공식 @notionhq/notion-mcp-server: NOTION_TOKEN (Internal Integration Token, ntn_.../secret_...)
     envRequirements: [
       {
-        key: "NOTION_API_KEY",
-        label: "Notion 통합 키",
-        labelEn: "Notion Integration Key",
+        key: "NOTION_TOKEN",
+        label: "Notion 통합 토큰",
+        labelEn: "Notion Integration Token",
         required: true,
-        hint: "notion.so/my-integrations → Internal Integration Token (secret_...)",
-        hintEn: "notion.so/my-integrations → Internal Integration Token (secret_...)",
+        hint: "notion.so/my-integrations → New integration → Internal Integration Token",
+        hintEn: "notion.so/my-integrations → New integration → Internal Integration Token",
       },
     ],
   },
@@ -162,6 +184,9 @@ export const MCP_TOOL_CATALOG: McpToolCatalogEntry[] = [
     args: ["-y", "mcp-linear"],
     trust: "community",
     docsUrl: "https://github.com/tacticlaunch/mcp-linear",
+    setupUrl: "https://linear.app/settings/api",
+    brandColor: "#5E6AD2",
+    mark: "L",
     envRequirements: [
       {
         key: "LINEAR_API_KEY",
@@ -187,6 +212,9 @@ export const MCP_TOOL_CATALOG: McpToolCatalogEntry[] = [
     args: ["-y", "@modelcontextprotocol/server-brave-search"],
     trust: "official",
     docsUrl: "https://github.com/modelcontextprotocol/servers/tree/main/src/brave-search",
+    setupUrl: "https://brave.com/search/api/",
+    brandColor: "#FB542B",
+    mark: "B",
     envRequirements: [
       {
         key: "BRAVE_API_KEY",

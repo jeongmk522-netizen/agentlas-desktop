@@ -8,11 +8,17 @@ interface AgentlasEvents {
   ) => () => void;
 }
 
+interface AgentlasFilesBridge {
+  /** 드래그&드롭/선택된 File(폴더 포함)의 실제 디스크 경로 */
+  pathForFile: (file: File) => string;
+}
+
 declare global {
   interface Window {
     agentlas: AgentlasIpc;
     agentlasEvents: AgentlasEvents;
     agentlasUpdater: AgentlasUpdaterEvents;
+    agentlasFiles?: AgentlasFilesBridge;
   }
 }
 
@@ -33,4 +39,10 @@ export function ipcEvents(): AgentlasEvents | null {
 export function updaterEvents(): AgentlasUpdaterEvents | null {
   if (typeof window === "undefined") return null;
   return window.agentlasUpdater ?? null;
+}
+
+/** 드롭된 File의 디스크 경로를 얻는다 — 폴더 드래그 임포트용. */
+export function pathForDroppedFile(file: File): string | null {
+  if (typeof window === "undefined") return null;
+  return window.agentlasFiles?.pathForFile(file) ?? null;
 }

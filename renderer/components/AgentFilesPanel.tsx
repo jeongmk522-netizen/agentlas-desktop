@@ -46,6 +46,14 @@ export function AgentFilesPanel({
     }
   }, [agentId]);
 
+  // 에이전트가 바뀌면 이전 에이전트의 활성 파일/내용을 즉시 비운다 (잘못된 경로 읽기 방지).
+  useEffect(() => {
+    setActivePath(null);
+    setPreview(null);
+    setDraft("");
+    setDirty(false);
+  }, [agentId]);
+
   useEffect(() => {
     void loadFiles();
   }, [loadFiles]);

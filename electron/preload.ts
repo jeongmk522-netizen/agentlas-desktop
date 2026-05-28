@@ -1,6 +1,6 @@
 // Renderer는 sandbox에 갇혀 있고, 노출하는 IPC만 사용 가능.
 // shared/types.ts AgentlasIpc 모양과 1:1 일치해야 한다.
-import { contextBridge, ipcRenderer } from "electron";
+import { contextBridge, ipcRenderer, webUtils } from "electron";
 import type {
   AgentlasIpc,
   Automation,
@@ -68,6 +68,8 @@ const api: AgentlasIpc = {
     install: (slug: string) => ipcRenderer.invoke("team:install", slug),
     installMine: (id: string) => ipcRenderer.invoke("team:installMine", id),
     uninstall: (id: string) => ipcRenderer.invoke("team:uninstall", id),
+    importLocalFolder: (absPath: string) =>
+      ipcRenderer.invoke("team:importLocalFolder", absPath),
   },
   agentFiles: {
     list: (agentId: string) => ipcRenderer.invoke("agentFiles:list", agentId),
@@ -145,6 +147,18 @@ const api: AgentlasIpc = {
 };
 
 contextBridge.exposeInMainWorld("agentlas", api);
+
+// 드래그&드롭으로 들어온 File/폴더의 실제 디스크 경로를 얻는다 (Electron 32+ webUtils).
+// 샌드박스 렌더러는 fs 접근이 없으므로 경로만 얻어 IPC로 넘긴다.
+contextBridge.exposeInMainWorld("agentlasFiles", {
+  pathForFile: (file: File): string => {
+    try {
+      return webUtils.getPathForFile(file);
+    } catch {
+      return "";
+    }
+  },
+});
 contextBridge.exposeInMainWorld("agentlasEvents", {
   on: (channel: string, handler: (event: McpInvocationEvent) => void) => {
     const wrapped = (_evt: Electron.IpcRendererEvent, payload: McpInvocationEvent) =>

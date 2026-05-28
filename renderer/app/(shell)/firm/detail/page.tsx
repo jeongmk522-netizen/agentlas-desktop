@@ -1,16 +1,14 @@
 // 회사 상세 — 헤더(이름·CEO 채팅 버튼) + 조직도 시각화 + 회사 내 채팅 목록.
 "use client";
-import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
+import { Suspense, useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { ipc } from "@/lib/ipc";
 import { pickLocalized, useT, type Locale } from "@/lib/i18n";
 import { navigate } from "@/lib/navigation";
-import { localFolderPersistence } from "@/lib/repo-persistence";
 import type { Chat, InstalledAgent, InstalledFirm } from "@/lib/types";
 import { AgentAvatar } from "@/components/AgentAvatar";
-import { WorkspacePanel } from "@/components/WorkspacePanel";
-import { IconBuilding, IconChat, IconFolder, IconPlus, IconTrash, IconUsers } from "@/components/Icon";
+import { IconBuilding, IconChat, IconTrash, IconUsers } from "@/components/Icon";
 
 export default function FirmDetailWrapper() {
   return (
@@ -27,9 +25,6 @@ function FirmDetailPage() {
   const [firm, setFirm] = useState<InstalledFirm | null>(null);
   const [agents, setAgents] = useState<InstalledAgent[]>([]);
   const [chats, setChats] = useState<Chat[]>([]);
-  // 우측 레포/폴더 트리 패널 — firm별 폴더를 localStorage에 기억.
-  const [repoOpen, setRepoOpen] = useState(true);
-  const repoPersistence = useMemo(() => localFolderPersistence(`firm.${id}`), [id]);
 
   const refresh = useCallback(async () => {
     const api = ipc();
@@ -148,22 +143,6 @@ function FirmDetailPage() {
           {t("firm.ceo.command")}
         </button>
         <button
-          onClick={() => setRepoOpen((v) => !v)}
-          className="titlebar-nodrag"
-          aria-label={t("workspace.title")}
-          title={t("workspace.title")}
-          style={{
-            color: repoOpen ? "var(--accent)" : "var(--muted-deep)",
-            background: repoOpen ? "var(--fill-1)" : "transparent",
-            padding: 6,
-            borderRadius: 6,
-            border: "none",
-            cursor: "pointer",
-          }}
-        >
-          <IconFolder size={16} />
-        </button>
-        <button
           onClick={() => void uninstall()}
           className="titlebar-nodrag"
           aria-label={t("common.delete")}
@@ -181,15 +160,8 @@ function FirmDetailPage() {
           {firmLoc.tagline}
         </p>
 
-        {/* 조직도 */}
-        <h2 style={{ fontFamily: "var(--font-head)", fontSize: 15, margin: "0 0 12px" }}>
-          <IconUsers size={14} style={{ marginRight: 6, verticalAlign: -2 }} />
-          {t("firm.section.orgchart")}
-        </h2>
-        <OrgChart firm={firm} agentMap={agentMap} locale={locale} />
-
         {/* 회사 채팅 목록 */}
-        <h2 style={{ fontFamily: "var(--font-head)", fontSize: 15, margin: "32px 0 12px" }}>
+        <h2 style={{ fontFamily: "var(--font-head)", fontSize: 15, margin: "0 0 12px" }}>
           {t("firm.section.chats")} ({chats.length})
         </h2>
         {chats.length === 0 ? (
@@ -241,9 +213,35 @@ function FirmDetailPage() {
         )}
       </section>
       </div>
-      {repoOpen && (
-        <WorkspacePanel chatId={firm.id} persistence={repoPersistence} onClose={() => setRepoOpen(false)} />
-      )}
+
+      {/* 우측 — 팀 분해 조직도 */}
+      <aside
+        className="glass-thin"
+        style={{
+          width: 360,
+          flexShrink: 0,
+          borderLeft: "1px solid var(--glass-border)",
+          display: "flex",
+          flexDirection: "column",
+          minHeight: 0,
+          height: "100%",
+        }}
+      >
+        <header style={{ padding: "14px 16px 10px", borderBottom: "1px solid var(--glass-border)", display: "flex", alignItems: "center", gap: 8 }}>
+          <IconUsers size={15} style={{ color: "var(--accent)" }} />
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontSize: 13, fontWeight: 700, fontFamily: "var(--font-head)" }}>
+              {t("firm.section.orgchart")}
+            </div>
+            <div style={{ fontSize: 11, color: "var(--muted-deep)" }}>
+              {t("firm.orgchart_sub", { n: firm.orgChart.length })}
+            </div>
+          </div>
+        </header>
+        <div style={{ flex: 1, overflowY: "auto", padding: 16 }}>
+          <OrgChart firm={firm} agentMap={agentMap} locale={locale} />
+        </div>
+      </aside>
     </div>
   );
 }

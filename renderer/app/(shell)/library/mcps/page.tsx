@@ -65,6 +65,12 @@ export default function LibraryMcpsPage() {
     );
   }, [catalog, query]);
 
+  const byCatalogId = useMemo(() => {
+    const m = new Map<string, McpToolCatalogEntry>();
+    for (const e of catalog) m.set(e.id, e);
+    return m;
+  }, [catalog]);
+
   async function connect(catalogId: string) {
     const api = ipc();
     if (!api) return;
@@ -215,6 +221,7 @@ export default function LibraryMcpsPage() {
                   }}
                 >
                   <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+                    <Logo entry={server.catalogId ? byCatalogId.get(server.catalogId) : undefined} name={name} size={26} />
                     <strong style={{ fontSize: 14 }}>{name}</strong>
                     <span
                       style={{
@@ -316,6 +323,7 @@ export default function LibraryMcpsPage() {
                   }}
                 >
                   <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                    <Logo entry={entry} name={name} size={28} />
                     <strong style={{ fontSize: 13.5, flex: 1 }}>{name}</strong>
                     <span
                       title={entry.trust === "official" ? t("mcps.official") : t("mcps.community")}
@@ -335,6 +343,31 @@ export default function LibraryMcpsPage() {
                       {entry.trust === "official" ? t("mcps.official") : t("mcps.community")}
                     </span>
                   </div>
+                  {/* 키 발급 / 문서 링크 */}
+                  {(entry.setupUrl || entry.docsUrl) && (
+                    <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+                      {entry.setupUrl && (
+                        <a
+                          href={entry.setupUrl}
+                          target="_blank"
+                          rel="noreferrer"
+                          style={{ fontSize: 11, color: "var(--accent)", fontWeight: 600, textDecoration: "none", display: "inline-flex", alignItems: "center", gap: 3 }}
+                        >
+                          <IconKey size={11} /> {t("mcps.get_key")}
+                        </a>
+                      )}
+                      {entry.docsUrl && (
+                        <a
+                          href={entry.docsUrl}
+                          target="_blank"
+                          rel="noreferrer"
+                          style={{ fontSize: 11, color: "var(--muted-deep)", textDecoration: "none" }}
+                        >
+                          {t("mcps.docs")} ↗
+                        </a>
+                      )}
+                    </div>
+                  )}
                   <div style={{ fontSize: 11.5, color: "var(--muted-deep)", lineHeight: 1.5, minHeight: 32 }}>
                     {desc}
                   </div>
@@ -453,6 +486,42 @@ function StatusLine({
     <div style={{ fontSize: 12, color: "var(--red-deep)" }}>
       {t("mcps.status.error", { error: status.error ?? "unknown" })}
     </div>
+  );
+}
+
+/** 외부 툴 로고 타일 — 브랜드 컬러 배경 + 모노그램. (브랜드 SVG 자산 없이 일관·안전하게 식별) */
+function Logo({
+  entry,
+  name,
+  size,
+}: {
+  entry?: McpToolCatalogEntry;
+  name: string;
+  size: number;
+}) {
+  const bg = entry?.brandColor ?? "var(--ink)";
+  const mark = entry?.mark ?? name.charAt(0).toUpperCase();
+  return (
+    <span
+      aria-hidden
+      style={{
+        width: size,
+        height: size,
+        flexShrink: 0,
+        borderRadius: size * 0.28,
+        background: bg,
+        color: "white",
+        display: "inline-flex",
+        alignItems: "center",
+        justifyContent: "center",
+        fontFamily: "var(--font-head)",
+        fontWeight: 800,
+        fontSize: size * (mark.length > 1 ? 0.4 : 0.5),
+        letterSpacing: -0.3,
+      }}
+    >
+      {mark}
+    </span>
   );
 }
 

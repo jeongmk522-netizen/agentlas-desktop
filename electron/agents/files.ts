@@ -11,6 +11,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { app } from "electron";
 import { getDb } from "../store/db";
+import { getRoute } from "./routes";
 import { listDirectory, readTextFilePreview, type DirListing, type TextFilePreview } from "../fs/workspace";
 
 interface AgentRow {
@@ -29,6 +30,13 @@ interface AgentRow {
 
 function agentsRoot(): string {
   return path.join(app.getPath("userData"), "agents");
+}
+
+/** 이 에이전트의 파일이 실제로 사는 폴더. 로컬 임포트면 원본 폴더, 아니면 userData/agents/<slug>. */
+function resolveDir(agentId: string, slug: string): { dir: string; isLocal: boolean } {
+  const route = getRoute(agentId);
+  if (route) return { dir: route.path, isLocal: true };
+  return { dir: agentFolderPath(slug), isLocal: false };
 }
 
 export function agentFolderPath(slug: string): string {
@@ -64,6 +72,9 @@ function parseEnv(json: string): Array<{ key: string; label?: string; required?:
 export function materializeAgentFiles(agentId: string): string | null {
   const row = getRow(agentId);
   if (!row) return null;
+  // 로컬 임포트 에이전트는 원본 폴더를 그대로 쓰므로 별도 파일을 만들지 않는다.
+  const route = getRoute(agentId);
+  if (route) return route.path;
   const dir = agentFolderPath(row.slug);
   fs.mkdirSync(dir, { recursive: true });
 
@@ -128,9 +139,9 @@ function writeIfMissing(file: string, content: string): void {
   fs.writeFileSync(file, content.endsWith("\n") ? content : content + "\n", "utf8");
 }
 
-/** 에이전트 폴더 내부 경로인지 확인. 아니면 throw. */
-function ensureInside(slug: string, absPath: string): string {
-  const root = path.resolve(agentFolderPath(slug));
+/** 지정한 base 폴더 내부 경로인지 확인. 아니면 throw. */
+function ensureInside(baseDir: string, absPath: string): string {
+  const root = path.resolve(baseDir);
   const resolved = path.resolve(absPath);
   const rel = path.relative(root, resolved);
   if (rel.startsWith("..") || path.isAbsolute(rel)) {
@@ -142,21 +153,30 @@ function ensureInside(slug: string, absPath: string): string {
 export async function listAgentFiles(agentId: string): Promise<DirListing> {
   const row = getRow(agentId);
   if (!row) return { path: "", exists: false, entries: [] };
-  materializeAgentFiles(agentId);
-  return listDirectory(agentFolderPath(row.slug), false);
+  const { dir, isLocal } = resolveDir(agentId, row.slug);
+  if (!isLocal) materializeAgentFiles(agentId);
+  return listDirectory(dir, false);
 }
 
 export async function readAgentFile(agentId: string, absPath: string): Promise<TextFilePreview> {
   const row = getRow(agentId);
   if (!row) return { path: absPath, content: "", truncated: false, size: 0, reason: "binary" };
-  const safe = ensureInside(row.slug, absPath);
+  const { dir } = resolveDir(agentId, row.slug);
+  // 에이전트 전환 시 이전 에이전트의 경로가 잠깐 넘어올 수 있다 — throw 대신 빈 미리보기로 안전 처리.
+  let safe: string;
+  try {
+    safe = ensureInside(dir, absPath);
+  } catch {
+    return { path: absPath, content: "", truncated: false, size: 0, reason: "binary" };
+  }
   return readTextFilePreview(safe);
 }
 
 export function writeAgentFile(agentId: string, absPath: string, content: string): { ok: boolean } {
   const row = getRow(agentId);
   if (!row) throw new Error("Agent not found");
-  const safe = ensureInside(row.slug, absPath);
+  const { dir } = resolveDir(agentId, row.slug);
+  const safe = ensureInside(dir, absPath);
   fs.mkdirSync(path.dirname(safe), { recursive: true });
   fs.writeFileSync(safe, content, "utf8");
   // system-prompt.md 편집은 DB에도 반영해 새 메시지에 즉시 적용.
@@ -166,11 +186,12 @@ export function writeAgentFile(agentId: string, absPath: string, content: string
   return { ok: true };
 }
 
-/** 설치된 모든 에이전트의 파일을 보장(앱 부팅 시). 누락분만 생성. */
+/** 설치된 모든 에이전트의 파일을 보장(앱 부팅 시). 로컬 임포트(라우팅 보유)는 건너뛴다. */
 export function materializeAllAgents(): void {
   const rows = getDb().prepare("SELECT id FROM installed_agents").all() as Array<{ id: string }>;
   for (const r of rows) {
     try {
+      if (getRoute(r.id)) continue;
       materializeAgentFiles(r.id);
     } catch {
       // ignore — 개별 실패는 무시

@@ -1,0 +1,1086 @@
+// 입력창 — Claude Desktop / Codex 스타일 풀 기능:
+//   - 텍스트 + 이미지/파일 첨부
+//   - + 메뉴 (파일 / 플러그인 / Plan 모드 / Goal 모드)
+//   - / 슬래시 커맨드 (자동완성)
+//   - @ 멘션 (에이전트 · 프로젝트 · 회사 · 환경변수)
+//   - 하단 툴바: 에이전트 칩 · 권한 칩 · 모드 토글 · 보내기
+//
+// 모드 토글은 V0 UI만 (실제 동작은 V1): plan/goal/permission이 invocation payload로 전달.
+"use client";
+import { useEffect, useMemo, useRef, useState } from "react";
+import type {
+  ImageAttachment,
+  InstalledAgent,
+  InstalledFirm,
+  Project,
+} from "@/lib/types";
+import { pickLocalized, useT } from "@/lib/i18n";
+import {
+  IconArrowUp,
+  IconAtSign,
+  IconBuilding,
+  IconChevronDown,
+  IconChevronRight,
+  IconClose,
+  IconFileUp,
+  IconFolder,
+  IconKey,
+  IconLayers,
+  IconPaperclip,
+  IconPlus,
+  IconRoute,
+  IconShield,
+  IconSparkles,
+  IconTarget,
+} from "@/components/Icon";
+
+type TFunction = ReturnType<typeof useT>["t"];
+
+interface PreviewedImage extends ImageAttachment {
+  dataUrl: string;
+  name: string;
+}
+
+interface MentionContext {
+  agents: InstalledAgent[];
+  projects: Project[];
+  firms: InstalledFirm[];
+  envKeys: string[]; // 등록된 env 키 (Library > Environment에서 add한)
+}
+
+interface SendOptions {
+  images?: ImageAttachment[];
+  /** 사용자가 활성화한 모드 — 백엔드 invocation에 전달 (V1) */
+  planMode?: boolean;
+  goalMode?: boolean;
+  permissions?: PermissionLevel;
+}
+
+/** popover에 그릴 한 행 + 평탄화 인덱스용 메타. group은 같은 헤더 아래로 그룹핑되지만 인덱스는 flat. */
+interface AutocompleteOption {
+  /** 안정적 key */
+  key: string;
+  /** 노출 그룹 헤더 — 같은 group끼리 헤더 한 번만 노출 */
+  group?: string;
+  title: string;
+  subtitle?: string;
+  /** 아이콘은 popover에서 일괄 매핑 (group으로 결정) */
+  kind: "cmd" | "agent" | "firm" | "project" | "env";
+  /** 선택 시 입력창에 치환할 토큰 */
+  replacement: string;
+}
+
+type PermissionLevel = "read" | "write" | "full";
+
+export function ChatInput({
+  onSend,
+  busy,
+  disabled,
+  context,
+}: {
+  onSend: (text: string, opts?: SendOptions) => void;
+  busy: boolean;
+  disabled?: boolean;
+  context?: MentionContext;
+}) {
+  const { t, locale } = useT();
+  const [input, setInput] = useState("");
+  const [images, setImages] = useState<PreviewedImage[]>([]);
+  const [plusOpen, setPlusOpen] = useState(false);
+  const [plusSubmenu, setPlusSubmenu] = useState<"plugins" | null>(null);
+  const [planMode, setPlanMode] = useState(false);
+  const [goalMode, setGoalMode] = useState(false);
+  const [permissions, setPermissions] = useState<PermissionLevel>("read");
+  const [permOpen, setPermOpen] = useState(false);
+  // / 슬래시 + @ 멘션 인라인 자동완성
+  const [trigger, setTrigger] = useState<null | {
+    kind: "slash" | "mention";
+    query: string;
+    /** textarea 내부 trigger 문자 위치 (caret index) */
+    startIndex: number;
+  }>(null);
+  /** 키보드 ↑↓로 선택 가능한 평탄화 인덱스 — Enter 시 이걸로 onPick */
+  const [activeIndex, setActiveIndex] = useState(0);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  const submitDisabled =
+    busy || (!input.trim() && images.length === 0) || disabled;
+
+  // ── 파일 첨부 ──────────────────────────────────────────
+  async function addFiles(files: FileList | File[]) {
+    const accepted: PreviewedImage[] = [];
+    for (const file of Array.from(files)) {
+      if (!file.type.startsWith("image/")) continue;
+      if (file.size > 5 * 1024 * 1024) {
+        alert(t("chatinput.image_too_large", { name: file.name }));
+        continue;
+      }
+      const data = await fileToBase64(file);
+      accepted.push({
+        mediaType: file.type,
+        data,
+        dataUrl: `data:${file.type};base64,${data}`,
+        name: file.name,
+      });
+    }
+    if (accepted.length > 0) setImages((arr) => [...arr, ...accepted]);
+  }
+
+  function removeImage(i: number) {
+    setImages((arr) => arr.filter((_, j) => j !== i));
+  }
+
+  // ── 입력 변경: / 또는 @ trigger 감지 ────────────────────
+  function onInputChange(e: React.ChangeEvent<HTMLTextAreaElement>) {
+    const next = e.target.value;
+    setInput(next);
+    const caret = e.target.selectionStart ?? next.length;
+    // 직전 단어 시작 위치 찾기 — 공백/개행으로 끊김
+    const before = next.slice(0, caret);
+    const lastSpace = Math.max(
+      before.lastIndexOf(" "),
+      before.lastIndexOf("\n"),
+      before.lastIndexOf("\t"),
+    );
+    const tokenStart = lastSpace + 1;
+    const token = before.slice(tokenStart);
+    if (token.startsWith("/")) {
+      setTrigger({ kind: "slash", query: token.slice(1), startIndex: tokenStart });
+    } else if (token.startsWith("@")) {
+      setTrigger({ kind: "mention", query: token.slice(1), startIndex: tokenStart });
+    } else {
+      setTrigger(null);
+    }
+  }
+
+  // ── 자동완성 옵션 평탄화 — 키보드 네비용 ────────────────
+  const autocompleteOptions = useMemo<AutocompleteOption[]>(() => {
+    if (!trigger || !context) return [];
+    return buildAutocompleteOptions(trigger, context, locale, t);
+  }, [trigger, context, locale, t]);
+
+  // trigger가 바뀌거나 query가 갱신되면 activeIndex를 0으로 리셋 — 빈 결과는 -1
+  useEffect(() => {
+    setActiveIndex(autocompleteOptions.length > 0 ? 0 : -1);
+  }, [autocompleteOptions]);
+
+  function applyAutocomplete(replacement: string) {
+    if (!trigger) return;
+    const before = input.slice(0, trigger.startIndex);
+    const caret = textareaRef.current?.selectionStart ?? input.length;
+    const after = input.slice(caret);
+    const next = `${before}${replacement} ${after}`;
+    setInput(next);
+    setTrigger(null);
+    // 다음 tick에 caret 위치
+    setTimeout(() => {
+      const pos = `${before}${replacement} `.length;
+      textareaRef.current?.focus();
+      textareaRef.current?.setSelectionRange(pos, pos);
+    }, 0);
+  }
+
+  function submit() {
+    if (submitDisabled) return;
+    const text = input.trim();
+    const attachments =
+      images.length > 0 ? images.map(({ mediaType, data }) => ({ mediaType, data })) : undefined;
+    onSend(text, {
+      images: attachments,
+      planMode: planMode || undefined,
+      goalMode: goalMode || undefined,
+      permissions,
+    });
+    setInput("");
+    setImages([]);
+    setTrigger(null);
+  }
+
+  // 클릭 외부 — 메뉴 닫기
+  useEffect(() => {
+    if (!plusOpen && !permOpen) return;
+    function onDown(e: MouseEvent) {
+      const target = e.target as HTMLElement;
+      if (!target.closest("[data-popover-root]")) {
+        setPlusOpen(false);
+        setPlusSubmenu(null);
+        setPermOpen(false);
+      }
+    }
+    window.addEventListener("mousedown", onDown);
+    return () => window.removeEventListener("mousedown", onDown);
+  }, [plusOpen, permOpen]);
+
+  // ── 플러그인 목록 (설치된 에이전트의 MCP 서버 dedupe) ─────
+  const plugins = useMemo(() => {
+    const set = new Set<string>();
+    for (const a of context?.agents ?? []) for (const m of a.mcpServers) set.add(m);
+    return [...set];
+  }, [context?.agents]);
+
+  return (
+    <footer
+      data-popover-root
+      className="titlebar-nodrag"
+      style={{
+        borderTop: "var(--hairline)",
+        padding: "10px 16px 14px",
+        background: "transparent",
+        position: "relative",
+      }}
+      onDragOver={(e) => {
+        e.preventDefault();
+        e.dataTransfer.dropEffect = "copy";
+      }}
+      onDrop={(e) => {
+        e.preventDefault();
+        if (e.dataTransfer.files.length > 0) void addFiles(e.dataTransfer.files);
+      }}
+    >
+      {/* 슬래시/멘션 자동완성 popover */}
+      {trigger && context && (
+        <AutocompletePopover
+          trigger={trigger}
+          options={autocompleteOptions}
+          activeIndex={activeIndex}
+          onHover={setActiveIndex}
+          t={t}
+          onPick={applyAutocomplete}
+        />
+      )}
+
+      {/* + 메뉴 popover */}
+      {plusOpen && (
+        <PlusMenu
+          submenu={plusSubmenu}
+          setSubmenu={setPlusSubmenu}
+          plugins={plugins}
+          onAddFile={() => {
+            setPlusOpen(false);
+            setPlusSubmenu(null);
+            fileInputRef.current?.click();
+          }}
+          planMode={planMode}
+          setPlanMode={setPlanMode}
+          goalMode={goalMode}
+          setGoalMode={setGoalMode}
+          t={t}
+        />
+      )}
+
+      {/* 권한 popover */}
+      {permOpen && <PermissionMenu value={permissions} setValue={setPermissions} t={t} />}
+
+      <div
+        className="glass-lift"
+        style={{
+          borderRadius: 18,
+          padding: "10px 12px",
+          display: "flex",
+          flexDirection: "column",
+          gap: 8,
+        }}
+      >
+        {/* 이미지 미리보기 */}
+        {images.length > 0 && (
+          <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+            {images.map((img, i) => (
+              <div
+                key={i}
+                style={{
+                  position: "relative",
+                  width: 56,
+                  height: 56,
+                  borderRadius: 10,
+                  overflow: "hidden",
+                  border: "1px solid var(--paper-edge)",
+                }}
+                title={img.name}
+              >
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src={img.dataUrl}
+                  alt={img.name}
+                  style={{ width: "100%", height: "100%", objectFit: "cover" }}
+                />
+                <button
+                  onClick={() => removeImage(i)}
+                  aria-label={t("chatinput.remove_image")}
+                  style={{
+                    position: "absolute",
+                    top: 2,
+                    right: 2,
+                    width: 18,
+                    height: 18,
+                    borderRadius: "50%",
+                    background: "rgba(0,0,0,0.7)",
+                    color: "white",
+                    border: "none",
+                    fontSize: 10,
+                    fontWeight: 700,
+                  }}
+                >
+                  ×
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept="image/*"
+          multiple
+          style={{ display: "none" }}
+          onChange={(e) => {
+            if (e.target.files) void addFiles(e.target.files);
+            e.target.value = "";
+          }}
+        />
+
+        {/* 텍스트 영역 */}
+        <textarea
+          ref={textareaRef}
+          value={input}
+          onChange={onInputChange}
+          onKeyDown={(e) => {
+            // 자동완성 popover가 떠 있을 때만 ↑↓/Enter/Tab/Esc 가로챔
+            if (trigger && autocompleteOptions.length > 0) {
+              if (e.key === "ArrowDown") {
+                e.preventDefault();
+                setActiveIndex((i) =>
+                  i < 0 ? 0 : (i + 1) % autocompleteOptions.length,
+                );
+                return;
+              }
+              if (e.key === "ArrowUp") {
+                e.preventDefault();
+                setActiveIndex((i) =>
+                  i <= 0 ? autocompleteOptions.length - 1 : i - 1,
+                );
+                return;
+              }
+              if (e.key === "Enter" || e.key === "Tab") {
+                // 자동완성 선택 — ⌘↵ 전송과 충돌하지 않도록 modifier 없을 때만
+                if (!e.metaKey && !e.ctrlKey) {
+                  e.preventDefault();
+                  const opt = autocompleteOptions[activeIndex];
+                  if (opt) applyAutocomplete(opt.replacement);
+                  return;
+                }
+              }
+            }
+            if (trigger && e.key === "Escape") {
+              setTrigger(null);
+              e.preventDefault();
+              return;
+            }
+            if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+              e.preventDefault();
+              submit();
+            }
+          }}
+          onPaste={(e) => {
+            const items = e.clipboardData?.items;
+            if (!items) return;
+            const files: File[] = [];
+            for (const it of Array.from(items)) {
+              if (it.type.startsWith("image/")) {
+                const f = it.getAsFile();
+                if (f) files.push(f);
+              }
+            }
+            if (files.length > 0) {
+              e.preventDefault();
+              void addFiles(files);
+            }
+          }}
+          placeholder={
+            disabled
+              ? t("chatinput.placeholder_disabled")
+              : t("chatinput.placeholder_rich")
+          }
+          rows={2}
+          disabled={disabled}
+          style={{
+            width: "100%",
+            border: "none",
+            outline: "none",
+            fontSize: 14,
+            lineHeight: 1.5,
+            background: "transparent",
+            color: "var(--ink)",
+            resize: "none",
+            padding: "4px 6px",
+            fontFamily: "var(--font-body)",
+          }}
+        />
+
+        {/* 하단 툴바 */}
+        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+          {/* + 메뉴 */}
+          <button
+            onClick={() => {
+              setPlusOpen((v) => !v);
+              setPlusSubmenu(null);
+            }}
+            aria-label={t("chatinput.plus")}
+            title={t("chatinput.plus")}
+            disabled={disabled}
+            style={toolBtnStyle(plusOpen)}
+          >
+            <IconPlus size={15} />
+          </button>
+
+          {/* 슬래시 힌트 */}
+          <button
+            onClick={() => {
+              setInput((s) => `${s}${s.endsWith(" ") || s === "" ? "" : " "}/`);
+              setTimeout(() => textareaRef.current?.focus(), 0);
+            }}
+            aria-label={t("chatinput.slash")}
+            title={t("chatinput.slash")}
+            disabled={disabled}
+            style={toolBtnStyle(false)}
+          >
+            <span style={{ fontFamily: "var(--font-mono)", fontSize: 13, fontWeight: 700 }}>/</span>
+          </button>
+
+          {/* @ 멘션 힌트 */}
+          <button
+            onClick={() => {
+              setInput((s) => `${s}${s.endsWith(" ") || s === "" ? "" : " "}@`);
+              setTimeout(() => textareaRef.current?.focus(), 0);
+            }}
+            aria-label={t("chatinput.mention")}
+            title={t("chatinput.mention")}
+            disabled={disabled}
+            style={toolBtnStyle(false)}
+          >
+            <IconAtSign size={14} />
+          </button>
+
+          {/* 권한 칩 */}
+          <button
+            onClick={() => setPermOpen((v) => !v)}
+            disabled={disabled}
+            style={{
+              ...toolBtnStyle(permOpen),
+              width: "auto",
+              padding: "0 10px",
+              gap: 6,
+              fontSize: 11,
+              fontWeight: 600,
+              color:
+                permissions === "full"
+                  ? "var(--red-deep)"
+                  : permissions === "write"
+                    ? "var(--amber-deep)"
+                    : "var(--green-deep)",
+            }}
+          >
+            <IconShield size={13} />
+            {t(`chatinput.perm.${permissions}` as `chatinput.perm.${PermissionLevel}`)}
+            <IconChevronDown size={11} style={{ opacity: 0.6 }} />
+          </button>
+
+          <div style={{ flex: 1 }} />
+
+          {/* 모드 칩 — Plan */}
+          <button
+            onClick={() => setPlanMode((v) => !v)}
+            disabled={disabled}
+            title={t("chatinput.plan_mode")}
+            style={{
+              ...toolBtnStyle(planMode),
+              width: "auto",
+              padding: "0 10px",
+              gap: 6,
+              fontSize: 11,
+              fontWeight: 600,
+              color: planMode ? "var(--accent)" : "var(--muted-deep)",
+            }}
+          >
+            <IconRoute size={13} />
+            {t("chatinput.plan_mode")}
+          </button>
+
+          {/* 모드 칩 — Goal */}
+          <button
+            onClick={() => setGoalMode((v) => !v)}
+            disabled={disabled}
+            title={t("chatinput.goal_mode")}
+            style={{
+              ...toolBtnStyle(goalMode),
+              width: "auto",
+              padding: "0 10px",
+              gap: 6,
+              fontSize: 11,
+              fontWeight: 600,
+              color: goalMode ? "var(--accent)" : "var(--muted-deep)",
+            }}
+          >
+            <IconTarget size={13} />
+            {t("chatinput.goal_mode")}
+          </button>
+
+          {/* 보내기 */}
+          <button
+            onClick={submit}
+            disabled={submitDisabled}
+            aria-label={t("chatinput.send")}
+            style={{
+              width: 32,
+              height: 32,
+              flexShrink: 0,
+              borderRadius: "50%",
+              background: submitDisabled ? "var(--paper-2)" : "var(--ink)",
+              color: submitDisabled ? "var(--muted-deep)" : "white",
+              border: "none",
+              display: "inline-flex",
+              alignItems: "center",
+              justifyContent: "center",
+              boxShadow: submitDisabled ? "none" : "0 4px 14px rgba(11,11,15,0.18)",
+            }}
+          >
+            {busy ? <span style={{ fontSize: 10 }}>···</span> : <IconArrowUp size={15} />}
+          </button>
+        </div>
+      </div>
+    </footer>
+  );
+}
+
+// ── 평탄화된 자동완성 옵션 빌더 ──────────────────────────
+// 키보드 ↑↓ 인덱스가 그룹 헤더를 건너뛰도록 옵션만 flat list로 모으고,
+// 표시 시 group이 바뀔 때만 그룹 헤더를 그린다.
+function buildAutocompleteOptions(
+  trigger: { kind: "slash" | "mention"; query: string; startIndex: number },
+  context: MentionContext,
+  locale: "ko" | "en",
+  t: TFunction,
+): AutocompleteOption[] {
+  const q = trigger.query.toLowerCase();
+  const out: AutocompleteOption[] = [];
+
+  if (trigger.kind === "slash") {
+    const cmds = [
+      { key: "/new", desc: t("chatinput.cmd.new") },
+      { key: "/clear", desc: t("chatinput.cmd.clear") },
+      { key: "/help", desc: t("chatinput.cmd.help") },
+    ].filter((c) => !q || c.key.includes(q) || c.desc.toLowerCase().includes(q));
+    for (const c of cmds) {
+      out.push({
+        key: `cmd-${c.key}`,
+        kind: "cmd",
+        title: c.key,
+        subtitle: c.desc,
+        replacement: c.key,
+      });
+    }
+    return out;
+  }
+
+  // mention — 그룹: agents → firms → projects → env, 각 최대 5개
+  const agents = context.agents
+    .filter((a) => {
+      const loc = pickLocalized(a, locale);
+      return !q || loc.name.toLowerCase().includes(q) || a.slug.includes(q);
+    })
+    .slice(0, 5);
+  const firms = context.firms
+    .filter((f) => {
+      const loc = pickLocalized(f, locale);
+      return !q || loc.name.toLowerCase().includes(q) || f.slug.includes(q);
+    })
+    .slice(0, 5);
+  const projects = context.projects
+    .filter((p) => !q || p.name.toLowerCase().includes(q))
+    .slice(0, 5);
+  const envs = context.envKeys
+    .filter((k) => !q || k.toLowerCase().includes(q))
+    .slice(0, 5);
+
+  for (const a of agents) {
+    const loc = pickLocalized(a, locale);
+    out.push({
+      key: `a-${a.id}`,
+      group: t("sidebar.agents"),
+      kind: "agent",
+      title: loc.name,
+      subtitle: loc.tagline,
+      replacement: `@${loc.name}`,
+    });
+  }
+  for (const f of firms) {
+    const loc = pickLocalized(f, locale);
+    out.push({
+      key: `f-${f.id}`,
+      group: t("sidebar.firms"),
+      kind: "firm",
+      title: loc.name,
+      subtitle: loc.tagline,
+      replacement: `@${loc.name}`,
+    });
+  }
+  for (const p of projects) {
+    out.push({
+      key: `p-${p.id}`,
+      group: t("sidebar.projects"),
+      kind: "project",
+      title: p.name,
+      replacement: `@${p.name}`,
+    });
+  }
+  for (const k of envs) {
+    out.push({
+      key: `e-${k}`,
+      group: t("env.title"),
+      kind: "env",
+      title: k,
+      replacement: `@${k}`,
+    });
+  }
+  return out;
+}
+
+// ── 자동완성 popover (/ 또는 @) ──────────────────────────
+function AutocompletePopover({
+  trigger,
+  options,
+  activeIndex,
+  onHover,
+  t,
+  onPick,
+}: {
+  trigger: { kind: "slash" | "mention"; query: string; startIndex: number };
+  options: AutocompleteOption[];
+  activeIndex: number;
+  onHover: (i: number) => void;
+  t: TFunction;
+  onPick: (replacement: string) => void;
+}) {
+  const title =
+    trigger.kind === "slash" ? t("chatinput.slash_title") : t("chatinput.mention_title");
+  if (options.length === 0) {
+    return (
+      <Popover title={title}>
+        <EmptyHint>{t("chatinput.no_match")}</EmptyHint>
+      </Popover>
+    );
+  }
+  // 그룹 헤더는 같은 group이 처음 등장할 때만 그린다.
+  const seenGroups = new Set<string>();
+  return (
+    <Popover title={title}>
+      {options.map((opt, i) => {
+        const showHeader = opt.group && !seenGroups.has(opt.group);
+        if (opt.group) seenGroups.add(opt.group);
+        return (
+          <div key={opt.key}>
+            {showHeader && <GroupLabel>{opt.group}</GroupLabel>}
+            <Row
+              onClick={() => onPick(opt.replacement)}
+              onHover={() => onHover(i)}
+              active={i === activeIndex}
+              icon={kindIcon(opt.kind)}
+              title={opt.title}
+              subtitle={opt.subtitle}
+            />
+          </div>
+        );
+      })}
+    </Popover>
+  );
+}
+
+function kindIcon(kind: AutocompleteOption["kind"]) {
+  switch (kind) {
+    case "cmd":
+      return (
+        <span style={{ fontFamily: "var(--font-mono)", fontWeight: 700, fontSize: 11 }}>/</span>
+      );
+    case "agent":
+      return <IconSparkles size={13} style={{ color: "var(--accent)" }} />;
+    case "firm":
+      return <IconBuilding size={13} style={{ color: "var(--accent)" }} />;
+    case "project":
+      return <IconFolder size={13} style={{ color: "var(--muted-deep)" }} />;
+    case "env":
+      return <IconKey size={13} style={{ color: "var(--peach-ink)" }} />;
+  }
+}
+
+// ── + 메뉴 ───────────────────────────────────────────────
+function PlusMenu({
+  submenu,
+  setSubmenu,
+  plugins,
+  onAddFile,
+  planMode,
+  setPlanMode,
+  goalMode,
+  setGoalMode,
+  t,
+}: {
+  submenu: "plugins" | null;
+  setSubmenu: (s: "plugins" | null) => void;
+  plugins: string[];
+  onAddFile: () => void;
+  planMode: boolean;
+  setPlanMode: (v: boolean) => void;
+  goalMode: boolean;
+  setGoalMode: (v: boolean) => void;
+  t: TFunction;
+}) {
+  if (submenu === "plugins") {
+    return (
+      <Popover>
+        <button
+          onClick={() => setSubmenu(null)}
+          style={{
+            display: "flex",
+            width: "100%",
+            alignItems: "center",
+            gap: 6,
+            padding: "6px 10px",
+            fontSize: 11,
+            color: "var(--muted-deep)",
+            background: "transparent",
+            border: "none",
+          }}
+        >
+          <IconChevronRight size={11} style={{ transform: "rotate(180deg)" }} />
+          {t("chatinput.plus.plugins")}
+        </button>
+        {plugins.length === 0 ? (
+          <EmptyHint>{t("chatinput.no_plugins")}</EmptyHint>
+        ) : (
+          plugins.map((p) => (
+            <Row
+              key={p}
+              icon={<IconLayers size={13} style={{ color: "var(--accent)" }} />}
+              title={p}
+            />
+          ))
+        )}
+      </Popover>
+    );
+  }
+  return (
+    <Popover>
+      <Row
+        onClick={onAddFile}
+        icon={<IconFileUp size={14} />}
+        title={t("chatinput.plus.attach")}
+      />
+      <Row
+        onClick={() => setSubmenu("plugins")}
+        icon={<IconLayers size={14} style={{ color: "var(--accent)" }} />}
+        title={t("chatinput.plus.plugins")}
+        right={<IconChevronRight size={11} style={{ color: "var(--muted)" }} />}
+      />
+      <Divider />
+      <ToggleRow
+        icon={<IconRoute size={14} />}
+        title={t("chatinput.plan_mode")}
+        on={planMode}
+        onChange={setPlanMode}
+      />
+      <ToggleRow
+        icon={<IconTarget size={14} />}
+        title={t("chatinput.goal_mode")}
+        on={goalMode}
+        onChange={setGoalMode}
+      />
+    </Popover>
+  );
+}
+
+// ── 권한 메뉴 ─────────────────────────────────────────────
+function PermissionMenu({
+  value,
+  setValue,
+  t,
+}: {
+  value: PermissionLevel;
+  setValue: (v: PermissionLevel) => void;
+  t: TFunction;
+}) {
+  const opts: Array<{ id: PermissionLevel; color: string }> = [
+    { id: "read", color: "var(--green-deep)" },
+    { id: "write", color: "var(--amber-deep)" },
+    { id: "full", color: "var(--red-deep)" },
+  ];
+  return (
+    <Popover title={t("chatinput.perm.title")}>
+      {opts.map((o) => (
+        <Row
+          key={o.id}
+          onClick={() => setValue(o.id)}
+          icon={<IconShield size={13} style={{ color: o.color }} />}
+          title={t(`chatinput.perm.${o.id}` as `chatinput.perm.${PermissionLevel}`)}
+          subtitle={t(`chatinput.perm.${o.id}.desc` as `chatinput.perm.${PermissionLevel}.desc`)}
+          right={value === o.id ? <span style={{ color: "var(--accent)", fontWeight: 700 }}>•</span> : undefined}
+        />
+      ))}
+    </Popover>
+  );
+}
+
+// ── popover primitives ──────────────────────────────────
+function Popover({
+  title,
+  children,
+}: {
+  title?: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div
+      data-popover-root
+      className="glass-lift"
+      style={{
+        position: "absolute",
+        bottom: "calc(100% - 4px)",
+        left: 16,
+        minWidth: 240,
+        maxWidth: 320,
+        maxHeight: 360,
+        overflowY: "auto",
+        borderRadius: 14,
+        padding: 6,
+        zIndex: 100,
+      }}
+    >
+      {title && (
+        <div
+          style={{
+            padding: "6px 10px 4px",
+            fontSize: 10,
+            fontFamily: "var(--font-mono)",
+            textTransform: "uppercase",
+            letterSpacing: 0.6,
+            color: "var(--muted-deep)",
+          }}
+        >
+          {title}
+        </div>
+      )}
+      {children}
+    </div>
+  );
+}
+
+function GroupLabel({ children }: { children: React.ReactNode }) {
+  return (
+    <div
+      style={{
+        padding: "6px 10px 2px",
+        fontSize: 10,
+        fontFamily: "var(--font-mono)",
+        textTransform: "uppercase",
+        letterSpacing: 0.6,
+        color: "var(--muted-deep)",
+      }}
+    >
+      {children}
+    </div>
+  );
+}
+
+function Divider() {
+  return (
+    <div
+      style={{
+        height: 1,
+        background: "var(--paper-edge)",
+        margin: "4px 6px",
+      }}
+    />
+  );
+}
+
+function EmptyHint({ children }: { children: React.ReactNode }) {
+  return (
+    <div style={{ padding: "10px 12px", fontSize: 11, color: "var(--muted-deep)" }}>
+      {children}
+    </div>
+  );
+}
+
+function Row({
+  onClick,
+  onHover,
+  active,
+  icon,
+  title,
+  subtitle,
+  right,
+}: {
+  onClick?: () => void;
+  /** 마우스가 위로 올라오면 호출 — 키보드 activeIndex와 마우스 활성을 동기화 */
+  onHover?: () => void;
+  /** 키보드 ↑↓로 선택된 행이면 true */
+  active?: boolean;
+  icon: React.ReactNode;
+  title: string;
+  subtitle?: string;
+  right?: React.ReactNode;
+}) {
+  // active일 때는 hover 색을 항상 표시 — inline 토글이라 ref로 보존하지 않음
+  return (
+    <button
+      onClick={onClick}
+      disabled={!onClick}
+      style={{
+        display: "flex",
+        width: "100%",
+        alignItems: "center",
+        gap: 10,
+        padding: "8px 10px",
+        borderRadius: 8,
+        background: active ? "var(--fill-1)" : "transparent",
+        border: "none",
+        textAlign: "left",
+        cursor: onClick ? "pointer" : "default",
+      }}
+      onMouseEnter={(e) => {
+        if (onClick) e.currentTarget.style.background = "var(--fill-1)";
+        onHover?.();
+      }}
+      onMouseLeave={(e) => {
+        // active면 hover 색을 유지
+        e.currentTarget.style.background = active ? "var(--fill-1)" : "transparent";
+      }}
+    >
+      <span style={{ flexShrink: 0, color: "var(--ink-soft)" }}>{icon}</span>
+      <span style={{ flex: 1, minWidth: 0 }}>
+        <span
+          style={{
+            display: "block",
+            fontSize: 12.5,
+            fontWeight: 600,
+            color: "var(--ink)",
+            whiteSpace: "nowrap",
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+          }}
+        >
+          {title}
+        </span>
+        {subtitle && (
+          <span
+            style={{
+              display: "block",
+              fontSize: 10.5,
+              color: "var(--muted-deep)",
+              whiteSpace: "nowrap",
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+            }}
+          >
+            {subtitle}
+          </span>
+        )}
+      </span>
+      {right}
+    </button>
+  );
+}
+
+function ToggleRow({
+  icon,
+  title,
+  on,
+  onChange,
+}: {
+  icon: React.ReactNode;
+  title: string;
+  on: boolean;
+  onChange: (v: boolean) => void;
+}) {
+  return (
+    <button
+      onClick={() => onChange(!on)}
+      style={{
+        display: "flex",
+        width: "100%",
+        alignItems: "center",
+        gap: 10,
+        padding: "8px 10px",
+        borderRadius: 8,
+        background: "transparent",
+        border: "none",
+      }}
+      onMouseEnter={(e) => {
+        e.currentTarget.style.background = "var(--fill-1)";
+      }}
+      onMouseLeave={(e) => {
+        e.currentTarget.style.background = "transparent";
+      }}
+    >
+      <span style={{ flexShrink: 0, color: on ? "var(--accent)" : "var(--ink-soft)" }}>{icon}</span>
+      <span style={{ flex: 1, fontSize: 12.5, fontWeight: 600, color: "var(--ink)", textAlign: "left" }}>
+        {title}
+      </span>
+      <span
+        style={{
+          width: 30,
+          height: 17,
+          borderRadius: 999,
+          background: on ? "var(--accent)" : "var(--paper-edge)",
+          position: "relative",
+          transition: "background 0.12s",
+        }}
+      >
+        <span
+          style={{
+            position: "absolute",
+            top: 2,
+            left: on ? 15 : 2,
+            width: 13,
+            height: 13,
+            borderRadius: "50%",
+            background: "white",
+            transition: "left 0.12s",
+            boxShadow: "0 1px 2px rgba(0,0,0,0.15)",
+          }}
+        />
+      </span>
+    </button>
+  );
+}
+
+// 도구 버튼 공통 스타일
+function toolBtnStyle(active: boolean): React.CSSProperties {
+  return {
+    width: 30,
+    height: 30,
+    flexShrink: 0,
+    borderRadius: 8,
+    background: active ? "var(--fill-1)" : "transparent",
+    color: active ? "var(--accent)" : "var(--ink-soft)",
+    border: "none",
+    display: "inline-flex",
+    alignItems: "center",
+    justifyContent: "center",
+    transition: "background 0.12s",
+    cursor: "pointer",
+  };
+}
+
+function fileToBase64(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const result = reader.result as string;
+      const comma = result.indexOf(",");
+      resolve(comma >= 0 ? result.slice(comma + 1) : result);
+    };
+    reader.onerror = () => reject(reader.error);
+    reader.readAsDataURL(file);
+  });
+}

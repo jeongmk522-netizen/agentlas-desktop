@@ -1,0 +1,175 @@
+// 마켓 소스 진입점. 환경변수 분기 + fallback wrapper.
+//
+// 모든 caller는 `getSource()`를 호출하고 인터페이스만 알면 됨.
+// MCP 호출 실패 → 마지막 성공 캐시 → InMemory로 자동 fallback (오프라인 보호).
+import { InMemorySource } from "./in-memory-source";
+import { McpSource } from "./mcp-source";
+import type { MarketplaceSource, SeedListingFull } from "./source";
+import { getSessionCookieHeader } from "../auth";
+import type {
+  FirmListing,
+  MarketplaceListing,
+  MarketplaceSourceStatus,
+  TeamBundle,
+} from "../../shared/types";
+
+const DEFAULT_BASE_URL = "https://agentlas.cloud/api/mcp/v1";
+
+let _status: MarketplaceSourceStatus = {
+  mode: "memory",
+  baseUrl: null,
+  online: true,
+  usingFallback: false,
+  lastError: null,
+  lastCheckedAt: null,
+};
+
+function setStatus(patch: Partial<MarketplaceSourceStatus>) {
+  _status = {
+    ..._status,
+    ...patch,
+    lastCheckedAt: new Date().toISOString(),
+  };
+}
+
+class FallbackSource implements MarketplaceSource {
+  private firmListCache: FirmListing[] | null = null;
+  private bundleListCache: TeamBundle[] | null = null;
+  private searchCache = new Map<string, MarketplaceListing[]>();
+  private agentManifestCache = new Map<string, (SeedListingFull & MarketplaceListing) | null>();
+  private firmManifestCache = new Map<string, FirmListing | null>();
+
+  constructor(
+    private primary: MarketplaceSource,
+    private fallback: MarketplaceSource,
+    private baseUrl: string,
+  ) {}
+
+  private async tryPrimary<T>(
+    fn: (s: MarketplaceSource) => Promise<T>,
+    method: string,
+    cacheRead?: () => T | undefined,
+    cacheWrite?: (value: T) => void,
+  ): Promise<T> {
+    try {
+      const result = await fn(this.primary);
+      cacheWrite?.(result);
+      setStatus({
+        mode: "mcp",
+        baseUrl: this.baseUrl,
+        online: true,
+        usingFallback: false,
+        lastError: null,
+      });
+      return result;
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      setStatus({
+        mode: "mcp",
+        baseUrl: this.baseUrl,
+        online: false,
+        usingFallback: true,
+        lastError: message,
+      });
+      console.warn(
+        `[marketplace] mcp(${this.baseUrl}) ${method} failed, falling back to in-memory:`,
+        message,
+      );
+      const cached = cacheRead?.();
+      if (cached !== undefined) return cached;
+      return fn(this.fallback);
+    }
+  }
+
+  listFirms(): Promise<FirmListing[]> {
+    return this.tryPrimary(
+      (s) => s.listFirms(),
+      "listFirms",
+      () => this.firmListCache ?? undefined,
+      (firms) => {
+        this.firmListCache = firms;
+      },
+    );
+  }
+  listBundles(): Promise<TeamBundle[]> {
+    return this.tryPrimary(
+      (s) => s.listBundles(),
+      "listBundles",
+      () => this.bundleListCache ?? undefined,
+      (bundles) => {
+        this.bundleListCache = bundles;
+      },
+    );
+  }
+  searchAgents(q: string): Promise<MarketplaceListing[]> {
+    const key = q.trim().toLowerCase();
+    return this.tryPrimary(
+      (s) => s.searchAgents(q),
+      "searchAgents",
+      () => this.searchCache.get(key),
+      (listings) => {
+        this.searchCache.set(key, listings);
+      },
+    );
+  }
+  getListingBySlug(slug: string): Promise<(SeedListingFull & MarketplaceListing) | null> {
+    return this.tryPrimary(
+      (s) => s.getListingBySlug(slug),
+      "getListingBySlug",
+      () => (this.agentManifestCache.has(slug) ? this.agentManifestCache.get(slug)! : undefined),
+      (listing) => {
+        this.agentManifestCache.set(slug, listing);
+      },
+    );
+  }
+  getFirmBySlug(slug: string): Promise<FirmListing | null> {
+    return this.tryPrimary(
+      (s) => s.getFirmBySlug(slug),
+      "getFirmBySlug",
+      () => (this.firmManifestCache.has(slug) ? this.firmManifestCache.get(slug)! : undefined),
+      (firm) => {
+        this.firmManifestCache.set(slug, firm);
+      },
+    );
+  }
+}
+
+let _source: MarketplaceSource | null = null;
+
+export function getSource(): MarketplaceSource {
+  if (_source) return _source;
+  const mode = (process.env.AGENTLAS_MARKET_SOURCE ?? "mcp").toLowerCase();
+  const memory = new InMemorySource();
+  if (mode === "mcp") {
+    const baseUrl = process.env.AGENTLAS_MCP_BASE_URL ?? DEFAULT_BASE_URL;
+    // cookieProvider는 함수로 — 로그인 상태가 런타임 중 바뀌므로 매 호출마다 평가.
+    const mcp = new McpSource({
+      baseUrl,
+      timeoutMs: 15000,
+      cookieProvider: () => getSessionCookieHeader(),
+    });
+    setStatus({
+      mode: "mcp",
+      baseUrl,
+      online: false,
+      usingFallback: false,
+      lastError: null,
+    });
+    _source = new FallbackSource(mcp, memory, baseUrl);
+  } else {
+    setStatus({
+      mode: "memory",
+      baseUrl: null,
+      online: true,
+      usingFallback: false,
+      lastError: null,
+    });
+    _source = memory;
+  }
+  return _source;
+}
+
+export function getSourceStatus(): MarketplaceSourceStatus {
+  getSource();
+  return _status;
+}

@@ -1,0 +1,115 @@
+// Main 프로세스에서 renderer로 push하는 상태/오류 메시지의 i18n.
+// 원칙: "영어 사용자에게는 한국어가 보이면 안 됨" (renderer i18n과 동일).
+// renderer는 McpInvocationRequest.locale로 자기 locale을 알려준다.
+export type RuntimeLocale = "ko" | "en";
+
+/** McpInvocationRequest나 부분 입력에서 locale을 안전하게 추출. fallback은 "en". */
+export function pickLocale(req: { locale?: string } | undefined | null): RuntimeLocale {
+  const raw = req?.locale ?? "";
+  return raw === "ko" ? "ko" : "en";
+}
+
+/** Electron app.getLocale() / "ko-KR" 형식을 ko|en으로 정규화 */
+export function normalizeOsLocale(raw: string | undefined): RuntimeLocale {
+  if (!raw) return "en";
+  return raw.toLowerCase().startsWith("ko") ? "ko" : "en";
+}
+
+type Args = Record<string, string | number>;
+
+function fmt(template: string, args?: Args): string {
+  if (!args) return template;
+  return template.replace(/\{(\w+)\}/g, (_, k) => String(args[k] ?? ""));
+}
+
+// 같은 키는 항상 ko/en 둘 다 채운다. UI 노출 메시지만 — 디버그/stderr는 그대로 영어.
+const DICT = {
+  ko: {
+    thinking: "{agent}가 생각 중...",
+    sending: "전송 중...",
+    callingBackend: "{backend} 호출 중...",
+    cliNoImage: "{backend}은 이미지 첨부 미지원 — 텍스트만 전송됩니다",
+    cliNoImageClaude:
+      "{backend}은 이미지 첨부 미지원 — 텍스트만 전송됩니다 (BYOK API로 전환하면 멀티모달 가능)",
+    errChatNotFound: "채팅을 찾지 못했습니다.",
+    errAgentNotFound: "에이전트가 삭제되었거나 찾을 수 없습니다.",
+    errNoRuntime:
+      "연결된 LLM 백엔드가 없습니다. 설정에서 Claude Code/Codex/Gemini CLI 또는 API 키를 연결해 주세요.",
+    errNoRunner: "지원하지 않는 런타임 조합: {kind}/{backend}",
+    errKeyMissingAnthropic: "Anthropic API 키가 저장되어 있지 않습니다. 설정에서 추가하세요.",
+    errKeyMissingOpenAI: "OpenAI API 키가 저장되어 있지 않습니다. 설정에서 추가하세요.",
+    errKeyMissingGoogle: "Google API 키가 저장되어 있지 않습니다. 설정에서 추가하세요.",
+    errCliMissingClaude:
+      "claude CLI를 찾지 못했습니다. `npm i -g @anthropic-ai/claude-code` 후 다시 시도하세요.",
+    errCliMissingCodex: "codex CLI를 찾지 못했습니다. `npm i -g @openai/codex` 후 다시 시도하세요.",
+    errCliMissingGemini:
+      "gemini CLI를 찾지 못했습니다. `npm i -g @google/gemini-cli` 후 다시 시도하세요.",
+    sysGuide: "사용자는 한국어로 대화합니다. 답변도 한국어로 합니다 (영어 요청이면 영어).",
+    sysHeader: "당신은 Agentlas Desktop에서 사용자가 설치한 전문 어시스턴트입니다.",
+    sysToolsOff:
+      "도구 호출이나 코드 실행은 할 수 없습니다 (MCP 도구 연결은 차기 버전에서 추가). 현재는 텍스트 답변만 가능합니다.",
+    sysAgentDef: "── 에이전트 정의 ──",
+    histPrev: "── 이전 대화 ──",
+    histThis: "── 이번 요청 ──",
+    histPrevSection: "[이전 대화]",
+    histThisSection: "[이번 요청]",
+    speakerUser: "사용자",
+    speakerAssistant: "어시스턴트",
+    projectContext: "[프로젝트 컨텍스트 — {name}]",
+    firmContext: "[회사 컨텍스트 — {name}]",
+    firmCeoGuide:
+      "당신은 이 회사의 CEO이며, 사용자가 이 채팅에서 명령을 내릴 때는 회사 전체에 대한 지시로 해석하세요.",
+    firmOrgChart: "현재 조직도:",
+    firmReportSuffix: "(보고: {to})",
+    firmDelegateNote:
+      "(M0: 실제 부서장 호출은 V1. 지금은 CEO인 당신이 위임 계획을 응답으로 보여주세요.)",
+  },
+  en: {
+    thinking: "{agent} is thinking...",
+    sending: "Sending...",
+    callingBackend: "Calling {backend}...",
+    cliNoImage: "{backend} does not support image attachments — sending text only",
+    cliNoImageClaude:
+      "{backend} does not support image attachments — sending text only (switch to BYOK API for multimodal)",
+    errChatNotFound: "Chat not found.",
+    errAgentNotFound: "Agent was removed or could not be found.",
+    errNoRuntime:
+      "No LLM backend connected. Connect a Claude Code/Codex/Gemini CLI or an API key in Settings.",
+    errNoRunner: "Unsupported runtime combination: {kind}/{backend}",
+    errKeyMissingAnthropic: "Anthropic API key is not saved. Add it in Settings.",
+    errKeyMissingOpenAI: "OpenAI API key is not saved. Add it in Settings.",
+    errKeyMissingGoogle: "Google API key is not saved. Add it in Settings.",
+    errCliMissingClaude:
+      "claude CLI not found. Install with `npm i -g @anthropic-ai/claude-code` and try again.",
+    errCliMissingCodex: "codex CLI not found. Install with `npm i -g @openai/codex` and try again.",
+    errCliMissingGemini:
+      "gemini CLI not found. Install with `npm i -g @google/gemini-cli` and try again.",
+    sysGuide: "The user speaks English. Reply in English (or match the user's input language).",
+    sysHeader: "You are a specialist assistant installed by the user in Agentlas Desktop.",
+    sysToolsOff:
+      "You cannot invoke tools or execute code (MCP tool integration ships in the next version). For now, text-only replies.",
+    sysAgentDef: "── Agent definition ──",
+    histPrev: "── Previous turns ──",
+    histThis: "── Current request ──",
+    histPrevSection: "[Previous turns]",
+    histThisSection: "[Current request]",
+    speakerUser: "User",
+    speakerAssistant: "Assistant",
+    projectContext: "[Project context — {name}]",
+    firmContext: "[Firm context — {name}]",
+    firmCeoGuide:
+      "You are the CEO of this firm. Interpret the user's instructions in this chat as orders to the entire firm.",
+    firmOrgChart: "Current org chart:",
+    firmReportSuffix: "(reports to: {to})",
+    firmDelegateNote:
+      "(M0: actual department-head invocation ships in V1. For now, as CEO, lay out your delegation plan in the reply.)",
+  },
+} as const;
+
+export type StatusKey = keyof typeof DICT.ko;
+
+export function tStatus(locale: RuntimeLocale, key: StatusKey, args?: Args): string {
+  return fmt(DICT[locale][key], args);
+}
+
+export type { RuntimeLocale as Locale };

@@ -1,0 +1,666 @@
+// 메시지 스트림 렌더 — agent 메시지는 Markdown으로, 사용자 메시지는 plain.
+// 작업 중 메시지는 Codex/Claude 데스크톱처럼 step log + 경과 시간을 실시간으로 보여준다.
+"use client";
+import { useEffect, useRef, useState } from "react";
+import type { InstalledAgent } from "@/lib/types";
+import { AgentAvatar } from "./AgentAvatar";
+import { Markdown, type CodeArtifact } from "./Markdown";
+import { useT } from "@/lib/i18n";
+
+/** 작업 중 패널에 누적되는 단일 단계. 새 이벤트마다 push (replace 아님). */
+export interface StreamStep {
+  id: string;
+  /** thinking = 모델 사고, tool = 런타임/툴 호출 */
+  kind: "thinking" | "tool";
+  text: string;
+}
+
+/** 에이전트가 사용자에게 옵션을 묻는 질문. Markdown에서 fence를 파싱해 채워진다. */
+export interface ChatQuestion {
+  /** 메시지 내 고유 id — 같은 메시지에서 여러 개 가능하면 인덱스로 구분 */
+  id: string;
+  question: string;
+  /** 짧은 라벨 (UI 칩) — 선택 사항 */
+  header?: string;
+  /** 여러 옵션 동시 선택 허용 여부 */
+  multiSelect?: boolean;
+  options: Array<{ label: string; description?: string }>;
+  /** 사용자가 답한 옵션 라벨(들) — 한 번 답하면 잠금 */
+  answer?: string[];
+}
+
+export interface StreamMessage {
+  id: string;
+  role: "user" | "agent" | "system";
+  text: string;
+  /** 가장 최근 status — 단일 줄 fallback (steps와 병행 가능) */
+  status?: string;
+  /** 진행 중일 때 누적된 step log. final 도착 시 비워도 되고 남겨둬도 됨. */
+  steps?: StreamStep[];
+  /** 호출 시작 시각 ms — 경과 시간 표시 */
+  startedAt?: number;
+  /** 토큰 partial이 도착하기 시작했는지. true면 본문 끝에 깜빡이는 커서. */
+  streaming?: boolean;
+  /** 진행 중인지 — true면 워킹 패널 노출, false면 일반 메시지 */
+  busy?: boolean;
+  /** 첨부된 이미지 미리보기 URL — data:image/... base64 */
+  imageDataUrls?: string[];
+  /** 본문에서 fence로 추출된 질문들 — UI는 본문 텍스트 아래에 카드로 렌더 */
+  questions?: ChatQuestion[];
+}
+
+export function ChatStream({
+  messages,
+  agentName,
+  agentTone,
+  agentTagline,
+  firmName,
+  onOpenArtifact,
+  onAnswerQuestion,
+}: {
+  messages: StreamMessage[];
+  agentName: string;
+  agentTone: InstalledAgent["tone"];
+  agentTagline?: string;
+  firmName?: string;
+  onOpenArtifact?: (a: CodeArtifact) => void;
+  /** 사용자가 질문에 답함 — 부모가 user 메시지로 전송 */
+  onAnswerQuestion?: (messageId: string, questionId: string, answers: string[]) => void;
+}) {
+  const { t } = useT();
+  const scrollRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
+  }, [messages]);
+
+  return (
+    <div
+      ref={scrollRef}
+      style={{
+        flex: 1,
+        overflowY: "auto",
+        padding: "24px 32px",
+        display: "flex",
+        flexDirection: "column",
+        gap: 16,
+      }}
+    >
+      {messages.length === 0 && (
+        <div
+          style={{
+            margin: "auto",
+            maxWidth: 420,
+            textAlign: "center",
+            padding: 24,
+            display: "flex",
+            flexDirection: "column",
+            alignItems: "center",
+            gap: 12,
+          }}
+        >
+          <div
+            style={{
+              transform: "scale(1.6)",
+              marginBottom: 8,
+            }}
+          >
+            <AgentAvatar name={agentName} tone={agentTone} size={36} />
+          </div>
+          <div>
+            <h2
+              style={{
+                margin: 0,
+                fontFamily: "var(--font-head)",
+                fontSize: 18,
+                fontWeight: 700,
+                color: "var(--ink)",
+              }}
+            >
+              {t("chatstream.empty_title", { name: agentName })}
+            </h2>
+            {firmName && (
+              <div
+                style={{
+                  marginTop: 4,
+                  fontSize: 11,
+                  color: "var(--accent)",
+                  fontWeight: 700,
+                  fontFamily: "var(--font-mono)",
+                  letterSpacing: 0.6,
+                  textTransform: "uppercase",
+                }}
+              >
+                {t("chatstream.firm_mode", { name: firmName })}
+              </div>
+            )}
+            {agentTagline && (
+              <p
+                style={{
+                  margin: "8px 0 0",
+                  color: "var(--muted-deep)",
+                  fontSize: 13,
+                  lineHeight: 1.5,
+                }}
+              >
+                {agentTagline}
+              </p>
+            )}
+          </div>
+          <div
+            style={{
+              marginTop: 8,
+              padding: "8px 12px",
+              fontSize: 11,
+              color: "var(--muted-deep)",
+              background: "var(--paper-2)",
+              borderRadius: 8,
+            }}
+          >
+            {t("chatstream.empty_hint")}
+          </div>
+        </div>
+      )}
+      {messages.map((m) => (
+        <Bubble
+          key={m.id}
+          message={m}
+          agentName={agentName}
+          agentTone={agentTone}
+          onOpenArtifact={onOpenArtifact}
+          onAnswerQuestion={onAnswerQuestion}
+        />
+      ))}
+    </div>
+  );
+}
+
+function Bubble({
+  message,
+  agentName,
+  agentTone,
+  onOpenArtifact,
+  onAnswerQuestion,
+}: {
+  message: StreamMessage;
+  agentName: string;
+  agentTone: InstalledAgent["tone"];
+  onOpenArtifact?: (a: CodeArtifact) => void;
+  onAnswerQuestion?: (messageId: string, questionId: string, answers: string[]) => void;
+}) {
+  const { t } = useT();
+  if (message.role === "user") {
+    return (
+      <div style={{ alignSelf: "flex-end", maxWidth: "75%" }}>
+        {message.imageDataUrls && message.imageDataUrls.length > 0 && (
+          <div style={{ display: "flex", gap: 6, marginBottom: 6, flexWrap: "wrap", justifyContent: "flex-end" }}>
+            {message.imageDataUrls.map((url, i) => (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img
+                key={i}
+                src={url}
+                alt=""
+                style={{
+                  maxWidth: 220,
+                  maxHeight: 160,
+                  borderRadius: 10,
+                  border: "1px solid var(--paper-edge)",
+                  objectFit: "cover",
+                }}
+              />
+            ))}
+          </div>
+        )}
+        {message.text && (
+          <div
+            style={{
+              background: "var(--fill-2)",
+              color: "var(--ink)",
+              padding: "10px 14px",
+              borderRadius: "var(--radius-md)",
+              fontSize: 14,
+              whiteSpace: "pre-wrap",
+            }}
+          >
+            {message.text}
+          </div>
+        )}
+      </div>
+    );
+  }
+  if (message.role === "system") {
+    return (
+      <div
+        style={{
+          alignSelf: "stretch",
+          fontSize: 13,
+          color: "var(--red-deep)",
+          background: "rgba(255,138,138,0.10)",
+          padding: "10px 14px",
+          borderRadius: "var(--radius-md)",
+        }}
+      >
+        {message.text}
+      </div>
+    );
+  }
+  // agent — Markdown 렌더링. 작업 중이면 워킹 패널 + 스트리밍 커서.
+  const showWorking = message.busy || (message.steps && message.steps.length > 0 && !message.text);
+  return (
+    <div style={{ display: "flex", gap: 10, alignSelf: "flex-start", maxWidth: "85%" }}>
+      <div style={{ position: "relative", flexShrink: 0 }}>
+        <AgentAvatar name={agentName} tone={agentTone} size={28} />
+        {message.busy && <BusyHalo />}
+      </div>
+      <div style={{ minWidth: 0, flex: 1 }}>
+        {showWorking && (
+          <WorkingPanel
+            steps={message.steps ?? []}
+            fallback={message.status}
+            startedAt={message.startedAt}
+            done={!message.busy}
+          />
+        )}
+        {message.text && (
+          <div
+            style={{
+              background: "var(--paper-2)",
+              border: "1px solid var(--paper-edge)",
+              padding: "12px 16px",
+              borderRadius: "var(--radius-md)",
+              marginTop: showWorking ? 8 : 0,
+            }}
+          >
+            <Markdown
+              text={message.text}
+              messageId={message.id}
+              onOpenArtifact={onOpenArtifact}
+            />
+            {message.streaming && <BlinkingCursor />}
+          </div>
+        )}
+        {message.questions && message.questions.length > 0 && (
+          <div style={{ display: "flex", flexDirection: "column", gap: 10, marginTop: 10 }}>
+            {message.questions.map((q) => (
+              <QuestionBlock
+                key={q.id}
+                question={q}
+                disabled={message.busy === true}
+                onAnswer={(answers) => onAnswerQuestion?.(message.id, q.id, answers)}
+              />
+            ))}
+          </div>
+        )}
+        {message.text && !message.busy && (
+          <div style={{ display: "flex", gap: 8, marginTop: 6 }}>
+            <button
+              onClick={() => void navigator.clipboard.writeText(message.text)}
+              style={{
+                fontSize: 11,
+                color: "var(--muted-deep)",
+                padding: "2px 10px",
+                borderRadius: 999,
+                border: "1px solid var(--paper-edge)",
+              }}
+            >
+              {t("chatstream.copy")}
+            </button>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ── 질문 카드 ───────────────────────────────────────────
+// LLM이 본문 fence로 emit한 옵션 질문. 사용자가 답하면 부모가 user 메시지로 자동 전송.
+function QuestionBlock({
+  question,
+  disabled,
+  onAnswer,
+}: {
+  question: ChatQuestion;
+  disabled: boolean;
+  onAnswer: (answers: string[]) => void;
+}) {
+  const { t } = useT();
+  const [picked, setPicked] = useState<Set<string>>(new Set(question.answer ?? []));
+  const answered = !!question.answer && question.answer.length > 0;
+
+  function toggle(label: string) {
+    if (answered) return;
+    if (question.multiSelect) {
+      const next = new Set(picked);
+      if (next.has(label)) next.delete(label);
+      else next.add(label);
+      setPicked(next);
+    } else {
+      // 단일 선택 — 클릭 즉시 답변
+      onAnswer([label]);
+    }
+  }
+
+  function submit() {
+    if (answered || picked.size === 0) return;
+    onAnswer([...picked]);
+  }
+
+  return (
+    <div
+      style={{
+        border: "1px solid var(--paper-edge)",
+        borderRadius: "var(--radius-md)",
+        background: "var(--paper)",
+        padding: 12,
+        display: "flex",
+        flexDirection: "column",
+        gap: 8,
+      }}
+    >
+      <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+        {question.header && (
+          <span
+            style={{
+              fontSize: 10,
+              fontFamily: "var(--font-mono)",
+              textTransform: "uppercase",
+              letterSpacing: 0.6,
+              color: "var(--accent)",
+              background: "var(--fill-1)",
+              padding: "2px 8px",
+              borderRadius: 999,
+              fontWeight: 700,
+            }}
+          >
+            {question.header}
+          </span>
+        )}
+        <span style={{ fontSize: 13, fontWeight: 600, color: "var(--ink)" }}>
+          {question.question}
+        </span>
+      </div>
+      <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+        {question.options.map((opt) => {
+          const isPicked = picked.has(opt.label);
+          const isAnswered = answered && (question.answer ?? []).includes(opt.label);
+          const dim = answered && !isAnswered;
+          return (
+            <button
+              key={opt.label}
+              onClick={() => toggle(opt.label)}
+              disabled={answered || disabled}
+              style={{
+                display: "flex",
+                alignItems: "flex-start",
+                gap: 10,
+                textAlign: "left",
+                padding: "10px 12px",
+                borderRadius: 10,
+                border: isAnswered || isPicked
+                  ? "1px solid var(--accent)"
+                  : "1px solid var(--paper-edge)",
+                background: isAnswered || isPicked ? "var(--fill-1)" : "var(--paper-2)",
+                opacity: dim ? 0.45 : 1,
+                cursor: answered || disabled ? "default" : "pointer",
+              }}
+            >
+              <span
+                aria-hidden
+                style={{
+                  marginTop: 2,
+                  width: 14,
+                  height: 14,
+                  flexShrink: 0,
+                  borderRadius: question.multiSelect ? 4 : "50%",
+                  border: isAnswered || isPicked
+                    ? "4px solid var(--accent)"
+                    : "1.5px solid var(--paper-edge)",
+                  background: isAnswered || isPicked ? "var(--accent)" : "var(--paper)",
+                }}
+              />
+              <span style={{ flex: 1, minWidth: 0 }}>
+                <span
+                  style={{
+                    display: "block",
+                    fontSize: 12.5,
+                    fontWeight: 600,
+                    color: "var(--ink)",
+                  }}
+                >
+                  {opt.label}
+                </span>
+                {opt.description && (
+                  <span
+                    style={{
+                      display: "block",
+                      fontSize: 11.5,
+                      color: "var(--muted-deep)",
+                      lineHeight: 1.45,
+                      marginTop: 2,
+                    }}
+                  >
+                    {opt.description}
+                  </span>
+                )}
+              </span>
+            </button>
+          );
+        })}
+      </div>
+      {question.multiSelect && !answered && (
+        <button
+          onClick={submit}
+          disabled={picked.size === 0 || disabled}
+          style={{
+            alignSelf: "flex-end",
+            padding: "6px 14px",
+            borderRadius: 999,
+            background: picked.size === 0 ? "var(--paper-2)" : "var(--ink)",
+            color: picked.size === 0 ? "var(--muted-deep)" : "white",
+            fontSize: 12,
+            fontWeight: 600,
+            border: "none",
+            cursor: picked.size === 0 ? "default" : "pointer",
+          }}
+        >
+          {t("ask.submit")}
+        </button>
+      )}
+    </div>
+  );
+}
+
+// ── 워킹 패널 ──────────────────────────────────────────────
+// "12s 동안 작업 중입니다" + step log. Codex/Claude 데스크톱 톤.
+function WorkingPanel({
+  steps,
+  fallback,
+  startedAt,
+  done,
+}: {
+  steps: StreamStep[];
+  fallback?: string;
+  startedAt?: number;
+  done: boolean;
+}) {
+  const { t, locale } = useT();
+  const elapsed = useElapsedSeconds(startedAt, !done);
+  const rows: StreamStep[] = steps.length > 0 ? steps : fallback ? [{ id: "_f", kind: "thinking", text: fallback }] : [];
+
+  return (
+    <div
+      style={{
+        background: "var(--paper-2)",
+        border: "1px solid var(--paper-edge)",
+        borderRadius: "var(--radius-md)",
+        padding: "10px 14px",
+        display: "flex",
+        flexDirection: "column",
+        gap: 6,
+      }}
+    >
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 8,
+          fontSize: 12,
+          color: "var(--muted-deep)",
+          fontWeight: 500,
+        }}
+      >
+        {!done && <PulsingDot />}
+        <span>
+          {done
+            ? t("chatstream.took", { sec: formatElapsed(elapsed, locale) })
+            : t("chatstream.working_for", { sec: formatElapsed(elapsed, locale) })}
+        </span>
+      </div>
+      {rows.length > 0 && (
+        <div
+          style={{
+            display: "flex",
+            flexDirection: "column",
+            gap: 4,
+            paddingLeft: 14,
+            borderLeft: "1px solid var(--paper-edge)",
+            marginLeft: 3,
+            minWidth: 0,
+          }}
+        >
+          {rows.map((s, idx) => {
+            // 진행 중이면 마지막 줄을 가장 진하게, 이전 줄은 살짝 흐리게 — Codex 디자인 톤
+            const isCurrent = !done && idx === rows.length - 1;
+            const isPast = !done && idx < rows.length - 1;
+            return (
+              <div
+                key={s.id}
+                style={{
+                  fontSize: 12.5,
+                  color: isPast ? "var(--muted-deep)" : "var(--ink-soft)",
+                  opacity: isPast ? 0.75 : 1,
+                  fontWeight: isCurrent ? 500 : 400,
+                  lineHeight: 1.5,
+                  display: "flex",
+                  alignItems: "flex-start",
+                  gap: 8,
+                  minWidth: 0,
+                }}
+              >
+                <span
+                  aria-hidden
+                  style={{
+                    flexShrink: 0,
+                    width: 14,
+                    display: "inline-flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    color: isCurrent ? "var(--accent)" : "var(--muted-deep)",
+                    marginTop: 2,
+                  }}
+                >
+                  {s.kind === "thinking" ? <ThinkingGlyph /> : <ToolGlyph />}
+                </span>
+                <span
+                  style={{
+                    minWidth: 0,
+                    flex: 1,
+                    wordBreak: "break-word",
+                    overflowWrap: "anywhere",
+                  }}
+                >
+                  {s.text}
+                </span>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ThinkingGlyph() {
+  return (
+    <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <path d="M9 18h6M10 22h4M12 2a7 7 0 0 0-4 12.7V17h8v-2.3A7 7 0 0 0 12 2z" />
+    </svg>
+  );
+}
+
+function ToolGlyph() {
+  return (
+    <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <path d="M13 2 4 14h7l-1 8 9-12h-7l1-8z" />
+    </svg>
+  );
+}
+
+function PulsingDot() {
+  return (
+    <span
+      aria-hidden
+      style={{
+        width: 7,
+        height: 7,
+        borderRadius: "50%",
+        background: "var(--accent)",
+        animation: "agentlas-pulse 1.2s ease-in-out infinite",
+        flexShrink: 0,
+      }}
+    />
+  );
+}
+
+function BusyHalo() {
+  return (
+    <span
+      aria-hidden
+      style={{
+        position: "absolute",
+        inset: -3,
+        borderRadius: "50%",
+        border: "1.5px solid var(--accent)",
+        opacity: 0.5,
+        animation: "agentlas-halo 1.6s ease-in-out infinite",
+        pointerEvents: "none",
+      }}
+    />
+  );
+}
+
+function BlinkingCursor() {
+  return (
+    <span
+      aria-hidden
+      style={{
+        display: "inline-block",
+        width: 7,
+        height: 14,
+        marginLeft: 2,
+        verticalAlign: "text-bottom",
+        background: "var(--accent)",
+        animation: "agentlas-blink 1s steps(2) infinite",
+        borderRadius: 1,
+      }}
+    />
+  );
+}
+
+function useElapsedSeconds(startedAt: number | undefined, ticking: boolean): number {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (!ticking || !startedAt) return;
+    const id = setInterval(() => setNow(Date.now()), 250);
+    return () => clearInterval(id);
+  }, [ticking, startedAt]);
+  if (!startedAt) return 0;
+  return Math.max(0, Math.floor((now - startedAt) / 1000));
+}
+
+function formatElapsed(sec: number, locale: "ko" | "en"): string {
+  if (sec < 60) return locale === "ko" ? `${sec}초` : `${sec}s`;
+  const m = Math.floor(sec / 60);
+  const s = sec % 60;
+  return locale === "ko" ? `${m}분 ${s}초` : `${m}m ${s}s`;
+}

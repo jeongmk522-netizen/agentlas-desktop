@@ -1,0 +1,168 @@
+// Electron 진입점.
+// dev:  ELECTRON_START_URL = http://localhost:3100 (Next.js dev server)
+// prod: file://dist/renderer/index.html (next export 결과)
+//
+// 보안 원칙 — PRD 6.2:
+// - contextIsolation: true
+// - nodeIntegration: false
+// - sandbox: true (renderer는 sandboxed)
+// - 모든 Node API는 preload → ipc 경로로만 노출
+import { app, BrowserWindow, Menu, nativeImage, net, protocol, shell } from "electron";
+import fs from "node:fs";
+import path from "node:path";
+import { pathToFileURL } from "node:url";
+import { registerIpcHandlers } from "./ipc";
+import { buildAppMenu } from "./menu";
+import { initStore } from "./store/db";
+import { initAutoUpdater } from "./updater";
+import { bootAuthFromKeychain } from "./auth";
+
+const isDev = process.env.NODE_ENV === "development";
+
+protocol.registerSchemesAsPrivileged([
+  {
+    scheme: "agentlas",
+    privileges: {
+      standard: true,
+      secure: true,
+      supportFetchAPI: true,
+      corsEnabled: true,
+    },
+  },
+]);
+
+// macOS dock 표시 이름 — productName이 "Agentlas"인 production 빌드와 일치시킴
+app.setName("Agentlas");
+
+const qaUserDataDir = process.env.AGENTLAS_QA_USER_DATA_DIR?.trim();
+if (qaUserDataDir) {
+  fs.mkdirSync(qaUserDataDir, { recursive: true });
+  app.setPath("userData", qaUserDataDir);
+}
+
+/**
+ * macOS dock 아이콘 — dev에서는 Electron 기본(원자 모양) 대신 우리 paw squircle.
+ * production 빌드는 electron-builder가 .icns로 bundling하므로 이 경로는 dev 전용.
+ * (whenReady 이후에 setIcon 호출 — 그 전에는 dock 핸들이 unstable)
+ */
+function applyDockIcon(): void {
+  if (process.platform !== "darwin" || !app.dock) return;
+  // dist/electron/main.js → ../../build-resources/icon-1024.png
+  const iconPath = path.join(__dirname, "../../build-resources/icon-1024.png");
+  try {
+    const img = nativeImage.createFromPath(iconPath);
+    if (img.isEmpty()) {
+      // 파일이 없거나 손상된 경우 — empty image면 nativeImage가 throw 안 함
+      console.warn(`[dock] icon not found or empty at ${iconPath} — using Electron default`);
+      return;
+    }
+    app.dock.setIcon(img);
+    const size = img.getSize();
+    console.log(`[dock] icon set ${size.width}x${size.height} from ${iconPath}`);
+  } catch (err) {
+    console.warn(`[dock] failed to set icon from ${iconPath}:`, err);
+  }
+}
+
+let mainWindow: BrowserWindow | null = null;
+
+function resolveRendererFile(url: string): string {
+  const rendererRoot = path.resolve(__dirname, "../renderer");
+  const parsed = new URL(url);
+  const pathname = decodeURIComponent(parsed.pathname || "/");
+  let routePath = pathname === "/" ? "index.html" : pathname.replace(/^\/+/, "");
+  const segments = routePath.split("/");
+  const staticAssetIndex = segments.findIndex((segment) => segment === "_next" || segment === "brand");
+  if (staticAssetIndex > 0) {
+    routePath = segments.slice(staticAssetIndex).join("/");
+  }
+
+  const direct = path.resolve(rendererRoot, routePath);
+  const candidates = [
+    direct,
+    path.extname(direct) ? direct : `${direct}.html`,
+    path.extname(direct) ? direct : path.join(direct, "index.html"),
+  ];
+
+  const resolved = candidates.find((candidate) => {
+    const relative = path.relative(rendererRoot, candidate);
+    return (
+      Boolean(relative) &&
+      !relative.startsWith("..") &&
+      !path.isAbsolute(relative) &&
+      fs.existsSync(candidate) &&
+      fs.statSync(candidate).isFile()
+    );
+  });
+
+  if (resolved) return resolved;
+  return path.join(rendererRoot, "404.html");
+}
+
+function registerRendererProtocol(): void {
+  protocol.handle("agentlas", (request) => {
+    const filePath = resolveRendererFile(request.url);
+    return net.fetch(pathToFileURL(filePath).toString());
+  });
+}
+
+async function createWindow(): Promise<void> {
+  mainWindow = new BrowserWindow({
+    width: 1240,
+    height: 820,
+    minWidth: 960,
+    minHeight: 640,
+    title: "Agentlas",
+    titleBarStyle: "hiddenInset", // macOS first — 윈도우 컨트롤은 좌상단에 흡수
+    backgroundColor: "#ffffff",
+    show: false,
+    webPreferences: {
+      preload: path.join(__dirname, "preload.js"),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+      // Renderer가 외부 https만 띄울 수 있게
+      webSecurity: true,
+    },
+  });
+
+  mainWindow.once("ready-to-show", () => mainWindow?.show());
+
+  // 외부 링크는 기본 브라우저로 — 데스크톱 안에서 임의 URL 열지 않는다 (PRD 6.2)
+  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+    if (url.startsWith("http://") || url.startsWith("https://")) {
+      shell.openExternal(url);
+    }
+    return { action: "deny" };
+  });
+
+  const startUrl = process.env.ELECTRON_START_URL;
+  if (isDev && startUrl) {
+    await mainWindow.loadURL(startUrl);
+    mainWindow.webContents.openDevTools({ mode: "detach" });
+  } else {
+    await mainWindow.loadURL("agentlas://app/index.html");
+  }
+}
+
+app.on("window-all-closed", () => {
+  // macOS first — 마지막 윈도우가 닫혀도 dock에 남아있는 게 표준
+  if (process.platform !== "darwin") app.quit();
+});
+
+app.on("activate", () => {
+  if (BrowserWindow.getAllWindows().length === 0) void createWindow();
+});
+
+app.whenReady().then(async () => {
+  registerRendererProtocol();
+  applyDockIcon();
+  initStore();
+  // 키체인에서 저장된 세션 복원 — 메인 윈도우가 뜨자마자 getSession()이 정상 값을 반환하도록 await
+  await bootAuthFromKeychain();
+  registerIpcHandlers();
+  await createWindow();
+  Menu.setApplicationMenu(buildAppMenu(() => mainWindow));
+  // 자동 업데이트는 production에서만. updater.ts 안에서 NODE_ENV 체크.
+  initAutoUpdater();
+});

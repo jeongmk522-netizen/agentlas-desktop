@@ -1,0 +1,656 @@
+// 첫 실행 4단계 마법사 — 셸 없는 풀스크린.
+// 1) 환영        — Agentlas 소개, BYOC 메시지
+// 2) 백엔드 연결  — 감지된 CLI 표시 + BYOK 키 입력
+// 3) 메뉴 투어    — 사이드바 5섹션 다이어그램 + 짧은 설명
+// 4) 시작        — 마켓플레이스로 이동해 첫 에이전트 설치
+"use client";
+import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
+import { ipc } from "@/lib/ipc";
+import type { RuntimeBackend, RuntimeStatus } from "@/lib/types";
+import { PawLogo } from "@/components/PawLogo";
+import {
+  IconBolt,
+  IconBrain,
+  IconBuilding,
+  IconChat,
+  IconCheck,
+  IconChevronRight,
+  IconFolder,
+  IconLayers,
+  IconLibrary,
+  IconSettings,
+  IconSparkles,
+} from "@/components/Icon";
+import { useT } from "@/lib/i18n";
+
+type Step = 1 | 2 | 3 | 4;
+
+const ONBOARDED_KEY = "agentlas.onboarded";
+
+export default function OnboardingPage() {
+  const router = useRouter();
+  const { t } = useT();
+  const [step, setStep] = useState<Step>(1);
+
+  function next() {
+    if (step < 4) setStep((s) => (s + 1) as Step);
+    else finish();
+  }
+  function back() {
+    if (step > 1) setStep((s) => (s - 1) as Step);
+  }
+  function finish() {
+    try {
+      window.localStorage.setItem(ONBOARDED_KEY, "1");
+    } catch {
+      // ignore
+    }
+    router.replace("/marketplace");
+  }
+
+  return (
+    <main
+      style={{
+        minHeight: "100vh",
+        display: "flex",
+        flexDirection: "column",
+        background: "var(--paper)",
+        overflowY: "auto",
+      }}
+    >
+      <div
+        className="titlebar-drag"
+        style={{
+          position: "absolute",
+          top: 0,
+          left: 0,
+          right: 0,
+          height: 44,
+        }}
+      />
+
+      {/* Progress bar */}
+      <div
+        className="titlebar-nodrag"
+        style={{
+          marginTop: 56,
+          padding: "0 32px",
+          display: "flex",
+          alignItems: "center",
+          gap: 8,
+          maxWidth: 720,
+          margin: "56px auto 0",
+          width: "100%",
+        }}
+      >
+        {[1, 2, 3, 4].map((s) => (
+          <div
+            key={s}
+            style={{
+              flex: 1,
+              height: 4,
+              borderRadius: 999,
+              background: s <= step ? "var(--accent)" : "var(--paper-edge)",
+              transition: "background 0.2s",
+            }}
+          />
+        ))}
+      </div>
+
+      <section
+        className="titlebar-nodrag"
+        style={{
+          flex: 1,
+          maxWidth: 720,
+          margin: "0 auto",
+          padding: "32px 32px 24px",
+          width: "100%",
+          display: "flex",
+          flexDirection: "column",
+          justifyContent: "center",
+        }}
+      >
+        {step === 1 && <StepWelcome />}
+        {step === 2 && <StepBackend />}
+        {step === 3 && <StepTour />}
+        {step === 4 && <StepDone />}
+      </section>
+
+      <footer
+        className="titlebar-nodrag"
+        style={{
+          maxWidth: 720,
+          margin: "0 auto",
+          width: "100%",
+          padding: "16px 32px 40px",
+          display: "flex",
+          alignItems: "center",
+          gap: 10,
+        }}
+      >
+        <button
+          onClick={back}
+          disabled={step === 1}
+          style={{
+            padding: "10px 20px",
+            borderRadius: 999,
+            background: "transparent",
+            color: step === 1 ? "var(--muted)" : "var(--ink-soft)",
+            fontWeight: 600,
+            fontSize: 13,
+            border: "1px solid var(--paper-edge)",
+            cursor: step === 1 ? "default" : "pointer",
+          }}
+        >
+          {t("onb.step.prev")}
+        </button>
+        <button
+          onClick={finish}
+          style={{
+            fontSize: 12,
+            color: "var(--muted-deep)",
+            background: "transparent",
+            border: "none",
+          }}
+        >
+          {t("onb.step.skip")}
+        </button>
+        <div style={{ flex: 1 }} />
+        <span style={{ fontSize: 11, color: "var(--muted)" }}>
+          {step} / 4
+        </span>
+        <button
+          onClick={next}
+          style={{
+            padding: "10px 24px",
+            borderRadius: 999,
+            background: "var(--accent)",
+            color: "white",
+            fontWeight: 600,
+            fontSize: 13,
+            border: "none",
+            display: "inline-flex",
+            alignItems: "center",
+            gap: 6,
+            boxShadow: "var(--shadow-2)",
+          }}
+        >
+          {step === 4 ? t("onb.step.start") : t("onb.step.next")}
+          <IconChevronRight size={14} />
+        </button>
+      </footer>
+    </main>
+  );
+}
+
+// ── Step 1: 환영 + 핵심 포지셔닝 3가지 ─────────────────────
+function StepWelcome() {
+  const { t } = useT();
+  return (
+    <div style={{ textAlign: "center" }}>
+      <PawLogo size={96} style={{ margin: "0 auto 24px" }} />
+      <h1
+        style={{
+          margin: 0,
+          fontFamily: "var(--font-head)",
+          fontSize: 36,
+          fontWeight: 700,
+          letterSpacing: -0.5,
+        }}
+      >
+        {t("onb.welcome.title")}
+      </h1>
+      <p
+        style={{
+          marginTop: 12,
+          color: "var(--ink-soft)",
+          fontSize: 16,
+          lineHeight: 1.6,
+          whiteSpace: "pre-line",
+        }}
+      >
+        {t("onb.welcome.tagline")}
+      </p>
+      <div
+        style={{
+          marginTop: 32,
+          display: "grid",
+          gridTemplateColumns: "repeat(3, 1fr)",
+          gap: 12,
+          textAlign: "left",
+        }}
+      >
+        <Highlight
+          icon={<IconLayers size={18} />}
+          title={t("pitch.threeInOne.title")}
+          desc={t("pitch.threeInOne.desc")}
+        />
+        <Highlight
+          icon={<IconBrain size={18} />}
+          title={t("pitch.hermes.title")}
+          desc={t("pitch.hermes.desc")}
+        />
+        <Highlight
+          icon={<IconBuilding size={18} />}
+          title={t("pitch.firm.title")}
+          desc={t("pitch.firm.desc")}
+        />
+      </div>
+      <p
+        style={{
+          marginTop: 20,
+          fontSize: 11,
+          color: "var(--muted-deep)",
+        }}
+      >
+        {t("pitch.opensource")}
+      </p>
+    </div>
+  );
+}
+
+function Highlight({
+  icon,
+  title,
+  desc,
+}: {
+  icon: React.ReactNode;
+  title: string;
+  desc: string;
+}) {
+  return (
+    <div
+      className="glass-strong"
+      style={{
+        padding: 16,
+        borderRadius: "var(--radius-md)",
+      }}
+    >
+      <span
+        style={{
+          display: "inline-flex",
+          width: 32,
+          height: 32,
+          borderRadius: 8,
+          background: "var(--fill-1)",
+          color: "var(--accent)",
+          alignItems: "center",
+          justifyContent: "center",
+          marginBottom: 8,
+        }}
+      >
+        {icon}
+      </span>
+      <div style={{ fontWeight: 700, fontSize: 13 }}>{title}</div>
+      <div style={{ fontSize: 12, color: "var(--muted-deep)", marginTop: 2 }}>
+        {desc}
+      </div>
+    </div>
+  );
+}
+
+// ── Step 2: 백엔드 연결 ────────────────────────────────────
+function StepBackend() {
+  const [statuses, setStatuses] = useState<RuntimeStatus[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [draft, setDraft] = useState<Record<RuntimeBackend, string>>({
+    anthropic: "",
+    openai: "",
+    google: "",
+  });
+  const [savedKey, setSavedKey] = useState<Record<RuntimeBackend, boolean>>({
+    anthropic: false,
+    openai: false,
+    google: false,
+  });
+  const [saving, setSaving] = useState<RuntimeBackend | null>(null);
+
+  async function refresh() {
+    const api = ipc();
+    if (!api) {
+      setLoading(false);
+      return;
+    }
+    const [s, a, o, g] = await Promise.all([
+      api.runtime.detect(),
+      api.secrets.hasApiKey("anthropic"),
+      api.secrets.hasApiKey("openai"),
+      api.secrets.hasApiKey("google"),
+    ]);
+    setStatuses(s);
+    setSavedKey({ anthropic: a, openai: o, google: g });
+    setLoading(false);
+  }
+  useEffect(() => {
+    void refresh();
+  }, []);
+
+  async function saveKey(backend: RuntimeBackend) {
+    const api = ipc();
+    if (!api || !draft[backend].trim()) return;
+    setSaving(backend);
+    try {
+      await api.secrets.saveApiKey(backend, draft[backend]);
+      setDraft((d) => ({ ...d, [backend]: "" }));
+      await refresh();
+    } finally {
+      setSaving(null);
+    }
+  }
+
+  const hasAnyBackend =
+    statuses.length > 0 || savedKey.anthropic || savedKey.openai || savedKey.google;
+
+  return (
+    <div>
+      <h2
+        style={{
+          margin: 0,
+          fontFamily: "var(--font-head)",
+          fontSize: 26,
+          fontWeight: 700,
+        }}
+      >
+        백엔드 연결
+      </h2>
+      <p style={{ color: "var(--muted-deep)", fontSize: 14, lineHeight: 1.6, marginTop: 8 }}>
+        Agentlas는 LLM을 호스팅하지 않습니다. <strong>당신의 머신에서 당신의 구독/키로</strong> 직접 호출합니다.
+      </p>
+
+      {loading ? (
+        <div style={{ marginTop: 24, color: "var(--muted-deep)" }}>감지 중…</div>
+      ) : (
+        <>
+          {/* 감지된 CLI */}
+          <h3
+            style={{
+              marginTop: 24,
+              fontSize: 12,
+              fontFamily: "var(--font-mono)",
+              textTransform: "uppercase",
+              letterSpacing: 0.6,
+              color: "var(--muted-deep)",
+            }}
+          >
+            감지된 CLI {statuses.filter((s) => s.kind !== "byok").length > 0 && "✓"}
+          </h3>
+          {statuses.filter((s) => s.kind !== "byok").length === 0 ? (
+            <div
+              style={{
+                padding: 14,
+                background: "var(--paper-2)",
+                border: "1px dashed var(--paper-edge)",
+                borderRadius: "var(--radius-md)",
+                fontSize: 13,
+                color: "var(--muted-deep)",
+                marginTop: 8,
+              }}
+            >
+              로컬에 Claude Code / Codex / Gemini CLI가 설치되어 있지 않습니다.
+              <br />
+              CLI 없이도 아래에서 API 키로 연결할 수 있어요.
+            </div>
+          ) : (
+            <ul
+              style={{
+                listStyle: "none",
+                padding: 0,
+                margin: "8px 0 0",
+                display: "flex",
+                flexDirection: "column",
+                gap: 8,
+              }}
+            >
+              {statuses
+                .filter((s) => s.kind !== "byok")
+                .map((s) => (
+                  <li
+                    key={s.source}
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 10,
+                      padding: "10px 14px",
+                      background: "var(--paper)",
+                      border: "1px solid var(--paper-edge)",
+                      borderRadius: "var(--radius-md)",
+                    }}
+                  >
+                    <span
+                      style={{
+                        width: 24,
+                        height: 24,
+                        borderRadius: 6,
+                        background: "var(--fill-1)",
+                        color: "var(--green-deep)",
+                        display: "inline-flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                      }}
+                    >
+                      <IconCheck size={14} />
+                    </span>
+                    <div style={{ flex: 1 }}>
+                      <div style={{ fontWeight: 600, fontSize: 13 }}>
+                        {labelOf(s.kind)} · {backendLabel(s.backend)}
+                      </div>
+                      <div style={{ fontSize: 11, color: "var(--muted-deep)" }}>
+                        {s.source}
+                        {s.version && ` · v${s.version}`}
+                      </div>
+                    </div>
+                  </li>
+                ))}
+            </ul>
+          )}
+
+          {/* BYOK */}
+          <h3
+            style={{
+              marginTop: 28,
+              fontSize: 12,
+              fontFamily: "var(--font-mono)",
+              textTransform: "uppercase",
+              letterSpacing: 0.6,
+              color: "var(--muted-deep)",
+            }}
+          >
+            또는 API 키 (BYOK)
+          </h3>
+          {(["anthropic", "openai", "google"] as RuntimeBackend[]).map((b) => (
+            <div
+              key={b}
+              style={{
+                padding: 12,
+                marginTop: 8,
+                background: "var(--paper)",
+                border: "1px solid var(--paper-edge)",
+                borderRadius: "var(--radius-md)",
+                display: "flex",
+                alignItems: "center",
+                gap: 8,
+              }}
+            >
+              <strong style={{ fontSize: 12, minWidth: 90 }}>{backendLabel(b)}</strong>
+              <input
+                type="password"
+                value={draft[b]}
+                onChange={(e) => setDraft((d) => ({ ...d, [b]: e.target.value }))}
+                placeholder={savedKey[b] ? "✓ 저장됨" : "sk-..."}
+                style={{
+                  flex: 1,
+                  padding: "6px 10px",
+                  fontSize: 12,
+                  fontFamily: "var(--font-mono)",
+                  border: "1px solid var(--paper-edge)",
+                  borderRadius: "var(--radius-md)",
+                  background: "var(--paper-2)",
+                  outline: "none",
+                }}
+              />
+              <button
+                onClick={() => void saveKey(b)}
+                disabled={!draft[b].trim() || saving === b}
+                style={{
+                  padding: "6px 12px",
+                  fontSize: 12,
+                  fontWeight: 600,
+                  borderRadius: "var(--radius-md)",
+                  background: draft[b].trim() ? "var(--accent)" : "var(--paper-2)",
+                  color: draft[b].trim() ? "white" : "var(--muted-deep)",
+                  border: "none",
+                }}
+              >
+                저장
+              </button>
+            </div>
+          ))}
+
+          <p
+            style={{
+              marginTop: 16,
+              fontSize: 11,
+              color: hasAnyBackend ? "var(--green-deep)" : "var(--muted-deep)",
+              fontWeight: hasAnyBackend ? 600 : 400,
+            }}
+          >
+            {hasAnyBackend
+              ? "연결 준비 완료. 다음 단계로 진행하세요."
+              : "CLI 1개 또는 API 키 1개만 있으면 시작할 수 있습니다."}
+          </p>
+        </>
+      )}
+    </div>
+  );
+}
+
+function labelOf(kind: string) {
+  return { "claude-code": "Claude Code", codex: "Codex", gemini: "Gemini", byok: "API" }[
+    kind as "claude-code" | "codex" | "gemini" | "byok"
+  ];
+}
+function backendLabel(b: RuntimeBackend) {
+  return { anthropic: "Anthropic (Claude)", openai: "OpenAI", google: "Google" }[b];
+}
+
+// ── Step 3: 메뉴 투어 ─────────────────────────────────────
+function StepTour() {
+  const items = [
+    {
+      icon: <IconChat size={18} />,
+      title: "채팅",
+      desc: "어시스턴트와 일대일 대화. 메시지는 로컬 SQLite에만 저장돼요.",
+    },
+    {
+      icon: <IconFolder size={18} />,
+      title: "프로젝트",
+      desc: "관련 채팅을 묶고 공통 컨텍스트 노트를 자동으로 적용합니다.",
+    },
+    {
+      icon: <IconBolt size={18} />,
+      title: "자동화",
+      desc: "정기 실행되는 에이전트 작업 (V1에 풀 가동, 지금은 UI 미리보기).",
+    },
+    {
+      icon: <IconLibrary size={18} />,
+      title: "라이브러리",
+      desc: "설치된 에이전트·스킬·MCP를 한 곳에서 관리합니다.",
+    },
+    {
+      icon: <IconSettings size={18} />,
+      title: "설정",
+      desc: "백엔드 연결, API 키 추가/변경. 좌측 하단 톱니바퀴 또는 ⌘,",
+    },
+    {
+      icon: <IconSparkles size={18} />,
+      title: "단축키",
+      desc: "⌘↵ 메시지 보내기 · ⌘[ 사이드바 접기 · ⌘N 새 채팅 (예정)",
+    },
+  ];
+  return (
+    <div>
+      <h2 style={{ margin: 0, fontFamily: "var(--font-head)", fontSize: 26, fontWeight: 700 }}>
+        메뉴 안내
+      </h2>
+      <p style={{ color: "var(--muted-deep)", fontSize: 14, marginTop: 8 }}>
+        왼쪽 사이드바에 있는 항목들이에요. ⌘[로 접고 펼 수 있습니다.
+      </p>
+      <div
+        style={{
+          marginTop: 20,
+          display: "grid",
+          gridTemplateColumns: "repeat(2, 1fr)",
+          gap: 10,
+        }}
+      >
+        {items.map((it) => (
+          <div
+            key={it.title}
+            style={{
+              padding: 14,
+              border: "1px solid var(--paper-edge)",
+              borderRadius: "var(--radius-md)",
+              background: "var(--paper)",
+              display: "flex",
+              gap: 12,
+            }}
+          >
+            <span
+              style={{
+                width: 32,
+                height: 32,
+                borderRadius: 8,
+                background: "var(--fill-1)",
+                color: "var(--accent)",
+                display: "inline-flex",
+                alignItems: "center",
+                justifyContent: "center",
+                flexShrink: 0,
+              }}
+            >
+              {it.icon}
+            </span>
+            <div>
+              <div style={{ fontWeight: 700, fontSize: 13 }}>{it.title}</div>
+              <div style={{ fontSize: 12, color: "var(--muted-deep)", marginTop: 2, lineHeight: 1.5 }}>
+                {it.desc}
+              </div>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ── Step 4: 시작 ──────────────────────────────────────────
+function StepDone() {
+  return (
+    <div style={{ textAlign: "center" }}>
+      <div
+        style={{
+          width: 80,
+          height: 80,
+          borderRadius: "50%",
+          background: "var(--fill-1)",
+          color: "var(--accent)",
+          display: "inline-flex",
+          alignItems: "center",
+          justifyContent: "center",
+          margin: "0 auto 24px",
+        }}
+      >
+        <IconCheck size={36} />
+      </div>
+      <h2 style={{ margin: 0, fontFamily: "var(--font-head)", fontSize: 28, fontWeight: 700 }}>
+        준비 완료
+      </h2>
+      <p style={{ color: "var(--ink-soft)", fontSize: 15, lineHeight: 1.6, marginTop: 12 }}>
+        다음 화면에서 어시스턴트 팀을 골라 설치하세요.
+        <br />
+        <strong>쇼핑몰 사장</strong>, <strong>1인 마케터</strong>, <strong>크리에이터</strong> 페르소나별 추천이 준비돼 있어요.
+      </p>
+    </div>
+  );
+}

@@ -1,0 +1,113 @@
+// Firm CRUD — 설치된 회사 레지스트리. 다국어(name_en, tagline_en) 지원.
+import { randomUUID } from "node:crypto";
+import { getDb } from "./db";
+import { installAgent, getAgentById } from "../mcp/registry";
+import { getSource as getMarketSource } from "../marketplace";
+import type { FirmOrgNode, InstalledFirm } from "../../shared/types";
+
+interface FirmRow {
+  id: string;
+  slug: string;
+  name: string;
+  name_en: string;
+  tagline: string;
+  tagline_en: string;
+  persona: string;
+  ceo_agent_id: string;
+  org_chart_json: string;
+  installed_at: string;
+}
+
+function toFirm(row: FirmRow): InstalledFirm {
+  return {
+    id: row.id,
+    slug: row.slug,
+    name: row.name,
+    nameEn: row.name_en || row.name,
+    tagline: row.tagline,
+    taglineEn: row.tagline_en || row.tagline,
+    persona: row.persona,
+    ceoAgentId: row.ceo_agent_id,
+    orgChart: JSON.parse(row.org_chart_json) as Array<FirmOrgNode & { agentId: string }>,
+    installedAt: row.installed_at,
+  };
+}
+
+export function listFirms(): InstalledFirm[] {
+  const rows = getDb()
+    .prepare("SELECT * FROM firms ORDER BY installed_at DESC")
+    .all() as FirmRow[];
+  return rows.map(toFirm);
+}
+
+export function getFirm(id: string): InstalledFirm | null {
+  const row = getDb()
+    .prepare("SELECT * FROM firms WHERE id = ?")
+    .get(id) as FirmRow | undefined;
+  return row ? toFirm(row) : null;
+}
+
+export function getFirmBySlug(slug: string): InstalledFirm | null {
+  const row = getDb()
+    .prepare("SELECT * FROM firms WHERE slug = ?")
+    .get(slug) as FirmRow | undefined;
+  return row ? toFirm(row) : null;
+}
+
+export async function installFirm(slug: string): Promise<InstalledFirm> {
+  const seed = await getMarketSource().getFirmBySlug(slug);
+  if (!seed) throw new Error(`Unknown firm slug: ${slug}`);
+
+  const existing = getFirmBySlug(slug);
+  if (existing) return existing;
+
+  const slugToAgentId: Record<string, string> = {};
+  for (const agentSlug of seed.agentSlugs) {
+    const agent = await installAgent(agentSlug);
+    slugToAgentId[agentSlug] = agent.id;
+  }
+
+  const resolvedChart: Array<FirmOrgNode & { agentId: string }> = seed.orgChart.map(
+    (node) => {
+      const agentId = slugToAgentId[node.agentSlug];
+      if (!agentId)
+        throw new Error(`Firm ${slug}의 orgChart에서 slug ${node.agentSlug}가 의존 목록에 없습니다`);
+      return { ...node, agentId };
+    },
+  );
+
+  const ceoAgentId = slugToAgentId[seed.ceoSlug];
+  if (!ceoAgentId)
+    throw new Error(`Firm ${slug}의 CEO slug ${seed.ceoSlug}가 의존 목록에 없습니다`);
+
+  const id = randomUUID();
+  const installedAt = new Date().toISOString();
+  getDb()
+    .prepare(
+      `INSERT INTO firms (id, slug, name, name_en, tagline, tagline_en, persona,
+                          ceo_agent_id, org_chart_json, installed_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    )
+    .run(
+      id,
+      slug,
+      seed.name,
+      seed.nameEn,
+      seed.tagline,
+      seed.taglineEn,
+      seed.persona,
+      ceoAgentId,
+      JSON.stringify(resolvedChart),
+      installedAt,
+    );
+
+  if (!getAgentById(ceoAgentId)) {
+    throw new Error("CEO 에이전트 설치 후 조회 실패 (registry inconsistency)");
+  }
+
+  return getFirm(id) as InstalledFirm;
+}
+
+export function uninstallFirm(id: string): void {
+  getDb().prepare("DELETE FROM firms WHERE id = ?").run(id);
+}

@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <!-- Minimum entitlements — PRD 6.2 보안 모델: entitlement 최소화 원칙 -->
+  <key>com.apple.security.cs.allow-jit</key>
+  <true/>
+  <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+  <true/>
+  <!-- MCP 서버 실행 (자식 프로세스) 위해 필요 -->
+  <key>com.apple.security.cs.disable-library-validation</key>
+  <true/>
+  <!-- macOS Keychain 액세스 (API 키 저장) -->
+  <key>com.apple.security.keychain</key>
+  <true/>
+  <!-- 네트워크 클라이언트 (Anthropic/OpenAI/Google API + Agentlas 마켓 메타) -->
+  <key>com.apple.security.network.client</key>
+  <true/>
+  <!-- 파일 액세스 — 사용자가 명시 승인한 폴더만 -->
+  <key>com.apple.security.files.user-selected.read-write</key>
+  <true/>
+</dict>
+</plist>

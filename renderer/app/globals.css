@@ -1,0 +1,210 @@
+/* 웹 포털 paper tokens 기반 + Apple 글래스모피즘 레이어 */
+:root {
+  /* ── Color (paper/tokens.ts) ───────────────────────────── */
+  --ink: #0b0b0f;
+  --ink-soft: #3f3f46;
+  --paper: #ffffff;
+  --paper-2: #f7f7fa;
+  --paper-edge: #e8e8ec;
+  --muted: #a1a1aa;
+  --muted-deep: #71717a;
+
+  --accent: #5a56dc;
+  --accent-soft: rgba(90, 86, 220, 0.12);
+  --accent-strong: #4a45c8;
+  --fill-1: rgba(90, 86, 220, 0.06);
+  --fill-2: rgba(90, 86, 220, 0.12);
+
+  --peach: #ff7a55;
+  --peach-soft: #ffd6c6;
+  --peach-ink: #c24a28;
+
+  --blue: #8a86e8;
+  --blue-deep: #5a56dc;
+  --green: #a8d99b;
+  --green-deep: #56a14a;
+  --purple: #c9a8ff;
+  --purple-deep: #7b4ed1;
+  --amber: #f5c97a;
+  --amber-deep: #c98c1a;
+  --red: #ff8a8a;
+  --red-deep: #c93a3a;
+
+  /* ── Glass (Apple-style frosted surfaces) ──────────────── */
+  --glass-bg: rgba(255, 255, 255, 0.66);
+  --glass-bg-strong: rgba(255, 255, 255, 0.84);
+  --glass-bg-thin: rgba(255, 255, 255, 0.5);
+  --glass-border: rgba(11, 11, 15, 0.07);
+  --glass-border-strong: rgba(11, 11, 15, 0.12);
+  --glass-blur: saturate(180%) blur(20px);
+  --glass-blur-strong: saturate(180%) blur(30px);
+  --glass-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.6) inset,
+    0 1px 2px rgba(11, 11, 15, 0.04),
+    0 12px 32px -8px rgba(11, 11, 15, 0.08);
+  --glass-shadow-lift:
+    0 1px 0 rgba(255, 255, 255, 0.7) inset,
+    0 2px 6px rgba(11, 11, 15, 0.06),
+    0 22px 50px -12px rgba(11, 11, 15, 0.16);
+
+  /* ── Type ──────────────────────────────────────────────── */
+  --font-body:
+    -apple-system, BlinkMacSystemFont, "SF Pro Text", "Inter",
+    "Pretendard Variable", "Pretendard", "Noto Sans KR", "Segoe UI",
+    system-ui, sans-serif;
+  --font-head:
+    "SF Pro Display", -apple-system, BlinkMacSystemFont, "Inter Tight",
+    "Pretendard Variable", "Pretendard", "Inter", system-ui, sans-serif;
+  --font-mono: "SF Mono", "JetBrains Mono", ui-monospace, monospace;
+
+  /* ── Surface ───────────────────────────────────────────── */
+  --radius-xs: 4px;
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 16px;
+  --radius-xl: 22px;
+  --shadow-1: 0 1px 0 rgba(11, 11, 15, 0.04), 0 1px 2px rgba(11, 11, 15, 0.04);
+  --shadow-2: 0 2px 8px rgba(11, 11, 15, 0.06);
+  --hairline: 1px solid var(--paper-edge);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  color: var(--ink);
+  font-family: var(--font-body);
+  font-size: 14px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  letter-spacing: -0.01em;
+}
+
+/* 앱 전체 배경 — 부드러운 indigo/peach radial로 글래스 위에 색감 비춤 */
+body {
+  background:
+    radial-gradient(900px 600px at 12% -10%, rgba(90, 86, 220, 0.10), transparent 65%),
+    radial-gradient(700px 500px at 100% 110%, rgba(255, 122, 85, 0.07), transparent 65%),
+    radial-gradient(500px 360px at 50% 50%, rgba(168, 217, 155, 0.05), transparent 70%),
+    var(--paper);
+  background-attachment: fixed;
+}
+
+button,
+input,
+textarea,
+select {
+  font: inherit;
+  color: inherit;
+  letter-spacing: inherit;
+}
+
+button {
+  cursor: pointer;
+  background: none;
+  border: none;
+  padding: 0;
+}
+
+a {
+  color: var(--accent);
+  text-decoration: none;
+}
+a:hover {
+  text-decoration: underline;
+}
+
+/* Electron hidden titlebar용 — 윈도우 컨트롤 영역 확보 */
+.titlebar-drag {
+  -webkit-app-region: drag;
+}
+.titlebar-nodrag {
+  -webkit-app-region: no-drag;
+}
+
+/* ── Glass utility classes ────────────────────────────────── */
+.glass {
+  background: var(--glass-bg);
+  -webkit-backdrop-filter: var(--glass-blur);
+  backdrop-filter: var(--glass-blur);
+  border: 1px solid var(--glass-border);
+  box-shadow: var(--glass-shadow);
+}
+.glass-strong {
+  background: var(--glass-bg-strong);
+  -webkit-backdrop-filter: var(--glass-blur);
+  backdrop-filter: var(--glass-blur);
+  border: 1px solid var(--glass-border);
+}
+.glass-thin {
+  background: var(--glass-bg-thin);
+  -webkit-backdrop-filter: var(--glass-blur);
+  backdrop-filter: var(--glass-blur);
+  border: 1px solid var(--glass-border);
+}
+.glass-lift {
+  background: var(--glass-bg-strong);
+  -webkit-backdrop-filter: var(--glass-blur-strong);
+  backdrop-filter: var(--glass-blur-strong);
+  border: 1px solid var(--glass-border);
+  box-shadow: var(--glass-shadow-lift);
+}
+
+/* 미니 키캡 (단축키 표시) */
+.kbd {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--ink-soft);
+  background: var(--paper-2);
+  border: 1px solid var(--paper-edge);
+  border-bottom-width: 2px;
+  border-radius: 4px;
+}
+
+/* 스크롤바 — macOS 스타일 thin */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(11, 11, 15, 0.18);
+  border-radius: 999px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(11, 11, 15, 0.28);
+  background-clip: padding-box;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* ── 채팅 워킹 패널 애니메이션 — Codex/Claude 데스크톱 톤 ────────── */
+@keyframes agentlas-pulse {
+  0%, 100% { transform: scale(1); opacity: 1; }
+  50% { transform: scale(1.5); opacity: 0.45; }
+}
+@keyframes agentlas-halo {
+  0%, 100% { transform: scale(1); opacity: 0.55; }
+  50% { transform: scale(1.18); opacity: 0; }
+}
+@keyframes agentlas-blink {
+  0% { opacity: 1; }
+  50% { opacity: 0; }
+}
+@keyframes agentlas-spin {
+  to { transform: rotate(360deg); }
+}

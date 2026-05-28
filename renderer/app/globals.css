@@ -208,3 +208,13 @@ a:hover {
 @keyframes agentlas-spin {
   to { transform: rotate(360deg); }
 }
+/* 전송 중 스피너 — 보내기 버튼 안의 회전 링 (타원형 "···" 대체) */
+.agentlas-spinner {
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  border: 2px solid rgba(255, 255, 255, 0.35);
+  border-top-color: #ffffff;
+  animation: agentlas-spin 0.7s linear infinite;
+}

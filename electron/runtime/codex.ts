@@ -9,7 +9,7 @@ import fs from "node:fs/promises";
 import type { Runner, RunnerEvents, RunnerRequest, RunnerResult } from "./runner";
 import { wrapSystemPrompt } from "./runner";
 import { tStatus } from "./status-i18n";
-import { probeCliVersion, spawnCli } from "./exec";
+import { agentRunCwd, probeCliVersion, spawnCli } from "./exec";
 
 const CANDIDATES = [
   "codex",
@@ -98,9 +98,11 @@ export const runCodex: Runner = async (
 
   return new Promise<RunnerResult>((resolve, reject) => {
     // codex CLI의 비대화형 실행 모드 — exec 서브명령.
-    const child = spawnCli(bin, ["exec", prompt], {
+    // --skip-git-repo-check: cwd가 git 레포가 아니어도 실행 ("not inside a trusted directory" 방지).
+    const child = spawnCli(bin, ["exec", "--skip-git-repo-check", prompt], {
       stdio: ["ignore", "pipe", "pipe"],
       env: process.env,
+      cwd: agentRunCwd(),
     });
 
     let stdout = "";

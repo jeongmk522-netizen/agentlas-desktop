@@ -8,7 +8,7 @@ import fs from "node:fs/promises";
 import type { Runner, RunnerEvents, RunnerRequest, RunnerResult } from "./runner";
 import { wrapSystemPrompt } from "./runner";
 import { tStatus } from "./status-i18n";
-import { probeCliVersion, spawnCli } from "./exec";
+import { agentRunCwd, probeCliVersion, spawnCli } from "./exec";
 
 const CANDIDATES = [
   "gemini",
@@ -100,6 +100,7 @@ export const runGemini: Runner = async (
     const child = spawnCli(bin, ["--prompt", prompt], {
       stdio: ["ignore", "pipe", "pipe"],
       env: process.env,
+      cwd: agentRunCwd(),
     });
 
     let stdout = "";

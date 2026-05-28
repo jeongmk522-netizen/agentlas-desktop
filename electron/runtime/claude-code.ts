@@ -9,7 +9,7 @@ import fs from "node:fs/promises";
 import type { Runner, RunnerRequest, RunnerEvents, RunnerResult } from "./runner";
 import { wrapSystemPrompt } from "./runner";
 import { tStatus } from "./status-i18n";
-import { probeCliVersion, spawnCli } from "./exec";
+import { agentRunCwd, probeCliVersion, spawnCli } from "./exec";
 
 const CANDIDATES = [
   "claude",
@@ -101,6 +101,8 @@ export const runClaudeCode: Runner = async (
     const child = spawnCli(bin, args, {
       stdio: ["ignore", "pipe", "pipe"],
       env: process.env,
+      // 패키지된 앱의 cwd는 비쓰기/루트라 claude가 exit 1. 쓰기 가능한 전용 폴더에서 실행.
+      cwd: agentRunCwd(),
     });
 
     let stdout = "";

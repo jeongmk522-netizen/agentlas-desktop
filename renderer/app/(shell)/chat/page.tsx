@@ -267,6 +267,24 @@ function ChatPage() {
     router.replace(`/chat?id=${chatId}`);
   }, [seedPrompt, chat, agent, chatId, messages.length, send, router]);
 
+  // 슬래시 커맨드 실행 — /new(새 채팅) /clear(기록 지우기) /help(단축키)
+  const handleCommand = useCallback(
+    (cmd: string) => {
+      const api = ipc();
+      if (!api || !chat) return;
+      if (cmd === "/clear") {
+        void api.invoke.clearHistory(chat.id).then(() => setMessages([]));
+      } else if (cmd === "/new") {
+        void api.chats
+          .create({ agentId: chat.agentId, projectId: chat.projectId, firmId: chat.firmId })
+          .then((c) => router.push(`/chat?id=${c.id}`));
+      } else if (cmd === "/help") {
+        setMessages((m) => [...m, { id: uid(), role: "system", text: t("chatinput.cmd.help_text") }]);
+      }
+    },
+    [chat, router, t],
+  );
+
   async function switchAgent(agentId: string) {
     const api = ipc();
     if (!api || !chat || agentId === chat.agentId) return;
@@ -495,6 +513,7 @@ function ChatPage() {
         onSend={(text, opts) => {
           void send(text, opts?.images);
         }}
+        onCommand={handleCommand}
         busy={busy}
         disabled={!agent}
         context={{

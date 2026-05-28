@@ -158,8 +158,8 @@ const dict = {
     "home.market_link": "마켓",
 
     // ChatInput
-    "chatinput.placeholder": "에이전트에게 할 일을 적어 주세요 — ⌘↵ · 이미지 드래그·붙여넣기 가능",
-    "chatinput.placeholder_rich": "에이전트에게 할 일을 적어 주세요 — / 커맨드 · @ 멘션 · ⌘↵ 보내기",
+    "chatinput.placeholder": "에이전트에게 할 일을 적어 주세요 — Enter 전송 · Shift+Enter 줄바꿈 · 이미지 드래그",
+    "chatinput.placeholder_rich": "에이전트에게 할 일을 적어 주세요 — / 커맨드 · @ 멘션 · Enter 전송 · Shift+Enter 줄바꿈",
     "chatinput.placeholder_disabled": "에이전트가 없습니다 — 마켓에서 설치하세요",
     "chatinput.attach": "이미지 첨부 — 드래그·드롭·붙여넣기",
     "chatinput.remove_image": "이미지 제거",
@@ -175,6 +175,7 @@ const dict = {
     "chatinput.cmd.new": "새 채팅 시작",
     "chatinput.cmd.clear": "이 채팅 메시지 모두 지우기",
     "chatinput.cmd.help": "키보드 단축키 보기",
+    "chatinput.cmd.help_text": "⌨️ 단축키 — Enter: 전송 · Shift+Enter: 줄바꿈 · / : 커맨드(/new 새 채팅, /clear 기록 지우기, /help) · @ : 에이전트·프로젝트·회사·환경변수 멘션 · ⌘[ : 사이드바 접기",
     "chatinput.plus.attach": "사진 및 파일 추가",
     "chatinput.plus.plugins": "플러그인 (MCP 서버)",
     "chatinput.plan_mode": "플랜 모드",
@@ -640,8 +641,8 @@ const dict = {
     "home.market_link": "Market",
 
     // ChatInput
-    "chatinput.placeholder": "Tell your agent what to do — ⌘↵ · drag, drop, paste images",
-    "chatinput.placeholder_rich": "Tell your agent what to do — / for commands · @ for mentions · ⌘↵ to send",
+    "chatinput.placeholder": "Tell your agent what to do — Enter to send · Shift+Enter for newline · drag images",
+    "chatinput.placeholder_rich": "Tell your agent what to do — / commands · @ mentions · Enter to send · Shift+Enter newline",
     "chatinput.placeholder_disabled": "No agents installed — go to Marketplace",
     "chatinput.attach": "Attach image — drag, drop, or paste",
     "chatinput.remove_image": "Remove image",
@@ -657,6 +658,7 @@ const dict = {
     "chatinput.cmd.new": "Start a new chat",
     "chatinput.cmd.clear": "Clear this chat's history",
     "chatinput.cmd.help": "Keyboard shortcuts",
+    "chatinput.cmd.help_text": "⌨️ Shortcuts — Enter: send · Shift+Enter: newline · / : commands (/new, /clear, /help) · @ : mention agents, projects, firms, env · ⌘[ : toggle sidebar",
     "chatinput.plus.attach": "Add photo or file",
     "chatinput.plus.plugins": "Plugins (MCP servers)",
     "chatinput.plan_mode": "Plan mode",

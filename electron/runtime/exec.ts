@@ -5,6 +5,9 @@
 // 를 실행하지 못해(ENOENT), 감지와 실행이 모두 실패했다. cross-spawn은 PATH+PATHEXT로
 // 심을 찾아주고 인자를 cmd.exe에 안전하게 전달한다(수동 셸 인용 없이).
 import crossSpawn from "cross-spawn";
+import fs from "node:fs";
+import path from "node:path";
+import { app } from "electron";
 import type { ChildProcess, SpawnOptions } from "node:child_process";
 
 /** child_process.spawn 대체 — Windows `.cmd`/`.bat` 심을 해석한다. */
@@ -14,6 +17,25 @@ export function spawnCli(
   options: SpawnOptions,
 ): ChildProcess {
   return crossSpawn(command, args, options);
+}
+
+/**
+ * CLI 러너가 실행될 안전한 작업 디렉터리.
+ * 패키지된 앱은 cwd가 `/`(또는 앱 번들)이라 Claude는 권한 오류, Codex는
+ * "not inside a trusted directory"로 실패한다. userData 아래 쓰기 가능한
+ * 전용 폴더를 만들어 cwd로 사용한다.
+ */
+let _runCwd: string | null = null;
+export function agentRunCwd(): string {
+  if (_runCwd) return _runCwd;
+  const dir = path.join(app.getPath("userData"), "agent-cwd");
+  try {
+    fs.mkdirSync(dir, { recursive: true });
+    _runCwd = dir;
+  } catch {
+    _runCwd = app.getPath("home");
+  }
+  return _runCwd;
 }
 
 /**

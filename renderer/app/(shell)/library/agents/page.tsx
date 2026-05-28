@@ -38,20 +38,46 @@ export default function LibraryAgentsPage() {
   const [dragOver, setDragOver] = useState(false);
   const [importing, setImporting] = useState(false);
   const [runtimes, setRuntimes] = useState<RuntimeStatus[]>([]);
+  const [runtimeChecked, setRuntimeChecked] = useState(false);
+  const [panelWidth, setPanelWidth] = useState(420);
   const dragDepth = useRef(0);
 
   const refresh = useCallback(async () => {
     const api = ipc();
     if (!api) return;
-    const [list, rs] = await Promise.all([api.team.list(), api.runtime.detect()]);
+    // 에이전트는 즉시 표시 (빠른 SQLite). 런타임 감지는 느릴 수 있어 분리 — 배너가 먼저 깜빡이지 않게.
+    const list = await api.team.list();
     setAgents(list);
-    setRuntimes(rs);
     setSelectedId((cur) => cur ?? list[0]?.id ?? null);
+    void api.runtime
+      .detect()
+      .then((rs) => setRuntimes(rs))
+      .catch(() => {})
+      .finally(() => setRuntimeChecked(true));
   }, []);
 
   useEffect(() => {
     void refresh();
   }, [refresh]);
+
+  // 패널 폭 — localStorage에 기억
+  useEffect(() => {
+    try {
+      const saved = Number(window.localStorage.getItem("agentlas.agentPanelWidth"));
+      if (saved >= 280 && saved <= 760) setPanelWidth(saved);
+    } catch {
+      /* ignore */
+    }
+  }, []);
+  const onPanelResize = useCallback((w: number) => {
+    const clamped = Math.max(280, Math.min(760, w));
+    setPanelWidth(clamped);
+    try {
+      window.localStorage.setItem("agentlas.agentPanelWidth", String(clamped));
+    } catch {
+      /* ignore */
+    }
+  }, []);
 
   async function uninstall(id: string, name: string) {
     const api = ipc();
@@ -98,7 +124,8 @@ export default function LibraryAgentsPage() {
     void importPaths(paths);
   }
 
-  const hasRuntime = runtimes.length > 0;
+  // 런타임 감지가 끝났고(runtimeChecked) 0개일 때만 배너 — 초기 깜빡임 방지.
+  const showNoRuntime = runtimeChecked && runtimes.length === 0;
   const selectedAgent = agents.find((a) => a.id === selectedId) ?? null;
 
   return (
@@ -139,7 +166,7 @@ export default function LibraryAgentsPage() {
             </div>
           </div>
 
-          {!hasRuntime && (
+          {showNoRuntime && (
             <div
               style={{
                 marginBottom: 12,
@@ -295,6 +322,8 @@ export default function LibraryAgentsPage() {
         <AgentFilesPanel
           agentId={selectedId}
           agentName={selectedAgent ? pickLocalized(selectedAgent, locale).name : ""}
+          width={panelWidth}
+          onWidthChange={onPanelResize}
           onClose={() => setPanelOpen(false)}
         />
       )}

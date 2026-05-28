@@ -11,10 +11,15 @@ export function AgentFilesPanel({
   agentId,
   agentName,
   onClose,
+  width = 420,
+  onWidthChange,
 }: {
   agentId: string | null;
   agentName: string;
   onClose: () => void;
+  /** 패널 폭(px). 드래그 리사이즈 시 onWidthChange로 갱신 */
+  width?: number;
+  onWidthChange?: (w: number) => void;
 }) {
   const { t } = useT();
   const [files, setFiles] = useState<WorkspaceNode[]>([]);
@@ -96,19 +101,50 @@ export function AgentFilesPanel({
   const editable = preview != null && !preview.reason;
   const activeName = activePath ? activePath.split("/").pop() : null;
 
+  // 좌측 가장자리 드래그로 패널 폭 조정
+  function startResize(e: React.MouseEvent) {
+    if (!onWidthChange) return;
+    e.preventDefault();
+    const move = (ev: MouseEvent) => onWidthChange(window.innerWidth - ev.clientX);
+    const up = () => {
+      window.removeEventListener("mousemove", move);
+      window.removeEventListener("mouseup", up);
+      document.body.style.cursor = "";
+    };
+    document.body.style.cursor = "col-resize";
+    window.addEventListener("mousemove", move);
+    window.addEventListener("mouseup", up);
+  }
+
   return (
     <aside
       className="glass-thin"
       style={{
-        width: 420,
+        width,
         flexShrink: 0,
         borderLeft: "1px solid var(--glass-border)",
         display: "flex",
         flexDirection: "column",
         minHeight: 0,
         height: "100%",
+        position: "relative",
       }}
     >
+      {onWidthChange && (
+        <div
+          onMouseDown={startResize}
+          title=""
+          style={{
+            position: "absolute",
+            left: -3,
+            top: 0,
+            bottom: 0,
+            width: 6,
+            cursor: "col-resize",
+            zIndex: 5,
+          }}
+        />
+      )}
       <header
         style={{
           padding: "14px 16px 10px",

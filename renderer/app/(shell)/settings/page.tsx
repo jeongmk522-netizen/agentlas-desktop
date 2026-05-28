@@ -654,22 +654,39 @@ function CliInstallPanel({
                 <div style={{ fontSize: 11, color: "var(--muted-deep)" }}>{def.sub}</div>
               </div>
               {installed ? (
-                <span
-                  style={{
-                    fontSize: 11,
-                    fontWeight: 600,
-                    color: "var(--green-deep)",
-                    background: "rgba(168,217,155,0.20)",
-                    padding: "3px 10px",
-                    borderRadius: 999,
-                    display: "inline-flex",
-                    alignItems: "center",
-                    gap: 4,
-                  }}
-                >
-                  <IconCheck size={12} />
-                  {t("settings.cli.installed")}
-                </span>
+                <>
+                  <span
+                    style={{
+                      fontSize: 11,
+                      fontWeight: 600,
+                      color: "var(--green-deep)",
+                      background: "rgba(168,217,155,0.20)",
+                      padding: "3px 10px",
+                      borderRadius: 999,
+                      display: "inline-flex",
+                      alignItems: "center",
+                      gap: 4,
+                    }}
+                  >
+                    <IconCheck size={12} />
+                    {t("settings.cli.installed")}
+                  </span>
+                  {/* 설치돼 있어도 아직 로그인 안 했을 수 있으므로 웹 로그인 버튼 유지 */}
+                  <button
+                    onClick={() => void doLogin(def.kind)}
+                    style={{
+                      padding: "6px 12px",
+                      borderRadius: 999,
+                      fontSize: 12,
+                      fontWeight: 600,
+                      background: "transparent",
+                      color: "var(--accent)",
+                      border: "1px solid var(--paper-edge)",
+                    }}
+                  >
+                    {t("settings.cli.login")}
+                  </button>
+                </>
               ) : (
                 <>
                   <button

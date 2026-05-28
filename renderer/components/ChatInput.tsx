@@ -74,11 +74,14 @@ type PermissionLevel = "read" | "write" | "full";
 
 export function ChatInput({
   onSend,
+  onCommand,
   busy,
   disabled,
   context,
 }: {
   onSend: (text: string, opts?: SendOptions) => void;
+  /** 슬래시 커맨드(/new, /clear, /help …) 실행 — 텍스트 삽입이 아니라 액션 */
+  onCommand?: (cmd: string) => void;
   busy: boolean;
   disabled?: boolean;
   context?: MentionContext;
@@ -170,6 +173,14 @@ export function ChatInput({
     const before = input.slice(0, trigger.startIndex);
     const caret = textareaRef.current?.selectionStart ?? input.length;
     const after = input.slice(caret);
+    // 슬래시 커맨드는 텍스트로 넣지 않고 액션 실행 — 입력에서 "/..." 토큰 제거.
+    if (trigger.kind === "slash" && onCommand) {
+      setInput(`${before}${after}`.trimStart());
+      setTrigger(null);
+      onCommand(replacement);
+      setTimeout(() => textareaRef.current?.focus(), 0);
+      return;
+    }
     const next = `${before}${replacement} ${after}`;
     setInput(next);
     setTrigger(null);
@@ -377,7 +388,8 @@ export function ChatInput({
               e.preventDefault();
               return;
             }
-            if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+            // Enter = 즉시 전송, Shift+Enter = 줄바꿈. (자동완성 열림 시는 위에서 선택 처리)
+            if (e.key === "Enter" && !e.shiftKey) {
               e.preventDefault();
               submit();
             }
@@ -545,7 +557,7 @@ export function ChatInput({
               boxShadow: submitDisabled ? "none" : "0 4px 14px rgba(11,11,15,0.18)",
             }}
           >
-            {busy ? <span style={{ fontSize: 10 }}>···</span> : <IconArrowUp size={15} />}
+            {busy ? <span className="agentlas-spinner" aria-hidden /> : <IconArrowUp size={15} />}
           </button>
         </div>
       </div>

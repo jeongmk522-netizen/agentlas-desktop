@@ -199,7 +199,24 @@ export const MCP_TOOL_CATALOG: McpToolCatalogEntry[] = [
     ],
   },
 
-  // ── 웹 ────────────────────────────────────────────────────
+  // ── 웹 / 컴퓨터 유즈 ──────────────────────────────────────
+  {
+    id: "playwright",
+    name: "Playwright (브라우저)",
+    nameEn: "Playwright (browser)",
+    description: "실제 브라우저로 웹 탐색·클릭·입력·스크린샷 (컴퓨터 유즈, 키 불필요)",
+    descriptionEn: "Drive a real browser — navigate, click, type, screenshot (computer use, no key)",
+    category: "web",
+    transport: "stdio",
+    command: "npx",
+    args: ["-y", "@playwright/mcp@latest"],
+    trust: "official",
+    docsUrl: "https://github.com/microsoft/playwright-mcp",
+    brandColor: "#2EAD33",
+    mark: "PW",
+    // 키 없음 — 로컬 브라우저를 띄워 동작. 첫 실행 시 브라우저 바이너리를 받을 수 있음.
+    envRequirements: [],
+  },
   {
     id: "brave-search",
     name: "Brave 검색",

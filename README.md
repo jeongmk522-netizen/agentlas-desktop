@@ -49,21 +49,119 @@ someone else's agent platform.
   <img alt="Agentlas Desktop running a CEO agent" src="docs/screenshot.png" width="960">
 </p>
 
+## Who it's for
+
+- **Power users** who already pay for Claude, ChatGPT, or Gemini and want to run
+  agents on that subscription instead of paying a second AI bill to an agent SaaS.
+- **Builders** who package agents on [agentlas.cloud](https://agentlas.cloud) and
+  want to run them locally over MCP.
+- **Privacy-minded teams** who refuse to hand their API keys and chat history to a
+  third-party agent platform.
+- **Tinkerers** who want an open-source, auditable, forkable agent runner.
+
 ## Features
 
-| | |
-|---|---|
-| **Bring-your-own runtime** | Route every run through a local CLI (`claude-code`, `codex`, `gemini`) or a BYOK cloud key (Anthropic / OpenAI / Google). Agentlas detects installed CLIs automatically and never proxies the model call. |
-| **Agent firms with an org chart** | Install a whole company of agents — a CEO that delegates to department heads and workers — and watch the hierarchy render as a live org chart. |
-| **Projects & chats** | Group related chats under a project with a shared context note. Messages are stored in local SQLite; archive or delete anytime. |
-| **Working-folder panel** | Pin a folder to a chat so you can see (read-only) the repo or files an agent is working against. |
-| **MCP-native installs** | Install approved bundles from the `agentlas.cloud` marketplace and run them through local runtime adapters over the Model Context Protocol. |
-| **Library** | One place to manage installed agents, skills, MCP servers, and the shared environment-variable vault. |
-| **Automations** | Schedule recurring agent or firm runs from a prompt template (UI shipping in M0; persistent scheduler in V1). |
-| **Secrets in the OS keychain** | API keys and integration tokens live in the macOS/Windows/Linux keychain via the main process — never in a plaintext file, never exposed to the renderer. |
-| **Auto-updates** | Signed update feed via GitHub Releases; a "Restart to update" badge appears when a new build is downloaded. |
-| **Bilingual** | Full Korean / English UI with automatic locale detection. |
-| **Cross-platform** | Electron Builder produces macOS `.dmg`, Windows installer + portable `.exe`, and Linux `AppImage` + `.deb`. |
+A complete tour of what ships today.
+
+### Bring your own everything (BYOC)
+
+- **Local CLI runtimes, auto-detected.** Agentlas finds your installed
+  `claude-code`, `codex`, and `gemini` CLIs and runs through them — using the
+  subscription/login you already have. No re-auth, no copy-pasting keys.
+- **BYOK cloud keys.** No CLI? Paste an Anthropic, OpenAI, or Google API key and
+  go. Keys are stored in the OS keychain, never a file.
+- **Mix and switch freely.** Have Claude Code *and* a Gemini key? Both show up; pick
+  the active backend per run. Most apps lock you to one provider — Agentlas doesn't.
+- **No proxy, ever.** Every model call goes straight from your machine to the
+  provider. Agentlas runs no LLM of its own and adds **$0** to your model bill.
+
+### Agent firms — teams, not a single bot
+
+- **Install a whole company.** A *firm* is a CEO agent that delegates down to
+  department heads and workers — e.g. a storefront-ops firm with content, CS, and
+  analytics departments.
+- **Live org chart.** Every firm renders as a hierarchy so you can see who reports
+  to whom and which role handles what — no black box.
+- **Chat the CEO, mobilize the team.** Message the CEO and it routes work to the
+  right roles, or talk to any single specialist directly.
+
+### Projects, chats, and history that stay yours
+
+- **Projects** group related chats, apply a shared context note, and set a default
+  agent so every new chat starts with the right context.
+- **Chats** support rename, archive/unarchive, switching the bound agent, and full
+  message history — all in **local SQLite**, nothing on a server.
+- **Image attachments** are sent as multimodal input on BYOK backends.
+- **Working-folder panel** pins a folder to a chat with a read-only file tree and
+  text preview, so you can see the repo an agent is helping with.
+
+### Install agents over MCP — a real marketplace
+
+- **MCP-native installs.** Browse and install agents and whole firms from the
+  `agentlas.cloud` marketplace; they run through local runtime adapters over the
+  Model Context Protocol.
+- **Trust grades.** Listings carry a trust grade; sideloading unvetted agents is
+  gated.
+- **Works offline.** An in-memory fallback source keeps the marketplace usable when
+  the network or cloud is down.
+
+### Library — manage the whole toolbox
+
+- **Agents, Skills, MCP servers, and a shared env-var vault** in one place. The
+  vault tracks which environment variables each agent needs and which are set —
+  values live in the keychain, the UI only shows whether a key exists.
+
+### Automations
+
+- **Schedule recurring runs** against an agent or a firm from a prompt template.
+  (UI ships in the current M0 build; the persistent scheduler lands in V1.)
+
+### Migrate in — never locked in
+
+- **Import from OpenClaw and Hermes** in one click: SOUL/persona → an agent, `.env`
+  keys → the keychain, scheduled jobs → automations, memories → a project. Dry-run
+  and overwrite supported. Secret values never leave the main process.
+- **Apache-2.0 open source.** Audit it, fork it, ship your own variant.
+
+### Local-first security
+
+- API keys and tokens live in the **macOS/Windows/Linux keychain** via the main
+  process — never a plaintext file, never readable by the renderer/UI.
+- Chats, projects, firms, and installed agents live in **local SQLite**.
+
+### Cross-platform, self-updating, bilingual
+
+- **macOS (arm64 + Intel), Windows (installer + portable), Linux (AppImage + deb).**
+- **Auto-updates** via a GitHub Releases feed — a "Restart to update" badge appears
+  when a new build is downloaded.
+- **Full Korean / English UI** with automatic locale detection.
+
+## How Agentlas compares
+
+Three common ways to run AI agents today — and where Agentlas lands.
+
+| | **Agentlas Desktop** | Hosted agent platform (SaaS) | Single-model desktop chat | Raw terminal CLI |
+|---|---|---|---|---|
+| Where model calls go | **Direct from your machine** | Through their servers | Direct | Direct |
+| Who pays for tokens | **Your existing sub / key** | Platform fee **+** tokens | Your sub / key | Your sub / key |
+| Where keys & history live | **Your keychain + local SQLite** | Their cloud | Local (varies) | Local |
+| Multi-agent firms + org chart | **Yes** | Sometimes | No | No (manual) |
+| Install 3rd-party agents over MCP | **Yes, marketplace** | Varies | No | Manual |
+| Use local CLIs (Claude Code / Codex / Gemini) | **Yes** | Rarely | No | One at a time |
+| Mix CLIs **and** cloud keys in one window | **Yes** | No | No | No |
+| Open source (Apache-2.0) | **Yes** | Usually no | Varies | Varies |
+| Desktop GUI on mac / win / linux | **Yes** | Web only | Often | No (terminal) |
+
+**Why people pick Agentlas**
+
+- **It runs on the AI you already pay for.** No second subscription to an agent
+  platform — your Claude/ChatGPT/Gemini plan does the work.
+- **Your data never leaves your machine.** Keys in the OS keychain, chats in local
+  SQLite, model calls direct to the provider. Nothing to trust us with.
+- **Teams of agents, visible.** Firms with a real org chart beat a single opaque
+  chatbot when work needs more than one role.
+- **Open and portable.** Apache-2.0, importable from OpenClaw/Hermes, forkable — no
+  lock-in.
 
 ## Screens
 

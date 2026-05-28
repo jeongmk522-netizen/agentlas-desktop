@@ -22,11 +22,14 @@
     "dev:renderer": "cd renderer && next dev -p 3100",
     "dev:electron": "wait-on http://localhost:3100 && tsc -p electron/tsconfig.json && cross-env NODE_ENV=development ELECTRON_START_URL=http://localhost:3100 electron .",
     "build": "npm run build:renderer && npm run build:electron",
-    "build:renderer": "cd renderer && next build && cp -R out ../dist/renderer",
+    "build:renderer": "cd renderer && next build && node -e \"require('fs').cpSync('out','../dist/renderer',{recursive:true})\"",
     "build:electron": "tsc -p electron/tsconfig.json",
-    "prebuild:renderer": "rm -rf dist/renderer",
+    "prebuild:renderer": "node -e \"require('fs').rmSync('dist/renderer',{recursive:true,force:true})\"",
     "postinstall": "electron-rebuild --force",
     "package:mac": "bash scripts/package-mac.sh",
+    "dist:mac:unsigned": "npm run build && electron-builder --mac -c.mac.notarize=false -c.mac.identity=null",
+    "dist:win": "npm run build && electron-builder --win",
+    "dist:linux": "npm run build && electron-builder --linux",
     "release:mac:verify": "node scripts/verify-mac-release.mjs --write-env",
     "release:mac:candidate": "node scripts/verify-mac-release.mjs --write-env --allow-unnotarized",
     "release:readiness": "node scripts/release-readiness.mjs",
@@ -37,7 +40,7 @@
     "qa:committee": "node scripts/committee-gate.mjs",
     "typecheck": "tsc -p electron/tsconfig.json --noEmit && cd renderer && tsc --noEmit",
     "lint": "next lint --dir renderer",
-    "clean": "rm -rf dist out release renderer/.next renderer/out"
+    "clean": "node -e \"['dist','out','release','renderer/.next','renderer/out'].forEach(d=>require('fs').rmSync(d,{recursive:true,force:true}))\""
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.0.4",

@@ -5,7 +5,7 @@
 <h1 align="center">Agentlas Desktop</h1>
 
 <p align="center">
-  <strong>The open-source control room for running a local AI company on your Mac.</strong>
+  <strong>The open-source control room for your AI agents — on macOS, Windows, and Linux.</strong>
 </p>
 
 <p align="center">
@@ -23,72 +23,119 @@
   <a href="LICENSE">
     <img alt="License: Apache 2.0" src="https://img.shields.io/badge/license-Apache%202.0-green">
   </a>
-  <img alt="Platform" src="https://img.shields.io/badge/platform-macOS%2012%2B-lightgrey">
-  <img alt="Runtime" src="https://img.shields.io/badge/runtime-Claude%20Code%20%7C%20Codex%20%7C%20Gemini%20%7C%20BYOK-black">
+  <img alt="Platforms" src="https://img.shields.io/badge/macOS%20%C2%B7%20Windows%20%C2%B7%20Linux-lightgrey">
+  <img alt="Runtime" src="https://img.shields.io/badge/runtime-Claude%20%7C%20Codex%20%7C%20Gemini%20%7C%20BYOK-black">
 </p>
 
-Agentlas Desktop is a launcher for AI agents: a local Mac app where you install expert teams, connect the AI runtime you already pay for, and run serious work without handing your keys or chat history to another hosted agent platform.
+Connect the AI models you already pay for, import agents over MCP, and run whole
+agent teams from one local window — with the org chart and the repo behind every
+run in plain view. Your keys and your chat history stay on your machine, never on
+someone else's agent platform.
 
-It is built for people who want agents to feel less like demos and more like infrastructure: local storage, Keychain secrets, MCP marketplace installs, runtime adapters, signed macOS releases, and an update loop you can audit end to end.
+- **Bring your own models.** Claude, Codex, and Gemini (CLI or API key), or
+  OpenAI / Anthropic / Google directly. Agentlas never proxies the model call.
+- **Import agents over MCP.** Drop in an agent or a whole team — for example a
+  package you built on [agentlas.cloud](https://agentlas.cloud) — and run it.
+- **See the team, not a black box.** Every agent team renders as an org chart and
+  a file tree, so you can see who does what and which repo each run touches.
+- **Run and orchestrate locally.** The app supervises the agent processes and
+  routes work between roles, all on your disk.
+- **Local-first.** Keys in the OS keychain, chats and installed agents in local
+  SQLite. Open source, Apache-2.0 — fork it, audit it, ship a variant.
 
 <p align="center">
-  <img alt="Agentlas Desktop running a CEO agent for an ecommerce operator" src="docs/screenshot.png" width="960">
+  <img alt="Agentlas Desktop running a CEO agent" src="docs/screenshot.png" width="960">
 </p>
 
-## Why This Exists
+## Download
 
-Most agent products hide the interesting parts: where prompts live, what tools can run, where memory is stored, which model is being charged, and who holds the credentials.
+Get the latest build from the [**Releases page**](https://github.com/jeongmk522-netizen/agentlas-desktop/releases/latest).
 
-Agentlas Desktop makes that machinery visible. Install an agent, inspect the workflow, choose Claude Code, Codex, Gemini, or your own API key, then run it from a Mac app that stores secrets in the macOS Keychain and keeps the operating state on your disk.
+| OS | File | Notes |
+|----|------|-------|
+| macOS (Apple silicon) | `Agentlas-x.y.z-arm64.dmg` | M1 and newer |
+| macOS (Intel) | `Agentlas-x.y.z-x64.dmg` | Intel Macs |
+| Windows | `Agentlas-Setup-x.y.z.exe` · `Agentlas-x.y.z-portable.exe` | Windows 10/11 (x64) |
+| Linux | `Agentlas-x.y.z.AppImage` · `Agentlas-x.y.z.deb` | x64 |
 
-## What Makes It Different
+The app updates itself — a "Restart to update" badge appears when a new build is
+ready.
 
-- **Bring your own runtime.** Use Claude Code, Codex, Gemini CLI, or BYOK cloud APIs. Agentlas does not need to proxy the model call.
-- **Local-first by default.** Chats, firms, projects, automations, and runtime state are stored locally with SQLite.
-- **Keychain, not a config file.** API keys and auth tokens stay in macOS Keychain through the Electron main process.
-- **MCP-native agent installs.** The marketplace can install approved Agentlas bundles from `agentlas.cloud` and run them through local runtime adapters.
-- **Real desktop distribution.** Electron Builder produces signed, notarized macOS DMGs for Apple Silicon and Intel.
-- **Auditable updates.** GitHub Releases host the update feed, `latest-mac.yml`, blockmaps, checksums, and release evidence.
+### Opening the app the first time
 
-## Quick Start
+Agentlas Desktop is open source and the builds aren't paid code-signed on every
+platform, so your OS may ask you to confirm the first launch. This is normal for
+indie/open-source apps and happens only once.
 
-Requirements:
+**macOS** — if you see *"Agentlas can't be opened because Apple cannot check it
+for malicious software"*, right-click the app in Applications → **Open** →
+**Open**. Or, in Terminal:
 
-- macOS 12 Monterey or newer
-- Node.js 20+
-- npm
-- Xcode Command Line Tools
+```bash
+xattr -dr com.apple.quarantine /Applications/Agentlas.app
+open /Applications/Agentlas.app
+```
+
+**Windows** — if SmartScreen shows *"Windows protected your PC"*, click
+**More info** → **Run anyway**. The portable `.exe` runs without installing.
+
+**Linux** — make the AppImage executable and run it:
+
+```bash
+chmod +x Agentlas-*.AppImage
+./Agentlas-*.AppImage
+# no FUSE on your distro? run:
+./Agentlas-*.AppImage --appimage-extract-and-run
+```
+
+(Or install the `.deb`: `sudo dpkg -i Agentlas-*.deb`.)
+
+## Why this exists
+
+Most agent products hide the interesting parts: where prompts live, what tools
+can run, where memory is stored, which model is being charged, and who holds the
+credentials.
+
+Agentlas Desktop makes that machinery visible. Install an agent, inspect the
+workflow, pick Claude Code / Codex / Gemini or your own API key, then run it from
+an app that keeps secrets in the OS keychain and the operating state on your disk.
+
+## What makes it different
+
+- **Bring your own runtime.** Claude Code, Codex, Gemini CLI, or BYOK cloud APIs — no middleman model call.
+- **Local-first by default.** Chats, teams, projects, automations, and runtime state live in local SQLite.
+- **Keychain, not a config file.** API keys and tokens stay in the OS keychain via the Electron main process.
+- **MCP-native installs.** Install approved Agentlas bundles from `agentlas.cloud` and run them through local runtime adapters.
+- **Cross-platform desktop builds.** Electron Builder produces macOS `.dmg`, Windows installer + portable `.exe`, and Linux AppImage + `.deb`.
+- **Auditable updates.** GitHub Releases host the update feed, checksums, and release evidence.
+
+## Build from source
+
+Requirements: Node.js 20+, npm. (macOS also needs Xcode Command Line Tools for the native modules.)
 
 ```bash
 git clone https://github.com/jeongmk522-netizen/agentlas-desktop.git
 cd agentlas-desktop
 npm install
-npm run dev
+npm run dev        # Next.js renderer on :3100 + Electron
 ```
-
-`npm run dev` starts the Next.js renderer on `localhost:3100` and launches Electron against it. Renderer changes hot reload. Main-process changes require restarting the dev command.
-
-## Build And Check
 
 ```bash
-npm run typecheck
-npm run build
+npm run typecheck  # TypeScript for electron main + renderer
+npm run build      # export renderer + compile electron into dist/
 ```
 
-`typecheck` runs TypeScript for both Electron and the renderer. `build` exports the renderer and compiles the Electron main process into `dist/`.
-
-## Release Loop
-
-For public macOS releases you need an Apple Developer ID Application certificate and notarization credentials.
+Package an installer (unsigned — fine for local use):
 
 ```bash
-# Set CSC_LINK, CSC_KEY_PASSWORD, APPLE_ID,
-# APPLE_APP_SPECIFIC_PASSWORD, and APPLE_TEAM_ID in your shell.
-AGENTLAS_PUBLIC_RELEASE=1 npm run package:mac
-npm run release:mac:publish
+npm run dist:win            # Windows: NSIS installer + portable .exe
+npm run dist:linux          # Linux: AppImage + .deb
+npm run dist:mac:unsigned   # macOS: unsigned .dmg (no Apple cert needed)
 ```
 
-The release script verifies both DMGs with `hdiutil`, `stapler`, and `spctl`, writes `desktop-release-verification.json`, publishes GitHub Release assets, and lets Electron auto-update consume the release feed.
+Output lands in `release/`. Signed/notarized release builds and the GitHub
+Actions pipeline are documented in [`docs/PUBLIC-RELEASE.md`](docs/PUBLIC-RELEASE.md) —
+end users don't need any of that.
 
 ## Architecture
 
@@ -98,30 +145,34 @@ Agentlas Desktop
 │  ├─ runtime/        Claude Code, Codex, Gemini, BYOK adapters
 │  ├─ mcp/            MCP client and installer
 │  ├─ marketplace/    agentlas.cloud marketplace source
-│  ├─ secrets/        macOS Keychain vault
+│  ├─ secrets/        OS keychain vault
 │  ├─ store/          SQLite-backed local state
 │  └─ updater.ts      electron-updater integration
 ├─ renderer/          Next.js App Router UI
 ├─ shared/            typed IPC contracts
 ├─ scripts/           release, signing, and verification tooling
-└─ docs/              architecture and public release notes
+└─ docs/              architecture and release notes
 ```
 
-The renderer never gets direct filesystem, Keychain, or process-supervision access. It talks to the Electron main process through the typed preload bridge.
+The renderer never gets direct filesystem, keychain, or process-supervision
+access — it talks to the main process through a typed preload bridge.
 
-## Security Model
+## Security model
 
 - No credentials in Git.
 - No API keys written to plaintext local files.
 - Renderer code cannot directly read secrets.
-- Signing material is ignored by Git and injected only during release.
-- Auto-update assets are served from GitHub Releases and validated through the macOS signing and notarization chain.
+- Signing material is git-ignored and injected only during release.
+- Auto-update assets are served from GitHub Releases.
 
 Security reports: see [SECURITY.md](SECURITY.md).
 
 ## Contributing
 
-Pull requests are welcome. Start with [CONTRIBUTING.md](CONTRIBUTING.md), run `npm run typecheck`, and keep public safety in mind: no credentials, no local logs, no signing material.
+Pull requests are welcome. Start with [CONTRIBUTING.md](CONTRIBUTING.md), run
+`npm run typecheck`, and keep public safety in mind: no credentials, no local
+logs, no signing material. Windows/Linux testing and packaging feedback is
+especially appreciated.
 
 ## License
 

@@ -59,7 +59,7 @@ dmg:
 
 publish:
   - provider: github
-    owner: Masonleenf
+    owner: jeongmk522-netizen
     repo: agentlas-desktop
     private: false
     releaseType: release

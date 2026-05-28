@@ -7,7 +7,7 @@ cleaner_pid=""
 dmg_signing_keychain=""
 dmg_signing_identity=""
 original_keychains=()
-stable_repo="${AGENTLAS_DESKTOP_GITHUB_REPO:-Masonleenf/agentlas-desktop}"
+stable_repo="${AGENTLAS_DESKTOP_GITHUB_REPO:-jeongmk522-netizen/agentlas-desktop}"
 
 cleanup_appledouble() {
   for target in "$@"; do

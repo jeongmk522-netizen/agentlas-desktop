@@ -29,7 +29,12 @@ mac:
   entitlements: build-resources/entitlements.mac.plist
   entitlementsInherit: build-resources/entitlements.mac.plist
   notarize: true
+  # zip is REQUIRED for macOS auto-update (Squirrel.Mac). dmg is for manual install.
   target:
+    - target: zip
+      arch:
+        - arm64
+        - x64
     - target: dmg
       arch:
         - arm64

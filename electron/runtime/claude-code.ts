@@ -3,33 +3,34 @@
 //
 // 호출 형식: claude -p "<user prompt>" --append-system-prompt "<system>"
 // 이전 메시지 컨텍스트는 V0에서는 system prompt에 inline. M1에서 --resume 옵션 활용 검토.
-import { execFile, spawn } from "node:child_process";
-import { promisify } from "node:util";
 import path from "node:path";
 import os from "node:os";
 import fs from "node:fs/promises";
 import type { Runner, RunnerRequest, RunnerEvents, RunnerResult } from "./runner";
 import { wrapSystemPrompt } from "./runner";
 import { tStatus } from "./status-i18n";
-
-const execFileP = promisify(execFile);
+import { probeCliVersion, spawnCli } from "./exec";
 
 const CANDIDATES = [
   "claude",
   path.join(os.homedir(), ".claude/local/claude"),
   "/opt/homebrew/bin/claude",
   "/usr/local/bin/claude",
+  // Windows npm 전역 심 — GUI 앱이 PATH를 못 받았을 때의 fallback.
+  ...(process.platform === "win32"
+    ? [
+        path.join(process.env.APPDATA ?? "", "npm", "claude.cmd"),
+        path.join(process.env.LOCALAPPDATA ?? "", "npm", "claude.cmd"),
+      ]
+    : []),
 ];
 
 async function firstExisting(paths: string[]): Promise<string | null> {
   for (const p of paths) {
-    if (p === "claude") {
-      try {
-        await execFileP("claude", ["--version"], { timeout: 2000 });
-        return "claude";
-      } catch {
-        continue;
-      }
+    if (!path.isAbsolute(p)) {
+      // bare 커맨드명 — PATH(+Windows PATHEXT)로 해석. .cmd 심 포함.
+      if ((await probeCliVersion(p, 2000)) !== null) return p;
+      continue;
     }
     try {
       await fs.access(p);
@@ -49,13 +50,8 @@ export interface ClaudeCodeProbe {
 export async function probeClaudeCode(): Promise<ClaudeCodeProbe | null> {
   const found = await firstExisting(CANDIDATES);
   if (!found) return null;
-  try {
-    const { stdout } = await execFileP(found, ["--version"], { timeout: 3000 });
-    const version = stdout.trim().split(/\s+/).pop() ?? "unknown";
-    return { path: found, version };
-  } catch {
-    return { path: found, version: "unknown" };
-  }
+  const version = (await probeCliVersion(found)) ?? "unknown";
+  return { path: found, version };
 }
 
 let cachedBin: string | null | undefined;
@@ -102,7 +98,7 @@ export const runClaudeCode: Runner = async (
 
   return new Promise<RunnerResult>((resolve, reject) => {
     const args = ["-p", flatUser, "--append-system-prompt", systemPrompt];
-    const child = spawn(bin, args, {
+    const child = spawnCli(bin, args, {
       stdio: ["ignore", "pipe", "pipe"],
       env: process.env,
     });
@@ -111,7 +107,7 @@ export const runClaudeCode: Runner = async (
     let stderr = "";
     let lastEmit = 0;
 
-    child.stdout.on("data", (chunk: Buffer) => {
+    child.stdout?.on("data", (chunk: Buffer) => {
       const text = chunk.toString("utf8");
       stdout += text;
       const now = Date.now();
@@ -122,7 +118,7 @@ export const runClaudeCode: Runner = async (
       }
     });
 
-    child.stderr.on("data", (chunk: Buffer) => {
+    child.stderr?.on("data", (chunk: Buffer) => {
       stderr += chunk.toString("utf8");
     });
 

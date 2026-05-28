@@ -2,33 +2,34 @@
 // 사용자의 Google AI Pro 구독 또는 free tier로 돌아간다.
 //
 // 호출 형식: gemini --prompt "<text>"  (Gemini CLI의 비대화형 모드)
-import { execFile, spawn } from "node:child_process";
-import { promisify } from "node:util";
 import path from "node:path";
 import os from "node:os";
 import fs from "node:fs/promises";
 import type { Runner, RunnerEvents, RunnerRequest, RunnerResult } from "./runner";
 import { wrapSystemPrompt } from "./runner";
 import { tStatus } from "./status-i18n";
-
-const execFileP = promisify(execFile);
+import { probeCliVersion, spawnCli } from "./exec";
 
 const CANDIDATES = [
   "gemini",
   path.join(os.homedir(), ".gemini/bin/gemini"),
   "/opt/homebrew/bin/gemini",
   "/usr/local/bin/gemini",
+  // Windows npm 전역 심 — GUI 앱이 PATH를 못 받았을 때의 fallback.
+  ...(process.platform === "win32"
+    ? [
+        path.join(process.env.APPDATA ?? "", "npm", "gemini.cmd"),
+        path.join(process.env.LOCALAPPDATA ?? "", "npm", "gemini.cmd"),
+      ]
+    : []),
 ];
 
 async function firstExisting(paths: string[]): Promise<string | null> {
   for (const p of paths) {
-    if (p === "gemini") {
-      try {
-        await execFileP("gemini", ["--version"], { timeout: 2000 });
-        return "gemini";
-      } catch {
-        continue;
-      }
+    if (!path.isAbsolute(p)) {
+      // bare 커맨드명 — PATH(+Windows PATHEXT)로 해석. .cmd 심 포함.
+      if ((await probeCliVersion(p, 2000)) !== null) return p;
+      continue;
     }
     try {
       await fs.access(p);
@@ -48,13 +49,8 @@ export interface GeminiProbe {
 export async function probeGemini(): Promise<GeminiProbe | null> {
   const found = await firstExisting(CANDIDATES);
   if (!found) return null;
-  try {
-    const { stdout } = await execFileP(found, ["--version"], { timeout: 3000 });
-    const version = stdout.trim().split(/\s+/).pop() ?? "unknown";
-    return { path: found, version };
-  } catch {
-    return { path: found, version: "unknown" };
-  }
+  const version = (await probeCliVersion(found)) ?? "unknown";
+  return { path: found, version };
 }
 
 let cachedBin: string | null | undefined;
@@ -101,7 +97,7 @@ export const runGemini: Runner = async (
 
   return new Promise<RunnerResult>((resolve, reject) => {
     // Gemini CLI 비대화형 모드 — --prompt 플래그.
-    const child = spawn(bin, ["--prompt", prompt], {
+    const child = spawnCli(bin, ["--prompt", prompt], {
       stdio: ["ignore", "pipe", "pipe"],
       env: process.env,
     });
@@ -110,7 +106,7 @@ export const runGemini: Runner = async (
     let stderr = "";
     let lastEmit = 0;
 
-    child.stdout.on("data", (chunk: Buffer) => {
+    child.stdout?.on("data", (chunk: Buffer) => {
       const text = chunk.toString("utf8");
       stdout += text;
       const now = Date.now();
@@ -119,7 +115,7 @@ export const runGemini: Runner = async (
         lastEmit = now;
       }
     });
-    child.stderr.on("data", (chunk: Buffer) => {
+    child.stderr?.on("data", (chunk: Buffer) => {
       stderr += chunk.toString("utf8");
     });
 

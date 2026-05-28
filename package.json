@@ -1,6 +1,6 @@
 {
   "name": "agentlas-desktop",
-  "version": "0.0.4",
+  "version": "0.0.5",
   "description": "Agentlas Desktop — AI 에이전트의 런처 (Steam for AI agents). BYOC: 사용자 Claude/ChatGPT/Gemini 구독 그대로.",
   "private": true,
   "license": "Apache-2.0",
@@ -45,12 +45,14 @@
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.0.4",
     "better-sqlite3": "^11.3.0",
+    "cross-spawn": "^7.0.6",
     "electron-updater": "^6.3.9",
     "keytar": "^7.9.0",
     "zod": "^3.23.8"
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.11",
+    "@types/cross-spawn": "^6.0.6",
     "@types/node": "^22.7.4",
     "@types/react": "^18.3.11",
     "@types/react-dom": "^18.3.0",

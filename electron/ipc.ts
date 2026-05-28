@@ -3,6 +3,7 @@
 import { app, BrowserWindow, ipcMain } from "electron";
 import { randomUUID } from "node:crypto";
 import { detectRuntimes, setActiveRuntime } from "./runtime/detect";
+import { runMigration, scanMigrationSources } from "./migrate";
 import {
   deleteApiKey,
   deleteEnvVar,
@@ -61,6 +62,7 @@ import {
 import type {
   Automation,
   McpInvocationRequest,
+  MigrationOptions,
   Project,
   RuntimeBackend,
   RuntimeSelection,
@@ -244,6 +246,10 @@ export function registerIpcHandlers(): void {
     toggleAutomation(id, enabled),
   );
   ipcMain.handle("automations:remove", (_e, id: string) => removeAutomation(id));
+
+  // ── migration (OpenClaw / Hermes → Agentlas) ────────────
+  ipcMain.handle("migration:scan", () => scanMigrationSources());
+  ipcMain.handle("migration:import", (_e, opts: MigrationOptions) => runMigration(opts));
 
   // ── invoke (백엔드 라우터 — 스트리밍 실행) ─────────────
   ipcMain.handle("invoke:run", async (event, req: McpInvocationRequest) => {

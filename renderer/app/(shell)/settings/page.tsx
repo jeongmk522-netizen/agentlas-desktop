@@ -5,6 +5,7 @@ import { ipc } from "@/lib/ipc";
 import { useT, type LocalePref } from "@/lib/i18n";
 import type { RuntimeBackend, RuntimeStatus } from "@/lib/types";
 import { IconLock } from "@/components/Icon";
+import { MigrationPanel } from "@/components/MigrationPanel";
 
 const BACKEND_LABEL: Record<RuntimeBackend, string> = {
   anthropic: "Anthropic (Claude)",
@@ -301,6 +302,8 @@ export default function SettingsPage() {
             </div>
           </div>
         ))}
+
+        <MigrationPanel />
       </section>
     </div>
   );

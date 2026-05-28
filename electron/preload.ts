@@ -6,6 +6,7 @@ import type {
   Automation,
   McpInvocationEvent,
   McpInvocationRequest,
+  MigrationOptions,
   Project,
   RuntimeBackend,
   RuntimeSelection,
@@ -104,6 +105,10 @@ const api: AgentlasIpc = {
     toggle: (id: string, enabled: boolean) =>
       ipcRenderer.invoke("automations:toggle", id, enabled),
     remove: (id: string) => ipcRenderer.invoke("automations:remove", id),
+  },
+  migration: {
+    scan: () => ipcRenderer.invoke("migration:scan"),
+    import: (opts: MigrationOptions) => ipcRenderer.invoke("migration:import", opts),
   },
   invoke: {
     run: (req: McpInvocationRequest) => ipcRenderer.invoke("invoke:run", req),

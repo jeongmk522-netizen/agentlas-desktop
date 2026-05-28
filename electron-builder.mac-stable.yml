@@ -31,14 +31,16 @@ mac:
   entitlementsInherit: build-resources/entitlements.mac.plist
   notarize: true
   # zip is REQUIRED for macOS auto-update (Squirrel.Mac updates from a .zip, not the .dmg).
-  # dmg stays for first-time manual download/install. latest-mac.yml lists the zip as the
-  # update artifact; without it electron-updater throws "ZIP file not provided".
+  # dmg stays for first-time manual download/install.
+  # ORDER MATTERS: electron-builder writes latest-mac.yml from the LAST target, so zip must
+  # be last — otherwise the feed points at the .dmg and electron-updater throws
+  # "ZIP file not provided".
   target:
-    - target: zip
+    - target: dmg
       arch:
         - arm64
         - x64
-    - target: dmg
+    - target: zip
       arch:
         - arm64
         - x64

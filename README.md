@@ -112,8 +112,56 @@ Get the latest build from the [**Releases page**](https://github.com/jeongmk522-
 | Windows | `Agentlas-Setup-x.y.z.exe` · `Agentlas-x.y.z-portable.exe` | Windows 10/11 (x64) |
 | Linux | `Agentlas-x.y.z.AppImage` · `Agentlas-x.y.z.deb` | x64 |
 
-The app updates itself — a "Restart to update" badge appears when a new build is
-ready.
+### Install from the terminal
+
+Prefer the command line? These one-liners fetch the latest release asset straight
+from GitHub (no need to hardcode a version).
+
+**macOS** (auto-detects Apple silicon vs Intel):
+
+```bash
+arch=$([ "$(uname -m)" = "arm64" ] && echo arm64 || echo x64)
+url=$(curl -fsSL https://api.github.com/repos/jeongmk522-netizen/agentlas-desktop/releases/latest \
+  | grep -o "https://[^\"]*-${arch}\.dmg" | head -1)
+curl -fL "$url" -o Agentlas.dmg && open Agentlas.dmg
+```
+
+**Linux (.deb — Debian/Ubuntu):**
+
+```bash
+url=$(curl -fsSL https://api.github.com/repos/jeongmk522-netizen/agentlas-desktop/releases/latest \
+  | grep -o 'https://[^"]*\.deb' | head -1)
+curl -fL "$url" -o agentlas.deb && sudo dpkg -i agentlas.deb
+```
+
+**Linux (AppImage — any distro):**
+
+```bash
+url=$(curl -fsSL https://api.github.com/repos/jeongmk522-netizen/agentlas-desktop/releases/latest \
+  | grep -o 'https://[^"]*\.AppImage' | head -1)
+curl -fL "$url" -o Agentlas.AppImage && chmod +x Agentlas.AppImage && ./Agentlas.AppImage
+```
+
+**Windows (PowerShell):**
+
+```powershell
+$r = Invoke-RestMethod https://api.github.com/repos/jeongmk522-netizen/agentlas-desktop/releases/latest
+$u = ($r.assets | Where-Object { $_.name -like 'Agentlas-Setup-*.exe' }).browser_download_url
+Invoke-WebRequest $u -OutFile "$env:TEMP\AgentlasSetup.exe"; Start-Process "$env:TEMP\AgentlasSetup.exe"
+```
+
+(With the GitHub CLI on any OS: `gh release download -R jeongmk522-netizen/agentlas-desktop --pattern '*.dmg'`.)
+
+### Updates — do I need to reinstall?
+
+No. The app updates itself: ~15s after launch and then hourly it checks GitHub
+Releases, downloads a newer build in the background, and shows a **"Restart to
+update"** badge (the same idea as Codex's update button). Click it to apply.
+
+- **Windows:** auto-update works for the **installer** build (`Agentlas-Setup-*.exe`).
+  The **portable** `.exe` does **not** self-update — re-download it to upgrade.
+- **macOS / Linux (AppImage):** self-update in place. The `.deb` updates via the
+  same in-app flow.
 
 ### First-time setup — opening the app the first time
 

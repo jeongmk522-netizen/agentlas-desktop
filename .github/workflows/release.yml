@@ -86,5 +86,20 @@ jobs:
 
       # --publish always uploads the artifacts (and the per-platform update feed:
       # latest.yml / latest-mac.yml / latest-linux.yml) to the tag's release.
+      # Retried because hdiutil (macOS DMG creation) flakes intermittently on
+      # hosted runners; re-publish overwrites partially uploaded assets.
       - name: Package and publish
-        run: npx electron-builder ${{ matrix.builder_args }} --publish always
+        shell: bash
+        run: |
+          for attempt in 1 2 3; do
+            echo "::group::electron-builder attempt $attempt"
+            if npx electron-builder ${{ matrix.builder_args }} --publish always; then
+              echo "::endgroup::"
+              exit 0
+            fi
+            echo "::endgroup::"
+            echo "::warning::electron-builder attempt $attempt failed; retrying in 15s"
+            sleep 15
+          done
+          echo "::error::electron-builder failed after 3 attempts"
+          exit 1

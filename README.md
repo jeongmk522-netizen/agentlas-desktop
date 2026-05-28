@@ -5,7 +5,31 @@
 <h1 align="center">Agentlas Desktop</h1>
 
 <p align="center">
-  <strong>The open-source control room for your AI agents — on macOS, Windows, and Linux.</strong>
+  <strong>Run whole AI agent teams on the Claude, ChatGPT, or Gemini plan you already pay for — locally.</strong>
+</p>
+
+<p align="center">
+  The only local AI agent launcher that <strong>never hands your API keys or chat history to a hosting platform.</strong><br>
+  Bring your own Claude Code, Codex, or Gemini CLI (or any API key), import agents over MCP, and run them on your own machine.
+</p>
+
+<!-- ── Download (primary action) ───────────────────────────────────────── -->
+<p align="center">
+  <a href="https://github.com/jeongmk522-netizen/agentlas-desktop/releases/latest">
+    <img alt="Download for macOS — Apple Silicon" src="https://img.shields.io/badge/Download_for_Mac-Apple_Silicon-000000?style=for-the-badge&logo=apple&logoColor=white">
+  </a>
+  <a href="https://github.com/jeongmk522-netizen/agentlas-desktop/releases/latest">
+    <img alt="Download for macOS — Intel" src="https://img.shields.io/badge/Download_for_Mac-Intel-555555?style=for-the-badge&logo=apple&logoColor=white">
+  </a>
+  <a href="https://github.com/jeongmk522-netizen/agentlas-desktop/releases/latest">
+    <img alt="Download for Windows" src="https://img.shields.io/badge/Download_for-Windows-0078D6?style=for-the-badge&logo=windows&logoColor=white">
+  </a>
+  <a href="https://github.com/jeongmk522-netizen/agentlas-desktop/releases/latest">
+    <img alt="Download for Linux" src="https://img.shields.io/badge/Download_for-Linux-FCC624?style=for-the-badge&logo=linux&logoColor=black">
+  </a>
+</p>
+<p align="center">
+  <sub>Free · open source (Apache-2.0) · no Agentlas account needed to run · prefer the terminal? <a href="#install-from-the-terminal">one-line install ↓</a></sub>
 </p>
 
 <p align="center">
@@ -26,16 +50,33 @@
     <img alt="License: Apache 2.0" src="https://img.shields.io/badge/license-Apache%202.0-green">
   </a>
   <img alt="Platforms" src="https://img.shields.io/badge/macOS%20%C2%B7%20Windows%20%C2%B7%20Linux-lightgrey">
-  <img alt="Runtime" src="https://img.shields.io/badge/runtime-Claude%20%7C%20Codex%20%7C%20Gemini%20%7C%20BYOK-black">
+  <img alt="Runtime" src="https://img.shields.io/badge/runtime-Claude%20Code%20%7C%20Codex%20%7C%20Gemini%20%7C%20BYOK-black">
 </p>
+
+<p align="center">
+  <img alt="Agentlas Desktop running a CEO agent over a live org chart" src="docs/screenshot.png" width="960">
+</p>
+
+### What you get
+
+| | |
+|---|---|
+| **4 runtimes** | Claude Code · Codex · Gemini CLI · any API key (BYOK) — auto-detected |
+| **3 cloud providers** | Anthropic · OpenAI · Google, using *your* key |
+| **+$0 to your model bill** | Agentlas runs no model and never proxies a call |
+| **100% local** | keys in the OS keychain, chats & agents in local SQLite |
+| **Agent teams, visible** | every firm renders as an org chart, not a black box |
+| **MCP marketplace** | install single agents or whole teams over the Model Context Protocol |
+| **3 platforms** | macOS (Apple Silicon + Intel) · Windows · Linux, self-updating |
+| **Apache-2.0** | audit it, fork it, ship your own variant |
 
 Connect the AI models you already pay for, import agents over MCP, and run whole
 agent teams from one local window — with the org chart and the repo behind every
 run in plain view. Your keys and your chat history stay on your machine, never on
 someone else's agent platform.
 
-- **Bring your own models.** Claude, Codex, and Gemini (CLI or API key), or
-  OpenAI / Anthropic / Google directly. Agentlas never proxies the model call.
+- **Bring your own models.** Claude Code, Codex, and Gemini CLI, or
+  OpenAI / Anthropic / Google API keys directly. Agentlas never proxies the model call.
 - **Import agents over MCP.** Drop in an agent or a whole team — for example a
   package you built on [agentlas.cloud](https://agentlas.cloud) — and run it.
 - **See the team, not a black box.** Every agent team renders as an org chart and
@@ -44,10 +85,6 @@ someone else's agent platform.
   routes work between roles, all on your disk.
 - **Local-first.** Keys in the OS keychain, chats and installed agents in local
   SQLite. Open source, Apache-2.0 — fork it, audit it, ship a variant.
-
-<p align="center">
-  <img alt="Agentlas Desktop running a CEO agent" src="docs/screenshot.png" width="960">
-</p>
 
 ## Who it's for
 

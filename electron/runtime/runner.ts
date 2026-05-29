@@ -15,6 +15,8 @@ export interface RunnerRequest {
   model?: string;
   /** BYOK 긴 컨텍스트(1M) opt-in. Agentlas-managed 러너(BYOK/Ollama)만 사용. */
   longContext?: boolean;
+  /** 작업량(reasoning effort) — Claude Code `--effort`로 전달. 그 외 러너는 무시. */
+  effort?: string;
   /** 실행 취소 신호 — abort 시 CLI 러너는 자식 프로세스 kill, API 러너는 fetch abort. */
   signal?: AbortSignal;
   /** 도구 사용 권한 — read(읽기) / write(편집) / full(셸·외부). 런타임 권한 모드로 매핑. */

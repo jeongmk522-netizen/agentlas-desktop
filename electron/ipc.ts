@@ -3,6 +3,7 @@
 import { app, BrowserWindow, ipcMain } from "electron";
 import { randomUUID } from "node:crypto";
 import { detectRuntimes, setActiveRuntime } from "./runtime/detect";
+import { listRuntimeModels } from "./runtime/providers";
 import { installCli, openCliLogin, type InstallableCli } from "./runtime/install-cli";
 import { listRuntimeCommands } from "./runtime/commands";
 import { installAgentlasCli } from "./runtime/install-agentlas-cli";
@@ -85,6 +86,7 @@ import type {
   MigrationOptions,
   Project,
   RuntimeBackend,
+  RuntimeKind,
   RuntimeSelection,
 } from "../shared/types";
 
@@ -138,6 +140,11 @@ export function registerIpcHandlers(): void {
   ipcMain.handle("runtime:installCli", (_e, kind: InstallableCli) => installCli(kind));
   ipcMain.handle("runtime:openCliLogin", (_e, kind: InstallableCli) => openCliLogin(kind));
   ipcMain.handle("runtime:listCommands", () => listRuntimeCommands());
+  ipcMain.handle(
+    "runtime:listModels",
+    (_e, sel: { kind: RuntimeKind; backend?: RuntimeBackend | null; availableModels?: string[] | null }) =>
+      listRuntimeModels(sel.kind, sel.backend ?? null, sel.availableModels ?? null, Date.now()),
+  );
   ipcMain.handle("runtime:installAgentlasCli", () => installAgentlasCli());
 
   // ── secrets (macOS Keychain) ────────────────────────────

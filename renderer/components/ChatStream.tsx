@@ -493,10 +493,22 @@ function WorkingPanel({
 }) {
   const { t, locale } = useT();
   const elapsed = useElapsedSeconds(startedAt, !done);
-  // 완료 후엔 일반 status 줄은 숨기고 tool-use 블록만 남긴다(클러터 방지). 진행 중엔 전부 표시.
+  const [override, setOverride] = useState<boolean | null>(null);
+
   const allRows: StreamStep[] =
     steps.length > 0 ? steps : fallback ? [{ id: "_f", kind: "thinking", text: fallback }] : [];
-  const rows = done ? allRows.filter((s) => s.tool) : allRows;
+  const toolSteps = allRows.filter((s) => s.tool);
+  const thinkingSteps = allRows.filter((s) => !s.tool);
+
+  // 도구 그룹 카운트 → "실행됨 명령 N개, 읽기 파일 N개" 요약 (스크린샷 형식).
+  const counts: Record<ToolGroup, number> = { command: 0, read: 0, edit: 0, search: 0, other: 0 };
+  for (const s of toolSteps) counts[toolView(s.tool!, s.args, locale).group] += 1;
+  const summary = buildToolSummary(counts, locale);
+
+  // 기본: 진행 중엔 목록 펼침, 완료되면 접힘. 사용자가 누르면 그 상태로 고정.
+  const expanded = override ?? !done;
+  const latestThinking =
+    thinkingSteps.length > 0 ? thinkingSteps[thinkingSteps.length - 1].text : "";
 
   return (
     <div
@@ -507,9 +519,10 @@ function WorkingPanel({
         padding: "10px 14px",
         display: "flex",
         flexDirection: "column",
-        gap: 6,
+        gap: 8,
       }}
     >
+      {/* 메트릭 줄 — "2분 58초 · 94.5k tokens" */}
       <div
         style={{
           display: "flex",
@@ -528,67 +541,98 @@ function WorkingPanel({
           {tokens != null && tokens > 0 && ` · ${formatTokens(tokens)} tokens`}
         </span>
       </div>
-      {rows.length > 0 && (
+
+      {/* 진행 중 라이브 narration (도구 외 사고 단계 — 가장 최근 1줄) */}
+      {!done && latestThinking && (
         <div
           style={{
             display: "flex",
-            flexDirection: "column",
-            gap: 4,
-            paddingLeft: 14,
-            borderLeft: "1px solid var(--paper-edge)",
-            marginLeft: 3,
+            alignItems: "center",
+            gap: 8,
+            fontSize: 12.5,
+            color: "var(--ink-soft)",
             minWidth: 0,
           }}
         >
-          {rows.map((s, idx) => {
-            if (s.tool) return <ToolRow key={s.id} step={s} />;
-            const isCurrent = !done && idx === rows.length - 1;
-            const isPast = !done && idx < rows.length - 1;
-            return (
-              <div
-                key={s.id}
-                style={{
-                  fontSize: 12.5,
-                  color: isPast ? "var(--muted-deep)" : "var(--ink-soft)",
-                  opacity: isPast ? 0.75 : 1,
-                  fontWeight: isCurrent ? 500 : 400,
-                  lineHeight: 1.5,
-                  display: "flex",
-                  alignItems: "flex-start",
-                  gap: 8,
-                  minWidth: 0,
-                }}
-              >
-                <span
-                  aria-hidden
-                  style={{
-                    flexShrink: 0,
-                    width: 14,
-                    display: "inline-flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    color: isCurrent ? "var(--accent)" : "var(--muted-deep)",
-                    marginTop: 2,
-                  }}
-                >
-                  <ThinkingGlyph />
-                </span>
-                <span style={{ minWidth: 0, flex: 1, wordBreak: "break-word", overflowWrap: "anywhere" }}>
-                  {s.text}
-                </span>
-              </div>
-            );
-          })}
+          <span aria-hidden style={{ flexShrink: 0, color: "var(--accent)", display: "inline-flex" }}>
+            <ThinkingGlyph />
+          </span>
+          <span
+            style={{
+              minWidth: 0,
+              flex: 1,
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              whiteSpace: "nowrap",
+            }}
+          >
+            {latestThinking}
+          </span>
+        </div>
+      )}
+
+      {/* 도구 사용 그룹 — 접기/펴기 요약 + 목록 (Claude Code/FleetView 형식) */}
+      {toolSteps.length > 0 && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+          <button
+            onClick={() => setOverride(!expanded)}
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 6,
+              width: "100%",
+              textAlign: "left",
+              background: "transparent",
+              border: "none",
+              padding: 0,
+              cursor: "pointer",
+              fontSize: 12.5,
+              fontWeight: 600,
+              color: "var(--ink-soft)",
+            }}
+          >
+            <span style={{ minWidth: 0, flex: 1 }}>{summary}</span>
+            <span
+              aria-hidden
+              style={{
+                color: "var(--muted)",
+                transform: expanded ? "rotate(180deg)" : "none",
+                transition: "transform .12s",
+                display: "inline-flex",
+                flexShrink: 0,
+              }}
+            >
+              <ChevronDown />
+            </span>
+          </button>
+          {expanded && (
+            <div
+              style={{
+                display: "flex",
+                flexDirection: "column",
+                gap: 4,
+                paddingLeft: 14,
+                borderLeft: "1px solid var(--paper-edge)",
+                marginLeft: 3,
+                minWidth: 0,
+              }}
+            >
+              {toolSteps.map((s, idx) => (
+                <ToolRow key={s.id} step={s} current={!done && idx === toolSteps.length - 1} />
+              ))}
+            </div>
+          )}
         </div>
       )}
     </div>
   );
 }
 
-// Claude Code식 tool-use 블록 — "<tool> 사용 중 ›" 클릭하면 인자(JSON) 펼침.
-function ToolRow({ step }: { step: StreamStep }) {
-  const { t } = useT();
+// 단일 도구 행 — "실행됨 <명령>" / "읽기 <파일>" 형식. 클릭하면 인자(JSON) 펼침.
+function ToolRow({ step, current }: { step: StreamStep; current?: boolean }) {
+  const { locale } = useT();
   const [open, setOpen] = useState(false);
+  const view = toolView(step.tool!, step.args, locale);
   const hasArgs = !!(step.args && step.args !== "{}" && step.args !== "");
   return (
     <div style={{ minWidth: 0 }}>
@@ -608,21 +652,40 @@ function ToolRow({ step }: { step: StreamStep }) {
           cursor: hasArgs ? "pointer" : "default",
         }}
       >
-        <span aria-hidden style={{ flexShrink: 0, color: "var(--accent)", display: "inline-flex", marginTop: 1 }}>
-          <ToolGlyph />
+        <span
+          style={{
+            flexShrink: 0,
+            fontSize: 11,
+            color: "var(--muted-deep)",
+            fontWeight: current ? 700 : 500,
+          }}
+        >
+          {view.verb}
         </span>
-        <span style={{ fontFamily: "var(--font-mono)", fontSize: 12, fontWeight: 600, color: "var(--ink)" }}>
-          {step.tool}
+        <span
+          style={{
+            fontFamily: "var(--font-mono)",
+            fontSize: 12,
+            color: "var(--ink)",
+            fontWeight: current ? 600 : 400,
+            minWidth: 0,
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            whiteSpace: "nowrap",
+          }}
+        >
+          {view.label || step.tool}
         </span>
-        <span style={{ color: "var(--muted-deep)" }}>{t("chatstream.tool_using")}</span>
         {hasArgs && (
           <span
             aria-hidden
             style={{
+              marginLeft: "auto",
               color: "var(--muted)",
               transform: open ? "rotate(90deg)" : "none",
               transition: "transform .12s",
               display: "inline-flex",
+              flexShrink: 0,
             }}
           >
             ›
@@ -632,7 +695,7 @@ function ToolRow({ step }: { step: StreamStep }) {
       {open && hasArgs && (
         <pre
           style={{
-            margin: "4px 0 2px 21px",
+            margin: "4px 0 2px 0",
             padding: "8px 10px",
             background: "var(--paper)",
             border: "1px solid var(--paper-edge)",
@@ -653,6 +716,111 @@ function ToolRow({ step }: { step: StreamStep }) {
   );
 }
 
+// ── 도구 분류 (이름+인자 → 동사 + 간결 라벨 + 그룹) ───────────────
+type ToolGroup = "command" | "read" | "edit" | "search" | "other";
+interface ToolViewModel {
+  group: ToolGroup;
+  verb: string;
+  label: string;
+}
+
+const VERB: Record<ToolGroup, { ko: string; en: string }> = {
+  command: { ko: "실행됨", en: "ran" },
+  read: { ko: "읽기", en: "read" },
+  edit: { ko: "편집", en: "edited" },
+  search: { ko: "검색", en: "searched" },
+  other: { ko: "사용", en: "used" },
+};
+
+function baseName(p: string): string {
+  const parts = p.split(/[/\\]/).filter(Boolean);
+  return parts[parts.length - 1] || p;
+}
+function squish(s: string, n = 72): string {
+  const t = s.replace(/\s+/g, " ").trim();
+  return t.length > n ? t.slice(0, n - 1) + "…" : t;
+}
+function parseArgs(s?: string): Record<string, unknown> {
+  if (!s) return {};
+  try {
+    const o = JSON.parse(s);
+    return o && typeof o === "object" ? (o as Record<string, unknown>) : {};
+  } catch {
+    return {};
+  }
+}
+
+function toolView(tool: string, argsStr: string | undefined, locale: "ko" | "en"): ToolViewModel {
+  const a = parseArgs(argsStr);
+  const name = tool.toLowerCase();
+  const str = (x: unknown) => (typeof x === "string" ? x : "");
+  const v = (g: ToolGroup) => VERB[g][locale];
+  if (name === "bash")
+    return { group: "command", verb: v("command"), label: squish(str(a.command).split("\n")[0]) };
+  if (name === "grep")
+    return {
+      group: "search",
+      verb: v("search"),
+      label: squish(`grep ${str(a.pattern)}${a.path ? " " + str(a.path) : ""}`),
+    };
+  if (name === "glob")
+    return { group: "search", verb: v("search"), label: squish(`find ${str(a.pattern) || str(a.glob)}`) };
+  if (name === "read")
+    return {
+      group: "read",
+      verb: v("read"),
+      label: baseName(str(a.file_path) || str(a.path) || str(a.notebook_path)),
+    };
+  if (name === "edit" || name === "multiedit" || name === "write" || name === "notebookedit")
+    return { group: "edit", verb: v("edit"), label: baseName(str(a.file_path) || str(a.notebook_path)) };
+  if (name === "websearch") return { group: "search", verb: v("search"), label: squish(str(a.query)) };
+  if (name === "webfetch")
+    return { group: "command", verb: locale === "ko" ? "가져옴" : "fetched", label: squish(str(a.url)) };
+  if (name === "task")
+    return {
+      group: "command",
+      verb: locale === "ko" ? "위임" : "delegated",
+      label: squish(str(a.description) || str(a.subagent_type)),
+    };
+  if (name.startsWith("mcp__")) {
+    const parts = tool.split("__");
+    const pretty = parts.length >= 3 ? `${parts[1]}·${parts.slice(2).join("·")}` : tool;
+    return { group: "command", verb: locale === "ko" ? "호출" : "called", label: pretty };
+  }
+  return { group: "other", verb: v("other"), label: tool };
+}
+
+function buildToolSummary(counts: Record<ToolGroup, number>, locale: "ko" | "en"): string {
+  const order: ToolGroup[] = ["command", "read", "edit", "search", "other"];
+  const ko: Record<ToolGroup, (n: number) => string> = {
+    command: (n) => `실행됨 명령 ${n}개`,
+    read: (n) => `읽기 파일 ${n}개`,
+    edit: (n) => `편집 파일 ${n}개`,
+    search: (n) => `검색 ${n}개`,
+    other: (n) => `도구 ${n}개`,
+  };
+  const en: Record<ToolGroup, (n: number) => string> = {
+    command: (n) => `ran ${n} command${n > 1 ? "s" : ""}`,
+    read: (n) => `read ${n} file${n > 1 ? "s" : ""}`,
+    edit: (n) => `edited ${n} file${n > 1 ? "s" : ""}`,
+    search: (n) => `${n} search${n > 1 ? "es" : ""}`,
+    other: (n) => `${n} tool${n > 1 ? "s" : ""}`,
+  };
+  const fmt = locale === "ko" ? ko : en;
+  return order
+    .filter((g) => counts[g] > 0)
+    .map((g) => fmt[g](counts[g]))
+    .join(", ");
+}
+
+function ChevronDown() {
+  return (
+    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <path d="m6 9 6 6 6-6" />
+    </svg>
+  );
+}
+
 function prettyJson(s: string): string {
   try {
     return JSON.stringify(JSON.parse(s), null, 2);
@@ -670,14 +838,6 @@ function ThinkingGlyph() {
   return (
     <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
       <path d="M9 18h6M10 22h4M12 2a7 7 0 0 0-4 12.7V17h8v-2.3A7 7 0 0 0 12 2z" />
-    </svg>
-  );
-}
-
-function ToolGlyph() {
-  return (
-    <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-      <path d="M13 2 4 14h7l-1 8 9-12h-7l1-8z" />
     </svg>
   );
 }

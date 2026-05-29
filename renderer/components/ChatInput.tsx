@@ -14,8 +14,27 @@ import type {
   InstalledFirm,
   Project,
   RuntimeCommand,
+  RuntimeStatus,
 } from "@/lib/types";
+import { CONTEXT_MANAGED_BY } from "@shared/models";
 import { pickLocalized, useT } from "@/lib/i18n";
+
+type ModelOption = { id: string; label: string; tag?: string };
+
+const CLI_LABEL: Record<string, string> = {
+  "claude-code": "Claude Code",
+  codex: "Codex",
+  gemini: "Gemini",
+};
+
+/** 모델 칩에 보일 라벨 — 현재 모델 라벨(opts에서) 또는 런타임 기본명. */
+function modelChipLabel(s: RuntimeStatus, opts: ModelOption[]): string {
+  const label = opts.find((o) => o.id === s.model)?.label ?? (s.model || null);
+  if (s.kind === "ollama") return label ? `Ollama · ${label}` : "Ollama";
+  if (s.kind === "byok") return label ?? "API";
+  const base = CLI_LABEL[s.kind] ?? s.kind;
+  return label ? `${base} · ${label}` : base;
+}
 import {
   IconArrowUp,
   IconAtSign,
@@ -83,6 +102,10 @@ export function ChatInput({
   busy,
   disabled,
   context,
+  runtime,
+  modelOptions,
+  onSelectModel,
+  onSelectEffort,
 }: {
   onSend: (text: string, opts?: SendOptions) => void;
   /** 슬래시 커맨드(/new, /clear, /help …) 실행 — 텍스트 삽입이 아니라 액션 */
@@ -90,6 +113,14 @@ export function ChatInput({
   busy: boolean;
   disabled?: boolean;
   context?: MentionContext;
+  /** 활성 런타임 — 모델/작업량 picker용. */
+  runtime?: RuntimeStatus | null;
+  /** 실시간 조회된 모델 목록 (runtime.listModels). */
+  modelOptions?: ModelOption[];
+  /** 모델 선택 — "" 이면 구독 기본(--model 미전달). */
+  onSelectModel?: (id: string) => void;
+  /** 작업량 선택 — "" 이면 기본. claude-code 전용. */
+  onSelectEffort?: (id: string) => void;
 }) {
   const { t, locale } = useT();
   const [input, setInput] = useState("");
@@ -100,6 +131,7 @@ export function ChatInput({
   const [goalMode, setGoalMode] = useState(false);
   const [permissions, setPermissions] = useState<PermissionLevel>("read");
   const [permOpen, setPermOpen] = useState(false);
+  const [modelOpen, setModelOpen] = useState(false);
   // / 슬래시 + @ 멘션 인라인 자동완성
   const [trigger, setTrigger] = useState<null | {
     kind: "slash" | "mention";
@@ -215,18 +247,19 @@ export function ChatInput({
 
   // 클릭 외부 — 메뉴 닫기
   useEffect(() => {
-    if (!plusOpen && !permOpen) return;
+    if (!plusOpen && !permOpen && !modelOpen) return;
     function onDown(e: MouseEvent) {
       const target = e.target as HTMLElement;
       if (!target.closest("[data-popover-root]")) {
         setPlusOpen(false);
         setPlusSubmenu(null);
         setPermOpen(false);
+        setModelOpen(false);
       }
     }
     window.addEventListener("mousedown", onDown);
     return () => window.removeEventListener("mousedown", onDown);
-  }, [plusOpen, permOpen]);
+  }, [plusOpen, permOpen, modelOpen]);
 
   // ── 플러그인 목록 (설치된 에이전트의 MCP 서버 dedupe) ─────
   const plugins = useMemo(() => {
@@ -287,6 +320,23 @@ export function ChatInput({
 
       {/* 권한 popover */}
       {permOpen && <PermissionMenu value={permissions} setValue={setPermissions} t={t} />}
+
+      {/* 모델·작업량 popover */}
+      {modelOpen && runtime && (
+        <ModelMenu
+          runtime={runtime}
+          options={modelOptions ?? []}
+          onSelectModel={(id) => {
+            onSelectModel?.(id);
+            setModelOpen(false);
+          }}
+          onSelectEffort={(id) => {
+            onSelectEffort?.(id);
+            setModelOpen(false);
+          }}
+          t={t}
+        />
+      )}
 
       <div
         className="glass-lift"
@@ -502,6 +552,32 @@ export function ChatInput({
             {t(`chatinput.perm.${permissions}` as `chatinput.perm.${PermissionLevel}`)}
             <IconChevronDown size={11} style={{ opacity: 0.6 }} />
           </button>
+
+          {/* 모델·작업량 칩 — 활성 런타임이 모델 선택 또는 작업량을 지원할 때만 */}
+          {runtime &&
+            ((modelOptions?.length ?? 0) > 0 || (runtime.efforts?.length ?? 0) > 0) && (
+              <button
+                onClick={() => setModelOpen((v) => !v)}
+                disabled={disabled}
+                title={t("chatinput.model")}
+                style={{
+                  ...toolBtnStyle(modelOpen),
+                  width: "auto",
+                  padding: "0 10px",
+                  gap: 6,
+                  fontSize: 11,
+                  fontWeight: 600,
+                  color: "var(--ink-soft)",
+                  maxWidth: 220,
+                }}
+              >
+                <IconSparkles size={13} style={{ color: "var(--accent)" }} />
+                <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                  {modelChipLabel(runtime, modelOptions ?? [])}
+                </span>
+                <IconChevronDown size={11} style={{ opacity: 0.6 }} />
+              </button>
+            )}
 
           <div style={{ flex: 1 }} />
 
@@ -866,6 +942,81 @@ function PermissionMenu({
           right={value === o.id ? <span style={{ color: "var(--accent)", fontWeight: 700 }}>•</span> : undefined}
         />
       ))}
+    </Popover>
+  );
+}
+
+// ── 모델·작업량 메뉴 ──────────────────────────────────────
+// Image #2의 Claude Code 모델 메뉴를 입력창 안에 재현: 모델 목록 + 작업량.
+// 목록은 실시간(runtime.listModels / runtime.efforts)이라 CLI가 업데이트되면 자동 반영.
+function ModelMenu({
+  runtime,
+  options,
+  onSelectModel,
+  onSelectEffort,
+  t,
+}: {
+  runtime: RuntimeStatus;
+  options: ModelOption[];
+  onSelectModel: (id: string) => void;
+  onSelectEffort: (id: string) => void;
+  t: TFunction;
+}) {
+  const efforts = runtime.efforts ?? [];
+  // CLI(claude-code/codex/gemini)는 "구독 기본" 선택 가능. BYOK/Ollama는 항상 구체 모델.
+  const allowDefaultModel = runtime.kind !== "byok" && runtime.kind !== "ollama";
+  const managedByRuntime = CONTEXT_MANAGED_BY[runtime.kind] === "runtime";
+  const check = <span style={{ color: "var(--accent)", fontWeight: 700 }}>•</span>;
+  const modelIcon = <IconSparkles size={13} style={{ color: "var(--accent)" }} />;
+  const effortIcon = <IconRoute size={13} style={{ color: "var(--muted-deep)" }} />;
+
+  return (
+    <Popover title={t("chatinput.model")}>
+      {allowDefaultModel && (
+        <Row
+          onClick={() => onSelectModel("")}
+          icon={modelIcon}
+          title={t("chat.model.cli_default")}
+          right={!runtime.model ? check : undefined}
+        />
+      )}
+      {options.map((o) => (
+        <Row
+          key={o.id}
+          onClick={() => onSelectModel(o.id)}
+          icon={modelIcon}
+          title={o.label}
+          subtitle={o.tag}
+          right={runtime.model === o.id ? check : undefined}
+        />
+      ))}
+      {efforts.length > 0 && (
+        <>
+          <Divider />
+          <GroupLabel>{t("chatinput.effort")}</GroupLabel>
+          <Row
+            onClick={() => onSelectEffort("")}
+            icon={effortIcon}
+            title={t("chat.model.cli_default")}
+            right={!runtime.effort ? check : undefined}
+          />
+          {efforts.map((e) => (
+            <Row
+              key={e.id}
+              onClick={() => onSelectEffort(e.id)}
+              icon={effortIcon}
+              title={e.label}
+              right={runtime.effort === e.id ? check : undefined}
+            />
+          ))}
+        </>
+      )}
+      <Divider />
+      <div style={{ padding: "6px 10px", fontSize: 10.5, color: "var(--muted-deep)", lineHeight: 1.5 }}>
+        {managedByRuntime
+          ? t("settings.runtime.managed_runtime")
+          : t("settings.runtime.managed_agentlas")}
+      </div>
     </Popover>
   );
 }

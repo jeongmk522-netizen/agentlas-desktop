@@ -580,9 +580,25 @@ function UpdatePanel() {
 
 // ── Agentlas 터미널 CLI 설치 ──────────────────────────────
 function AgentlasCliPanel() {
-  const { t } = useT();
+  const { t, locale } = useT();
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState("");
+  const usage =
+    locale === "ko"
+      ? [
+          ["agentlas", "설치된 에이전트 목록 보기"],
+          ["agentlas <이름>", "claude처럼 바로 대화형 세션 시작"],
+          ['agentlas run <이름> "질문"', "1회 실행 (스크립트·파이프용)"],
+          ["agentlas firm <회사>", "회사(CEO)에게 위임 실행"],
+          ["agentlas doctor", "런타임·데이터 점검"],
+        ]
+      : [
+          ["agentlas", "list installed agents"],
+          ["agentlas <name>", "start an interactive session (like claude)"],
+          ['agentlas run <name> "prompt"', "one-shot run (scripts / pipes)"],
+          ["agentlas firm <firm>", "delegate to a firm's CEO"],
+          ["agentlas doctor", "check runtime & data"],
+        ];
 
   async function install() {
     const api = ipc();
@@ -654,6 +670,47 @@ function AgentlasCliPanel() {
             {msg}
           </div>
         )}
+
+        {/* 사용법 — "터미널 어케 키는지" 안내: 설치 후 터미널에서 바로 입력 */}
+        <div
+          style={{
+            marginTop: 4,
+            borderTop: "1px solid var(--paper-edge)",
+            paddingTop: 10,
+            display: "flex",
+            flexDirection: "column",
+            gap: 6,
+          }}
+        >
+          <div style={{ fontSize: 11.5, color: "var(--muted-deep)", lineHeight: 1.5 }}>
+            {locale === "ko"
+              ? "설치한 뒤 터미널(Terminal.app · iTerm 등)을 열고 아래 명령을 입력하세요. 설치가 곧 PATH 등록입니다."
+              : "After installing, open a terminal (Terminal.app, iTerm, …) and type a command below. Installing also registers it on your PATH."}
+          </div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+            {usage.map(([cmd, desc]) => (
+              <div key={cmd} style={{ display: "flex", alignItems: "baseline", gap: 10 }}>
+                <code
+                  style={{
+                    fontFamily: "var(--font-mono)",
+                    fontSize: 11.5,
+                    color: "var(--ink)",
+                    background: "var(--paper-2)",
+                    padding: "2px 7px",
+                    borderRadius: 6,
+                    whiteSpace: "nowrap",
+                    flexShrink: 0,
+                  }}
+                >
+                  {cmd}
+                </code>
+                <span style={{ fontSize: 11.5, color: "var(--muted-deep)", lineHeight: 1.5 }}>
+                  {desc}
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
       </div>
     </>
   );

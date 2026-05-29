@@ -62,6 +62,62 @@ async function getBin(): Promise<string | null> {
   return cachedBin;
 }
 
+// ── 작업량(effort) 자동 동기화 ─────────────────────────────
+// 하드코딩 대신 `claude --help`를 파싱해 이 CLI 버전이 실제 지원하는 --effort 레벨만 노출한다.
+// CLI가 업데이트돼 레벨이 바뀌면 자동 반영. --effort 자체가 없으면 빈 배열(=작업량 미지원).
+const EFFORT_LABELS: Record<string, string> = {
+  low: "Low",
+  medium: "Medium",
+  high: "High",
+  xhigh: "Extra",
+  max: "Max",
+};
+
+function runClaudeHelp(bin: string, timeoutMs = 4000): Promise<string> {
+  return new Promise((resolve) => {
+    let out = "";
+    let settled = false;
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve(out);
+    };
+    const child = spawnCli(bin, ["--help"], { stdio: ["ignore", "pipe", "pipe"] });
+    const timer = setTimeout(() => {
+      child.kill();
+      finish();
+    }, timeoutMs);
+    child.stdout?.on("data", (c: Buffer) => (out += c.toString("utf8")));
+    child.on("error", finish);
+    child.on("close", finish);
+  });
+}
+
+function parseEffortChoices(help: string): string[] {
+  // 예: "--effort <level>  Effort level for the current session (low, medium, high, xhigh, max)"
+  const m = help.match(/--effort[\s\S]{0,240}?\(([a-z0-9, ]+)\)/i);
+  if (!m) return [];
+  return m[1]
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
+
+let cachedEfforts: Array<{ id: string; label: string }> | undefined;
+/** 이 Claude Code 버전이 지원하는 작업량 레벨 — --help 파싱(1회 캐시). 미지원이면 []. */
+export async function probeClaudeEfforts(): Promise<Array<{ id: string; label: string }>> {
+  if (cachedEfforts !== undefined) return cachedEfforts;
+  const bin = await getBin();
+  if (!bin) {
+    cachedEfforts = [];
+    return cachedEfforts;
+  }
+  const help = await runClaudeHelp(bin);
+  cachedEfforts = parseEffortChoices(help).map((id) => ({ id, label: EFFORT_LABELS[id] ?? id }));
+  return cachedEfforts;
+}
+
 function flattenHistory(req: RunnerRequest): string {
   // CLI는 단일 turn — 이전 대화를 user 메시지에 inline으로 prepend.
   if (req.history.length === 0) return req.userPrompt;
@@ -106,6 +162,8 @@ export const runClaudeCode: Runner = async (
 
   // 모델 선택 — opus/sonnet/haiku 별칭(또는 풀 ID). 미지정이면 구독 기본 모델.
   const modelArgs = req.model && req.model.trim() ? ["--model", req.model.trim()] : [];
+  // 작업량(reasoning effort) — low/medium/high/xhigh/max. 미지정이면 CLI 기본.
+  const effortArgs = req.effort && req.effort.trim() ? ["--effort", req.effort.trim()] : [];
 
   return new Promise<RunnerResult>((resolve, reject) => {
     // stream-json + verbose: tool_use / 텍스트 / 토큰(usage) 이벤트를 NDJSON으로 받아
@@ -119,6 +177,7 @@ export const runClaudeCode: Runner = async (
       "stream-json",
       "--verbose",
       ...modelArgs,
+      ...effortArgs,
       ...permArgs,
     ];
     const child = spawnCli(bin, args, {

@@ -15,14 +15,10 @@ import type {
   RuntimeCommand,
   RuntimeStatus,
 } from "@/lib/types";
-import {
-  BYOK_MODELS,
-  CONTEXT_MANAGED_BY,
-  cliModels,
-  findByokModel,
-  hasModelPicker,
-  type ByokBackend,
-} from "@shared/models";
+import { CONTEXT_MANAGED_BY } from "@shared/models";
+
+/** picker 모델 옵션 — runtime.listModels가 실시간 조회해 채워준다. */
+type ModelOption = { id: string; label: string; tag?: string };
 import { ChatStream, type StreamMessage } from "@/components/ChatStream";
 import { extractQuestions } from "@/lib/ask-question";
 import { ChatInput } from "@/components/ChatInput";
@@ -43,21 +39,13 @@ const CLI_RUNTIME_LABEL: Record<string, string> = {
   gemini: "Gemini",
 };
 
-/** 헤더 칩에 보일 활성 런타임·모델 라벨. */
-function runtimeChipLabel(s: RuntimeStatus): string {
-  if (s.kind === "ollama") return s.model ? `Ollama · ${s.model}` : "Ollama";
-  if (s.kind === "byok") return findByokModel(s.backend, s.model)?.label ?? s.model ?? "API";
+/** 헤더 칩 라벨 — 실시간 모델 옵션(opts)에서 현재 모델 라벨을 찾아 조립. */
+function runtimeChipLabel(s: RuntimeStatus, opts: ModelOption[]): string {
+  const label = opts.find((o) => o.id === s.model)?.label ?? s.model ?? undefined;
+  if (s.kind === "ollama") return label ? `Ollama · ${label}` : "Ollama";
+  if (s.kind === "byok") return label ?? "API";
   const base = CLI_RUNTIME_LABEL[s.kind] ?? s.kind;
-  const m = cliModels(s.kind).find((o) => o.id === s.model);
-  return m ? `${base} · ${m.label}` : base;
-}
-
-/** 런타임의 모델 선택 옵션 — BYOK 카탈로그 또는 CLI 모델 목록. */
-function modelOptionsFor(s: RuntimeStatus): Array<{ id: string; label: string }> {
-  if (s.kind === "byok") {
-    return (BYOK_MODELS[s.backend as ByokBackend] ?? []).map((m) => ({ id: m.id, label: m.label }));
-  }
-  return cliModels(s.kind).map((m) => ({ id: m.id, label: m.label }));
+  return label ? `${base} · ${label}` : base;
 }
 
 export default function ChatPageWrapper() {
@@ -93,6 +81,8 @@ function ChatPage() {
   const seededRef = useRef<string>("");
   // 활성 런타임/모델 — 헤더 칩 표시 + BYOK 인라인 모델 변경. 진행 중 실행의 runId(취소용).
   const [activeRuntime, setActiveRuntime] = useState<RuntimeStatus | null>(null);
+  // 활성 런타임의 모델 목록 — 실시간 조회(BYOK는 provider API, ollama 동적, CLI 카탈로그).
+  const [modelOptions, setModelOptions] = useState<ModelOption[]>([]);
   const runIdRef = useRef<string | null>(null);
   const [artifact, setArtifact] = useState<CodeArtifact | null>(null);
   // 우측 워크스페이스 패널 — 채팅 진입 시 working_folder가 저장돼 있으면 자동 노출
@@ -169,6 +159,31 @@ function ChatPage() {
       subRef.current = null;
     };
   }, [chatId, router]);
+
+  // 활성 런타임이 바뀌면 모델 목록을 실시간 조회 (BYOK provider API / ollama / CLI 카탈로그).
+  useEffect(() => {
+    const api = ipc();
+    if (!api || !activeRuntime) {
+      setModelOptions([]);
+      return;
+    }
+    let cancelled = false;
+    void api.runtime
+      .listModels({
+        kind: activeRuntime.kind,
+        backend: activeRuntime.backend,
+        availableModels: activeRuntime.availableModels,
+      })
+      .then((opts) => {
+        if (!cancelled) setModelOptions(opts);
+      })
+      .catch(() => {
+        if (!cancelled) setModelOptions([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [activeRuntime]);
 
   const send = useCallback(
     async (
@@ -405,18 +420,6 @@ function ChatPage() {
 
   if (!chat) return null;
 
-  // 헤더 런타임 칩 — 컨텍스트 관리 주체 + 1M 표시 계산.
-  const rtManagedByRuntime = activeRuntime
-    ? CONTEXT_MANAGED_BY[activeRuntime.kind] === "runtime"
-    : false;
-  const rtModel =
-    activeRuntime?.kind === "byok"
-      ? findByokModel(activeRuntime.backend, activeRuntime.model)
-      : undefined;
-  const rtShow1M =
-    !!rtModel?.longContext &&
-    (rtModel.longContext.mode === "auto" || !!activeRuntime?.longContextEnabled);
-
   return (
     <div style={{ display: "flex", height: "100%", width: "100%", minWidth: 0, overflow: "hidden" }}>
       <div style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0 }}>
@@ -605,88 +608,6 @@ function ChatPage() {
             />
             {t("chat.stop")}
           </button>
-        )}
-        {activeRuntime && (
-          <div
-            className="titlebar-nodrag"
-            style={{ position: "relative", display: "inline-flex", alignItems: "center" }}
-            title={
-              rtManagedByRuntime
-                ? t("chat.runtime.auto_context")
-                : t("chat.runtime.managed_agentlas")
-            }
-          >
-            <span
-              style={{
-                display: "inline-flex",
-                alignItems: "center",
-                gap: 6,
-                padding: "5px 10px",
-                borderRadius: 999,
-                background: "var(--paper-2)",
-                border: "1px solid var(--paper-edge)",
-                fontSize: 11.5,
-                fontWeight: 600,
-                color: "var(--ink-soft)",
-                maxWidth: 230,
-                cursor: hasModelPicker(activeRuntime.kind) ? "pointer" : "default",
-              }}
-            >
-              <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                {runtimeChipLabel(activeRuntime)}
-              </span>
-              {rtManagedByRuntime ? (
-                <span
-                  style={{
-                    fontSize: 9.5,
-                    fontFamily: "var(--font-head)",
-                    padding: "1px 6px",
-                    borderRadius: 999,
-                    background: "var(--fill-1)",
-                    color: "var(--accent)",
-                  }}
-                >
-                  {t("chat.runtime.auto_context")}
-                </span>
-              ) : rtShow1M ? (
-                <span
-                  style={{
-                    fontSize: 9.5,
-                    fontFamily: "var(--font-head)",
-                    padding: "1px 6px",
-                    borderRadius: 999,
-                    background: "var(--fill-1)",
-                    color: "var(--accent)",
-                  }}
-                >
-                  1M
-                </span>
-              ) : null}
-              {hasModelPicker(activeRuntime.kind) && (
-                <IconChevronRight
-                  size={10}
-                  style={{ color: "var(--muted)", transform: "rotate(90deg)" }}
-                />
-              )}
-            </span>
-            {hasModelPicker(activeRuntime.kind) && (
-              <select
-                value={activeRuntime.model ?? ""}
-                onChange={(e) => void switchModel(e.target.value)}
-                aria-label={t("chat.model.switch")}
-                style={{ position: "absolute", inset: 0, opacity: 0, cursor: "pointer" }}
-              >
-                {activeRuntime.kind !== "byok" && (
-                  <option value="">{t("chat.model.cli_default")}</option>
-                )}
-                {modelOptionsFor(activeRuntime).map((m) => (
-                  <option key={m.id} value={m.id}>
-                    {m.label}
-                  </option>
-                ))}
-              </select>
-            )}
-          </div>
         )}
         <button
           onClick={() => setWorkspaceOpen((v) => !v)}

@@ -1,6 +1,6 @@
 // CLI 자동 감지 통합 + 활성 백엔드 선택 상태 관리.
 // PRD 3.1 FRE 6단계 — 사용자가 입력 안 해도 한 번 클릭으로 연결되도록.
-import { probeClaudeCode } from "./claude-code";
+import { probeClaudeCode, probeClaudeEfforts } from "./claude-code";
 import { probeCodex } from "./codex";
 import { probeGemini } from "./gemini";
 import { probeOllama } from "./ollama";
@@ -42,6 +42,33 @@ function cliModelOf(kind: RuntimeKind, active: ActiveRuntimeRow | null): string 
     return active.model;
   }
   return undefined;
+}
+
+// 작업량(effort) 영속 — active_runtime 컬럼 추가(마이그레이션) 대신 meta(key/value) 테이블 사용.
+// 동시 편집 중인 스키마와 충돌하지 않게 무-마이그레이션으로 처리.
+function getStoredEffort(): string | null {
+  try {
+    const row = getDb()
+      .prepare("SELECT value FROM meta WHERE key = 'claude_effort'")
+      .get() as { value: string } | undefined;
+    return row?.value ?? null;
+  } catch {
+    return null;
+  }
+}
+function setStoredEffort(effort: string | null | undefined): void {
+  try {
+    const db = getDb();
+    if (effort && effort.trim()) {
+      db.prepare("INSERT OR REPLACE INTO meta(key, value) VALUES ('claude_effort', ?)").run(
+        effort.trim(),
+      );
+    } else {
+      db.prepare("DELETE FROM meta WHERE key = 'claude_effort'").run();
+    }
+  } catch {
+    // meta 테이블이 아직 없으면(구버전 DB) 무시 — 작업량 미설정으로 동작.
+  }
 }
 
 function isActiveRuntime(status: RuntimeStatus, active: ActiveRuntimeRow | null): boolean {
@@ -91,15 +118,17 @@ export async function detectRuntimes(): Promise<RuntimeStatus[]> {
     .get() as ActiveRuntimeRow | undefined;
   const active = activeRow ?? null;
 
-  const [cc, cx, gm, ollama, anthropicByok, openaiByok, googleByok] = await Promise.all([
-    probeClaudeCode(),
-    probeCodex(),
-    probeGemini(),
-    probeOllama(),
-    hasApiKey("anthropic"),
-    hasApiKey("openai"),
-    hasApiKey("google"),
-  ]);
+  const [cc, cx, gm, ollama, anthropicByok, openaiByok, googleByok, claudeEfforts] =
+    await Promise.all([
+      probeClaudeCode(),
+      probeCodex(),
+      probeGemini(),
+      probeOllama(),
+      hasApiKey("anthropic"),
+      hasApiKey("openai"),
+      hasApiKey("google"),
+      probeClaudeEfforts(),
+    ]);
 
   const list: RuntimeStatus[] = [];
 
@@ -113,6 +142,9 @@ export async function detectRuntimes(): Promise<RuntimeStatus[]> {
       // 컨텍스트는 CLI가 자동 관리하지만 모델은 --model로 선택 가능 (opus/sonnet/haiku).
       model: cliModelOf("claude-code", active),
       availableModels: cliModels("claude-code").map((m) => m.id),
+      // 작업량 — 현재 선택값 + 이 CLI가 지원하는 레벨(--help 파싱으로 자동 동기화).
+      effort: getStoredEffort(),
+      efforts: claudeEfforts,
     });
   }
   if (cx) {
@@ -204,5 +236,7 @@ export async function detectRuntimes(): Promise<RuntimeStatus[]> {
 
 export async function setActiveRuntime(selection: RuntimeSelection): Promise<RuntimeStatus[]> {
   saveActiveRuntime(selection);
+  // effort가 명시된 경우에만 갱신 — 모델만 바꾸는 호출은 기존 작업량을 유지.
+  if (selection.effort !== undefined) setStoredEffort(selection.effort);
   return detectRuntimes();
 }

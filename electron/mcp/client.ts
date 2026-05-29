@@ -184,6 +184,7 @@ export async function runMcpInvocation(
         backendLabel: picked.label,
         model: active.model ?? undefined,
         longContext: active.longContextEnabled ?? false,
+        effort: active.effort ?? undefined,
         signal,
         permission: req.permissions,
         locale,

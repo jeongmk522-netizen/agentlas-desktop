@@ -14,6 +14,8 @@ export interface RuntimeSelection {
   model?: string;
   /** BYOK 긴 컨텍스트(1M) opt-in 토글. beta-header 모델에만 의미. (auto 모델은 항상 ON 취급) */
   longContext?: boolean;
+  /** 작업량(reasoning effort) — Claude Code `--effort` 전용. "" 또는 미설정이면 기본. */
+  effort?: string;
 }
 
 /** CLI(Claude/Codex/Gemini)에서 스캔한 슬래시 명령 — 챗 입력 `/` 자동완성에 노출. */
@@ -39,6 +41,10 @@ export interface RuntimeStatus {
   availableModels?: string[];
   /** BYOK 긴 컨텍스트(1M) 토글 상태. beta-header 모델에서만 의미 있음. */
   longContextEnabled?: boolean;
+  /** 작업량(reasoning effort) 현재 선택값 — claude-code 전용. 미설정이면 기본. */
+  effort?: string | null;
+  /** 이 런타임이 지원하는 작업량 레벨 — `claude --help` 파싱으로 자동 동기화. claude-code만 채움. */
+  efforts?: Array<{ id: string; label: string }>;
 }
 
 /**
@@ -497,6 +503,13 @@ export interface AgentlasIpc {
     ) => Promise<{ ok: boolean; message: string; command?: string }>;
     /** CLI(Claude/Codex/Gemini)의 커스텀 슬래시 명령을 스캔 — 매 호출마다 최신. */
     listCommands: () => Promise<RuntimeCommand[]>;
+    /** 런타임의 모델 목록을 실시간 조회 — BYOK는 provider /models API, ollama는 동적, CLI는 카탈로그.
+     *  하드코딩 대신 실제 소스에서 가져와 자동 동기화 (5분 캐시). */
+    listModels: (sel: {
+      kind: RuntimeKind;
+      backend?: RuntimeBackend | null;
+      availableModels?: string[] | null;
+    }) => Promise<Array<{ id: string; label: string; tag?: string }>>;
     /** `agentlas` 터미널 CLI 설치 — PATH에 래퍼 스크립트를 둔다. */
     installAgentlasCli: () => Promise<{ ok: boolean; path: string; message: string }>;
   };

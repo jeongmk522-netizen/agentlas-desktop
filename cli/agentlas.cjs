@@ -23,7 +23,6 @@
 const path = require("node:path");
 const os = require("node:os");
 const fs = require("node:fs");
-const readline = require("node:readline");
 const { spawn } = require("node:child_process");
 
 // ── 앱과 동일한 userData 경로 (electron app.getPath('userData')와 일치) ──
@@ -169,6 +168,19 @@ function buildArgs(kind, systemPrompt, prompt) {
   return [prompt];
 }
 
+// `claude` 치면 바로 대화형 세션 뜨듯이 — 에이전트 폴더(CLAUDE.md/AGENTS.md/GEMINI.md 보유)에서
+// 네이티브 CLI를 인자 없이(대화형) 실행. 에이전트 페르소나는 그 폴더의 프로젝트 지시로 자동 로드. (A+B 결합)
+function launchInteractive(db, agent, runtimeOverride) {
+  const kind = pickRuntimeKind(db, runtimeOverride);
+  const folder = agentFolder(agent);
+  ensureNativeFiles(agent, folder);
+  const bin = which(RUNTIME_BIN[kind]) || RUNTIME_BIN[kind];
+  process.stderr.write(`▸ ${agent.name} (${kind}) — ${folder}\n`);
+  const child = spawn(bin, [], { cwd: folder, stdio: "inherit", env: process.env });
+  child.on("error", (err) => fail(`실행 실패(${kind}): ${err.message}`));
+  child.on("close", (code) => process.exit(code ?? 0));
+}
+
 function spawnRuntime(kind, systemPrompt, prompt) {
   return new Promise((resolve) => {
     const bin = which(RUNTIME_BIN[kind]) || RUNTIME_BIN[kind];
@@ -239,24 +251,11 @@ async function cmdRun(db, query, prompt, runtimeOverride) {
   process.exit(code);
 }
 
-async function cmdChat(db, query, runtimeOverride) {
+// chat / open / 에이전트명 단독 → 네이티브 CLI 대화형 세션 (claude처럼 바로 접속)
+function cmdOpen(db, query, runtimeOverride) {
   const agent = resolveAgent(db, query);
   if (!agent) fail(`에이전트를 찾을 수 없습니다: ${query}`);
-  const kind = pickRuntimeKind(db, runtimeOverride);
-  process.stderr.write(`▸ ${agent.name} (${kind}) — 종료: Ctrl+C 또는 빈 줄에 /exit\n`);
-  const rl = readline.createInterface({ input: process.stdin, output: process.stderr });
-  const ask = () =>
-    rl.question("\nyou › ", async (line) => {
-      const t = (line || "").trim();
-      if (t === "/exit" || t === "/quit") {
-        rl.close();
-        return;
-      }
-      if (!t) return ask();
-      await spawnRuntime(kind, agent.system_prompt || "", t);
-      ask();
-    });
-  ask();
+  launchInteractive(db, agent, runtimeOverride);
 }
 
 function cmdEnv(db) {
@@ -288,10 +287,12 @@ function cmdHelp() {
     [
       "agentlas — Agentlas 터미널 CLI",
       "",
+      "  agentlas <agent>      claude처럼 바로 대화형 세션 (에이전트 페르소나 로드)",
+      "  agentlas              (에이전트 1개면 바로 대화형, 아니면 목록)",
+      "  open <agent>          위와 동일 (명시적)",
+      "  run <agent> [prompt]  1회 실행 — 스크립트/파이프용 (prompt 없으면 stdin)",
+      "  cd <agent>            에이전트 폴더 경로 — cd \"$(agentlas cd seo)\" && claude",
       "  list                  에이전트/회사 + 활성 런타임",
-      "  cd <agent>            에이전트 폴더 경로 (네이티브 CLI용) — cd \"$(agentlas cd seo)\" && claude",
-      "  run <agent> [prompt]  활성 CLI로 1회 실행 (prompt 없으면 stdin)",
-      "  chat <agent>          대화형 REPL",
       "  env                   공유 env 키 목록",
       "  doctor                런타임/데이터 점검",
       "",
@@ -330,10 +331,20 @@ async function main() {
       rest.push(argv[i]);
     }
   }
-  const cmd = rest[0] || "help";
+  const cmd = rest[0] || "";
   if (cmd === "help" || cmd === "--help" || cmd === "-h") return cmdHelp();
 
   const db = openDb();
+
+  // 인자 없이 `agentlas` → 에이전트 1개면 바로 대화형, 아니면 목록 + 사용법
+  if (cmd === "") {
+    const agents = listAgents(db);
+    if (agents.length === 1) return launchInteractive(db, agents[0], runtimeOverride);
+    cmdList(db);
+    out("\n사용: agentlas <agent>  (claude처럼 바로 대화형) · agentlas run <agent> \"...\" · agentlas help");
+    return;
+  }
+
   switch (cmd) {
     case "list":
       return cmdList(db);
@@ -342,14 +353,15 @@ async function main() {
     case "run":
       return cmdRun(db, rest[1], rest.slice(2).join(" "), runtimeOverride);
     case "chat":
-      return cmdChat(db, rest[1], runtimeOverride);
+    case "open":
+      return cmdOpen(db, rest[1], runtimeOverride);
     case "env":
       return cmdEnv(db);
     case "doctor":
       return cmdDoctor(db);
     default:
-      process.stderr.write(`알 수 없는 명령: ${cmd}\n\n`);
-      return cmdHelp();
+      // 알려진 명령이 아니면 에이전트명으로 간주 → claude처럼 바로 대화형 세션
+      return cmdOpen(db, cmd, runtimeOverride);
   }
 }
 

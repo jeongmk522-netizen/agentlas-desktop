@@ -110,21 +110,117 @@ const RUNTIME_BIN = {
   gemini: "gemini",
 };
 
-function pickRuntimeKind(db, override) {
+// 활성 런타임 → 실행 방식 결정. CLI(claude/codex/gemini) 또는 API(BYOK/Ollama).
+function resolveRuntime(db, override) {
   if (override) {
     if (!RUNTIME_BIN[override]) fail(`알 수 없는 런타임: ${override} (claude-code|codex|gemini)`);
-    return override;
+    return { mode: "cli", kind: override };
   }
   const ar = activeRuntime(db);
-  if (ar && RUNTIME_BIN[ar.kind]) return ar.kind;
-  // 활성이 BYOK/Ollama거나 없으면 설치된 CLI를 탐지해 폴백
+  if (ar && RUNTIME_BIN[ar.kind]) return { mode: "cli", kind: ar.kind };
+  if (ar && ar.kind === "byok" && ar.backend) return { mode: "api", backend: ar.backend, model: ar.model };
+  if (ar && ar.kind === "ollama") return { mode: "api", backend: "ollama", model: ar.model };
+  // 폴백: 설치된 CLI 탐지
   for (const kind of Object.keys(RUNTIME_BIN)) {
-    if (which(RUNTIME_BIN[kind])) return kind;
+    if (which(RUNTIME_BIN[kind])) return { mode: "cli", kind };
   }
-  fail(
-    "사용할 CLI 런타임을 찾지 못했습니다. Claude Code / Codex / Gemini CLI를 설치·로그인하거나 " +
-      "--runtime 으로 지정하세요. (BYOK/Ollama는 앱 GUI에서 사용 — CLI 모드는 Phase 1에서 CLI 런타임만 지원)",
-  );
+  fail("사용할 런타임이 없습니다. CLI(claude/codex/gemini)를 설치하거나 앱에서 API 키/Ollama를 설정하세요.");
+}
+
+// ── API 러너 (BYOK / Ollama) — 비스트리밍, 최종 텍스트 반환 ──
+const DEFAULT_API_MODEL = {
+  anthropic: "claude-sonnet-4-5",
+  openai: "gpt-4o-mini",
+  google: "gemini-1.5-flash",
+  ollama: "llama3.1",
+};
+async function apiKey(backend) {
+  const keytar = readKeytar();
+  if (!keytar) return null;
+  return keytar.getPassword(SERVICE, "byok:" + backend);
+}
+async function runApi(backend, model, system, prompt) {
+  model = model || DEFAULT_API_MODEL[backend];
+  if (typeof fetch !== "function") fail("이 런타임에 fetch가 없습니다(앱 런타임으로 실행 필요).");
+  if (backend === "ollama") {
+    const resp = await fetch("http://127.0.0.1:11434/api/chat", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ model, stream: false, messages: [{ role: "system", content: system }, { role: "user", content: prompt }] }),
+    });
+    if (!resp.ok) fail(`Ollama ${resp.status} — 'ollama serve' 실행/모델 확인`);
+    const j = await resp.json();
+    return (j.message && j.message.content) || "";
+  }
+  const key = await apiKey(backend);
+  if (!key) fail(`${backend} API 키가 없습니다. 앱 설정 → BYOK에서 키를 등록하세요.`);
+  if (backend === "anthropic") {
+    const resp = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-api-key": key, "anthropic-version": "2023-06-01" },
+      body: JSON.stringify({ model, max_tokens: 4096, system, messages: [{ role: "user", content: prompt }] }),
+    });
+    if (!resp.ok) fail(`Anthropic ${resp.status}: ${(await resp.text().catch(() => "")).slice(0, 200)}`);
+    const j = await resp.json();
+    return (j.content && j.content[0] && j.content[0].text) || "";
+  }
+  if (backend === "openai") {
+    const resp = await fetch("https://api.openai.com/v1/chat/completions", {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: "Bearer " + key },
+      body: JSON.stringify({ model, messages: [{ role: "system", content: system }, { role: "user", content: prompt }] }),
+    });
+    if (!resp.ok) fail(`OpenAI ${resp.status}: ${(await resp.text().catch(() => "")).slice(0, 200)}`);
+    const j = await resp.json();
+    return (j.choices && j.choices[0] && j.choices[0].message && j.choices[0].message.content) || "";
+  }
+  if (backend === "google") {
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(key)}`;
+    const resp = await fetch(url, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ systemInstruction: { parts: [{ text: system }] }, contents: [{ role: "user", parts: [{ text: prompt }] }] }),
+    });
+    if (!resp.ok) fail(`Google ${resp.status}: ${(await resp.text().catch(() => "")).slice(0, 200)}`);
+    const j = await resp.json();
+    const c = j.candidates && j.candidates[0];
+    return (c && c.content && c.content.parts && c.content.parts[0] && c.content.parts[0].text) || "";
+  }
+  fail("지원하지 않는 backend: " + backend);
+}
+
+// 1회 실행 — CLI면 spawn(스트리밍 stdout), API면 호출 후 텍스트 출력. 종료코드 반환.
+async function executeOnce(db, system, prompt, override) {
+  const rt = resolveRuntime(db, override);
+  if (rt.mode === "cli") {
+    process.stderr.write(`▸ ${rt.kind}\n`);
+    return spawnRuntime(rt.kind, system, prompt);
+  }
+  process.stderr.write(`▸ ${rt.backend}${rt.model ? " · " + rt.model : ""}\n`);
+  const text = await runApi(rt.backend, rt.model, system, prompt);
+  process.stdout.write((text || "").trim() + "\n");
+  return 0;
+}
+
+// API 백엔드용 간이 대화형 REPL (네이티브 인터랙티브가 없는 BYOK/Ollama).
+function apiRepl(backend, model, system, label) {
+  const readline = require("node:readline");
+  process.stderr.write(`▸ ${label} (${backend}${model ? " · " + model : ""}) — 종료: /exit\n`);
+  const rl = readline.createInterface({ input: process.stdin, output: process.stderr });
+  const ask = () =>
+    rl.question("\nyou › ", async (line) => {
+      const tt = (line || "").trim();
+      if (tt === "/exit" || tt === "/quit") return rl.close();
+      if (!tt) return ask();
+      try {
+        const text = await runApi(backend, model, system, tt);
+        process.stdout.write("\n" + (text || "").trim() + "\n");
+      } catch (e) {
+        process.stderr.write("✖ " + (e && e.message) + "\n");
+      }
+      ask();
+    });
+  ask();
 }
 
 function which(cmd) {
@@ -171,14 +267,19 @@ function buildArgs(kind, systemPrompt, prompt) {
 // `claude` 치면 바로 대화형 세션 뜨듯이 — 에이전트 폴더(CLAUDE.md/AGENTS.md/GEMINI.md 보유)에서
 // 네이티브 CLI를 인자 없이(대화형) 실행. 에이전트 페르소나는 그 폴더의 프로젝트 지시로 자동 로드. (A+B 결합)
 function launchInteractive(db, agent, runtimeOverride) {
-  const kind = pickRuntimeKind(db, runtimeOverride);
+  const rt = resolveRuntime(db, runtimeOverride);
   const folder = agentFolder(agent);
   ensureNativeFiles(agent, folder);
-  const bin = which(RUNTIME_BIN[kind]) || RUNTIME_BIN[kind];
-  process.stderr.write(`▸ ${agent.name} (${kind}) — ${folder}\n`);
-  const child = spawn(bin, [], { cwd: folder, stdio: "inherit", env: process.env });
-  child.on("error", (err) => fail(`실행 실패(${kind}): ${err.message}`));
-  child.on("close", (code) => process.exit(code ?? 0));
+  if (rt.mode === "cli") {
+    const bin = which(RUNTIME_BIN[rt.kind]) || RUNTIME_BIN[rt.kind];
+    process.stderr.write(`▸ ${agent.name} (${rt.kind}) — ${folder}\n`);
+    const child = spawn(bin, [], { cwd: folder, stdio: "inherit", env: process.env });
+    child.on("error", (err) => fail(`실행 실패(${rt.kind}): ${err.message}`));
+    child.on("close", (code) => process.exit(code ?? 0));
+    return;
+  }
+  // BYOK/Ollama는 네이티브 인터랙티브가 없으므로 API REPL로 대화.
+  apiRepl(rt.backend, rt.model, agent.system_prompt || "", agent.name);
 }
 
 function spawnRuntime(kind, systemPrompt, prompt) {
@@ -208,7 +309,12 @@ function cmdList(db) {
     const local = routes[a.id] ? "  [local]" : "";
     out(`  ${a.slug.padEnd(28)} ${a.name}${local}`);
   }
-  out("\n실행: agentlas run <slug> \"프롬프트\"   ·   네이티브: cd \"$(agentlas cd <slug>)\" && claude");
+  const firms = listFirms(db);
+  if (firms.length) {
+    out(`\n회사 ${firms.length}개:`);
+    for (const f of firms) out(`  ${f.slug.padEnd(28)} ${f.name}  (CEO)`);
+  }
+  out("\n실행: agentlas <agent>  ·  agentlas firm <firm>  ·  agentlas run <agent> \"...\"  ·  cd \"$(agentlas cd seo)\" && claude");
 }
 
 function ensureNativeFiles(agent, folder) {
@@ -245,9 +351,8 @@ async function cmdRun(db, query, prompt, runtimeOverride) {
   let userPrompt = prompt;
   if (!userPrompt) userPrompt = await readStdin();
   if (!userPrompt || !userPrompt.trim()) fail("프롬프트가 비어 있습니다. agentlas run <agent> \"...\" 또는 stdin으로 전달하세요.");
-  const kind = pickRuntimeKind(db, runtimeOverride);
-  process.stderr.write(`▸ ${agent.name} (${kind})\n`);
-  const code = await spawnRuntime(kind, agent.system_prompt || "", userPrompt.trim());
+  process.stderr.write(`▸ ${agent.name}\n`);
+  const code = await executeOnce(db, agent.system_prompt || "", userPrompt.trim(), runtimeOverride);
   process.exit(code);
 }
 
@@ -256,6 +361,66 @@ function cmdOpen(db, query, runtimeOverride) {
   const agent = resolveAgent(db, query);
   if (!agent) fail(`에이전트를 찾을 수 없습니다: ${query}`);
   launchInteractive(db, agent, runtimeOverride);
+}
+
+// ── 회사(firm) — CEO 위임 실행 ─────────────────────────────
+function listFirms(db) {
+  try {
+    return db.prepare("SELECT * FROM firms ORDER BY installed_at DESC").all();
+  } catch {
+    return [];
+  }
+}
+function resolveFirm(db, query) {
+  const firms = listFirms(db);
+  const q = (query || "").toLowerCase();
+  return (
+    firms.find((f) => f.slug === query || f.id === query) ||
+    firms.find((f) => (f.name || "").toLowerCase() === q) ||
+    firms.find((f) => (f.slug || "").toLowerCase().includes(q) || (f.name || "").toLowerCase().includes(q)) ||
+    null
+  );
+}
+function firmSystemPrompt(db, firm) {
+  const ceo = db.prepare("SELECT * FROM installed_agents WHERE id = ?").get(firm.ceo_agent_id);
+  let roster = "";
+  try {
+    const org = JSON.parse(firm.org_chart_json);
+    roster = org
+      .map((n) => `  - ${n.role}: ${n.agentSlug}${n.reportsTo ? ` (reports to ${n.reportsTo})` : ""}`)
+      .join("\n");
+  } catch {
+    /* ignore */
+  }
+  const base = (ceo && ceo.system_prompt) || `You are the CEO of ${firm.name}.`;
+  return `${base}\n\n[FIRM] 당신은 '${firm.name}' 회사의 CEO입니다. 사용자 명령을 부서에 위임해 처리하세요.\n조직도:\n${roster}`;
+}
+async function cmdFirm(db, query, prompt, runtimeOverride) {
+  const firm = resolveFirm(db, query);
+  if (!firm) fail(`회사를 찾을 수 없습니다: ${query}`);
+  const sys = firmSystemPrompt(db, firm);
+  if (prompt && prompt.trim()) {
+    process.stderr.write(`▸ ${firm.name} CEO\n`);
+    const code = await executeOnce(db, sys, prompt.trim(), runtimeOverride);
+    process.exit(code);
+  }
+  // 대화형: firm 폴더에 CEO 컨텍스트를 깔고 네이티브 CLI, 또는 API REPL.
+  const rt = resolveRuntime(db, runtimeOverride);
+  const folder = path.join(userDataDir(), "firms", firm.slug);
+  fs.mkdirSync(folder, { recursive: true });
+  const header = `# ${firm.name} — CEO\n\n${sys}\n`;
+  writeIfMissing(path.join(folder, "CLAUDE.md"), header);
+  writeIfMissing(path.join(folder, "AGENTS.md"), header);
+  writeIfMissing(path.join(folder, "GEMINI.md"), header);
+  if (rt.mode === "cli") {
+    const bin = which(RUNTIME_BIN[rt.kind]) || RUNTIME_BIN[rt.kind];
+    process.stderr.write(`▸ ${firm.name} CEO (${rt.kind}) — ${folder}\n`);
+    const child = spawn(bin, [], { cwd: folder, stdio: "inherit", env: process.env });
+    child.on("error", (err) => fail(`실행 실패(${rt.kind}): ${err.message}`));
+    child.on("close", (code) => process.exit(code ?? 0));
+    return;
+  }
+  apiRepl(rt.backend, rt.model, sys, firm.name + " CEO");
 }
 
 function cmdEnv(db) {
@@ -290,8 +455,10 @@ function cmdHelp() {
       "  agentlas <agent>      claude처럼 바로 대화형 세션 (에이전트 페르소나 로드)",
       "  agentlas              (에이전트 1개면 바로 대화형, 아니면 목록)",
       "  open <agent>          위와 동일 (명시적)",
+      "  firm <firm> [cmd]     회사 CEO에 위임 (cmd 없으면 대화형)",
       "  run <agent> [prompt]  1회 실행 — 스크립트/파이프용 (prompt 없으면 stdin)",
       "  cd <agent>            에이전트 폴더 경로 — cd \"$(agentlas cd seo)\" && claude",
+      "  (BYOK/Ollama 활성 시 run/대화형은 API로 호출)",
       "  list                  에이전트/회사 + 활성 런타임",
       "  env                   공유 env 키 목록",
       "  doctor                런타임/데이터 점검",
@@ -355,13 +522,20 @@ async function main() {
     case "chat":
     case "open":
       return cmdOpen(db, rest[1], runtimeOverride);
+    case "firm":
+      return cmdFirm(db, rest[1], rest.slice(2).join(" "), runtimeOverride);
     case "env":
       return cmdEnv(db);
     case "doctor":
       return cmdDoctor(db);
-    default:
-      // 알려진 명령이 아니면 에이전트명으로 간주 → claude처럼 바로 대화형 세션
-      return cmdOpen(db, cmd, runtimeOverride);
+    default: {
+      // 알려진 명령이 아니면 에이전트명 → (없으면) 회사명 → 대화형 세션
+      const agent = resolveAgent(db, cmd);
+      if (agent) return launchInteractive(db, agent, runtimeOverride);
+      const firm = resolveFirm(db, cmd);
+      if (firm) return cmdFirm(db, cmd, "", runtimeOverride);
+      fail(`에이전트/회사를 찾을 수 없습니다: ${cmd}  (agentlas list 로 확인)`);
+    }
   }
 }
 

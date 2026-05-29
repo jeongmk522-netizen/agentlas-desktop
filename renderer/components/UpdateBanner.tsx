@@ -6,7 +6,7 @@
 // 사용자가 "나중에"로 일단 닫으면 같은 다운로드 버전에 대해 다시 안 뜸 (세션 한정).
 // 새 버전이 다시 다운로드되면 자동으로 다시 노출.
 "use client";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { ipc, updaterEvents } from "@/lib/ipc";
 import { useT } from "@/lib/i18n";
 import type { UpdaterState } from "@/lib/types";
@@ -18,6 +18,7 @@ export function UpdateBanner() {
   const [dismissedVersion, setDismissedVersion] = useState<string | null>(null);
   /** transient(checking/not-available/error) 상태는 자동으로 잠깐만 노출하고 사라지게 함 */
   const [transientUntil, setTransientUntil] = useState<number>(0);
+  const lastFocusCheck = useRef(0);
 
   useEffect(() => {
     let cancelled = false;
@@ -28,6 +29,15 @@ export function UpdateBanner() {
         if (!cancelled) setState(s);
       });
     }
+    // 창이 포커스될 때 자동 재확인(최대 10분에 1회) — 사용자가 수동으로 "업데이트 확인"을
+    // 누르지 않아도 새 버전을 곧바로 발견·다운로드·알림.
+    function onFocus() {
+      const now = Date.now();
+      if (now - lastFocusCheck.current < 10 * 60 * 1000) return;
+      lastFocusCheck.current = now;
+      void ipc()?.updater.check();
+    }
+    window.addEventListener("focus", onFocus);
     // 2) 이후 변화는 broadcast로 받음
     const events = updaterEvents();
     const off = events?.onState((next) => {
@@ -45,6 +55,7 @@ export function UpdateBanner() {
     return () => {
       cancelled = true;
       off?.();
+      window.removeEventListener("focus", onFocus);
     };
   }, []);
 
@@ -56,7 +67,8 @@ export function UpdateBanner() {
   }, [transientUntil]);
 
   const isDownloaded = state.status === "downloaded";
-  const isDownloading = state.status === "downloading";
+  // "available"도 즉시 노출 — 새 버전 발견 순간 알림(자동 다운로드 중).
+  const isDownloading = state.status === "downloading" || state.status === "available";
   const isDismissed =
     isDownloaded && state.version && dismissedVersion === state.version;
   const isTransient =
@@ -161,7 +173,9 @@ export function UpdateBanner() {
         <>
           <Spinner />
           <span style={{ color: "var(--ink-soft)" }}>
-            {t("update.downloading", { pct: state.progress ?? 0 })}
+            {state.status === "available"
+              ? t("update.found", { version: state.version ?? "?" })
+              : t("update.downloading", { pct: state.progress ?? 0 })}
           </span>
         </>
       )}

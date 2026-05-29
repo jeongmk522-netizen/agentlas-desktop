@@ -452,6 +452,7 @@ const dict = {
     "common.created_at": "{when}",
 
     // Auto-update (electron-updater)
+    "update.found": "새 버전 v{version} 발견 — 받는 중…",
     "update.downloading": "업데이트 다운로드 중 · {pct}%",
     "update.ready": "새 버전 준비됨 · v{version}",
     "update.restart_now": "재시작 업데이트",
@@ -947,6 +948,7 @@ const dict = {
     "common.created_at": "{when}",
 
     // Auto-update (electron-updater)
+    "update.found": "New version v{version} found — downloading…",
     "update.downloading": "Downloading update · {pct}%",
     "update.ready": "New version ready · v{version}",
     "update.restart_now": "Restart to update",

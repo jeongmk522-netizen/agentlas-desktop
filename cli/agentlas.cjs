@@ -103,6 +103,191 @@ function agentFolder(agent) {
   return path.join(userDataDir(), "agents", agent.slug);
 }
 
+// ── Agentlas 아키텍처 (앱과 동일한 빌트인 에이전트 + 메모리) ────────────
+// cli/architecture.data.json은 컴파일된 manifest에서 생성됨(scripts/gen-cli-architecture.mjs).
+let _arch = null;
+function loadArch() {
+  if (_arch) return _arch;
+  try {
+    _arch = require("./architecture.data.json");
+  } catch {
+    _arch = { version: "0", agents: [], emitterBlock: "", eventsHeading: "## Memory Events", memoryDir: ".agentlas", soulFile: "project-soul-memory.md", sitemapFile: "sitemap.json", logFile: "memory-log.jsonl", kinds: [], scopes: [] };
+  }
+  return _arch;
+}
+function tableExists(db, name) {
+  try { return !!db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(name); } catch { return false; }
+}
+function columnExists(db, table, col) {
+  try { return db.prepare(`PRAGMA table_info(${table})`).all().some((c) => c.name === col); } catch { return false; }
+}
+// 앱의 seedBuiltinAgents와 동일한 멱등·버전 게이팅 로직(CJS 버전). 스키마가 아직 v12가 아니면
+// (= 앱이 마이그레이션 전) 건너뜀 — 앱을 한 번 켜면 마이그레이션+시드가 수행된다.
+function seedBuiltins(db) {
+  const arch = loadArch();
+  if (!arch.agents || !arch.agents.length) return;
+  if (!tableExists(db, "meta") || !columnExists(db, "installed_agents", "builtin")) return;
+  let installedVersion = null;
+  try {
+    const r = db.prepare("SELECT value FROM meta WHERE key='architecture_version'").get();
+    installedVersion = r ? r.value : null;
+  } catch { return; }
+  if (installedVersion === arch.version) {
+    try {
+      const have = db.prepare("SELECT COUNT(*) AS n FROM installed_agents WHERE builtin=1").get();
+      if (have.n >= arch.agents.length) return;
+    } catch { /* fallthrough */ }
+  }
+  const now = new Date().toISOString();
+  try {
+    const tx = db.transaction(() => {
+      for (const def of arch.agents) {
+        const existing = db.prepare("SELECT id FROM installed_agents WHERE id=? OR slug=?").get(def.id, def.slug);
+        if (existing) {
+          db.prepare(
+            "UPDATE installed_agents SET name=?, name_en=?, tagline=?, tagline_en=?, system_prompt=?, tone=?, role=?, builtin=1, trust_grade='A' WHERE id=?",
+          ).run(def.name, def.nameEn, def.tagline, def.taglineEn, def.systemPrompt, def.tone, def.role, existing.id);
+        } else {
+          db.prepare(
+            "INSERT INTO installed_agents (id, slug, name, name_en, tagline, tagline_en, system_prompt, mcp_servers_json, env_requirements_json, preferred_backend, trust_grade, installed_at, tone, builtin, role) VALUES (?,?,?,?,?,?,?,'[]','[]',NULL,'A',?,?,1,?)",
+          ).run(def.id, def.slug, def.name, def.nameEn, def.tagline, def.taglineEn, def.systemPrompt, now, def.tone, def.role);
+        }
+      }
+      db.prepare("INSERT INTO meta(key,value) VALUES('architecture_version',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value").run(arch.version);
+    });
+    tx();
+  } catch { /* best-effort */ }
+}
+
+const SECRET_RE = [/\b(?:sk|pk|rk)-[A-Za-z0-9]{16,}/, /AKIA[0-9A-Z]{16}/, /ghp_[A-Za-z0-9]{20,}/, /xox[baprs]-[A-Za-z0-9-]{10,}/, /-----BEGIN [A-Z ]*PRIVATE KEY-----/, /\b(?:password|passwd|secret|api[_-]?key|access[_-]?token|bearer)\b\s*[:=]\s*\S+/i];
+
+function ensureProjectMemoryCli(projectPath, projectName) {
+  const arch = loadArch();
+  try {
+    const dir = path.join(projectPath, arch.memoryDir);
+    fs.mkdirSync(dir, { recursive: true });
+    const name = projectName || path.basename(projectPath) || "Project";
+    const soul = path.join(dir, arch.soulFile);
+    if (!fs.existsSync(soul)) {
+      fs.writeFileSync(soul, `# Project Soul Memory: ${name}\n\nDurable memory for this project folder, maintained by Agentlas.\n\n## Project Purpose\n\n## Current State\n\n## Decisions\n\n## Risks\n\n## Auto-curated memory\n`, "utf8");
+    }
+    const sitemap = path.join(dir, arch.sitemapFile);
+    if (!fs.existsSync(sitemap)) {
+      const now = new Date().toISOString();
+      fs.writeFileSync(sitemap, JSON.stringify({ project: name, created_at: now, updated_at: now, nodes: [] }, null, 2), "utf8");
+    }
+    return dir;
+  } catch { return null; }
+}
+function logCli(projectPath, rec) {
+  if (!projectPath) return;
+  try {
+    const dir = ensureProjectMemoryCli(projectPath);
+    if (!dir) return;
+    fs.appendFileSync(path.join(dir, loadArch().logFile), JSON.stringify(rec) + "\n", "utf8");
+  } catch { /* ignore */ }
+}
+// 작업 폴더 반복 방문 → 활성화(.agentlas 생성). 앱의 activation.ts와 동일한 정책(2회).
+function recordCliFolderVisit(db, projectPath) {
+  if (!tableExists(db, "folder_activity")) return { activated: false };
+  const now = new Date().toISOString();
+  try {
+    const row = db.prepare("SELECT visits, activated_at FROM folder_activity WHERE path=?").get(projectPath);
+    let visits, activatedAt;
+    if (row) {
+      visits = row.visits + 1; activatedAt = row.activated_at;
+      db.prepare("UPDATE folder_activity SET visits=?, last_seen=? WHERE path=?").run(visits, now, projectPath);
+    } else {
+      visits = 1; activatedAt = null;
+      db.prepare("INSERT INTO folder_activity (path, visits, activated_at, first_seen, last_seen) VALUES (?,?,NULL,?,?)").run(projectPath, visits, now, now);
+    }
+    if (!activatedAt && visits >= 2) {
+      db.prepare("UPDATE folder_activity SET activated_at=? WHERE path=?").run(now, projectPath);
+      ensureProjectMemoryCli(projectPath);
+      activatedAt = now;
+    }
+    return { activated: !!activatedAt };
+  } catch { return { activated: false }; }
+}
+// `agentlas run` 등이 호출된 작업 디렉터리 → 활성 프로젝트 경로(또는 null).
+function activeProjectPath(db) {
+  try {
+    const cwd = process.cwd();
+    if (cwd === os.homedir() || cwd === userDataDir() || cwd === runCwd()) return null;
+    const v = recordCliFolderVisit(db, cwd);
+    return v.activated ? cwd : null;
+  } catch { return null; }
+}
+function cliMemoryContext(db, projectPath) {
+  const sections = [];
+  const arch = loadArch();
+  if (projectPath) {
+    try {
+      const soulPath = path.join(projectPath, arch.memoryDir, arch.soulFile);
+      if (fs.existsSync(soulPath)) {
+        let s = fs.readFileSync(soulPath, "utf8");
+        if (s.length > 1800) s = s.slice(0, 1800) + "\n…(truncated)";
+        if (s.trim()) sections.push(`### Project memory (${projectPath})\n${s.trim()}`);
+      }
+    } catch { /* ignore */ }
+  }
+  if (tableExists(db, "memory_entries")) {
+    try {
+      const rows = projectPath
+        ? db.prepare("SELECT kind, content FROM memory_entries WHERE project_path=? AND superseded_at IS NULL AND scope!='session' ORDER BY created_at DESC LIMIT 12").all(projectPath)
+        : db.prepare("SELECT kind, content FROM memory_entries WHERE project_path IS NULL AND scope!='session' AND superseded_at IS NULL ORDER BY created_at DESC LIMIT 12").all();
+      if (rows.length) sections.push((projectPath ? "### Recent curated memory\n" : "### Curated memory (global)\n") + rows.map((r) => `- [${r.kind}] ${r.content}`).join("\n"));
+    } catch { /* ignore */ }
+  }
+  if (!sections.length) return "";
+  return "## Agentlas memory (read before answering; build on it)\n\n" + sections.join("\n\n");
+}
+function parseMemoryEventsCli(text) {
+  const heading = loadArch().eventsHeading;
+  const idx = text.lastIndexOf(heading);
+  if (idx < 0) return { events: [], cleaned: text.trim() };
+  const after = text.slice(idx + heading.length);
+  const fence = after.match(/```(?:json)?\s*([\s\S]*?)```/);
+  let events = [];
+  if (fence) { try { const d = JSON.parse(fence[1].trim()); if (Array.isArray(d)) events = d; } catch { /* ignore */ } }
+  let cut = text.length;
+  if (fence && fence.index != null) cut = idx + heading.length + fence.index + fence[0].length;
+  else cut = idx;
+  return { events, cleaned: (text.slice(0, idx) + text.slice(cut)).trim() };
+}
+function curateCliReply(db, text, ctx) {
+  const { events, cleaned } = parseMemoryEventsCli(text);
+  if (!events.length || !tableExists(db, "memory_entries")) return cleaned;
+  const arch = loadArch();
+  const { randomUUID } = require("node:crypto");
+  const now = new Date().toISOString();
+  for (const ev of events) {
+    const content = ev && typeof ev.content === "string" ? ev.content.trim() : "";
+    if (!content) continue;
+    if (ev.sensitivity === "secret" || SECRET_RE.some((re) => re.test(content))) continue;
+    const kind = arch.kinds.includes(ev.memory_kind) ? ev.memory_kind : "fact";
+    let scope = arch.scopes.includes(ev.suggested_scope) ? ev.suggested_scope : "session";
+    if (scope === "discard" || scope === "session") { logCli(ctx.projectPath, { action: scope, kind, content, at: now }); continue; }
+    if (scope === "project" && !ctx.projectPath) scope = "agent_team";
+    const ppath = scope === "project" ? ctx.projectPath : null;
+    try {
+      const dup = db.prepare("SELECT 1 FROM memory_entries WHERE scope=? AND kind=? AND lower(trim(content))=? AND superseded_at IS NULL AND (project_path IS ? OR project_path=?) LIMIT 1").get(scope, kind, content.toLowerCase(), ppath, ppath);
+      if (dup) continue;
+      db.prepare("INSERT INTO memory_entries (id,scope,kind,content,project_id,project_path,agent_id,chat_id,confidence,sensitivity,evidence_json,superseded_at,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,NULL,?)").run(randomUUID(), scope, kind, content, null, ppath, ctx.agentId || null, null, ev.confidence || "medium", ev.sensitivity || "internal", JSON.stringify(Array.isArray(ev.evidence_refs) ? ev.evidence_refs : []), now);
+      logCli(ctx.projectPath, { action: "written", scope, kind, content, at: now });
+    } catch { /* ignore */ }
+  }
+  return cleaned;
+}
+function augmentSystem(db, baseSystem, ctx, withEmitter) {
+  const arch = loadArch();
+  let sys = baseSystem || "";
+  const mem = cliMemoryContext(db, ctx && ctx.projectPath);
+  if (mem) sys += "\n\n" + mem;
+  if (withEmitter && arch.emitterBlock) sys += "\n\n" + arch.emitterBlock;
+  return sys;
+}
+
 // ── 런타임 CLI 스폰 ────────────────────────────────────────
 const RUNTIME_BIN = {
   "claude-code": "claude",
@@ -190,20 +375,29 @@ async function runApi(backend, model, system, prompt) {
 }
 
 // 1회 실행 — CLI면 spawn(스트리밍 stdout), API면 호출 후 텍스트 출력. 종료코드 반환.
-async function executeOnce(db, system, prompt, override) {
+// ctx = { projectPath, agentId } — 메모리 주입/큐레이션에 사용.
+async function executeOnce(db, system, prompt, override, ctx) {
+  ctx = ctx || { projectPath: null, agentId: null };
   const rt = resolveRuntime(db, override);
   if (rt.mode === "cli") {
+    // 네이티브 CLI는 자체 세션을 가지므로 emitter는 넣지 않고(노이즈 방지) 메모리 컨텍스트만 주입.
+    const sys = augmentSystem(db, system, ctx, false);
     process.stderr.write(`▸ ${rt.kind}\n`);
-    return spawnRuntime(rt.kind, system, prompt);
+    return spawnRuntime(rt.kind, sys, prompt);
   }
+  // API 경로 — emitter 동봉 → 답변에서 메모리 이벤트를 파싱·큐레이션하고 블록은 제거.
+  const sys = augmentSystem(db, system, ctx, true);
   process.stderr.write(`▸ ${rt.backend}${rt.model ? " · " + rt.model : ""}\n`);
-  const text = await runApi(rt.backend, rt.model, system, prompt);
-  process.stdout.write((text || "").trim() + "\n");
+  const text = await runApi(rt.backend, rt.model, sys, prompt);
+  const cleaned = curateCliReply(db, text || "", ctx);
+  process.stdout.write((cleaned || "").trim() + "\n");
   return 0;
 }
 
 // API 백엔드용 간이 대화형 REPL (네이티브 인터랙티브가 없는 BYOK/Ollama).
-function apiRepl(backend, model, system, label) {
+// 매 턴 메모리 컨텍스트 + emitter를 주입하고 답변에서 메모리를 큐레이션한다.
+function apiRepl(db, backend, model, system, label, ctx) {
+  ctx = ctx || { projectPath: null, agentId: null };
   const readline = require("node:readline");
   process.stderr.write(`▸ ${label} (${backend}${model ? " · " + model : ""}) — 종료: /exit\n`);
   const rl = readline.createInterface({ input: process.stdin, output: process.stderr });
@@ -213,8 +407,10 @@ function apiRepl(backend, model, system, label) {
       if (tt === "/exit" || tt === "/quit") return rl.close();
       if (!tt) return ask();
       try {
-        const text = await runApi(backend, model, system, tt);
-        process.stdout.write("\n" + (text || "").trim() + "\n");
+        const sys = augmentSystem(db, system, ctx, true);
+        const text = await runApi(backend, model, sys, tt);
+        const cleaned = curateCliReply(db, text || "", ctx);
+        process.stdout.write("\n" + (cleaned || "").trim() + "\n");
       } catch (e) {
         process.stderr.write("✖ " + (e && e.message) + "\n");
       }
@@ -279,7 +475,7 @@ function launchInteractive(db, agent, runtimeOverride) {
     return;
   }
   // BYOK/Ollama는 네이티브 인터랙티브가 없으므로 API REPL로 대화.
-  apiRepl(rt.backend, rt.model, agent.system_prompt || "", agent.name);
+  apiRepl(db, rt.backend, rt.model, agent.system_prompt || "", agent.name, { projectPath: activeProjectPath(db), agentId: agent.id });
 }
 
 function spawnRuntime(kind, systemPrompt, prompt) {
@@ -307,7 +503,8 @@ function cmdList(db) {
   const routes = routesMap();
   for (const a of agents) {
     const local = routes[a.id] ? "  [local]" : "";
-    out(`  ${a.slug.padEnd(28)} ${a.name}${local}`);
+    const arch = a.builtin ? "  [아키텍처]" : "";
+    out(`  ${a.slug.padEnd(28)} ${a.name}${arch}${local}`);
   }
   const firms = listFirms(db);
   if (firms.length) {
@@ -352,7 +549,7 @@ async function cmdRun(db, query, prompt, runtimeOverride) {
   if (!userPrompt) userPrompt = await readStdin();
   if (!userPrompt || !userPrompt.trim()) fail("프롬프트가 비어 있습니다. agentlas run <agent> \"...\" 또는 stdin으로 전달하세요.");
   process.stderr.write(`▸ ${agent.name}\n`);
-  const code = await executeOnce(db, agent.system_prompt || "", userPrompt.trim(), runtimeOverride);
+  const code = await executeOnce(db, agent.system_prompt || "", userPrompt.trim(), runtimeOverride, { projectPath: activeProjectPath(db), agentId: agent.id });
   process.exit(code);
 }
 
@@ -401,7 +598,7 @@ async function cmdFirm(db, query, prompt, runtimeOverride) {
   const sys = firmSystemPrompt(db, firm);
   if (prompt && prompt.trim()) {
     process.stderr.write(`▸ ${firm.name} CEO\n`);
-    const code = await executeOnce(db, sys, prompt.trim(), runtimeOverride);
+    const code = await executeOnce(db, sys, prompt.trim(), runtimeOverride, { projectPath: activeProjectPath(db), agentId: firm.ceo_agent_id });
     process.exit(code);
   }
   // 대화형: firm 폴더에 CEO 컨텍스트를 깔고 네이티브 CLI, 또는 API REPL.
@@ -420,7 +617,7 @@ async function cmdFirm(db, query, prompt, runtimeOverride) {
     child.on("close", (code) => process.exit(code ?? 0));
     return;
   }
-  apiRepl(rt.backend, rt.model, sys, firm.name + " CEO");
+  apiRepl(db, rt.backend, rt.model, sys, firm.name + " CEO", { projectPath: activeProjectPath(db), agentId: firm.ceo_agent_id });
 }
 
 function cmdEnv(db) {
@@ -502,6 +699,9 @@ async function main() {
   if (cmd === "help" || cmd === "--help" || cmd === "-h") return cmdHelp();
 
   const db = openDb();
+
+  // Agentlas 아키텍처 빌트인 에이전트를 보장(앱과 동일, 멱등·버전 게이팅). 스키마가 준비됐을 때만.
+  try { seedBuiltins(db); } catch { /* best-effort */ }
 
   // 인자 없이 `agentlas` → 에이전트 1개면 바로 대화형, 아니면 목록 + 사용법
   if (cmd === "") {

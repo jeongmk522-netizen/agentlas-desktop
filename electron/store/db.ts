@@ -9,7 +9,7 @@ import { app } from "electron";
 
 let _db: Database.Database | null = null;
 
-const SCHEMA_VERSION = 10;
+const SCHEMA_VERSION = 12;
 
 export function initStore(): void {
   if (_db) return;
@@ -231,6 +231,67 @@ export function initStore(): void {
         FOREIGN KEY(server_id) REFERENCES mcp_servers(id) ON DELETE CASCADE
       );
       CREATE INDEX IF NOT EXISTS idx_agent_mcp_agent ON agent_mcp_servers(agent_id);
+    `);
+  }
+
+  // ── v10 → v11: active_runtime.long_context (BYOK 1M 컨텍스트 토글) ─
+  if (userVersion < 11) {
+    const runtimeCols = _db
+      .prepare("PRAGMA table_info(active_runtime)")
+      .all() as Array<{ name: string }>;
+    if (!runtimeCols.some((c) => c.name === "long_context")) {
+      _db.exec("ALTER TABLE active_runtime ADD COLUMN long_context INTEGER NOT NULL DEFAULT 0");
+    }
+  }
+
+  // ── v11 → v12: Agentlas Architecture — built-in agents + curated memory ──
+  //   installed_agents.builtin/role : marks the 3 baked-in architecture agents.
+  //   meta                          : key/value (e.g. architecture_version) for upgrade gating.
+  //   memory_entries                : the Memory Curator's durable store.
+  //   folder_activity               : repeated-work detection → auto-activates PM Soul + sitemap.
+  if (userVersion < 12) {
+    const agentCols = _db
+      .prepare("PRAGMA table_info(installed_agents)")
+      .all() as Array<{ name: string }>;
+    if (!agentCols.some((c) => c.name === "builtin")) {
+      _db.exec("ALTER TABLE installed_agents ADD COLUMN builtin INTEGER NOT NULL DEFAULT 0");
+    }
+    if (!agentCols.some((c) => c.name === "role")) {
+      _db.exec("ALTER TABLE installed_agents ADD COLUMN role TEXT");
+    }
+
+    _db.exec(`
+      CREATE TABLE IF NOT EXISTS meta (
+        key TEXT PRIMARY KEY,
+        value TEXT NOT NULL
+      );
+
+      CREATE TABLE IF NOT EXISTS memory_entries (
+        id TEXT PRIMARY KEY,
+        scope TEXT NOT NULL,
+        kind TEXT NOT NULL,
+        content TEXT NOT NULL,
+        project_id TEXT,
+        project_path TEXT,
+        agent_id TEXT,
+        chat_id TEXT,
+        confidence TEXT NOT NULL DEFAULT 'medium',
+        sensitivity TEXT NOT NULL DEFAULT 'internal',
+        evidence_json TEXT NOT NULL DEFAULT '[]',
+        superseded_at TEXT,
+        created_at TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_memory_path ON memory_entries(project_path, superseded_at);
+      CREATE INDEX IF NOT EXISTS idx_memory_scope ON memory_entries(scope, superseded_at);
+      CREATE INDEX IF NOT EXISTS idx_memory_chat ON memory_entries(chat_id);
+
+      CREATE TABLE IF NOT EXISTS folder_activity (
+        path TEXT PRIMARY KEY,
+        visits INTEGER NOT NULL DEFAULT 0,
+        activated_at TEXT,
+        first_seen TEXT NOT NULL,
+        last_seen TEXT NOT NULL
+      );
     `);
   }
 

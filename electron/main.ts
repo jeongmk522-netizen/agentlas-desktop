@@ -17,6 +17,7 @@ import { initStore } from "./store/db";
 import { initAutoUpdater } from "./updater";
 import { bootAuthFromKeychain } from "./auth";
 import { materializeAllAgents } from "./agents/files";
+import { seedBuiltinAgents } from "./architecture/seed";
 
 const isDev = process.env.NODE_ENV === "development";
 
@@ -159,6 +160,13 @@ app.whenReady().then(async () => {
   registerRendererProtocol();
   applyDockIcon();
   initStore();
+  // Agentlas 아키텍처 — PM 소울/메모리 큐레이터/태스크 편향 큐레이터를 설치에 항상 동봉.
+  // 버전 게이팅이라 평상시엔 거의 no-op. ARCHITECTURE_VERSION이 오르면 프롬프트만 재동기화.
+  try {
+    seedBuiltinAgents();
+  } catch (err) {
+    console.error("[architecture] seedBuiltinAgents failed:", err);
+  }
   // 설치된 에이전트 폴더의 파일을 보장 — 라이브러리 우측 패널이 즉시 보여줄 수 있게.
   materializeAllAgents();
   // 키체인에서 저장된 세션 복원 — 메인 윈도우가 뜨자마자 getSession()이 정상 값을 반환하도록 await

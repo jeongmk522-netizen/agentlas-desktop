@@ -7,10 +7,15 @@ import {
   appendChatMessage,
   autoTitleFromFirstMessage,
   getChat,
+  getChatWorkingFolder,
   listChatMessages,
 } from "../store/chats";
 import { getProject } from "../store/projects";
 import { getFirm } from "../store/firms";
+import { recordFolderVisit } from "../architecture/activation";
+import { buildMemoryContext } from "../memory/context";
+import { curateReply } from "../memory/curator";
+import { MEMORY_EMITTER_BLOCK } from "../architecture/manifest";
 import { runClaudeCode } from "../runtime/claude-code";
 import { runCodex } from "../runtime/codex";
 import { runGemini } from "../runtime/gemini";
@@ -69,6 +74,7 @@ function pickActive(list: RuntimeStatus[]): RuntimeStatus | null {
 export async function runMcpInvocation(
   req: McpInvocationRequest,
   sink: EventSink,
+  signal?: AbortSignal,
 ): Promise<void> {
   const locale = pickLocale(req);
   const chat = getChat(req.chatId);
@@ -138,6 +144,28 @@ export async function runMcpInvocation(
     }
   }
 
+  // ── Agentlas 아키텍처: 메모리 주입 + 항상-켜진 큐레이터 ──────────────
+  // 워킹 폴더에서 반복 작업하면 그 폴더가 활성화되고, 그때부터 프로젝트 메모리(.agentlas)를
+  // 시스템 프롬프트에 주입한다. 폴더가 없거나 아직 활성 전이면 전역 메모리를 주입.
+  const workingFolder = getChatWorkingFolder(chat.id);
+  let activePath: string | null = null;
+  if (workingFolder) {
+    try {
+      const visit = recordFolderVisit(workingFolder);
+      if (visit.activated) activePath = workingFolder;
+    } catch (err) {
+      console.error("[architecture] recordFolderVisit failed:", err);
+    }
+  }
+  try {
+    const memoryContext = buildMemoryContext(activePath);
+    if (memoryContext) systemPrompt = `${systemPrompt}\n\n${memoryContext}`;
+  } catch (err) {
+    console.error("[architecture] buildMemoryContext failed:", err);
+  }
+  // 모든 대화에 메모리 이벤트 emitter를 동봉 → 큐레이터가 전역적으로 기억을 관리.
+  systemPrompt = `${systemPrompt}\n\n${MEMORY_EMITTER_BLOCK}`;
+
   const history = listChatMessages(chat.id, 80);
 
   // 사용자 메시지 영구화 + 첫 메시지면 제목 자동 생성
@@ -155,16 +183,36 @@ export async function runMcpInvocation(
         images: req.images,
         backendLabel: picked.label,
         model: active.model ?? undefined,
+        longContext: active.longContextEnabled ?? false,
+        signal,
+        permission: req.permissions,
         locale,
       },
       {
         onStatus: (status) => sink({ kind: "tool-use", status }),
         onPartial: (text) => sink({ kind: "partial", text }),
+        // Claude Code식 tool-use 블록 — 이름 + 인자 JSON
+        onTool: (name, args) => sink({ kind: "tool-use", tool: { name, args } }),
       },
     );
 
-    appendChatMessage(chat.id, "assistant", result.text);
-    sink({ kind: "final", text: result.text });
+    // 항상-켜진 큐레이터: 답변 끝의 "## Memory Events" 블록을 파싱해 안전·스코프·중복 처리 후
+    // 내구 메모리에 기록하고, 사용자에게 보이는 텍스트에서는 그 블록을 제거한다(추가 LLM 호출 없음).
+    let displayText = result.text;
+    try {
+      const { cleanedText } = curateReply(result.text, {
+        projectPath: activePath,
+        projectId: chat.projectId ?? null,
+        agentId: chat.agentId,
+        chatId: chat.id,
+      });
+      displayText = cleanedText || result.text;
+    } catch (err) {
+      console.error("[architecture] curateReply failed:", err);
+    }
+
+    appendChatMessage(chat.id, "assistant", displayText);
+    sink({ kind: "final", text: displayText, tokens: result.tokens });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     sink({ kind: "error", error: { code: "runner-failed", message: msg } });

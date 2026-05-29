@@ -88,6 +88,9 @@ import type {
   RuntimeSelection,
 } from "../shared/types";
 
+// 진행 중인 실행 레지스트리 — runId → AbortController. 병렬 세션을 각각 독립 추적/취소.
+const activeRuns = new Map<string, AbortController>();
+
 export function registerIpcHandlers(): void {
   // ── app ─────────────────────────────────────────────────
   // macOS "시스템 설정 > 언어 및 지역"의 1순위 언어. Electron이 BCP47 형태로 반환.
@@ -347,11 +350,25 @@ export function registerIpcHandlers(): void {
     const channel = `invoke:event:${runId}`;
     const win = BrowserWindow.fromWebContents(event.sender);
 
-    void runMcpInvocation(req, (ev) => {
-      win?.webContents.send(channel, ev);
-    });
+    // 실행마다 AbortController를 등록 — 병렬 실행이 서로 독립적으로 취소 가능.
+    const controller = new AbortController();
+    activeRuns.set(runId, controller);
+
+    void runMcpInvocation(
+      req,
+      (ev) => {
+        win?.webContents.send(channel, ev);
+      },
+      controller.signal,
+    ).finally(() => activeRuns.delete(runId));
 
     return { runId };
+  });
+
+  // 진행 중인 실행 취소 — CLI 자식 프로세스 kill / API fetch abort.
+  ipcMain.handle("invoke:cancel", (_e, runId: string) => {
+    activeRuns.get(runId)?.abort();
+    activeRuns.delete(runId);
   });
 
   ipcMain.handle("invoke:history", (_e, chatId: string) => listChatMessages(chatId));

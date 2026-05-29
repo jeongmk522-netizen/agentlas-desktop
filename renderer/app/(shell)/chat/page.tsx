@@ -13,7 +13,16 @@ import type {
   McpInvocationEvent,
   Project,
   RuntimeCommand,
+  RuntimeStatus,
 } from "@/lib/types";
+import {
+  BYOK_MODELS,
+  CONTEXT_MANAGED_BY,
+  cliModels,
+  findByokModel,
+  hasModelPicker,
+  type ByokBackend,
+} from "@shared/models";
 import { ChatStream, type StreamMessage } from "@/components/ChatStream";
 import { extractQuestions } from "@/lib/ask-question";
 import { ChatInput } from "@/components/ChatInput";
@@ -26,6 +35,29 @@ import { pickLocalized, useT } from "@/lib/i18n";
 
 function uid(): string {
   return Math.random().toString(36).slice(2);
+}
+
+const CLI_RUNTIME_LABEL: Record<string, string> = {
+  "claude-code": "Claude Code",
+  codex: "Codex",
+  gemini: "Gemini",
+};
+
+/** 헤더 칩에 보일 활성 런타임·모델 라벨. */
+function runtimeChipLabel(s: RuntimeStatus): string {
+  if (s.kind === "ollama") return s.model ? `Ollama · ${s.model}` : "Ollama";
+  if (s.kind === "byok") return findByokModel(s.backend, s.model)?.label ?? s.model ?? "API";
+  const base = CLI_RUNTIME_LABEL[s.kind] ?? s.kind;
+  const m = cliModels(s.kind).find((o) => o.id === s.model);
+  return m ? `${base} · ${m.label}` : base;
+}
+
+/** 런타임의 모델 선택 옵션 — BYOK 카탈로그 또는 CLI 모델 목록. */
+function modelOptionsFor(s: RuntimeStatus): Array<{ id: string; label: string }> {
+  if (s.kind === "byok") {
+    return (BYOK_MODELS[s.backend as ByokBackend] ?? []).map((m) => ({ id: m.id, label: m.label }));
+  }
+  return cliModels(s.kind).map((m) => ({ id: m.id, label: m.label }));
 }
 
 export default function ChatPageWrapper() {
@@ -59,6 +91,9 @@ function ChatPage() {
   const [titleDraft, setTitleDraft] = useState("");
   const subRef = useRef<(() => void) | null>(null);
   const seededRef = useRef<string>("");
+  // 활성 런타임/모델 — 헤더 칩 표시 + BYOK 인라인 모델 변경. 진행 중 실행의 runId(취소용).
+  const [activeRuntime, setActiveRuntime] = useState<RuntimeStatus | null>(null);
+  const runIdRef = useRef<string | null>(null);
   const [artifact, setArtifact] = useState<CodeArtifact | null>(null);
   // 우측 워크스페이스 패널 — 채팅 진입 시 working_folder가 저장돼 있으면 자동 노출
   const [workspaceOpen, setWorkspaceOpen] = useState(false);
@@ -102,6 +137,10 @@ function ChatPage() {
       void api.runtime.listCommands().then((cmds) => {
         if (!cancelled) setCliCommands(cmds);
       });
+      // 활성 런타임/모델 — 헤더 칩 표시용.
+      void api.runtime.detect().then((list) => {
+        if (!cancelled) setActiveRuntime(list.find((r) => r.active) ?? null);
+      });
       setAgent(agents.find((a) => a.id === c.agentId) ?? null);
       // working_folder가 이미 저장돼 있으면 자동으로 패널 노출 (다음 진입 시 복원)
       const savedFolder = await api.workspace.get(chatId);
@@ -132,10 +171,14 @@ function ChatPage() {
   }, [chatId, router]);
 
   const send = useCallback(
-    async (userPrompt: string, images?: ImageAttachment[]) => {
+    async (
+      userPrompt: string,
+      opts?: { images?: ImageAttachment[]; permissions?: "read" | "write" | "full" },
+    ) => {
       const api = ipc();
       const events = ipcEvents();
       if (!api || !events || !chat || busy) return;
+      const images = opts?.images;
       const placeholderId = uid();
       const imageDataUrls = images?.map(
         (img) => `data:${img.mediaType};base64,${img.data}`,
@@ -163,13 +206,30 @@ function ChatPage() {
         userPrompt,
         images,
         locale,
+        permissions: opts?.permissions,
       });
+      runIdRef.current = runId;
       const channel = api.invoke.eventChannel(runId);
       subRef.current?.();
       // 같은 status가 연달아 오면 중복 push 방지 — runner는 onStatus를 throttle 안 해서 partial과 섞이기도.
       const lastStatusRef = { text: "" };
       subRef.current = events.on(channel, (ev: McpInvocationEvent) => {
-        if (ev.kind === "thinking" || ev.kind === "tool-use") {
+        if (ev.kind === "tool-use" && ev.tool) {
+          // Claude Code식 tool-use 블록 — 이름 + 인자(접기/펴기)
+          setMessages((m) =>
+            m.map((msg) =>
+              msg.id === placeholderId
+                ? {
+                    ...msg,
+                    steps: [
+                      ...(msg.steps ?? []),
+                      { id: uid(), kind: "tool", text: ev.tool!.name, tool: ev.tool!.name, args: ev.tool!.args },
+                    ],
+                  }
+                : msg,
+            ),
+          );
+        } else if (ev.kind === "thinking" || ev.kind === "tool-use") {
           const status = ev.status?.trim();
           if (!status || status === lastStatusRef.text) return;
           lastStatusRef.text = status;
@@ -211,11 +271,13 @@ function ChatPage() {
                 text,
                 busy: false,
                 streaming: false,
+                tokens: ev.tokens ?? msg.tokens,
                 questions: questions.length > 0 ? questions : msg.questions,
               };
             }),
           );
           setBusy(false);
+          runIdRef.current = null;
           subRef.current?.();
           subRef.current = null;
           // 첫 메시지였으면 main 프로세스가 자동 제목 생성 → 갱신해서 사이드바도 반영
@@ -226,6 +288,7 @@ function ChatPage() {
             { id: uid(), role: "system", text: `⚠️ ${ev.error?.message ?? t("chat.err.unknown")}` },
           ]);
           setBusy(false);
+          runIdRef.current = null;
           subRef.current?.();
           subRef.current = null;
         }
@@ -233,6 +296,30 @@ function ChatPage() {
     },
     [chat, busy, locale, t],
   );
+
+  // 진행 중 실행 취소 — 헤더 Stop 버튼. 병렬 세션 각각 독립 취소.
+  const stop = useCallback(() => {
+    const api = ipc();
+    if (!api || !runIdRef.current) return;
+    void api.invoke.cancel(runIdRef.current);
+  }, []);
+
+  // 활성 모델을 채팅 헤더에서 바로 변경 — BYOK 및 CLI(claude-code) 공통.
+  // model === "" 이면 모델 미지정(구독 기본)으로 되돌린다.
+  async function switchModel(model: string) {
+    const api = ipc();
+    if (!api || !activeRuntime) return;
+    await api.runtime.setActive({
+      kind: activeRuntime.kind,
+      backend: activeRuntime.backend,
+      source: activeRuntime.source,
+      model: model || undefined,
+      longContext:
+        activeRuntime.kind === "byok" ? (activeRuntime.longContextEnabled ?? false) : undefined,
+    });
+    const list = await api.runtime.detect();
+    setActiveRuntime(list.find((r) => r.active) ?? null);
+  }
 
   /**
    * 에이전트가 emit한 질문(<<agentlas-ask>>)에 사용자가 답함.
@@ -317,6 +404,18 @@ function ChatPage() {
   }
 
   if (!chat) return null;
+
+  // 헤더 런타임 칩 — 컨텍스트 관리 주체 + 1M 표시 계산.
+  const rtManagedByRuntime = activeRuntime
+    ? CONTEXT_MANAGED_BY[activeRuntime.kind] === "runtime"
+    : false;
+  const rtModel =
+    activeRuntime?.kind === "byok"
+      ? findByokModel(activeRuntime.backend, activeRuntime.model)
+      : undefined;
+  const rtShow1M =
+    !!rtModel?.longContext &&
+    (rtModel.longContext.mode === "auto" || !!activeRuntime?.longContextEnabled);
 
   return (
     <div style={{ display: "flex", height: "100%", width: "100%", minWidth: 0, overflow: "hidden" }}>
@@ -475,6 +574,120 @@ function ChatPage() {
             </div>
           )}
         </div>
+        {busy && (
+          <button
+            onClick={stop}
+            className="titlebar-nodrag"
+            aria-label={t("chat.stop")}
+            title={t("chat.stop")}
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 6,
+              padding: "5px 12px",
+              borderRadius: 999,
+              fontSize: 12,
+              fontWeight: 600,
+              color: "var(--red-deep)",
+              background: "var(--paper-2)",
+              border: "1px solid var(--paper-edge)",
+              cursor: "pointer",
+            }}
+          >
+            <span
+              style={{
+                width: 9,
+                height: 9,
+                background: "currentColor",
+                borderRadius: 2,
+                display: "inline-block",
+              }}
+            />
+            {t("chat.stop")}
+          </button>
+        )}
+        {activeRuntime && (
+          <div
+            className="titlebar-nodrag"
+            style={{ position: "relative", display: "inline-flex", alignItems: "center" }}
+            title={
+              rtManagedByRuntime
+                ? t("chat.runtime.auto_context")
+                : t("chat.runtime.managed_agentlas")
+            }
+          >
+            <span
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 6,
+                padding: "5px 10px",
+                borderRadius: 999,
+                background: "var(--paper-2)",
+                border: "1px solid var(--paper-edge)",
+                fontSize: 11.5,
+                fontWeight: 600,
+                color: "var(--ink-soft)",
+                maxWidth: 230,
+                cursor: hasModelPicker(activeRuntime.kind) ? "pointer" : "default",
+              }}
+            >
+              <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                {runtimeChipLabel(activeRuntime)}
+              </span>
+              {rtManagedByRuntime ? (
+                <span
+                  style={{
+                    fontSize: 9.5,
+                    fontFamily: "var(--font-head)",
+                    padding: "1px 6px",
+                    borderRadius: 999,
+                    background: "var(--fill-1)",
+                    color: "var(--accent)",
+                  }}
+                >
+                  {t("chat.runtime.auto_context")}
+                </span>
+              ) : rtShow1M ? (
+                <span
+                  style={{
+                    fontSize: 9.5,
+                    fontFamily: "var(--font-head)",
+                    padding: "1px 6px",
+                    borderRadius: 999,
+                    background: "var(--fill-1)",
+                    color: "var(--accent)",
+                  }}
+                >
+                  1M
+                </span>
+              ) : null}
+              {hasModelPicker(activeRuntime.kind) && (
+                <IconChevronRight
+                  size={10}
+                  style={{ color: "var(--muted)", transform: "rotate(90deg)" }}
+                />
+              )}
+            </span>
+            {hasModelPicker(activeRuntime.kind) && (
+              <select
+                value={activeRuntime.model ?? ""}
+                onChange={(e) => void switchModel(e.target.value)}
+                aria-label={t("chat.model.switch")}
+                style={{ position: "absolute", inset: 0, opacity: 0, cursor: "pointer" }}
+              >
+                {activeRuntime.kind !== "byok" && (
+                  <option value="">{t("chat.model.cli_default")}</option>
+                )}
+                {modelOptionsFor(activeRuntime).map((m) => (
+                  <option key={m.id} value={m.id}>
+                    {m.label}
+                  </option>
+                ))}
+              </select>
+            )}
+          </div>
+        )}
         <button
           onClick={() => setWorkspaceOpen((v) => !v)}
           className="titlebar-nodrag"
@@ -517,7 +730,7 @@ function ChatPage() {
       />
       <ChatInput
         onSend={(text, opts) => {
-          void send(text, opts?.images);
+          void send(text, { images: opts?.images, permissions: opts?.permissions });
         }}
         onCommand={handleCommand}
         busy={busy}

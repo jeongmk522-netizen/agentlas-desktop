@@ -14,6 +14,8 @@ afterPack: build-resources/after-pack-clean.cjs
 
 files:
   - dist/electron/**/*
+  # dist/shared/** holds runtime values (shared/models.ts). MUST be packaged or the app crashes.
+  - dist/shared/**/*
   - dist/renderer/**/*
   - cli/**/*
   - package.json

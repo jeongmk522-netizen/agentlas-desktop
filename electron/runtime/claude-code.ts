@@ -93,11 +93,34 @@ export const runClaudeCode: Runner = async (
     events.onStatus(tStatus(req.locale, "callingBackend", { backend: req.backendLabel }));
   }
 
-  const systemPrompt = wrapSystemPrompt(req.systemPrompt, req.locale);
+  const systemPrompt = wrapSystemPrompt(req.systemPrompt, req.locale, req.permission);
   const flatUser = flattenHistory(req);
 
+  // 권한 칩 → claude 권한 모드. read=기본(헤드리스에서 위험 툴 자동 거부), write=편집 허용, full=전체.
+  const permArgs =
+    req.permission === "full"
+      ? ["--permission-mode", "bypassPermissions"]
+      : req.permission === "write"
+        ? ["--permission-mode", "acceptEdits"]
+        : [];
+
+  // 모델 선택 — opus/sonnet/haiku 별칭(또는 풀 ID). 미지정이면 구독 기본 모델.
+  const modelArgs = req.model && req.model.trim() ? ["--model", req.model.trim()] : [];
+
   return new Promise<RunnerResult>((resolve, reject) => {
-    const args = ["-p", flatUser, "--append-system-prompt", systemPrompt];
+    // stream-json + verbose: tool_use / 텍스트 / 토큰(usage) 이벤트를 NDJSON으로 받아
+    // Claude Code식 tool-use 블록 + 토큰 표시를 가능하게 한다.
+    const args = [
+      "-p",
+      flatUser,
+      "--append-system-prompt",
+      systemPrompt,
+      "--output-format",
+      "stream-json",
+      "--verbose",
+      ...modelArgs,
+      ...permArgs,
+    ];
     const child = spawnCli(bin, args, {
       stdio: ["ignore", "pipe", "pipe"],
       env: process.env,
@@ -105,18 +128,63 @@ export const runClaudeCode: Runner = async (
       cwd: agentRunCwd(),
     });
 
-    let stdout = "";
+    // 취소 — 사용자가 Stop을 누르면 자식 프로세스 종료. 병렬 세션 각각 독립 취소.
+    const onAbort = () => child.kill();
+    if (req.signal) {
+      if (req.signal.aborted) child.kill();
+      else req.signal.addEventListener("abort", onAbort, { once: true });
+    }
+
+    let buffer = "";
+    let acc = "";
+    let finalText = "";
+    let tokens: number | undefined;
     let stderr = "";
     let lastEmit = 0;
 
+    function handleEvent(ev: {
+      type?: string;
+      message?: { content?: Array<{ type?: string; text?: string; name?: string; input?: unknown }> };
+      result?: unknown;
+      usage?: { output_tokens?: number };
+    }): void {
+      if (ev.type === "assistant" && ev.message?.content) {
+        for (const block of ev.message.content) {
+          if (block.type === "text" && block.text) {
+            acc += (acc ? "\n" : "") + block.text;
+            const now = Date.now();
+            if (now - lastEmit > 60) {
+              events.onPartial(acc);
+              lastEmit = now;
+            }
+          } else if (block.type === "tool_use" && block.name) {
+            let argStr = "";
+            try {
+              argStr = JSON.stringify(block.input ?? {});
+            } catch {
+              argStr = "";
+            }
+            events.onTool?.(block.name, argStr.length > 2000 ? argStr.slice(0, 2000) + "…" : argStr);
+          }
+        }
+      } else if (ev.type === "result") {
+        if (typeof ev.result === "string") finalText = ev.result;
+        if (ev.usage?.output_tokens != null) tokens = ev.usage.output_tokens;
+      }
+    }
+
     child.stdout?.on("data", (chunk: Buffer) => {
-      const text = chunk.toString("utf8");
-      stdout += text;
-      const now = Date.now();
-      // 너무 잦은 IPC 푸시 방지 — 80ms throttle
-      if (now - lastEmit > 80) {
-        events.onPartial(stdout);
-        lastEmit = now;
+      buffer += chunk.toString("utf8");
+      let nl: number;
+      while ((nl = buffer.indexOf("\n")) >= 0) {
+        const line = buffer.slice(0, nl).trim();
+        buffer = buffer.slice(nl + 1);
+        if (!line) continue;
+        try {
+          handleEvent(JSON.parse(line));
+        } catch {
+          // 비-JSON 라인은 무시
+        }
       }
     });
 
@@ -126,14 +194,16 @@ export const runClaudeCode: Runner = async (
 
     child.on("error", (err) => reject(err));
     child.on("close", (code) => {
+      req.signal?.removeEventListener("abort", onAbort);
+      if (req.signal?.aborted) {
+        reject(new Error(tStatus(req.locale, "aborted")));
+        return;
+      }
       if (code === 0) {
-        resolve({ text: stdout.trim() });
+        if (acc) events.onPartial(finalText || acc);
+        resolve({ text: (finalText || acc).trim(), tokens });
       } else {
-        reject(
-          new Error(
-            `claude CLI exit ${code}${stderr ? `\n${stderr.slice(0, 500)}` : ""}`,
-          ),
-        );
+        reject(new Error(`claude CLI exit ${code}${stderr ? `\n${stderr.slice(0, 500)}` : ""}`));
       }
     });
   });

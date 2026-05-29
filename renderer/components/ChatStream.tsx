@@ -13,6 +13,10 @@ export interface StreamStep {
   /** thinking = 모델 사고, tool = 런타임/툴 호출 */
   kind: "thinking" | "tool";
   text: string;
+  /** tool 호출 이름 (있으면 Claude Code식 접기/펴기 블록으로 렌더) */
+  tool?: string;
+  /** tool 인자 JSON 문자열 — 펼쳤을 때 표시 */
+  args?: string;
 }
 
 /** 에이전트가 사용자에게 옵션을 묻는 질문. Markdown에서 fence를 파싱해 채워진다. */
@@ -47,6 +51,8 @@ export interface StreamMessage {
   imageDataUrls?: string[];
   /** 본문에서 fence로 추출된 질문들 — UI는 본문 텍스트 아래에 카드로 렌더 */
   questions?: ChatQuestion[];
+  /** 생성 토큰 수 — "N tokens" 표시 (Claude Code 스타일) */
+  tokens?: number;
 }
 
 export function ChatStream({
@@ -244,13 +250,12 @@ function Bubble({
       </div>
     );
   }
-  // agent — Markdown 렌더링. 작업 중이면 워킹 패널 + 스트리밍 커서.
-  const showWorking = message.busy || (message.steps && message.steps.length > 0 && !message.text);
+  // agent — Markdown 렌더링. 작업 중이거나 step/tool 기록이 있으면 워킹 패널(완료 후엔 시간·토큰·툴블록).
+  const showWorking = message.busy || (message.steps && message.steps.length > 0);
   return (
     <div style={{ display: "flex", gap: 10, alignSelf: "flex-start", maxWidth: "85%" }}>
       <div style={{ position: "relative", flexShrink: 0 }}>
         <AgentAvatar name={agentName} tone={agentTone} size={28} />
-        {message.busy && <BusyHalo />}
       </div>
       <div style={{ minWidth: 0, flex: 1 }}>
         {showWorking && (
@@ -259,6 +264,7 @@ function Bubble({
             fallback={message.status}
             startedAt={message.startedAt}
             done={!message.busy}
+            tokens={message.tokens}
           />
         )}
         {message.text && (
@@ -477,15 +483,20 @@ function WorkingPanel({
   fallback,
   startedAt,
   done,
+  tokens,
 }: {
   steps: StreamStep[];
   fallback?: string;
   startedAt?: number;
   done: boolean;
+  tokens?: number;
 }) {
   const { t, locale } = useT();
   const elapsed = useElapsedSeconds(startedAt, !done);
-  const rows: StreamStep[] = steps.length > 0 ? steps : fallback ? [{ id: "_f", kind: "thinking", text: fallback }] : [];
+  // 완료 후엔 일반 status 줄은 숨기고 tool-use 블록만 남긴다(클러터 방지). 진행 중엔 전부 표시.
+  const allRows: StreamStep[] =
+    steps.length > 0 ? steps : fallback ? [{ id: "_f", kind: "thinking", text: fallback }] : [];
+  const rows = done ? allRows.filter((s) => s.tool) : allRows;
 
   return (
     <div
@@ -514,6 +525,7 @@ function WorkingPanel({
           {done
             ? t("chatstream.took", { sec: formatElapsed(elapsed, locale) })
             : t("chatstream.working_for", { sec: formatElapsed(elapsed, locale) })}
+          {tokens != null && tokens > 0 && ` · ${formatTokens(tokens)} tokens`}
         </span>
       </div>
       {rows.length > 0 && (
@@ -529,7 +541,7 @@ function WorkingPanel({
           }}
         >
           {rows.map((s, idx) => {
-            // 진행 중이면 마지막 줄을 가장 진하게, 이전 줄은 살짝 흐리게 — Codex 디자인 톤
+            if (s.tool) return <ToolRow key={s.id} step={s} />;
             const isCurrent = !done && idx === rows.length - 1;
             const isPast = !done && idx < rows.length - 1;
             return (
@@ -559,16 +571,9 @@ function WorkingPanel({
                     marginTop: 2,
                   }}
                 >
-                  {s.kind === "thinking" ? <ThinkingGlyph /> : <ToolGlyph />}
+                  <ThinkingGlyph />
                 </span>
-                <span
-                  style={{
-                    minWidth: 0,
-                    flex: 1,
-                    wordBreak: "break-word",
-                    overflowWrap: "anywhere",
-                  }}
-                >
+                <span style={{ minWidth: 0, flex: 1, wordBreak: "break-word", overflowWrap: "anywhere" }}>
                   {s.text}
                 </span>
               </div>
@@ -578,6 +583,87 @@ function WorkingPanel({
       )}
     </div>
   );
+}
+
+// Claude Code식 tool-use 블록 — "<tool> 사용 중 ›" 클릭하면 인자(JSON) 펼침.
+function ToolRow({ step }: { step: StreamStep }) {
+  const { t } = useT();
+  const [open, setOpen] = useState(false);
+  const hasArgs = !!(step.args && step.args !== "{}" && step.args !== "");
+  return (
+    <div style={{ minWidth: 0 }}>
+      <button
+        onClick={() => hasArgs && setOpen((v) => !v)}
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 7,
+          width: "100%",
+          textAlign: "left",
+          background: "transparent",
+          border: "none",
+          padding: 0,
+          fontSize: 12.5,
+          color: "var(--ink-soft)",
+          cursor: hasArgs ? "pointer" : "default",
+        }}
+      >
+        <span aria-hidden style={{ flexShrink: 0, color: "var(--accent)", display: "inline-flex", marginTop: 1 }}>
+          <ToolGlyph />
+        </span>
+        <span style={{ fontFamily: "var(--font-mono)", fontSize: 12, fontWeight: 600, color: "var(--ink)" }}>
+          {step.tool}
+        </span>
+        <span style={{ color: "var(--muted-deep)" }}>{t("chatstream.tool_using")}</span>
+        {hasArgs && (
+          <span
+            aria-hidden
+            style={{
+              color: "var(--muted)",
+              transform: open ? "rotate(90deg)" : "none",
+              transition: "transform .12s",
+              display: "inline-flex",
+            }}
+          >
+            ›
+          </span>
+        )}
+      </button>
+      {open && hasArgs && (
+        <pre
+          style={{
+            margin: "4px 0 2px 21px",
+            padding: "8px 10px",
+            background: "var(--paper)",
+            border: "1px solid var(--paper-edge)",
+            borderRadius: 8,
+            fontSize: 11,
+            fontFamily: "var(--font-mono)",
+            color: "var(--ink-soft)",
+            whiteSpace: "pre-wrap",
+            wordBreak: "break-word",
+            maxHeight: 220,
+            overflow: "auto",
+          }}
+        >
+          {prettyJson(step.args!)}
+        </pre>
+      )}
+    </div>
+  );
+}
+
+function prettyJson(s: string): string {
+  try {
+    return JSON.stringify(JSON.parse(s), null, 2);
+  } catch {
+    return s;
+  }
+}
+
+function formatTokens(n: number): string {
+  if (n >= 1000) return `${(n / 1000).toFixed(1)}k`;
+  return String(n);
 }
 
 function ThinkingGlyph() {
@@ -607,23 +693,6 @@ function PulsingDot() {
         background: "var(--accent)",
         animation: "agentlas-pulse 1.2s ease-in-out infinite",
         flexShrink: 0,
-      }}
-    />
-  );
-}
-
-function BusyHalo() {
-  return (
-    <span
-      aria-hidden
-      style={{
-        position: "absolute",
-        inset: -3,
-        borderRadius: "50%",
-        border: "1.5px solid var(--accent)",
-        opacity: 0.5,
-        animation: "agentlas-halo 1.6s ease-in-out infinite",
-        pointerEvents: "none",
       }}
     />
   );

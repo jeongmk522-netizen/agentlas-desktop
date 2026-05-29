@@ -10,8 +10,10 @@ export interface RuntimeSelection {
   kind: RuntimeKind;
   backend?: RuntimeBackend;
   source?: string;
-  /** ollama 등 모델을 골라야 하는 LLM에서 활성 모델 이름 (예: "llama3.1", "deepseek-r1") */
+  /** ollama·BYOK 등 모델을 골라야 하는 LLM에서 활성 모델 이름 (예: "llama3.1", "claude-opus-4-8") */
   model?: string;
+  /** BYOK 긴 컨텍스트(1M) opt-in 토글. beta-header 모델에만 의미. (auto 모델은 항상 ON 취급) */
+  longContext?: boolean;
 }
 
 /** CLI(Claude/Codex/Gemini)에서 스캔한 슬래시 명령 — 챗 입력 `/` 자동완성에 노출. */
@@ -31,10 +33,12 @@ export interface RuntimeStatus {
   version: string | null;
   /** 사용자가 현재 이 LLM을 활성으로 선택했는지 */
   active: boolean;
-  /** ollama 활성 모델 이름. 모델 개념 없는 LLM은 미설정 */
+  /** ollama·BYOK 활성 모델 이름. 모델 개념 없는 LLM은 미설정 */
   model?: string | null;
   /** ollama가 로컬에 받아둔 모델 목록 (설정 화면의 모델 선택용). 그 외 LLM은 미설정 */
   availableModels?: string[];
+  /** BYOK 긴 컨텍스트(1M) 토글 상태. beta-header 모델에서만 의미 있음. */
+  longContextEnabled?: boolean;
 }
 
 /**
@@ -319,6 +323,8 @@ export interface McpInvocationRequest {
   /** UI 사용자 locale — main이 emit하는 상태/오류 메시지가 이 언어로 나옴.
    *  영어 사용자에게 한국어 status가 새지 않도록 renderer가 항상 동봉. */
   locale?: "ko" | "en";
+  /** 도구 사용 권한 수준 (ChatInput 권한 칩) — 런타임 권한 모드로 매핑 */
+  permissions?: "read" | "write" | "full";
 }
 
 export interface McpInvocationEvent {
@@ -326,6 +332,10 @@ export interface McpInvocationEvent {
   status?: string;
   text?: string;
   error?: { code: string; message: string };
+  /** 도구 호출 이벤트 — Claude Code식 접기/펴기 블록용 (이름 + 인자 JSON) */
+  tool?: { name: string; args?: string };
+  /** 생성 토큰 수 (final에 동봉) — "N tokens" 표시용 */
+  tokens?: number;
 }
 
 /** 워킹 폴더 트리의 한 엔트리 — lazy expand. dir이면 hasChildren 힌트로 chevron 표시. */
@@ -616,6 +626,8 @@ export interface AgentlasIpc {
   invoke: {
     run: (req: McpInvocationRequest) => Promise<{ runId: string }>;
     eventChannel: (runId: string) => string;
+    /** 진행 중인 실행을 취소 — CLI 자식 프로세스 kill / API fetch abort. 병렬 세션 각각 독립 취소. */
+    cancel: (runId: string) => Promise<void>;
     history: (chatId: string) => Promise<ChatHistoryEntry[]>;
     clearHistory: (chatId: string) => Promise<void>;
   };

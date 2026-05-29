@@ -12,13 +12,37 @@ import type {
   RuntimeSelection,
   RuntimeStatus,
 } from "../../shared/types";
+import { byokModels, cliModels, defaultByokModel, findByokModel } from "../../shared/models";
 
 type ActiveRuntimeRow = {
   kind: RuntimeKind;
   backend: RuntimeBackend | null;
   source: string | null;
   model: string | null;
+  long_context: number;
 };
+
+/** BYOK 백엔드의 활성 모델 — 저장된 선택이 카탈로그에 있으면 그대로, 아니면 기본값. */
+function byokModelOf(backend: RuntimeBackend, active: ActiveRuntimeRow | null): string | undefined {
+  if (active?.kind === "byok" && active.backend === backend && findByokModel(backend, active.model)) {
+    return active.model ?? undefined;
+  }
+  return defaultByokModel(backend);
+}
+
+/** BYOK 1M 토글 상태 — 활성 백엔드일 때만 저장값 반영, 그 외엔 off. */
+function byokLongOf(backend: RuntimeBackend, active: ActiveRuntimeRow | null): boolean {
+  return !!(active?.kind === "byok" && active.backend === backend && active.long_context);
+}
+
+/** CLI 런타임의 활성 모델 — 저장된 선택이 카탈로그에 있으면 그대로, 아니면 undefined(구독 기본). */
+function cliModelOf(kind: RuntimeKind, active: ActiveRuntimeRow | null): string | undefined {
+  const opts = cliModels(kind);
+  if (active?.kind === kind && active.model && opts.some((o) => o.id === active.model)) {
+    return active.model;
+  }
+  return undefined;
+}
 
 function isActiveRuntime(status: RuntimeStatus, active: ActiveRuntimeRow | null): boolean {
   if (!active) return false;
@@ -38,11 +62,22 @@ function isActiveRuntime(status: RuntimeStatus, active: ActiveRuntimeRow | null)
 }
 
 function saveActiveRuntime(status: RuntimeStatus | RuntimeSelection): void {
+  // RuntimeSelection(longContext)과 RuntimeStatus(longContextEnabled) 양쪽에서 1M 토글을 읽는다.
+  const longCtx =
+    ("longContext" in status ? status.longContext : undefined) ??
+    ("longContextEnabled" in status ? status.longContextEnabled : undefined) ??
+    false;
   getDb()
     .prepare(
-      "INSERT OR REPLACE INTO active_runtime(id, kind, backend, source, model) VALUES (1, ?, ?, ?, ?)",
+      "INSERT OR REPLACE INTO active_runtime(id, kind, backend, source, model, long_context) VALUES (1, ?, ?, ?, ?, ?)",
     )
-    .run(status.kind, status.backend ?? null, status.source ?? null, status.model ?? null);
+    .run(
+      status.kind,
+      status.backend ?? null,
+      status.source ?? null,
+      status.model ?? null,
+      longCtx ? 1 : 0,
+    );
 }
 
 /**
@@ -52,7 +87,7 @@ function saveActiveRuntime(status: RuntimeStatus | RuntimeSelection): void {
 export async function detectRuntimes(): Promise<RuntimeStatus[]> {
   const db = getDb();
   const activeRow = db
-    .prepare("SELECT kind, backend, source, model FROM active_runtime WHERE id = 1")
+    .prepare("SELECT kind, backend, source, model, long_context FROM active_runtime WHERE id = 1")
     .get() as ActiveRuntimeRow | undefined;
   const active = activeRow ?? null;
 
@@ -75,6 +110,9 @@ export async function detectRuntimes(): Promise<RuntimeStatus[]> {
       source: cc.path,
       version: cc.version,
       active: false,
+      // 컨텍스트는 CLI가 자동 관리하지만 모델은 --model로 선택 가능 (opus/sonnet/haiku).
+      model: cliModelOf("claude-code", active),
+      availableModels: cliModels("claude-code").map((m) => m.id),
     });
   }
   if (cx) {
@@ -118,6 +156,9 @@ export async function detectRuntimes(): Promise<RuntimeStatus[]> {
       source: "byok:anthropic",
       version: null,
       active: false,
+      model: byokModelOf("anthropic", active),
+      availableModels: byokModels("anthropic").map((m) => m.id),
+      longContextEnabled: byokLongOf("anthropic", active),
     });
   }
   if (openaiByok) {
@@ -127,6 +168,9 @@ export async function detectRuntimes(): Promise<RuntimeStatus[]> {
       source: "byok:openai",
       version: null,
       active: false,
+      model: byokModelOf("openai", active),
+      availableModels: byokModels("openai").map((m) => m.id),
+      longContextEnabled: byokLongOf("openai", active),
     });
   }
   if (googleByok) {
@@ -136,6 +180,9 @@ export async function detectRuntimes(): Promise<RuntimeStatus[]> {
       source: "byok:google",
       version: null,
       active: false,
+      model: byokModelOf("google", active),
+      availableModels: byokModels("google").map((m) => m.id),
+      longContextEnabled: byokLongOf("google", active),
     });
   }
 

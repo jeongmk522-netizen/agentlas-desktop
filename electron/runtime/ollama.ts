@@ -9,6 +9,7 @@
 import type { Runner, RunnerEvents, RunnerRequest, RunnerResult } from "./runner";
 import { wrapSystemPrompt } from "./runner";
 import { tStatus } from "./status-i18n";
+import { compactHistory } from "./compact";
 
 /** 기본 로컬 호스트. env OLLAMA_HOST로 재정의 가능(원격 Ollama도 지원). */
 export function ollamaHost(): string {
@@ -91,11 +92,19 @@ export const runOllama: Runner = async (
 
   events.onStatus(tStatus(req.locale, "callingBackend", { backend: req.backendLabel }));
 
+  // 로컬 모델은 컨텍스트 윈도우가 천차만별 — 보수적 기본값으로 무한 성장/거부 방지.
+  const { recent, digest, droppedCount } = compactHistory(req.history, {
+    contextWindow: 32_000,
+    locale: req.locale,
+  });
+  if (digest) events.onStatus(tStatus(req.locale, "compacted", { n: droppedCount }));
+  const systemText = digest ? `${req.systemPrompt}\n\n${digest}` : req.systemPrompt;
+
   const messages: Array<{
     role: "system" | "user" | "assistant";
     content: string | OllamaContent[];
-  }> = [{ role: "system", content: wrapSystemPrompt(req.systemPrompt, req.locale) }];
-  for (const m of req.history) {
+  }> = [{ role: "system", content: wrapSystemPrompt(systemText, req.locale, req.permission) }];
+  for (const m of recent) {
     if (m.role === "user" || m.role === "assistant") {
       messages.push({ role: m.role, content: m.text });
     }
@@ -118,6 +127,7 @@ export const runOllama: Runner = async (
     resp = await fetch(`${host}/v1/chat/completions`, {
       method: "POST",
       headers: { "content-type": "application/json" },
+      signal: req.signal,
       body: JSON.stringify({ model, stream: true, messages }),
     });
   } catch {

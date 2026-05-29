@@ -142,6 +142,7 @@ const api: AgentlasIpc = {
   invoke: {
     run: (req: McpInvocationRequest) => ipcRenderer.invoke("invoke:run", req),
     eventChannel: (runId: string) => `invoke:event:${runId}`,
+    cancel: (runId: string) => ipcRenderer.invoke("invoke:cancel", runId),
     history: (chatId: string) => ipcRenderer.invoke("invoke:history", chatId),
     clearHistory: (chatId: string) =>
       ipcRenderer.invoke("invoke:clearHistory", chatId),

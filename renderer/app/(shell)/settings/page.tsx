@@ -4,6 +4,12 @@ import { useCallback, useEffect, useState } from "react";
 import { ipc, updaterEvents } from "@/lib/ipc";
 import { useT, type LocalePref } from "@/lib/i18n";
 import type { RuntimeBackend, RuntimeStatus, UpdaterState } from "@/lib/types";
+import {
+  BYOK_MODELS,
+  CONTEXT_MANAGED_BY,
+  findByokModel,
+  needsLongContextToggle,
+} from "@shared/models";
 import { IconCheck, IconLock, IconRefresh } from "@/components/Icon";
 import { MigrationPanel } from "@/components/MigrationPanel";
 
@@ -83,6 +89,20 @@ export default function SettingsPage() {
       backend: "ollama",
       source: "ollama",
       model,
+    });
+    setStatuses(updated);
+  }
+
+  // BYOK 모델/1M 선택 — 해당 백엔드를 model·longContext와 함께 활성화.
+  async function activateByok(backend: ByokBackend, model: string, longContext: boolean) {
+    const api = ipc();
+    if (!api) return;
+    const updated = await api.runtime.setActive({
+      kind: "byok",
+      backend,
+      source: `byok:${backend}`,
+      model,
+      longContext,
     });
     setStatuses(updated);
   }
@@ -215,6 +235,12 @@ export default function SettingsPage() {
                 <div style={{ fontSize: 11, color: "var(--muted-deep)" }}>
                   {s.source}
                   {s.version && ` · v${s.version}`}
+                </div>
+                {/* 컨텍스트·압축을 누가 관리하는가 — CLI는 자동(런타임), BYOK/Ollama는 Agentlas */}
+                <div style={{ fontSize: 10.5, color: "var(--muted)", marginTop: 2 }}>
+                  {CONTEXT_MANAGED_BY[s.kind] === "runtime"
+                    ? t("settings.runtime.managed_runtime")
+                    : t("settings.runtime.managed_agentlas")}
                 </div>
               </div>
               {!s.active && (
@@ -408,6 +434,13 @@ export default function SettingsPage() {
                 </button>
               )}
             </div>
+            {hasKey[b] && (
+              <ByokModelControls
+                backend={b}
+                status={statuses.find((s) => s.kind === "byok" && s.backend === b)}
+                onActivate={activateByok}
+              />
+            )}
           </div>
         ))}
 
@@ -623,6 +656,92 @@ function AgentlasCliPanel() {
         )}
       </div>
     </>
+  );
+}
+
+// ── BYOK 모델 선택 + 1M 컨텍스트 토글 ─────────────────────
+// 모델 칩을 누르면 해당 백엔드가 그 모델로 활성화된다. 긴 컨텍스트는:
+//  - beta-header 모델(Anthropic): 사용자 토글(opt-in) — 켜면 1M 베타 헤더 전송
+//  - auto 모델(GPT-4.1 · Gemini): 모델 내장 → "1M 내장" 배지만 표시
+function ByokModelControls({
+  backend,
+  status,
+  onActivate,
+}: {
+  backend: ByokBackend;
+  status?: RuntimeStatus;
+  onActivate: (backend: ByokBackend, model: string, longContext: boolean) => void | Promise<void>;
+}) {
+  const { t } = useT();
+  const models = BYOK_MODELS[backend];
+  const currentModel = status?.model ?? models[0]?.id;
+  const longOn = status?.longContextEnabled ?? false;
+  const showToggle = needsLongContextToggle(backend, currentModel);
+  const autoLong = !!findByokModel(backend, currentModel)?.longContext && !showToggle;
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 4 }}>
+      <div style={{ fontSize: 11, color: "var(--muted-deep)" }}>{t("settings.byok.model_label")}</div>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+        {models.map((m) => {
+          const isCurrent = currentModel === m.id;
+          return (
+            <button
+              key={m.id}
+              // 다른 모델로 바꾸면 1M 토글은 초기화(off), 같은 모델 재클릭이면 현재 상태 유지.
+              onClick={() => void onActivate(backend, m.id, isCurrent ? longOn : false)}
+              style={{
+                padding: "6px 12px",
+                borderRadius: 999,
+                fontSize: 12,
+                fontFamily: "var(--font-mono)",
+                fontWeight: isCurrent ? 700 : 500,
+                background: isCurrent ? "var(--ink)" : "var(--paper-2)",
+                color: isCurrent ? "white" : "var(--ink-soft)",
+                border: isCurrent ? "1px solid var(--ink)" : "1px solid var(--paper-edge)",
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 6,
+              }}
+            >
+              {m.label}
+              {m.longContext && (
+                <span
+                  style={{
+                    fontSize: 9.5,
+                    fontFamily: "var(--font-head)",
+                    padding: "1px 5px",
+                    borderRadius: 999,
+                    background: isCurrent ? "rgba(255,255,255,0.22)" : "var(--fill-1)",
+                    color: isCurrent ? "white" : "var(--accent)",
+                  }}
+                >
+                  1M
+                </span>
+              )}
+            </button>
+          );
+        })}
+      </div>
+      {showToggle && currentModel && (
+        <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12, cursor: "pointer" }}>
+          <input
+            type="checkbox"
+            checked={longOn}
+            onChange={(e) => void onActivate(backend, currentModel, e.target.checked)}
+          />
+          <span style={{ fontWeight: 600 }}>{t("settings.byok.context1m")}</span>
+          <span style={{ fontSize: 11, color: "var(--muted-deep)" }}>
+            {t("settings.byok.context1m_hint")}
+          </span>
+        </label>
+      )}
+      {autoLong && (
+        <div style={{ fontSize: 11, color: "var(--green-deep)", fontWeight: 600 }}>
+          ✓ {t("settings.byok.context1m_auto")}
+        </div>
+      )}
+    </div>
   );
 }
 

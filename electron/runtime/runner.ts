@@ -11,8 +11,14 @@ export interface RunnerRequest {
   images?: ImageAttachment[];
   /** 사용자에게 보일 라벨 — "Claude Code CLI" / "Anthropic API" / "Ollama · llama3.1" */
   backendLabel: string;
-  /** ollama 등 모델 선택이 필요한 LLM의 활성 모델 이름. 그 외엔 미설정 */
+  /** ollama·BYOK 등 모델 선택이 필요한 LLM의 활성 모델 이름. 그 외엔 미설정 */
   model?: string;
+  /** BYOK 긴 컨텍스트(1M) opt-in. Agentlas-managed 러너(BYOK/Ollama)만 사용. */
+  longContext?: boolean;
+  /** 실행 취소 신호 — abort 시 CLI 러너는 자식 프로세스 kill, API 러너는 fetch abort. */
+  signal?: AbortSignal;
+  /** 도구 사용 권한 — read(읽기) / write(편집) / full(셸·외부). 런타임 권한 모드로 매핑. */
+  permission?: "read" | "write" | "full";
   /** 상태/오류 메시지 i18n에 사용. renderer가 동봉, fallback "en" */
   locale: RuntimeLocale;
 }
@@ -22,10 +28,14 @@ export interface RunnerEvents {
   onPartial: (chunk: string) => void;
   /** 사용자에게 보일 상태 줄 — locale 적용된 완성 문자열 */
   onStatus: (status: string) => void;
+  /** 도구 호출 — Claude Code식 tool-use 블록 (이름 + 인자 JSON). 선택. */
+  onTool?: (name: string, args?: string) => void;
 }
 
 export interface RunnerResult {
   text: string;
+  /** 생성 토큰 수 (가능한 런타임만) */
+  tokens?: number;
 }
 
 export type Runner = (
@@ -51,11 +61,20 @@ Rules:
 
 /** 표준 시스템 프롬프트 — 에이전트 프롬프트 앞에 붙는 안전 헤더.
  *  locale에 따라 LLM에게 답변 언어 가이드를 다르게 준다 (영어 사용자에게는 영어 가이드). */
-export function wrapSystemPrompt(agentSystemPrompt: string, locale: RuntimeLocale): string {
+export function wrapSystemPrompt(
+  agentSystemPrompt: string,
+  locale: RuntimeLocale,
+  permission?: "read" | "write" | "full",
+): string {
+  // write/full 권한이면 도구 사용 허용 안내(Claude Code식 tool-use). read/기본이면 도구 끔.
+  const toolsLine =
+    permission === "write" || permission === "full"
+      ? "You have tools available (file read/write, shell, web search, MCP). Use them when they help complete the task, and say what you're doing."
+      : tStatus(locale, "sysToolsOff");
   return [
     tStatus(locale, "sysHeader"),
     tStatus(locale, "sysGuide"),
-    tStatus(locale, "sysToolsOff"),
+    toolsLine,
     "",
     ASK_PROTOCOL,
     "",

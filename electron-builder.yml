@@ -12,6 +12,9 @@ afterPack: build-resources/after-pack-clean.cjs
 
 files:
   - dist/electron/**/*
+  # dist/shared/** holds runtime values (shared/models.ts: BYOK_MODELS, context policy).
+  # detect.ts/byok.ts value-import it, so it MUST be packaged or the app crashes at launch.
+  - dist/shared/**/*
   - dist/renderer/**/*
   - cli/**/*
   - package.json

@@ -105,6 +105,13 @@ export const runCodex: Runner = async (
       cwd: agentRunCwd(),
     });
 
+    // 취소 — Stop 누르면 자식 프로세스 종료.
+    const onAbort = () => child.kill();
+    if (req.signal) {
+      if (req.signal.aborted) child.kill();
+      else req.signal.addEventListener("abort", onAbort, { once: true });
+    }
+
     let stdout = "";
     let stderr = "";
     let lastEmit = 0;
@@ -124,6 +131,11 @@ export const runCodex: Runner = async (
 
     child.on("error", (err) => reject(err));
     child.on("close", (code) => {
+      req.signal?.removeEventListener("abort", onAbort);
+      if (req.signal?.aborted) {
+        reject(new Error(tStatus(req.locale, "aborted")));
+        return;
+      }
       if (code === 0) {
         resolve({ text: stdout.trim() });
       } else {

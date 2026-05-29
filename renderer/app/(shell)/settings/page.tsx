@@ -241,6 +241,9 @@ export default function SettingsPage() {
         {/* CLI 도구 설치 (미설치 사용자용) */}
         <CliInstallPanel statuses={statuses} onChanged={refresh} />
 
+        {/* Agentlas 터미널 CLI */}
+        <AgentlasCliPanel />
+
         {/* 로컬 모델 (Ollama) */}
         <h2 style={{ fontFamily: "var(--font-head)", fontSize: 15, margin: "32px 0 12px" }}>
           {t("settings.ollama.title")}
@@ -536,6 +539,87 @@ function UpdatePanel() {
           >
             {checking ? t("settings.update.checking") : t("settings.update.check")}
           </button>
+        )}
+      </div>
+    </>
+  );
+}
+
+// ── Agentlas 터미널 CLI 설치 ──────────────────────────────
+function AgentlasCliPanel() {
+  const { t } = useT();
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState("");
+
+  async function install() {
+    const api = ipc();
+    if (!api || busy) return;
+    setBusy(true);
+    setMsg("");
+    try {
+      const r = await api.runtime.installAgentlasCli();
+      setMsg(r.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <>
+      <h2 style={{ fontFamily: "var(--font-head)", fontSize: 15, margin: "32px 0 12px" }}>
+        {t("settings.agentlascli.title")}
+      </h2>
+      <div
+        style={{
+          padding: 14,
+          border: "1px solid var(--paper-edge)",
+          borderRadius: "var(--radius-md)",
+          background: "var(--paper)",
+          display: "flex",
+          flexDirection: "column",
+          gap: 8,
+        }}
+      >
+        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontSize: 13, fontWeight: 600 }}>
+              <code style={{ fontFamily: "var(--font-mono)" }}>agentlas</code> CLI
+            </div>
+            <div style={{ fontSize: 11.5, color: "var(--muted-deep)", lineHeight: 1.5 }}>
+              {t("settings.agentlascli.desc")}
+            </div>
+          </div>
+          <button
+            onClick={() => void install()}
+            disabled={busy}
+            style={{
+              padding: "6px 14px",
+              borderRadius: 999,
+              fontSize: 12,
+              fontWeight: 600,
+              background: busy ? "var(--paper-2)" : "var(--accent)",
+              color: busy ? "var(--muted-deep)" : "white",
+              border: "none",
+              flexShrink: 0,
+            }}
+          >
+            {busy ? t("settings.cli.installing") : t("settings.agentlascli.install")}
+          </button>
+        </div>
+        {msg && (
+          <div
+            style={{
+              fontSize: 11.5,
+              color: "var(--ink-soft)",
+              fontFamily: "var(--font-mono)",
+              whiteSpace: "pre-wrap",
+              background: "var(--paper-2)",
+              padding: "8px 10px",
+              borderRadius: 8,
+            }}
+          >
+            {msg}
+          </div>
         )}
       </div>
     </>

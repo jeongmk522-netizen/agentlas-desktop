@@ -487,6 +487,8 @@ export interface AgentlasIpc {
     ) => Promise<{ ok: boolean; message: string; command?: string }>;
     /** CLI(Claude/Codex/Gemini)의 커스텀 슬래시 명령을 스캔 — 매 호출마다 최신. */
     listCommands: () => Promise<RuntimeCommand[]>;
+    /** `agentlas` 터미널 CLI 설치 — PATH에 래퍼 스크립트를 둔다. */
+    installAgentlasCli: () => Promise<{ ok: boolean; path: string; message: string }>;
   };
   secrets: {
     saveApiKey: (backend: RuntimeBackend, key: string) => Promise<void>;

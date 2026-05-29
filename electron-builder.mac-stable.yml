@@ -15,6 +15,7 @@ afterPack: build-resources/after-pack-clean.cjs
 files:
   - dist/electron/**/*
   - dist/renderer/**/*
+  - cli/**/*
   - package.json
   - "!**/*.map"
 

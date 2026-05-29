@@ -13,6 +13,7 @@ import type {
   InstalledAgent,
   InstalledFirm,
   Project,
+  RuntimeCommand,
 } from "@/lib/types";
 import { pickLocalized, useT } from "@/lib/i18n";
 import {
@@ -46,6 +47,8 @@ interface MentionContext {
   projects: Project[];
   firms: InstalledFirm[];
   envKeys: string[]; // 등록된 env 키 (Library > Environment에서 add한)
+  /** CLI(Claude/Codex/Gemini)에서 스캔한 슬래시 명령 — / 자동완성에 노출 */
+  commands?: RuntimeCommand[];
 }
 
 interface SendOptions {
@@ -68,6 +71,8 @@ interface AutocompleteOption {
   kind: "cmd" | "agent" | "firm" | "project" | "env";
   /** 선택 시 입력창에 치환할 토큰 */
   replacement: string;
+  /** true면 앱 액션 실행(/new·/clear·/help). false/undefined면 텍스트 삽입(멘션·CLI 슬래시). */
+  appAction?: boolean;
 }
 
 type PermissionLevel = "read" | "write" | "full";
@@ -168,25 +173,25 @@ export function ChatInput({
     setActiveIndex(autocompleteOptions.length > 0 ? 0 : -1);
   }, [autocompleteOptions]);
 
-  function applyAutocomplete(replacement: string) {
+  function applyAutocomplete(opt: AutocompleteOption) {
     if (!trigger) return;
     const before = input.slice(0, trigger.startIndex);
     const caret = textareaRef.current?.selectionStart ?? input.length;
     const after = input.slice(caret);
-    // 슬래시 커맨드는 텍스트로 넣지 않고 액션 실행 — 입력에서 "/..." 토큰 제거.
-    if (trigger.kind === "slash" && onCommand) {
+    // 앱 슬래시 명령(/new·/clear·/help)은 텍스트로 넣지 않고 액션 실행 — "/..." 토큰 제거.
+    if (opt.appAction && onCommand) {
       setInput(`${before}${after}`.trimStart());
       setTrigger(null);
-      onCommand(replacement);
+      onCommand(opt.replacement);
       setTimeout(() => textareaRef.current?.focus(), 0);
       return;
     }
-    const next = `${before}${replacement} ${after}`;
+    // 멘션 + CLI 슬래시 명령 → 텍스트 삽입 (전송 시 CLI가 확장).
+    const next = `${before}${opt.replacement} ${after}`;
     setInput(next);
     setTrigger(null);
-    // 다음 tick에 caret 위치
     setTimeout(() => {
-      const pos = `${before}${replacement} `.length;
+      const pos = `${before}${opt.replacement} `.length;
       textareaRef.current?.focus();
       textareaRef.current?.setSelectionRange(pos, pos);
     }, 0);
@@ -378,7 +383,7 @@ export function ChatInput({
                 if (!e.metaKey && !e.ctrlKey) {
                   e.preventDefault();
                   const opt = autocompleteOptions[activeIndex];
-                  if (opt) applyAutocomplete(opt.replacement);
+                  if (opt) applyAutocomplete(opt);
                   return;
                 }
               }
@@ -578,6 +583,7 @@ function buildAutocompleteOptions(
   const out: AutocompleteOption[] = [];
 
   if (trigger.kind === "slash") {
+    // 앱 명령 — 실행(appAction)
     const cmds = [
       { key: "/new", desc: t("chatinput.cmd.new") },
       { key: "/clear", desc: t("chatinput.cmd.clear") },
@@ -586,10 +592,32 @@ function buildAutocompleteOptions(
     for (const c of cmds) {
       out.push({
         key: `cmd-${c.key}`,
+        group: t("chatinput.slash.app"),
         kind: "cmd",
         title: c.key,
         subtitle: c.desc,
         replacement: c.key,
+        appAction: true,
+      });
+    }
+    // CLI 슬래시 명령 — 텍스트 삽입(전송 시 CLI가 확장). source별 그룹.
+    const srcLabel: Record<RuntimeCommand["source"], string> = {
+      "claude-code": "Claude",
+      codex: "Codex",
+      gemini: "Gemini",
+    };
+    const cli = (context.commands ?? [])
+      .filter((c) => !q || c.name.toLowerCase().includes(q) || c.description.toLowerCase().includes(q))
+      .slice(0, 40);
+    for (const c of cli) {
+      out.push({
+        key: `cli-${c.source}-${c.name}`,
+        group: srcLabel[c.source],
+        kind: "cmd",
+        title: c.name,
+        subtitle: c.description || undefined,
+        replacement: c.name,
+        appAction: false,
       });
     }
     return out;
@@ -672,7 +700,7 @@ function AutocompletePopover({
   activeIndex: number;
   onHover: (i: number) => void;
   t: TFunction;
-  onPick: (replacement: string) => void;
+  onPick: (opt: AutocompleteOption) => void;
 }) {
   const title =
     trigger.kind === "slash" ? t("chatinput.slash_title") : t("chatinput.mention_title");
@@ -694,7 +722,7 @@ function AutocompletePopover({
           <div key={opt.key}>
             {showHeader && <GroupLabel>{opt.group}</GroupLabel>}
             <Row
-              onClick={() => onPick(opt.replacement)}
+              onClick={() => onPick(opt)}
               onHover={() => onHover(i)}
               active={i === activeIndex}
               icon={kindIcon(opt.kind)}

@@ -4,6 +4,8 @@ import { getDb } from "../store/db";
 import { getSource as getMarketSource, getCargoSource } from "../marketplace";
 import { materializeAgentFiles } from "../agents/files";
 import { getRoute, removeRoute } from "../agents/routes";
+import { MCP_TOOL_CATALOG } from "../mcp-tools/catalog";
+import { installFromCatalog } from "../mcp-tools/registry";
 import type { SeedListingFull } from "../marketplace/source";
 import type {
   AgentEnvRequirement,
@@ -98,8 +100,38 @@ export async function installMyAgent(id: string): Promise<InstalledAgent> {
   return persistListing(listing.slug, listing);
 }
 
+/**
+ * 에이전트가 호출하는 외부 MCP/API를 external tools에 자동 등록한다.
+ * 매칭 규칙:
+ *   - 에이전트의 mcpServers(문자열 id)에 카탈로그 id가 포함되거나
+ *   - 에이전트의 envRequirements 키 중 하나라도 카탈로그 도구가 요구하는 키와 일치하면
+ * 그 카탈로그 도구를 설치(installFromCatalog는 멱등). 사용자는 키만 넣으면 바로 사용.
+ */
+function autoRegisterAgentTools(listing: FullListing): void {
+  try {
+    const serverIds = new Set(listing.mcpServers ?? []);
+    const envKeys = new Set((listing.envRequirements ?? []).map((e) => e.key));
+    for (const entry of MCP_TOOL_CATALOG) {
+      const byId = serverIds.has(entry.id);
+      const byEnv = entry.envRequirements.some((r) => envKeys.has(r.key));
+      if (byId || byEnv) {
+        try {
+          installFromCatalog(entry.id);
+        } catch {
+          // 개별 도구 등록 실패는 무시
+        }
+      }
+    }
+  } catch {
+    // 자동 등록은 베스트에포트 — 실패해도 설치는 진행
+  }
+}
+
 function persistListing(slug: string, listing: FullListing): InstalledAgent {
   const envReqsJson = JSON.stringify(listing.envRequirements ?? []);
+
+  // 이 에이전트가 호출하는 외부 MCP/API를 external tools에 자동 등록.
+  autoRegisterAgentTools(listing);
 
   const db = getDb();
   const existing = db

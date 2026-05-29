@@ -34,6 +34,40 @@ export default function LibraryMcpsPage() {
   const [testing, setTesting] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [query, setQuery] = useState("");
+  // 커스텀 MCP 추가 폼
+  const [customOpen, setCustomOpen] = useState(false);
+  const [cName, setCName] = useState("");
+  const [cTransport, setCTransport] = useState<"stdio" | "sse" | "http">("stdio");
+  const [cCommand, setCCommand] = useState("npx");
+  const [cArgs, setCArgs] = useState("");
+  const [cUrl, setCUrl] = useState("");
+  const [cEnv, setCEnv] = useState("");
+  const [cBusy, setCBusy] = useState(false);
+
+  async function addCustom() {
+    const api = ipc();
+    if (!api || !cName.trim()) return;
+    setCBusy(true);
+    try {
+      await api.mcpTools.installCustom({
+        name: cName.trim(),
+        transport: cTransport,
+        command: cTransport === "stdio" ? cCommand.trim() || "npx" : undefined,
+        args: cTransport === "stdio" ? cArgs.trim().split(/\s+/).filter(Boolean) : undefined,
+        url: cTransport !== "stdio" ? cUrl.trim() : undefined,
+        envKeys: cEnv.trim() ? cEnv.split(/[,\s]+/).map((s) => s.trim()).filter(Boolean) : undefined,
+      });
+      setCName("");
+      setCArgs("");
+      setCUrl("");
+      setCEnv("");
+      setCustomOpen(false);
+      await refresh();
+      setTab("installed");
+    } finally {
+      setCBusy(false);
+    }
+  }
 
   const refresh = useCallback(async () => {
     const api = ipc();
@@ -299,6 +333,84 @@ export default function LibraryMcpsPage() {
           </ul>
         )
       ) : (
+        <>
+        {/* 커스텀 MCP 추가 */}
+        <div style={{ marginBottom: 12 }}>
+          {!customOpen ? (
+            <button
+              onClick={() => setCustomOpen(true)}
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 6,
+                padding: "7px 12px",
+                fontSize: 12,
+                fontWeight: 600,
+                color: "var(--ink-soft)",
+                background: "var(--paper-2)",
+                border: "1px dashed var(--paper-edge)",
+                borderRadius: 999,
+                cursor: "pointer",
+              }}
+            >
+              <IconPlus size={12} /> {t("mcps.custom.add")}
+            </button>
+          ) : (
+            <div
+              className="glass-strong"
+              style={{ padding: 14, borderRadius: "var(--radius-md)", display: "flex", flexDirection: "column", gap: 8 }}
+            >
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <strong style={{ fontSize: 13, flex: 1 }}>{t("mcps.custom.title")}</strong>
+                <button
+                  onClick={() => setCustomOpen(false)}
+                  style={{ fontSize: 12, color: "var(--muted-deep)", background: "transparent", border: "none", cursor: "pointer" }}
+                >
+                  {t("common.cancel")}
+                </button>
+              </div>
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                <input
+                  value={cName}
+                  onChange={(e) => setCName(e.target.value)}
+                  placeholder={t("mcps.custom.name")}
+                  style={{ ...customInput, flex: "1 1 160px" }}
+                />
+                <select value={cTransport} onChange={(e) => setCTransport(e.target.value as "stdio" | "sse" | "http")} style={customInput}>
+                  <option value="stdio">stdio (npx)</option>
+                  <option value="sse">SSE</option>
+                  <option value="http">HTTP</option>
+                </select>
+              </div>
+              {cTransport === "stdio" ? (
+                <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                  <input value={cCommand} onChange={(e) => setCCommand(e.target.value)} placeholder={t("mcps.custom.command")} style={{ ...customInput, flex: "0 0 100px", fontFamily: "var(--font-mono)" }} />
+                  <input value={cArgs} onChange={(e) => setCArgs(e.target.value)} placeholder={t("mcps.custom.args")} style={{ ...customInput, flex: "1 1 200px", fontFamily: "var(--font-mono)" }} />
+                </div>
+              ) : (
+                <input value={cUrl} onChange={(e) => setCUrl(e.target.value)} placeholder={t("mcps.custom.url")} style={{ ...customInput, fontFamily: "var(--font-mono)" }} />
+              )}
+              <input value={cEnv} onChange={(e) => setCEnv(e.target.value)} placeholder={t("mcps.custom.env")} style={{ ...customInput, fontFamily: "var(--font-mono)" }} />
+              <button
+                onClick={() => void addCustom()}
+                disabled={!cName.trim() || cBusy}
+                style={{
+                  alignSelf: "flex-start",
+                  padding: "7px 16px",
+                  borderRadius: 999,
+                  fontSize: 12,
+                  fontWeight: 700,
+                  border: "none",
+                  background: cName.trim() && !cBusy ? "var(--accent)" : "var(--paper-2)",
+                  color: cName.trim() && !cBusy ? "white" : "var(--muted-deep)",
+                }}
+              >
+                {cBusy ? t("mcps.testing") : t("mcps.custom.create")}
+              </button>
+            </div>
+          )}
+        </div>
+
         <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0,1fr))", gap: 12 }}>
           {filteredCatalog.length === 0 ? (
             <div style={{ gridColumn: "1 / -1" }}>
@@ -419,6 +531,7 @@ export default function LibraryMcpsPage() {
             })
           )}
         </div>
+        </>
       )}
 
       {/* 보안 노트 */}
@@ -524,6 +637,15 @@ function Logo({
     </span>
   );
 }
+
+const customInput: React.CSSProperties = {
+  padding: "8px 12px",
+  border: "1px solid var(--paper-edge)",
+  borderRadius: "var(--radius-md)",
+  background: "var(--paper)",
+  fontSize: 12.5,
+  outline: "none",
+};
 
 function Empty({ text }: { text: string }) {
   return (

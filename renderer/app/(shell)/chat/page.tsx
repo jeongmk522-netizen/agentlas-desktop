@@ -12,6 +12,7 @@ import type {
   InstalledFirm,
   McpInvocationEvent,
   Project,
+  RuntimeCommand,
 } from "@/lib/types";
 import { ChatStream, type StreamMessage } from "@/components/ChatStream";
 import { extractQuestions } from "@/lib/ask-question";
@@ -49,6 +50,7 @@ function ChatPage() {
   const [allFirms, setAllFirms] = useState<InstalledFirm[]>([]);
   const [allProjects, setAllProjects] = useState<Project[]>([]);
   const [allEnvKeys, setAllEnvKeys] = useState<string[]>([]);
+  const [cliCommands, setCliCommands] = useState<RuntimeCommand[]>([]);
   const [firm, setFirm] = useState<InstalledFirm | null>(null);
   const [project, setProject] = useState<Project | null>(null);
   const [messages, setMessages] = useState<StreamMessage[]>([]);
@@ -96,6 +98,10 @@ function ChatPage() {
       setAllFirms(firmsAll);
       // @ 멘션 popover에는 실제로 값이 저장된 키만 노출 — 비어있는 키를 멘션하면 invocation에서 빈 값이 주입돼 혼란.
       setAllEnvKeys(envVars.filter((e) => e.hasValue).map((e) => e.key));
+      // CLI 슬래시 명령 스캔 (매 진입 시 최신) — 느려도 채팅 표시를 막지 않게 후속 로드.
+      void api.runtime.listCommands().then((cmds) => {
+        if (!cancelled) setCliCommands(cmds);
+      });
       setAgent(agents.find((a) => a.id === c.agentId) ?? null);
       // working_folder가 이미 저장돼 있으면 자동으로 패널 노출 (다음 진입 시 복원)
       const savedFolder = await api.workspace.get(chatId);
@@ -521,6 +527,7 @@ function ChatPage() {
           projects: allProjects,
           firms: allFirms,
           envKeys: allEnvKeys,
+          commands: cliCommands,
         }}
       />
       </div>

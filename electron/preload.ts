@@ -48,6 +48,7 @@ const api: AgentlasIpc = {
       ipcRenderer.invoke("runtime:installCli", kind),
     openCliLogin: (kind: "claude-code" | "codex" | "gemini") =>
       ipcRenderer.invoke("runtime:openCliLogin", kind),
+    listCommands: () => ipcRenderer.invoke("runtime:listCommands"),
   },
   secrets: {
     saveApiKey: (backend: RuntimeBackend, key: string) =>

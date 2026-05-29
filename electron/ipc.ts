@@ -4,6 +4,7 @@ import { app, BrowserWindow, ipcMain } from "electron";
 import { randomUUID } from "node:crypto";
 import { detectRuntimes, setActiveRuntime } from "./runtime/detect";
 import { installCli, openCliLogin, type InstallableCli } from "./runtime/install-cli";
+import { listRuntimeCommands } from "./runtime/commands";
 import { runMigration, scanMigrationSources } from "./migrate";
 import {
   deleteApiKey,
@@ -132,6 +133,7 @@ export function registerIpcHandlers(): void {
   );
   ipcMain.handle("runtime:installCli", (_e, kind: InstallableCli) => installCli(kind));
   ipcMain.handle("runtime:openCliLogin", (_e, kind: InstallableCli) => openCliLogin(kind));
+  ipcMain.handle("runtime:listCommands", () => listRuntimeCommands());
 
   // ── secrets (macOS Keychain) ────────────────────────────
   ipcMain.handle("secrets:saveApiKey", (_e, backend: RuntimeBackend, key: string) =>

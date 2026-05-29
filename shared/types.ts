@@ -14,6 +14,14 @@ export interface RuntimeSelection {
   model?: string;
 }
 
+/** CLI(Claude/Codex/Gemini)에서 스캔한 슬래시 명령 — 챗 입력 `/` 자동완성에 노출. */
+export interface RuntimeCommand {
+  /** "/deploy", "/frontend:component" 등 (앞에 / 포함) */
+  name: string;
+  description: string;
+  source: "claude-code" | "codex" | "gemini";
+}
+
 export interface RuntimeStatus {
   kind: RuntimeKind;
   backend: RuntimeBackend;
@@ -477,6 +485,8 @@ export interface AgentlasIpc {
     openCliLogin: (
       kind: "claude-code" | "codex" | "gemini",
     ) => Promise<{ ok: boolean; message: string; command?: string }>;
+    /** CLI(Claude/Codex/Gemini)의 커스텀 슬래시 명령을 스캔 — 매 호출마다 최신. */
+    listCommands: () => Promise<RuntimeCommand[]>;
   };
   secrets: {
     saveApiKey: (backend: RuntimeBackend, key: string) => Promise<void>;

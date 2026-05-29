@@ -29,6 +29,7 @@ export type {
   MigrationSourcePreview,
   Project,
   RuntimeBackend,
+  RuntimeCommand,
   RuntimeKind,
   RuntimeSelection,
   RuntimeStatus,

@@ -314,6 +314,8 @@ export interface Chat {
   firmId: string | null;
   /** 이 채팅에 묶인 에이전트 (개별) 또는 firm의 CEO 에이전트 */
   agentId: string;
+  /** 'user'(일반, 사이드바 노출) | 'division'(백그라운드 본부/자동화 세션, 숨김) */
+  kind: "user" | "division";
   /** 사용자 첫 메시지로 자동 생성된 제목 (사용자 rename 가능) */
   title: string;
   /** 보관 시각 — null이면 활성, 있으면 사이드바에서 숨김 (보관함에서만 보임) */

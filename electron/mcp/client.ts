@@ -18,6 +18,8 @@ import { recordFolderVisit } from "../architecture/activation";
 import { buildMemoryContext } from "../memory/context";
 import { curateReply } from "../memory/curator";
 import { MEMORY_EMITTER_BLOCK } from "../architecture/manifest";
+import { AUTOMATION_PROTOCOL, parseAutomations } from "../automation-emitter";
+import { createAutomation } from "../store/automations";
 import { runClaudeCode } from "../runtime/claude-code";
 import { runCodex } from "../runtime/codex";
 import { runGemini } from "../runtime/gemini";
@@ -212,6 +214,8 @@ export async function runMcpInvocation(
   }
   // 모든 대화에 메모리 이벤트 emitter를 동봉 → 큐레이터가 전역적으로 기억을 관리.
   systemPrompt = `${systemPrompt}\n\n${MEMORY_EMITTER_BLOCK}`;
+  // 사용자 채팅에서만 자동화 생성 protocol 주입 (백그라운드 automation 실행 세션은 제외 → 재귀 방지)
+  if (chat.kind !== "division") systemPrompt = `${systemPrompt}\n\n${AUTOMATION_PROTOCOL}`;
 
   const history = listChatMessages(chat.id, 80);
 
@@ -250,14 +254,34 @@ export async function runMcpInvocation(
     // 항상-켜진 큐레이터: 답변 끝의 "## Memory Events" 블록을 파싱해 안전·스코프·중복 처리 후
     // 내구 메모리에 기록하고, 사용자에게 보이는 텍스트에서는 그 블록을 제거한다(추가 LLM 호출 없음).
     let displayText = result.text;
+    // 에이전트가 "## Automation" 블록을 넣었으면 → 현재 chat의 타깃(firm/agent)으로 자동화 등록 + 블록 제거.
+    // (백그라운드 automation 실행 세션은 제외 → 자동화가 자동화를 만드는 재귀 방지)
+    if (chat.kind !== "division") {
+      try {
+        const { automations: autos, cleanedText } = parseAutomations(displayText);
+        for (const a of autos) {
+          createAutomation({
+            name: a.name,
+            scheduleHuman: a.schedule,
+            targetType: chat.firmId ? "firm" : "agent",
+            targetId: chat.firmId ?? chat.agentId,
+            promptTemplate: a.prompt,
+            createdBy: "agent",
+          });
+        }
+        displayText = cleanedText;
+      } catch (err) {
+        console.error("[automation] parseAutomations failed:", err);
+      }
+    }
     try {
-      const { cleanedText } = curateReply(result.text, {
+      const { cleanedText } = curateReply(displayText, {
         projectPath: activePath,
         projectId: chat.projectId ?? null,
         agentId: chat.agentId,
         chatId: chat.id,
       });
-      displayText = cleanedText || result.text;
+      displayText = cleanedText || displayText;
     } catch (err) {
       console.error("[architecture] curateReply failed:", err);
     }

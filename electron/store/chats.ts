@@ -16,6 +16,7 @@ interface ChatRow {
   archived_at: string | null;
   created_at: string;
   updated_at: string;
+  kind: string | null;
 }
 
 function toChat(row: ChatRow): Chat {
@@ -28,6 +29,7 @@ function toChat(row: ChatRow): Chat {
     archivedAt: row.archived_at,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
+    kind: row.kind === "division" ? "division" : "user",
   };
 }
 

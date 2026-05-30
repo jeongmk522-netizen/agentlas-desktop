@@ -679,8 +679,10 @@ function launchInteractive(db, agent, runtimeOverride) {
   const subject = {
     kind: "agent",
     id: agent.id,
+    slug: agent.slug,
     label: agent.name,
     system: agent.system_prompt || `You are ${agent.name}.`,
+    capAgent: agent,
   };
   return launchTui(db, subject, runtimeOverride);
 }
@@ -882,8 +884,15 @@ async function cmdFirm(db, query, prompt, runtimeOverride) {
     const code = await executeOnce(db, sys, prompt.trim(), runtimeOverride, { projectPath: activeProjectPath(db), agentId: firm.ceo_agent_id, permission: PERMISSION });
     process.exit(code);
   }
-  // 대화형 — 보스턴테리어 TUI. CEO 페르소나를 system으로, 작업은 현재 폴더에서.
-  const subject = { kind: "firm", id: firm.ceo_agent_id, label: firm.name + " CEO", system: sys };
+  // 대화형 — agentlas TUI. CEO 페르소나를 system으로, 작업은 현재 폴더에서.
+  const subject = {
+    kind: "firm",
+    id: firm.ceo_agent_id,
+    slug: firm.slug,
+    label: firm.name + " CEO",
+    system: sys,
+    capAgent: { name: firm.name, name_en: firm.name, tagline: firm.tagline, system_prompt: sys },
+  };
   return launchTui(db, subject, runtimeOverride);
 }
 

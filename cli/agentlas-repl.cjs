@@ -12,6 +12,7 @@ const { Ui } = require("./agentlas-ui.cjs");
 const banner = require("./agentlas-banner.cjs");
 const { runNativeTurn } = require("./agentlas-native-host.cjs");
 const { runApiTurn } = require("./agentlas-api-agent.cjs");
+const caps = require("./agentlas-capabilities.cjs");
 
 function runtimeLabel(rt) {
   if (!rt) return "(none)";
@@ -81,6 +82,8 @@ function startRepl(opts) {
   const { db } = opts;
   const H = opts.helpers;
   const prefs = opts.prefs || {};
+  prefs.agentRuntime = prefs.agentRuntime || {}; // { agentSlug|firmSlug: runtimeSpec|"auto" }
+  let baseRuntime = opts.runtime; // session default; per-agent runtime auto-routes from this
   const ui = new Ui({ lang: prefs.lang || "en" });
   const state = {
     subject: opts.subject || null,
@@ -218,15 +221,56 @@ function startRepl(opts) {
     ui.warn(ui.t("runtimeUsage"));
   }
 
-  function setSubjectAgent(agent) {
-    state.subject = { kind: "agent", id: agent.id, label: agent.name, system: agent.system_prompt || `You are ${agent.name}.` };
-    state.history = [];
+  function installedKinds() {
+    return caps.CLI_KINDS.filter((k) => H.which(H.RUNTIME_BIN[k]));
+  }
+  // Resolve the runtime a subject runs on: pinned (prefs) > capability auto-route > session default.
+  function applyRuntimeFor(subject) {
+    const pinned = prefs.agentRuntime[subject.slug];
+    let spec;
+    if (pinned && pinned !== "auto") spec = pinned;
+    else spec = caps.autoRuntimeFor(subject.capAgent, { installedKinds: installedKinds(), activeSpec: caps.specOf(baseRuntime) });
+    state.runtime = caps.runtimeFromSpec(spec);
     state.native = {};
   }
-  function setSubjectFirm(firm) {
-    state.subject = { kind: "firm", id: firm.ceo_agent_id, label: firm.name + " CEO", system: H.firmSystemPrompt(db, firm) };
+  // Tell the user when we routed to an image-capable runtime, or when the current one can't make images.
+  function routingNote(subject) {
+    if (!subject || !caps.needsImage(subject.capAgent)) return;
+    const spec = caps.specOf(state.runtime);
+    if (caps.capsFor(spec).image) {
+      if (spec !== caps.specOf(baseRuntime)) ui.info(ui.t("routedImage", spec));
+    } else {
+      ui.warn(ui.t("guard.imageWarn", caps.capsFor(spec).label || spec));
+    }
+  }
+  function specToRuntime(spec) {
+    return (!spec || spec === "auto") ? null : caps.runtimeFromSpec(spec);
+  }
+
+  function setSubjectAgent(agent) {
+    state.subject = {
+      kind: "agent",
+      id: agent.id,
+      slug: agent.slug,
+      label: agent.name,
+      system: agent.system_prompt || `You are ${agent.name}.`,
+      capAgent: agent,
+    };
     state.history = [];
-    state.native = {};
+    applyRuntimeFor(state.subject);
+  }
+  function setSubjectFirm(firm) {
+    const sys = H.firmSystemPrompt(db, firm);
+    state.subject = {
+      kind: "firm",
+      id: firm.ceo_agent_id,
+      slug: firm.slug,
+      label: firm.name + " CEO",
+      system: sys,
+      capAgent: { name: firm.name, name_en: firm.name, tagline: firm.tagline, system_prompt: sys },
+    };
+    state.history = [];
+    applyRuntimeFor(state.subject);
   }
   function switchSubject(kind, query) {
     if (kind === "agent") {
@@ -239,6 +283,13 @@ function startRepl(opts) {
       setSubjectFirm(firm);
     }
     ui.ok(ui.t("switched", state.subject.label));
+    routingNote(state.subject);
+  }
+  // resolved runtime spec for any agent row (for display in roster / team)
+  function resolvedSpec(agentRow, slug) {
+    const pinned = prefs.agentRuntime[slug];
+    if (pinned && pinned !== "auto") return pinned;
+    return caps.autoRuntimeFor(agentRow, { installedKinds: installedKinds(), activeSpec: caps.specOf(baseRuntime) });
   }
 
   function printRoster() {
@@ -246,16 +297,58 @@ function startRepl(opts) {
     const firms = H.listFirms(db);
     ui.line("");
     ui.line(ui.c.dim("  " + ui.t("picker.agents")));
-    ags.forEach((a, i) =>
-      ui.line("   " + ui.c.faint(String(i + 1).padStart(2)) + "  " + ui.c.emerald(a.slug.padEnd(28)) + ui.c.text(a.name)),
-    );
+    ags.forEach((a, i) => {
+      const spec = resolvedSpec(a, a.slug);
+      const bdg = caps.needsImage(a) ? (caps.capsFor(spec).image ? "🖼" : "🖼⚠") : "";
+      ui.line(
+        "   " + ui.c.faint(String(i + 1).padStart(2)) + "  " + ui.c.emerald(a.slug.padEnd(26)) + " " +
+          ui.c.text((a.name || "").padEnd(16)) + " " + ui.c.blue(spec) + (bdg ? " " + bdg : ""),
+      );
+    });
     if (firms.length) {
       ui.line(ui.c.dim("  " + ui.t("picker.companies")));
       firms.forEach((f) =>
-        ui.line("       " + ui.c.emerald(("firm " + f.slug).padEnd(28)) + ui.c.text(f.name) + ui.c.dim(" (CEO)")),
+        ui.line("       " + ui.c.emerald(("firm " + f.slug).padEnd(26)) + " " + ui.c.text(f.name) + ui.c.dim(" (CEO)")),
       );
     }
     if (!ags.length && !firms.length) ui.line("   " + ui.c.dim(ui.t("picker.none")));
+  }
+
+  // /team — show or assign each agent's runtime (LLM). Auto-routed by capability unless pinned.
+  function printTeam() {
+    const ags = H.listAgents(db);
+    ui.line("");
+    ui.line(ui.c.dim("  " + ui.t("team.title")));
+    for (const a of ags) {
+      const pinned = prefs.agentRuntime[a.slug] && prefs.agentRuntime[a.slug] !== "auto";
+      const spec = resolvedSpec(a, a.slug);
+      const bdg = caps.needsImage(a) ? (caps.capsFor(spec).image ? "🖼" : "🖼⚠") : "";
+      ui.line(
+        "   " + ui.c.emerald(a.slug.padEnd(28)) + ui.c.blue((spec + (bdg ? " " + bdg : "")).padEnd(14)) +
+          ui.c.faint(pinned ? ui.t("team.pinned") : ui.t("team.auto")),
+      );
+    }
+    ui.line("   " + ui.c.faint(ui.t("team.usage")));
+  }
+  function setTeam(arg) {
+    const parts = arg.trim().split(/\s+/);
+    const who = parts[0];
+    let spec = (parts[1] || "").trim();
+    if (spec === "claude") spec = "claude-code";
+    const agent = H.resolveAgent(db, who);
+    const firm = agent ? null : H.resolveFirm(db, who);
+    const slug = agent ? agent.slug : firm ? firm.slug : null;
+    if (!slug) return ui.error(ui.t("noAgent", who));
+    if (!spec) return printTeam();
+    const valid = ["auto", "claude-code", "codex", "gemini", "anthropic", "openai", "google", "ollama"];
+    if (!valid.includes(spec)) return ui.warn(ui.t("team.usage"));
+    prefs.agentRuntime[slug] = spec;
+    if (opts.savePrefs) opts.savePrefs(prefs);
+    ui.ok(ui.t("team.set", slug, spec === "auto" ? ui.t("team.auto") : spec));
+    if (state.subject && state.subject.slug === slug) {
+      applyRuntimeFor(state.subject);
+      routingNote(state.subject);
+    }
   }
 
   async function handleSlash(line) {
@@ -268,6 +361,9 @@ function startRepl(opts) {
         return true;
       case "agents":
         printRoster();
+        return true;
+      case "team":
+        arg ? setTeam(arg) : printTeam();
         return true;
       case "firms": {
         const fs = H.listFirms(db);
@@ -357,6 +453,7 @@ function startRepl(opts) {
   function chooseAndStart(setter, row) {
     setter(row);
     ui.ok(ui.t("switched", state.subject.label));
+    routingNote(state.subject);
     ask();
   }
   function pick() {
@@ -439,9 +536,15 @@ function startRepl(opts) {
         ui.error((e && e.message) || String(e));
       }
     }
+    baseRuntime = state.runtime; // lock in the session default (post-wizard) before per-agent routing
+    if (state.subject && state.subject.capAgent) applyRuntimeFor(state.subject);
     showBanner();
-    if (state.subject) ask();
-    else pick();
+    if (state.subject) {
+      routingNote(state.subject);
+      ask();
+    } else {
+      pick();
+    }
   }
   bootstrap();
 }
@@ -451,6 +554,7 @@ function printHelp(ui) {
   const rows = [
     [ui.t("help.talkKey"), ui.t("help.talk")],
     ["/agents", ui.t("help.agents")],
+    ["/team [agent rt]", ui.t("help.team")],
     ["/agent <name>", ui.t("help.agent")],
     ["/firms · /firm <name>", ui.t("help.firms")],
     ["/runtime <kind>", ui.t("help.runtime")],

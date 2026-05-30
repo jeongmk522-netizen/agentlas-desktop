@@ -19,7 +19,7 @@ export function ArtifactPanel({
   return (
     <aside
       style={{
-        width: 480,
+        width: "min(480px, 42vw)",
         flexShrink: 0,
         height: "100%",
         background: "#1c1a17",
@@ -52,7 +52,7 @@ export function ArtifactPanel({
             fontSize: 10,
             fontFamily: "var(--font-mono)",
             color: "white",
-            background: "var(--accent)",
+            background: "rgba(255,255,255,0.12)",
             padding: "2px 8px",
             borderRadius: 999,
             textTransform: "uppercase",

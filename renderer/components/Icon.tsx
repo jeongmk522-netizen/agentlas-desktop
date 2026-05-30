@@ -123,3 +123,18 @@ export const IconArrowUp = (p: Props) =>
   svg("M12 19V5M5 12l7-7 7 7", { ...p, strokeWidth: (p.strokeWidth ?? 1.7) + 0.3 });
 export const IconSidebar = (p: Props) =>
   svg("M3 4h18a1 1 0 0 1 1 1v14a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1zM9 4v16", p);
+/** 우측 패널 토글 — 오른쪽에 구분선 */
+export const IconPanelRight = (p: Props) =>
+  svg("M3 4h18a1 1 0 0 1 1 1v14a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1zM15 4v16", p);
+export const IconSun = (p: Props) =>
+  svg(
+    "M12 17a5 5 0 1 0 0-10 5 5 0 0 0 0 10zM12 1v2M12 21v2M4.2 4.2l1.4 1.4M18.4 18.4l1.4 1.4M1 12h2M21 12h2M4.2 19.8l1.4-1.4M18.4 5.6l1.4-1.4",
+    p,
+  );
+export const IconMoon = (p: Props) => svg("M21 12.8A9 9 0 1 1 11.2 3 7 7 0 0 0 21 12.8z", p);
+/** 팀 네트워크 — 상단 노드 + 두 하위 노드 + 연결선 */
+export const IconNetwork = (p: Props) =>
+  svg(
+    "M12 3a2.5 2.5 0 1 0 0 5 2.5 2.5 0 0 0 0-5zM5.5 16a2.5 2.5 0 1 0 0 5 2.5 2.5 0 0 0 0-5zM18.5 16a2.5 2.5 0 1 0 0 5 2.5 2.5 0 0 0 0-5zM11 7.7 6.5 14.5M13 7.7l4.5 6.8",
+    p,
+  );

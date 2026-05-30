@@ -111,3 +111,59 @@ export async function installFirm(slug: string): Promise<InstalledFirm> {
 export function uninstallFirm(id: string): void {
   getDb().prepare("DELETE FROM firms WHERE id = ?").run(id);
 }
+
+/**
+ * 로컬에서 임포트한 "팀" 폴더를 회사(firm)로 등록 — slug 기준 멱등.
+ * 마켓 설치(installFirm)와 달리 의존 에이전트를 따로 설치하지 않는다(CEO = 임포트된 팀 에이전트,
+ * 부서 노드는 정보용). 같은 폴더를 다시 임포트하면 기존 firm을 갱신한다.
+ */
+export function upsertLocalTeamFirm(input: {
+  slug: string;
+  name: string;
+  nameEn?: string;
+  tagline: string;
+  persona?: string;
+  ceoAgentId: string;
+  orgChart: Array<FirmOrgNode & { agentId: string }>;
+}): InstalledFirm {
+  const existing = getFirmBySlug(input.slug);
+  const chartJson = JSON.stringify(input.orgChart);
+  if (existing) {
+    getDb()
+      .prepare(
+        `UPDATE firms SET name = ?, name_en = ?, tagline = ?, tagline_en = ?, persona = ?,
+                          ceo_agent_id = ?, org_chart_json = ? WHERE id = ?`,
+      )
+      .run(
+        input.name,
+        input.nameEn ?? input.name,
+        input.tagline,
+        input.tagline,
+        input.persona ?? "",
+        input.ceoAgentId,
+        chartJson,
+        existing.id,
+      );
+    return getFirm(existing.id) as InstalledFirm;
+  }
+  const id = randomUUID();
+  getDb()
+    .prepare(
+      `INSERT INTO firms (id, slug, name, name_en, tagline, tagline_en, persona,
+                          ceo_agent_id, org_chart_json, installed_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    )
+    .run(
+      id,
+      input.slug,
+      input.name,
+      input.nameEn ?? input.name,
+      input.tagline,
+      input.tagline,
+      input.persona ?? "",
+      input.ceoAgentId,
+      chartJson,
+      new Date().toISOString(),
+    );
+  return getFirm(id) as InstalledFirm;
+}

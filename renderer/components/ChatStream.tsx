@@ -226,6 +226,7 @@ function Bubble({
               borderRadius: "var(--radius-md)",
               fontSize: 14,
               whiteSpace: "pre-wrap",
+              overflowWrap: "anywhere",
             }}
           >
             {message.text}
@@ -461,11 +462,12 @@ function QuestionBlock({
             alignSelf: "flex-end",
             padding: "6px 14px",
             borderRadius: 999,
-            background: picked.size === 0 ? "var(--paper-2)" : "var(--ink)",
-            color: picked.size === 0 ? "var(--muted-deep)" : "white",
+            background: picked.size === 0 ? "var(--paper-2)" : "var(--paper)",
+            color: picked.size === 0 ? "var(--muted-deep)" : "var(--ink)",
             fontSize: 12,
             fontWeight: 600,
-            border: "none",
+            border: "1px solid var(--paper-edge)",
+            boxShadow: picked.size === 0 ? "none" : "var(--neu-raised)",
             cursor: picked.size === 0 ? "default" : "pointer",
           }}
         >

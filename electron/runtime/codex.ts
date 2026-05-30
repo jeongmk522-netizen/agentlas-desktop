@@ -102,7 +102,8 @@ export const runCodex: Runner = async (
     const child = spawnCli(bin, ["exec", "--skip-git-repo-check", prompt], {
       stdio: ["ignore", "pipe", "pipe"],
       env: process.env,
-      cwd: agentRunCwd(),
+      // 사용자가 지정한 프로젝트 폴더에서 실행 — 미지정이면 전용 폴더.
+      cwd: req.cwd ?? agentRunCwd(),
     });
 
     // 취소 — Stop 누르면 자식 프로세스 종료.

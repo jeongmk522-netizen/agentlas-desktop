@@ -137,6 +137,37 @@ export function listGlobalMemory(limit = 30): MemoryEntry[] {
   return rows.map(toEntry);
 }
 
+/** Per-agent project memory: project/agent_team memory PLUS only THIS agent's agent_repo.
+ *  (Other agents' agent_repo is excluded so each session sees only its own + shared memory.) */
+export function listMemoryByPathForAgent(
+  projectPath: string,
+  agentId: string | null,
+  limit = 40,
+): MemoryEntry[] {
+  const rows = getDb()
+    .prepare(
+      `SELECT * FROM memory_entries
+       WHERE project_path = ? AND superseded_at IS NULL
+         AND (scope != 'agent_repo' OR agent_id IS ?)
+       ORDER BY created_at DESC LIMIT ?`,
+    )
+    .all(projectPath, agentId, limit) as Row[];
+  return rows.map(toEntry);
+}
+
+/** Per-agent global memory: shared (agent_team) + this agent's own (agent_repo), folder-less. */
+export function listGlobalMemoryForAgent(agentId: string | null, limit = 30): MemoryEntry[] {
+  const rows = getDb()
+    .prepare(
+      `SELECT * FROM memory_entries
+       WHERE project_path IS NULL AND scope != 'session' AND superseded_at IS NULL
+         AND (scope != 'agent_repo' OR agent_id IS ?)
+       ORDER BY created_at DESC LIMIT ?`,
+    )
+    .all(agentId, limit) as Row[];
+  return rows.map(toEntry);
+}
+
 /** Dedup check: same scope+kind+content already live for this path (or globally). */
 export function hasEquivalentMemory(
   scope: MemoryScope,

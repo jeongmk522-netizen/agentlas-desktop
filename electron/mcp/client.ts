@@ -12,6 +12,8 @@ import {
 } from "../store/chats";
 import { getProject } from "../store/projects";
 import { getFirm } from "../store/firms";
+import { getResolvedOrg } from "../store/org-spec";
+import { runFirmInvocation } from "./firm-orchestrator";
 import { recordFolderVisit } from "../architecture/activation";
 import { buildMemoryContext } from "../memory/context";
 import { curateReply } from "../memory/curator";
@@ -65,6 +67,18 @@ function pickActive(list: RuntimeStatus[]): RuntimeStatus | null {
   return list.find((r) => r.active) ?? list[0] ?? null;
 }
 
+/** 활성 런타임 + 러너를 한 번에 선택 (오케스트레이터/리졸버 공용). */
+export async function pickActiveRunner(): Promise<
+  { runner: Runner; label: string; active: RuntimeStatus } | null
+> {
+  const list = await detectRuntimes();
+  const active = pickActive(list);
+  if (!active) return null;
+  const picked = pickRunner(active);
+  if (!picked) return null;
+  return { runner: picked.runner, label: picked.label, active };
+}
+
 /**
  * Renderer → main IPC 진입점. chatId 기반.
  * 1) chat → agent + project lookup → system prompt 조립
@@ -111,6 +125,36 @@ export async function runMcpInvocation(
       },
     });
     return;
+  }
+
+  // ── 멀티 에이전트 firm 오케스트레이션 ──
+  // 회사 채팅이고 정규화된 조직에 본부/전문가가 있으면 3-tier 오케스트레이터로 분기.
+  // (본부가 없는 firm은 아래 단일 CEO 경로 — 기존 동작 유지)
+  if (chat.firmId) {
+    const firm = getFirm(chat.firmId);
+    if (firm) {
+      const org = getResolvedOrg(firm);
+      if (org.divisions.length > 0) {
+        try {
+          await runFirmInvocation({
+            req,
+            chat: { id: chat.id, projectId: chat.projectId, firmId: chat.firmId },
+            org,
+            ceoAgent: agent,
+            active,
+            picked,
+            locale,
+            sink,
+            signal,
+          });
+        } catch (err) {
+          // 오케스트레이션 실패 → 무한 스피너 방지: 에러 이벤트 emit
+          const msg = err instanceof Error ? err.message : String(err);
+          sink({ kind: "error", error: { code: "firm-failed", message: msg } });
+        }
+        return;
+      }
+    }
   }
 
   // 프로젝트 컨텍스트 노트가 있으면 system prompt 뒤에 append
@@ -187,6 +231,9 @@ export async function runMcpInvocation(
         effort: active.effort ?? undefined,
         signal,
         permission: req.permissions,
+        // 사용자가 지정한 워킹 폴더(프로젝트)에서 에이전트를 실행 — 빌드/파일 생성이 거기서 일어난다.
+        // 활성화(2회 방문) 게이팅과 무관하게, 폴더가 지정돼 있으면 즉시 cwd로 사용한다.
+        cwd: workingFolder ?? undefined,
         locale,
       },
       {

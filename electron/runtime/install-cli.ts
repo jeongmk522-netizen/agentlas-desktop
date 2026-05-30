@@ -6,16 +6,64 @@
 //      (사용자는 "웹 로그인"만 하면 됨)
 //   3) 이후 detectRuntimes()가 자동 인식
 import { spawn } from "node:child_process";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { spawnCli } from "./exec";
 
 export type InstallableCli = "claude-code" | "codex" | "gemini";
 
-/** 고정 명령 화이트리스트 — 절대 사용자 입력을 끼우지 않는다. */
-const CLI_PLAN: Record<InstallableCli, { pkg: string; loginCmd: string }> = {
-  "claude-code": { pkg: "@anthropic-ai/claude-code", loginCmd: "claude" },
-  codex: { pkg: "@openai/codex", loginCmd: "codex login" },
-  gemini: { pkg: "@google/gemini-cli", loginCmd: "gemini" },
+/** 고정 명령 화이트리스트 — 절대 사용자 입력을 끼우지 않는다. bin은 설치 후 PATH에 생기는 실행파일명. */
+const CLI_PLAN: Record<InstallableCli, { pkg: string; loginCmd: string; bin: string }> = {
+  "claude-code": { pkg: "@anthropic-ai/claude-code", loginCmd: "claude", bin: "claude" },
+  codex: { pkg: "@openai/codex", loginCmd: "codex login", bin: "codex" },
+  gemini: { pkg: "@google/gemini-cli", loginCmd: "gemini", bin: "gemini" },
 };
+
+// GUI Electron은 Finder/dock에서 뜨면 로그인 셸 PATH(/opt/homebrew/bin 등)를 못 받는다 →
+// bare `npm`/`claude` spawn이 ENOENT로 실패. CLI 탐지/설치 모두에서 PATH를 보강한다.
+const EXTRA_BIN_DIRS = [
+  "/opt/homebrew/bin",
+  "/usr/local/bin",
+  "/usr/bin",
+  "/bin",
+  path.join(os.homedir(), ".local", "bin"),
+  path.join(os.homedir(), ".npm-global", "bin"),
+  path.join(os.homedir(), "node_modules", ".bin"),
+  path.join(os.homedir(), ".claude", "local"),
+  path.join(os.homedir(), ".codex", "bin"),
+  path.join(os.homedir(), ".gemini", "bin"),
+];
+
+function searchDirs(): string[] {
+  const fromPath = (process.env.PATH || "").split(path.delimiter).filter(Boolean);
+  return [...fromPath, ...EXTRA_BIN_DIRS];
+}
+
+/** 실행 가능한 바이너리의 절대경로를 보강된 PATH에서 찾는다(없으면 null). */
+function resolveBinary(name: string): string | null {
+  const exts = process.platform === "win32" ? [".cmd", ".exe", ""] : [""];
+  for (const dir of searchDirs()) {
+    for (const ext of exts) {
+      const full = path.join(dir, name + ext);
+      try {
+        fs.accessSync(full, fs.constants.X_OK);
+        return full;
+      } catch {
+        // next
+      }
+    }
+  }
+  return null;
+}
+
+/** 보강된 PATH를 가진 env (GUI spawn용). */
+function augmentedEnv(): NodeJS.ProcessEnv {
+  const merged = Array.from(new Set([...(process.env.PATH || "").split(path.delimiter), ...EXTRA_BIN_DIRS]))
+    .filter(Boolean)
+    .join(path.delimiter);
+  return { ...process.env, PATH: merged };
+}
 
 export interface CliActionResult {
   ok: boolean;
@@ -30,6 +78,22 @@ export function installCli(kind: InstallableCli): Promise<CliActionResult> {
   if (!plan) return Promise.resolve({ ok: false, message: `Unknown CLI: ${kind}` });
   const command = `npm install -g ${plan.pkg}`;
 
+  // 이미 설치돼 있으면 npm을 건드리지 않는다 — 네이티브 설치본(~/.local/bin/claude 등)도 인정.
+  const existing = resolveBinary(plan.bin);
+  if (existing) {
+    return Promise.resolve({ ok: true, message: `already installed: ${existing}` });
+  }
+
+  // GUI에서도 npm을 찾도록 절대경로로 resolve(+PATH 보강). 못 찾으면 직접 실행 명령 안내.
+  const npmBin = resolveBinary("npm");
+  if (!npmBin) {
+    return Promise.resolve({
+      ok: false,
+      message: "npm not found on PATH. Install Node.js, then run the command below in a terminal.",
+      command,
+    });
+  }
+
   return new Promise<CliActionResult>((resolve) => {
     let settled = false;
     const done = (r: CliActionResult) => {
@@ -43,9 +107,9 @@ export function installCli(kind: InstallableCli): Promise<CliActionResult> {
     let err = "";
     let child: ReturnType<typeof spawnCli>;
     try {
-      child = spawnCli("npm", ["install", "-g", plan.pkg], {
+      child = spawnCli(npmBin, ["install", "-g", plan.pkg], {
         stdio: ["ignore", "pipe", "pipe"],
-        env: process.env,
+        env: augmentedEnv(),
       });
     } catch (e) {
       done({ ok: false, message: e instanceof Error ? e.message : String(e), command });

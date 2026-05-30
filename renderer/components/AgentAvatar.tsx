@@ -1,30 +1,15 @@
-// 게임 라이브러리 카드 느낌 — 한 글자 이니셜 + tone 색.
-// PRD 7.4: 에이전트 카드는 사람처럼 보이게.
+// 에이전트 프로필 — 한 글자 이니셜.
+// 디자인 방향(2026-05): 다양한 밝은 톤색을 쓰지 않고 중성 모노크롬으로 통일.
+// (tone prop은 호출부 호환을 위해 유지하되 색에는 더 이상 쓰지 않음.)
 "use client";
 import type { CSSProperties } from "react";
 
-const TONE_BG: Record<string, string> = {
-  blue: "var(--blue)",
-  green: "var(--green)",
-  purple: "var(--purple)",
-  amber: "var(--amber)",
-  peach: "var(--peach-soft)",
-};
-
-const TONE_INK: Record<string, string> = {
-  blue: "var(--blue-deep)",
-  green: "var(--green-deep)",
-  purple: "var(--purple-deep)",
-  amber: "var(--amber-deep)",
-  peach: "var(--peach-ink)",
-};
-
 export function AgentAvatar({
   name,
-  tone = "blue",
   size = 32,
 }: {
   name: string;
+  /** @deprecated 색에 더 이상 사용하지 않음 — 모노크롬 통일. 호출부 호환용으로만 남김. */
   tone?: "blue" | "green" | "purple" | "amber" | "peach";
   size?: number;
 }) {
@@ -33,8 +18,8 @@ export function AgentAvatar({
     width: size,
     height: size,
     borderRadius: "50%",
-    background: TONE_BG[tone] ?? TONE_BG.blue,
-    color: TONE_INK[tone] ?? TONE_INK.blue,
+    background: "var(--paper-edge)",
+    color: "var(--ink-soft)",
     display: "inline-flex",
     alignItems: "center",
     justifyContent: "center",

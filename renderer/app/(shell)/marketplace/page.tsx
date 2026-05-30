@@ -25,6 +25,7 @@ import {
   IconCheck,
   IconChevronRight,
   IconFilm,
+  IconFolder,
   IconHome,
   IconMegaphone,
   IconMoreHorizontal,
@@ -87,6 +88,7 @@ function MarketplacePage() {
   const [bundles, setBundles] = useState<TeamBundle[]>([]);
   const [firms, setFirms] = useState<FirmListing[]>([]);
   const [installedFirms, setInstalledFirms] = useState<InstalledFirm[]>([]);
+  const [importing, setImporting] = useState(false);
   const [listings, setListings] = useState<MarketplaceListing[]>([]);
   const [installedAgentSlugs, setInstalledAgentSlugs] = useState<Set<string>>(new Set());
   const [sourceStatus, setSourceStatus] = useState<MarketplaceSourceStatus | null>(null);
@@ -132,6 +134,32 @@ function MarketplacePage() {
     setSourceStatus(status);
     setSignedIn(session.signedIn);
   }
+
+  // 로컬 폴더에서 회사/에이전트 임포트 — Agents 화면과 동일하게 마켓에서도 가능.
+  // 팀으로 감지되면 firms에 등록되므로 그 회사 상세로 이동한다.
+  async function importLocalFolderFromMarket() {
+    const api = ipc();
+    if (!api || importing) return;
+    const dir = await api.fs.pickDirectory();
+    if (!dir) return;
+    setImporting(true);
+    try {
+      const agent = await api.team.importLocalFolder(dir);
+      await refresh();
+      if (agent && agent.kind === "team") {
+        const inst = (await api.firms.list()).find((f) => f.slug === `firm-${agent.slug}`);
+        if (inst) {
+          navigate(`/firm/detail?id=${inst.id}`);
+          return;
+        }
+      }
+      setTab("agents");
+      router.replace("/marketplace?tab=agents");
+    } finally {
+      setImporting(false);
+    }
+  }
+
   useEffect(() => {
     void refresh();
   }, []);
@@ -266,6 +294,29 @@ function MarketplacePage() {
           className="titlebar-nodrag"
           style={{ display: "flex", alignItems: "center", gap: 4 }}
         >
+          <button
+            onClick={() => void importLocalFolderFromMarket()}
+            disabled={importing}
+            title={t("library.agents.import_local_hint")}
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 5,
+              padding: "5px 11px",
+              borderRadius: 6,
+              fontSize: 12,
+              fontWeight: 600,
+              color: "var(--ink-soft)",
+              background: "var(--paper)",
+              border: "1px solid var(--paper-edge)",
+              boxShadow: "0 1px 0 rgba(11,11,15,0.04)",
+              cursor: importing ? "default" : "pointer",
+              opacity: importing ? 0.6 : 1,
+            }}
+          >
+            <IconFolder size={12} />
+            {importing ? t("import.importing") : t("library.agents.import_local")}
+          </button>
           <Link
             href="/library/agents"
             style={{
@@ -348,11 +399,12 @@ function MarketplacePage() {
             style={{
               padding: "5px 12px",
               borderRadius: 999,
-              background: "var(--accent)",
-              color: "white",
+              background: "var(--paper)",
+              color: "var(--ink)",
               fontSize: 12,
               fontWeight: 600,
-              border: "none",
+              border: "1px solid var(--paper-edge)",
+              boxShadow: "var(--neu-raised)",
               cursor: "pointer",
             }}
           >
@@ -431,14 +483,14 @@ function MarketplacePage() {
                 gap: 12,
                 padding: "9px 12px",
                 borderRadius: 8,
-                background: "rgba(255, 214, 198, 0.52)",
+                background: "var(--paper-2)",
                 border: "1px solid rgba(181, 87, 46, 0.2)",
                 color: "var(--ink-soft)",
                 fontSize: 11.5,
                 lineHeight: 1.35,
               }}
             >
-              <span>
+              <span style={{ minWidth: 0 }}>
                 {locale === "ko"
                   ? "Agentlas MCP에 연결하지 못해 오프라인 캐시를 보여주고 있어요."
                   : "Showing offline cache because Agentlas MCP is unreachable."}
@@ -446,8 +498,9 @@ function MarketplacePage() {
               <button
                 onClick={() => void refresh()}
                 style={{
-                  border: "1px solid rgba(11,11,15,0.08)",
-                  background: "rgba(255,255,255,0.7)",
+                  flexShrink: 0,
+                  border: "1px solid var(--paper-edge)",
+                  background: "var(--paper)",
                   borderRadius: 6,
                   padding: "4px 8px",
                   color: "var(--ink)",
@@ -663,12 +716,12 @@ function HeroCard({
             gap: 8,
             padding: "10px 18px",
             borderRadius: 999,
-            background: "var(--ink)",
-            color: "white",
+            background: "var(--paper)",
+            color: "var(--ink)",
             fontWeight: 600,
             fontSize: 12.5,
-            border: "none",
-            boxShadow: "0 4px 14px rgba(11,11,15,0.18)",
+            border: "1px solid var(--paper-edge)",
+            boxShadow: "var(--neu-raised)",
           }}
         >
           {installed ? (
@@ -705,7 +758,7 @@ function HeroCard({
               width: 6,
               height: 6,
               borderRadius: "50%",
-              background: i === activeIdx ? "var(--ink)" : "rgba(11,11,15,0.18)",
+              background: i === activeIdx ? "var(--ink)" : "var(--paper-edge)",
               border: "none",
               padding: 0,
               cursor: "pointer",

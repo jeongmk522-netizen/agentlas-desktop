@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { ipc, updaterEvents } from "@/lib/ipc";
 import { useT, type LocalePref } from "@/lib/i18n";
+import { useTheme, type ThemePref } from "@/lib/theme";
 import type { RuntimeBackend, RuntimeStatus, UpdaterState } from "@/lib/types";
 import {
   BYOK_MODELS,
@@ -39,6 +40,7 @@ const RUNTIME_LABEL: Record<string, string> = {
 
 export default function SettingsPage() {
   const { t, pref, setPref } = useT();
+  const { pref: themePref, setPref: setThemePref } = useTheme();
   const [statuses, setStatuses] = useState<RuntimeStatus[]>([]);
   const [draftKey, setDraftKey] = useState<Record<ByokBackend, string>>({
     anthropic: "",
@@ -155,12 +157,14 @@ export default function SettingsPage() {
           {t("settings.lang.title")}
         </h2>
         <div
-          className="glass-strong"
           style={{
-            padding: 12,
+            padding: 6,
             borderRadius: "var(--radius-md)",
             display: "flex",
             gap: 6,
+            background: "var(--paper-2)",
+            border: "1px solid var(--paper-edge)",
+            boxShadow: "var(--neu-inset)",
           }}
         >
           {(["system", "ko", "en"] as LocalePref[]).map((p) => {
@@ -174,10 +178,11 @@ export default function SettingsPage() {
                   padding: "8px 12px",
                   borderRadius: "var(--radius-md)",
                   fontSize: 12.5,
-                  fontWeight: 600,
-                  background: active ? "var(--ink)" : "transparent",
-                  color: active ? "white" : "var(--ink-soft)",
-                  border: active ? "1px solid var(--ink)" : "1px solid transparent",
+                  fontWeight: active ? 600 : 500,
+                  background: active ? "var(--paper)" : "transparent",
+                  color: active ? "var(--ink)" : "var(--ink-soft)",
+                  boxShadow: active ? "var(--neu-raised)" : "none",
+                  border: active ? "1px solid var(--paper-edge)" : "1px solid transparent",
                 }}
               >
                 {p === "system"
@@ -185,6 +190,49 @@ export default function SettingsPage() {
                   : p === "ko"
                   ? t("settings.lang.ko")
                   : t("settings.lang.en")}
+              </button>
+            );
+          })}
+        </div>
+
+        {/* 화면 테마 (라이트/다크/시스템) */}
+        <h2 style={{ fontFamily: "var(--font-head)", fontSize: 15, margin: "24px 0 12px" }}>
+          {t("settings.appearance.title")}
+        </h2>
+        <div
+          style={{
+            padding: 6,
+            borderRadius: "var(--radius-md)",
+            display: "flex",
+            gap: 6,
+            background: "var(--paper-2)",
+            border: "1px solid var(--paper-edge)",
+            boxShadow: "var(--neu-inset)",
+          }}
+        >
+          {(["system", "light", "dark"] as ThemePref[]).map((p) => {
+            const active = themePref === p;
+            return (
+              <button
+                key={p}
+                onClick={() => setThemePref(p)}
+                style={{
+                  flex: 1,
+                  padding: "8px 12px",
+                  borderRadius: "var(--radius-md)",
+                  fontSize: 12.5,
+                  fontWeight: active ? 600 : 500,
+                  background: active ? "var(--paper)" : "transparent",
+                  color: active ? "var(--ink)" : "var(--ink-soft)",
+                  boxShadow: active ? "var(--neu-raised)" : "none",
+                  border: active ? "1px solid var(--paper-edge)" : "1px solid transparent",
+                }}
+              >
+                {p === "system"
+                  ? t("settings.appearance.system")
+                  : p === "light"
+                  ? t("settings.appearance.light")
+                  : t("settings.appearance.dark")}
               </button>
             );
           })}
@@ -329,9 +377,10 @@ export default function SettingsPage() {
                       fontSize: 12,
                       fontFamily: "var(--font-mono)",
                       fontWeight: isCurrent ? 700 : 500,
-                      background: isCurrent ? "var(--ink)" : "var(--paper-2)",
-                      color: isCurrent ? "white" : "var(--ink-soft)",
-                      border: isCurrent ? "1px solid var(--ink)" : "1px solid var(--paper-edge)",
+                      background: isCurrent ? "var(--paper)" : "var(--paper-2)",
+                      color: isCurrent ? "var(--ink)" : "var(--ink-soft)",
+                      border: "1px solid var(--paper-edge)",
+                      boxShadow: isCurrent ? "var(--neu-raised)" : "none",
                       display: "inline-flex",
                       alignItems: "center",
                       gap: 6,
@@ -408,11 +457,12 @@ export default function SettingsPage() {
                 style={{
                   padding: "8px 14px",
                   borderRadius: "var(--radius-md)",
-                  background: draftKey[b].trim() ? "var(--accent)" : "var(--paper-2)",
-                  color: draftKey[b].trim() ? "white" : "var(--muted-deep)",
+                  background: draftKey[b].trim() ? "var(--paper)" : "var(--paper-2)",
+                  color: draftKey[b].trim() ? "var(--ink)" : "var(--muted-deep)",
                   fontWeight: 600,
                   fontSize: 12,
-                  border: "none",
+                  border: "1px solid var(--paper-edge)",
+                  boxShadow: draftKey[b].trim() ? "var(--neu-raised)" : "none",
                 }}
               >
                 {t("settings.save")}
@@ -547,11 +597,12 @@ function UpdatePanel() {
             style={{
               padding: "8px 14px",
               borderRadius: "var(--radius-md)",
-              background: "var(--accent)",
-              color: "white",
+              background: "var(--paper)",
+              color: "var(--ink)",
               fontWeight: 700,
               fontSize: 12,
-              border: "none",
+              border: "1px solid var(--paper-edge)",
+              boxShadow: "var(--neu-raised)",
             }}
           >
             {t("settings.update.install")}
@@ -563,11 +614,12 @@ function UpdatePanel() {
             style={{
               padding: "8px 14px",
               borderRadius: "var(--radius-md)",
-              background: checking ? "var(--paper-2)" : "var(--ink)",
-              color: checking ? "var(--muted-deep)" : "white",
+              background: checking ? "var(--paper-2)" : "var(--paper)",
+              color: checking ? "var(--muted-deep)" : "var(--ink)",
               fontWeight: 700,
               fontSize: 12,
-              border: "none",
+              border: "1px solid var(--paper-edge)",
+              boxShadow: checking ? "none" : "var(--neu-raised)",
             }}
           >
             {checking ? t("settings.update.checking") : t("settings.update.check")}
@@ -646,9 +698,10 @@ function AgentlasCliPanel() {
               borderRadius: 999,
               fontSize: 12,
               fontWeight: 600,
-              background: busy ? "var(--paper-2)" : "var(--accent)",
-              color: busy ? "var(--muted-deep)" : "white",
-              border: "none",
+              background: busy ? "var(--paper-2)" : "var(--paper)",
+              color: busy ? "var(--muted-deep)" : "var(--ink)",
+              border: "1px solid var(--paper-edge)",
+              boxShadow: busy ? "none" : "var(--neu-raised)",
               flexShrink: 0,
             }}
           >
@@ -753,9 +806,10 @@ function ByokModelControls({
                 fontSize: 12,
                 fontFamily: "var(--font-mono)",
                 fontWeight: isCurrent ? 700 : 500,
-                background: isCurrent ? "var(--ink)" : "var(--paper-2)",
-                color: isCurrent ? "white" : "var(--ink-soft)",
-                border: isCurrent ? "1px solid var(--ink)" : "1px solid var(--paper-edge)",
+                background: isCurrent ? "var(--paper)" : "var(--paper-2)",
+                color: isCurrent ? "var(--ink)" : "var(--ink-soft)",
+                border: "1px solid var(--paper-edge)",
+                boxShadow: isCurrent ? "var(--neu-raised)" : "none",
                 display: "inline-flex",
                 alignItems: "center",
                 gap: 6,
@@ -770,7 +824,7 @@ function ByokModelControls({
                     padding: "1px 5px",
                     borderRadius: 999,
                     background: isCurrent ? "rgba(255,255,255,0.22)" : "var(--fill-1)",
-                    color: isCurrent ? "white" : "var(--accent)",
+                    color: isCurrent ? "var(--paper)" : "var(--accent)",
                   }}
                 >
                   1M
@@ -957,9 +1011,10 @@ function CliInstallPanel({
                       borderRadius: 999,
                       fontSize: 12,
                       fontWeight: 600,
-                      background: isInstalling ? "var(--paper-2)" : "var(--accent)",
-                      color: isInstalling ? "var(--muted-deep)" : "white",
-                      border: "none",
+                      background: isInstalling ? "var(--paper-2)" : "var(--paper)",
+                      color: isInstalling ? "var(--muted-deep)" : "var(--ink)",
+                      border: "1px solid var(--paper-edge)",
+                      boxShadow: isInstalling ? "none" : "var(--neu-raised)",
                     }}
                   >
                     {isInstalling ? t("settings.cli.installing") : t("settings.cli.install")}

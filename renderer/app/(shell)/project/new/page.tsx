@@ -105,11 +105,12 @@ export default function NewProjectPage() {
             style={{
               padding: "10px 18px",
               borderRadius: "var(--radius-md)",
-              background: name.trim() && !busy ? "var(--accent)" : "var(--paper-2)",
-              color: name.trim() && !busy ? "white" : "var(--muted-deep)",
+              background: name.trim() && !busy ? "var(--paper)" : "var(--paper-2)",
+              color: name.trim() && !busy ? "var(--ink)" : "var(--muted-deep)",
               fontWeight: 600,
               fontSize: 13,
-              border: "none",
+              border: "1px solid var(--paper-edge)",
+              boxShadow: name.trim() && !busy ? "var(--neu-raised)" : "none",
             }}
           >
             {busy ? t("project.btn.creating") : t("project.btn.create")}

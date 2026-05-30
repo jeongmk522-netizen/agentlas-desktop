@@ -205,9 +205,10 @@ export default function LibraryMcpsPage() {
                 borderRadius: 999,
                 fontSize: 12.5,
                 fontWeight: active ? 700 : 500,
-                background: active ? "var(--ink)" : "var(--paper-2)",
-                color: active ? "white" : "var(--ink-soft)",
-                border: active ? "1px solid var(--ink)" : "1px solid var(--paper-edge)",
+                background: active ? "var(--paper)" : "var(--paper-2)",
+                color: active ? "var(--ink)" : "var(--ink-soft)",
+                border: "1px solid var(--paper-edge)",
+                boxShadow: active ? "var(--neu-raised)" : "none",
               }}
             >
               {label}
@@ -400,9 +401,10 @@ export default function LibraryMcpsPage() {
                   borderRadius: 999,
                   fontSize: 12,
                   fontWeight: 700,
-                  border: "none",
-                  background: cName.trim() && !cBusy ? "var(--accent)" : "var(--paper-2)",
-                  color: cName.trim() && !cBusy ? "white" : "var(--muted-deep)",
+                  border: "1px solid var(--paper-edge)",
+                  boxShadow: cName.trim() && !cBusy ? "var(--neu-raised)" : "none",
+                  background: cName.trim() && !cBusy ? "var(--paper)" : "var(--paper-2)",
+                  color: cName.trim() && !cBusy ? "var(--ink)" : "var(--muted-deep)",
                 }}
               >
                 {cBusy ? t("mcps.testing") : t("mcps.custom.create")}
@@ -513,9 +515,10 @@ export default function LibraryMcpsPage() {
                           fontWeight: 600,
                           padding: "5px 12px",
                           borderRadius: 999,
-                          background: "var(--accent)",
-                          color: "white",
-                          border: "none",
+                          background: "var(--paper)",
+                          color: "var(--ink)",
+                          border: "1px solid var(--paper-edge)",
+                          boxShadow: "var(--neu-raised)",
                           display: "inline-flex",
                           alignItems: "center",
                           gap: 4,
@@ -572,8 +575,8 @@ function StatusLine({
   }
   if (status.missingEnv.length > 0) {
     return (
-      <div style={{ fontSize: 12, color: "var(--peach-ink)", display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-        <span>{t("mcps.status.missing_env", { keys: status.missingEnv.join(", ") })}</span>
+      <div style={{ fontSize: 12, color: "var(--peach-ink)", display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", minWidth: 0 }}>
+        <span style={{ overflowWrap: "anywhere", minWidth: 0 }}>{t("mcps.status.missing_env", { keys: status.missingEnv.join(", ") })}</span>
         <Link href="/library/env" style={{ color: "var(--accent)", fontWeight: 600 }}>
           {t("mcps.missing_env_cta")}
         </Link>
@@ -586,7 +589,18 @@ function StatusLine({
         <IconCheck size={12} />
         {t("mcps.status.ok", { n: status.tools.length })}
         {status.tools.length > 0 && (
-          <span style={{ color: "var(--muted-deep)", fontFamily: "var(--font-mono)", fontSize: 11 }}>
+          <span
+            style={{
+              color: "var(--muted-deep)",
+              fontFamily: "var(--font-mono)",
+              fontSize: 11,
+              maxWidth: 240,
+              minWidth: 0,
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              whiteSpace: "nowrap",
+            }}
+          >
             {" "}
             · {status.tools.slice(0, 4).map((tool) => tool.name).join(", ")}
             {status.tools.length > 4 ? " …" : ""}
@@ -612,7 +626,8 @@ function Logo({
   name: string;
   size: number;
 }) {
-  const bg = entry?.brandColor ?? "var(--ink)";
+  // 브랜드 컬러가 없으면 accent로 폴백 — 흰 모노그램이 다크모드에서도 읽힌다 (var(--ink)는 다크에서 밝아짐).
+  const bg = entry?.brandColor ?? "var(--accent)";
   const mark = entry?.mark ?? name.charAt(0).toUpperCase();
   return (
     <span

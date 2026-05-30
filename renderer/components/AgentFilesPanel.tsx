@@ -216,9 +216,10 @@ export function AgentFilesPanel({
                       fontSize: 11.5,
                       fontFamily: "var(--font-mono)",
                       fontWeight: active ? 700 : 500,
-                      background: active ? "var(--ink)" : "var(--paper-2)",
-                      color: active ? "white" : "var(--ink-soft)",
-                      border: active ? "1px solid var(--ink)" : "1px solid var(--paper-edge)",
+                      background: active ? "var(--paper)" : "var(--paper-2)",
+                      color: active ? "var(--ink)" : "var(--ink-soft)",
+                      border: "1px solid var(--paper-edge)",
+                      boxShadow: active ? "var(--neu-raised)" : "none",
                     }}
                   >
                     {f.name}
@@ -258,9 +259,10 @@ export function AgentFilesPanel({
                       borderRadius: 999,
                       fontSize: 12,
                       fontWeight: 700,
-                      border: "none",
-                      background: dirty && !saving ? "var(--accent)" : "var(--paper-2)",
-                      color: dirty && !saving ? "white" : "var(--muted-deep)",
+                      border: "1px solid var(--paper-edge)",
+                      boxShadow: dirty && !saving ? "var(--neu-raised)" : "none",
+                      background: dirty && !saving ? "var(--paper)" : "var(--paper-2)",
+                      color: dirty && !saving ? "var(--ink)" : "var(--muted-deep)",
                     }}
                   >
                     {saving ? t("agentfiles.saving") : t("common.save")}

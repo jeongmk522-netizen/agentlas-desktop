@@ -25,6 +25,43 @@ function FirmDetailPage() {
   const [firm, setFirm] = useState<InstalledFirm | null>(null);
   const [agents, setAgents] = useState<InstalledAgent[]>([]);
   const [chats, setChats] = useState<Chat[]>([]);
+  const [resolving, setResolving] = useState(false);
+  const [resolveMsg, setResolveMsg] = useState("");
+  // 조직도 패널 너비 — 가운데 분할선을 끌어 조절 (Agents 화면과 동일 UX). localStorage 영속.
+  const [orgWidth, setOrgWidth] = useState(360);
+  useEffect(() => {
+    try {
+      const n = parseInt(window.localStorage.getItem("agentlas.firm.orgWidth") ?? "", 10);
+      if (Number.isFinite(n) && n >= 260 && n <= 640) setOrgWidth(n);
+    } catch {
+      // ignore
+    }
+  }, []);
+  const startResize = useCallback(
+    (e: React.MouseEvent) => {
+      const startX = e.clientX;
+      const startW = orgWidth;
+      let finalW = startW;
+      function onMove(ev: MouseEvent) {
+        const dx = startX - ev.clientX; // 우측 패널: 왼쪽으로 끌면 넓어짐
+        finalW = Math.max(260, Math.min(640, startW + dx));
+        setOrgWidth(finalW);
+      }
+      function onUp() {
+        window.removeEventListener("mousemove", onMove);
+        window.removeEventListener("mouseup", onUp);
+        try {
+          window.localStorage.setItem("agentlas.firm.orgWidth", String(finalW));
+        } catch {
+          // ignore
+        }
+      }
+      window.addEventListener("mousemove", onMove);
+      window.addEventListener("mouseup", onUp);
+      e.preventDefault();
+    },
+    [orgWidth],
+  );
 
   const refresh = useCallback(async () => {
     const api = ipc();
@@ -52,6 +89,20 @@ function FirmDetailPage() {
     if (!api || !firm) return;
     const chat = await api.chats.create({ firmId: firm.id });
     navigate(`/chat?id=${chat.id}`);
+  }
+
+  // 임포트한 팀 폴더를 LLM으로 분석해 3-tier(본부·전문가) 구조를 생성/갱신
+  async function resolveOrg() {
+    const api = ipc();
+    if (!api || !firm || resolving) return;
+    setResolving(true);
+    setResolveMsg("");
+    try {
+      const r = await api.firms.resolveOrg(firm.id);
+      setResolveMsg(r.ok ? t("firm.resolve_ok") : t("firm.resolve_fail", { error: r.error ?? "?" }));
+    } finally {
+      setResolving(false);
+    }
   }
 
   async function uninstall() {
@@ -131,12 +182,12 @@ function FirmDetailPage() {
             gap: 6,
             padding: "9px 16px",
             borderRadius: 999,
-            background: "var(--accent)",
-            color: "white",
+            background: "var(--paper)",
+            color: "var(--ink)",
             fontWeight: 600,
             fontSize: 13,
-            border: "none",
-            boxShadow: "var(--shadow-1)",
+            border: "1px solid var(--paper-edge)",
+            boxShadow: "var(--neu-raised)",
           }}
         >
           <IconChat size={14} />
@@ -195,10 +246,20 @@ function FirmDetailPage() {
                     color: "var(--ink)",
                   }}
                 >
-                  <span style={{ flex: 1, fontWeight: 500, fontSize: 13 }}>
+                  <span
+                    style={{
+                      flex: 1,
+                      minWidth: 0,
+                      fontWeight: 500,
+                      fontSize: 13,
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                      whiteSpace: "nowrap",
+                    }}
+                  >
                     {c.title.trim() || t("chat.untitled")}
                   </span>
-                  <span style={{ fontSize: 10, color: "var(--muted)" }}>
+                  <span style={{ fontSize: 10, color: "var(--muted)", flexShrink: 0 }}>
                     {new Date(c.updatedAt).toLocaleString("ko-KR", {
                       month: "numeric",
                       day: "numeric",
@@ -214,11 +275,12 @@ function FirmDetailPage() {
       </section>
       </div>
 
-      {/* 우측 — 팀 분해 조직도 */}
+      {/* 우측 — 팀 분해 조직도 (가운데 분할선 드래그로 너비 조절) */}
       <aside
         className="glass-thin"
         style={{
-          width: 360,
+          position: "relative",
+          width: orgWidth,
           flexShrink: 0,
           borderLeft: "1px solid var(--glass-border)",
           display: "flex",
@@ -227,6 +289,13 @@ function FirmDetailPage() {
           height: "100%",
         }}
       >
+        {/* 좌측 가장자리 드래그 핸들 */}
+        <div
+          role="separator"
+          aria-label={t("workspace.resize")}
+          onMouseDown={startResize}
+          style={{ position: "absolute", left: -3, top: 0, bottom: 0, width: 6, cursor: "ew-resize", zIndex: 2 }}
+        />
         <header style={{ padding: "14px 16px 10px", borderBottom: "1px solid var(--glass-border)", display: "flex", alignItems: "center", gap: 8 }}>
           <IconUsers size={15} style={{ color: "var(--accent)" }} />
           <div style={{ flex: 1, minWidth: 0 }}>
@@ -234,9 +303,29 @@ function FirmDetailPage() {
               {t("firm.section.orgchart")}
             </div>
             <div style={{ fontSize: 11, color: "var(--muted-deep)" }}>
-              {t("firm.orgchart_sub", { n: firm.orgChart.length })}
+              {resolveMsg || t("firm.orgchart_sub", { n: firm.orgChart.length })}
             </div>
           </div>
+          <button
+            onClick={() => void resolveOrg()}
+            disabled={resolving}
+            title={t("firm.resolve_hint")}
+            style={{
+              flexShrink: 0,
+              fontSize: 11,
+              fontWeight: 600,
+              padding: "5px 10px",
+              borderRadius: 999,
+              color: "var(--ink-soft)",
+              background: "var(--paper)",
+              border: "1px solid var(--paper-edge)",
+              boxShadow: "var(--neu-raised)",
+              cursor: resolving ? "default" : "pointer",
+              opacity: resolving ? 0.6 : 1,
+            }}
+          >
+            {resolving ? t("firm.resolving") : t("firm.resolve")}
+          </button>
         </header>
         <div style={{ flex: 1, overflowY: "auto", padding: 16 }}>
           <OrgChart firm={firm} agentMap={agentMap} locale={locale} />
@@ -270,7 +359,7 @@ function OrgChart({
     const kids = children(node.agentSlug);
     const isCeo = node.reportsTo === null;
     return (
-      <div key={node.agentId} style={{ marginTop: depth === 0 ? 0 : 8 }}>
+      <div key={node.agentSlug} style={{ marginTop: depth === 0 ? 0 : 8 }}>
         <div
           style={{
             display: "flex",
@@ -282,25 +371,39 @@ function OrgChart({
             borderRadius: "var(--radius-md)",
           }}
         >
-          {agent && agentLoc && <AgentAvatar name={agentLoc.name} tone={agent.tone} size={32} />}
+          {/* 부서는 라벨 전용(agentId 없음)일 수 있음 — 그래도 역할명으로 아바타를 그려 빈 노드/(missing) 방지 */}
+          <AgentAvatar name={agentLoc?.name ?? node.role} tone={agent?.tone} size={32} />
           <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-              <strong style={{ fontSize: 13 }}>{agentLoc?.name ?? "(missing)"}</strong>
-              <span
+            <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
+              <strong
                 style={{
-                  fontSize: 10,
-                  padding: "2px 8px",
-                  borderRadius: 999,
-                  background: isCeo ? "var(--accent)" : "var(--paper-2)",
-                  color: isCeo ? "white" : "var(--ink-soft)",
-                  fontWeight: 600,
+                  fontSize: 13,
+                  minWidth: 0,
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                  whiteSpace: "nowrap",
                 }}
               >
-                {node.role}
-              </span>
+                {agentLoc?.name ?? node.role}
+              </strong>
+              {(isCeo || agentLoc) && (
+                <span
+                  style={{
+                    fontSize: 10,
+                    padding: "2px 8px",
+                    borderRadius: 999,
+                    background: isCeo ? "var(--ink)" : "var(--paper-2)",
+                    color: isCeo ? "var(--paper)" : "var(--ink-soft)",
+                    fontWeight: 600,
+                    flexShrink: 0,
+                  }}
+                >
+                  {node.role}
+                </span>
+              )}
             </div>
             {agentLoc && (
-              <div style={{ fontSize: 11, color: "var(--muted-deep)", marginTop: 2 }}>
+              <div style={{ fontSize: 11, color: "var(--muted-deep)", marginTop: 2, overflowWrap: "anywhere" }}>
                 {agentLoc.tagline}
               </div>
             )}

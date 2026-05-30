@@ -158,11 +158,12 @@ export function ImportAgentsModal({
                 style={{
                   padding: "9px 18px",
                   borderRadius: 999,
-                  background: "var(--accent)",
-                  color: "white",
+                  background: "var(--paper)",
+                  color: "var(--ink)",
                   fontWeight: 600,
                   fontSize: 13,
-                  border: "none",
+                  border: "1px solid var(--paper-edge)",
+                  boxShadow: "var(--neu-raised)",
                 }}
               >
                 {t("account.sign_in")}
@@ -252,9 +253,10 @@ export function ImportAgentsModal({
                 fontWeight: 600,
                 padding: "8px 18px",
                 borderRadius: 999,
-                background: totalSelected > 0 ? "var(--accent)" : "var(--paper-2)",
-                color: totalSelected > 0 ? "white" : "var(--muted-deep)",
-                border: "none",
+                background: totalSelected > 0 ? "var(--paper)" : "var(--paper-2)",
+                color: totalSelected > 0 ? "var(--ink)" : "var(--muted-deep)",
+                border: "1px solid var(--paper-edge)",
+                boxShadow: totalSelected > 0 ? "var(--neu-raised)" : "none",
               }}
             >
               {importing ? t("import.importing") : t("import.import_selected", { n: totalSelected })}

@@ -111,11 +111,12 @@ function ProjectPage() {
             gap: 6,
             padding: "8px 14px",
             borderRadius: "var(--radius-md)",
-            background: "var(--accent)",
-            color: "white",
+            background: "var(--paper)",
+            color: "var(--ink)",
             fontWeight: 600,
             fontSize: 13,
-            border: "none",
+            border: "1px solid var(--paper-edge)",
+            boxShadow: "var(--neu-raised)",
           }}
         >
           <IconPlus size={14} />{t("project.new_chat")}
@@ -171,11 +172,12 @@ function ProjectPage() {
                   style={{
                     padding: "6px 14px",
                     borderRadius: "var(--radius-md)",
-                    background: "var(--accent)",
-                    color: "white",
+                    background: "var(--paper)",
+                    color: "var(--ink)",
                     fontWeight: 600,
                     fontSize: 12,
-                    border: "none",
+                    border: "1px solid var(--paper-edge)",
+                    boxShadow: "var(--neu-raised)",
                   }}
                 >
                   {t("common.save")}
@@ -245,15 +247,25 @@ function ProjectPage() {
                       color: "var(--ink)",
                     }}
                   >
-                    <span style={{ flex: 1, fontWeight: 500, fontSize: 13 }}>
+                    <span
+                      style={{
+                        flex: 1,
+                        minWidth: 0,
+                        fontWeight: 500,
+                        fontSize: 13,
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                        whiteSpace: "nowrap",
+                      }}
+                    >
                       {c.title.trim() || t("chat.untitled")}
                     </span>
                     {agent && (
-                      <span style={{ fontSize: 11, color: "var(--muted-deep)" }}>
+                      <span style={{ fontSize: 11, color: "var(--muted-deep)", flexShrink: 0 }}>
                         {pickLocalized(agent, locale).name}
                       </span>
                     )}
-                    <span style={{ fontSize: 10, color: "var(--muted)" }}>
+                    <span style={{ fontSize: 10, color: "var(--muted)", flexShrink: 0 }}>
                       {new Date(c.updatedAt).toLocaleString("ko-KR", {
                         month: "numeric",
                         day: "numeric",

@@ -107,9 +107,21 @@ export function MigrationPanel() {
                 background: "var(--paper)",
               }}
             >
-              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                <strong style={{ fontSize: 14 }}>{s.label}</strong>
-                <span style={{ fontSize: 11, color: "var(--muted-deep)" }}>{s.rootPath}</span>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
+                <strong style={{ fontSize: 14, flexShrink: 0 }}>{s.label}</strong>
+                <span
+                  style={{
+                    fontSize: 11,
+                    color: "var(--muted-deep)",
+                    flex: 1,
+                    minWidth: 0,
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                    whiteSpace: "nowrap",
+                  }}
+                >
+                  {s.rootPath}
+                </span>
               </div>
 
               <ul
@@ -151,11 +163,12 @@ export function MigrationPanel() {
                 style={{
                   padding: "8px 16px",
                   borderRadius: "var(--radius-md)",
-                  background: busy === s.kind ? "var(--paper-2)" : "var(--accent)",
-                  color: busy === s.kind ? "var(--muted-deep)" : "white",
+                  background: busy === s.kind ? "var(--paper-2)" : "var(--paper)",
+                  color: busy === s.kind ? "var(--muted-deep)" : "var(--ink)",
                   fontWeight: 600,
                   fontSize: 12.5,
-                  border: "none",
+                  border: "1px solid var(--paper-edge)",
+                  boxShadow: busy === s.kind ? "none" : "var(--neu-raised)",
                 }}
               >
                 {busy === s.kind

@@ -9,7 +9,7 @@ import { app } from "electron";
 
 let _db: Database.Database | null = null;
 
-const SCHEMA_VERSION = 12;
+const SCHEMA_VERSION = 13;
 
 export function initStore(): void {
   if (_db) return;
@@ -293,6 +293,25 @@ export function initStore(): void {
         last_seen TEXT NOT NULL
       );
     `);
+  }
+
+  // ── v12 → v13: 멀티 에이전트 — 숨김 본부 세션(sub-chat) + per-agent 메모리 인덱스 ──
+  //   chats.kind          : 'user'(일반, 사이드바 노출) | 'division'(백그라운드 본부 세션, 숨김)
+  //   chats.parent_chat_id: 본부 세션 → 부모 firm 채팅 링크
+  if (userVersion < 13) {
+    const chatCols = _db
+      .prepare("PRAGMA table_info(chats)")
+      .all() as Array<{ name: string }>;
+    if (!chatCols.some((c) => c.name === "kind")) {
+      _db.exec("ALTER TABLE chats ADD COLUMN kind TEXT NOT NULL DEFAULT 'user'");
+    }
+    if (!chatCols.some((c) => c.name === "parent_chat_id")) {
+      _db.exec("ALTER TABLE chats ADD COLUMN parent_chat_id TEXT");
+    }
+    _db.exec(
+      "CREATE INDEX IF NOT EXISTS idx_chats_parent ON chats(parent_chat_id);" +
+        "CREATE INDEX IF NOT EXISTS idx_memory_agent ON memory_entries(agent_id, superseded_at);",
+    );
   }
 
   _db.pragma(`user_version = ${SCHEMA_VERSION}`);

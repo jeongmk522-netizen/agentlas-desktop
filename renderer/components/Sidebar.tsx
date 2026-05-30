@@ -22,16 +22,19 @@ import {
   IconFolder,
   IconKey,
   IconLibrary,
+  IconMoon,
   IconPlus,
   IconSettings,
   IconSparkles,
   IconStore,
+  IconSun,
 } from "./Icon";
 import { PawLogo } from "./PawLogo";
 import { ChatRow } from "./ChatRow";
 import { AccountChip } from "./AccountChip";
 import { VersionChip } from "./VersionChip";
 import { pickLocalized, useT } from "@/lib/i18n";
+import { useTheme } from "@/lib/theme";
 
 const COLLAPSE_KEY = "agentlas.sidebar.collapsed";
 const COLLAPSED_WIDTH = 60;
@@ -241,8 +244,10 @@ function SidebarInner({ refreshKey: refreshKeyProp = 0 }: { refreshKey?: number 
             title={t("sidebar.new_chat")}
             style={{
               ...iconBtnStyle(false),
-              background: "var(--accent)",
-              color: "white",
+              background: "var(--paper)",
+              color: "var(--ink)",
+              border: "1px solid var(--paper-edge)",
+              boxShadow: "var(--neu-raised)",
             }}
           >
             <IconPlus size={16} />
@@ -276,6 +281,7 @@ function SidebarInner({ refreshKey: refreshKeyProp = 0 }: { refreshKey?: number 
           title={data.runtime ? labelOfRuntime(data.runtime) : t("sidebar.backend_none")}
         >
           <RuntimeDot status={data.runtime} />
+          <ThemeToggleButton collapsed />
           <Link
             href="/settings"
             aria-label={t("sidebar.settings")}
@@ -350,19 +356,16 @@ function SidebarInner({ refreshKey: refreshKeyProp = 0 }: { refreshKey?: number 
       <div style={{ padding: "8px 10px 4px" }} className="titlebar-nodrag">
         <button
           onClick={() => void handleNewChat()}
+          className="neu-btn-primary"
           style={{
             width: "100%",
             display: "flex",
             alignItems: "center",
+            justifyContent: "center",
             gap: 8,
             padding: "9px 12px",
             borderRadius: "var(--radius-md)",
-            background: "var(--accent)",
-            color: "white",
-            fontWeight: 600,
             fontSize: 13,
-            border: "none",
-            boxShadow: "var(--shadow-1)",
           }}
         >
           <IconPlus size={15} />
@@ -652,6 +655,7 @@ function SidebarInner({ refreshKey: refreshKeyProp = 0 }: { refreshKey?: number 
             </div>
           )}
         </div>
+        <ThemeToggleButton />
         <Link
           href="/settings"
           style={{
@@ -767,6 +771,40 @@ function RuntimeDot({ status }: { status: RuntimeStatus | null }) {
   );
 }
 
+// 라이트/다크 빠른 전환 — 푸터에 배치 (접힘/펼침 공용)
+function ThemeToggleButton({ collapsed }: { collapsed?: boolean }) {
+  const { t } = useT();
+  const { resolved, toggle } = useTheme();
+  return (
+    <button
+      onClick={toggle}
+      aria-label={t("sidebar.theme_toggle")}
+      title={t("sidebar.theme_toggle")}
+      style={
+        collapsed
+          ? iconBtnStyle(false)
+          : {
+              display: "inline-flex",
+              alignItems: "center",
+              justifyContent: "center",
+              padding: 6,
+              borderRadius: 8,
+              color: "var(--muted-deep)",
+              background: "transparent",
+              border: "none",
+              cursor: "pointer",
+            }
+      }
+    >
+      {resolved === "dark" ? (
+        <IconSun size={collapsed ? 15 : 16} />
+      ) : (
+        <IconMoon size={collapsed ? 15 : 16} />
+      )}
+    </button>
+  );
+}
+
 function labelOfRuntime(s: RuntimeStatus): string {
   // Ollama는 "Ollama · <model>"로 단독 표기 (백엔드 라벨 중복 회피).
   if (s.kind === "ollama") {
@@ -878,8 +916,8 @@ function CollapsedNav({
                 height: 14,
                 padding: "0 4px",
                 borderRadius: 999,
-                background: "var(--accent)",
-                color: "white",
+                background: "var(--ink)",
+                color: "var(--paper)",
                 fontSize: 9,
                 fontWeight: 700,
                 display: "inline-flex",

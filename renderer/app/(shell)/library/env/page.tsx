@@ -228,9 +228,10 @@ export default function LibraryEnvPage() {
                   borderRadius: 999,
                   fontSize: 11.5,
                   fontWeight: active ? 700 : 500,
-                  background: active ? "var(--ink)" : "var(--paper-2)",
-                  color: active ? "white" : "var(--ink-soft)",
-                  border: active ? "1px solid var(--ink)" : "1px solid var(--paper-edge)",
+                  background: active ? "var(--paper)" : "var(--paper-2)",
+                  color: active ? "var(--ink)" : "var(--ink-soft)",
+                  border: "1px solid var(--paper-edge)",
+                  boxShadow: active ? "var(--neu-raised)" : "none",
                 }}
               >
                 {t(`env.filter.${f}` as "env.filter.all")}
@@ -244,11 +245,12 @@ export default function LibraryEnvPage() {
             marginLeft: "auto",
             padding: "8px 14px",
             borderRadius: 999,
-            background: "var(--accent)",
-            color: "white",
+            background: "var(--paper)",
+            color: "var(--ink)",
             fontWeight: 600,
             fontSize: 12,
-            border: "none",
+            border: "1px solid var(--paper-edge)",
+            boxShadow: "var(--neu-raised)",
             display: "inline-flex",
             alignItems: "center",
             gap: 6,
@@ -295,11 +297,12 @@ export default function LibraryEnvPage() {
             style={{
               padding: "8px 16px",
               borderRadius: "var(--radius-md)",
-              background: newKey.trim() && newValue.trim() ? "var(--ink)" : "var(--paper-2)",
-              color: newKey.trim() && newValue.trim() ? "white" : "var(--muted-deep)",
+              background: newKey.trim() && newValue.trim() ? "var(--paper)" : "var(--paper-2)",
+              color: newKey.trim() && newValue.trim() ? "var(--ink)" : "var(--muted-deep)",
               fontWeight: 600,
               fontSize: 12,
-              border: "none",
+              border: "1px solid var(--paper-edge)",
+              boxShadow: newKey.trim() && newValue.trim() ? "var(--neu-raised)" : "none",
             }}
           >
             {t("common.save")}
@@ -535,11 +538,12 @@ function InlineSet({
         style={{
           padding: "6px 14px",
           borderRadius: "var(--radius-md)",
-          background: draft.trim() ? "var(--ink)" : "var(--paper)",
-          color: draft.trim() ? "white" : "var(--muted-deep)",
+          background: draft.trim() ? "var(--paper)" : "var(--paper-2)",
+          color: draft.trim() ? "var(--ink)" : "var(--muted-deep)",
           fontWeight: 600,
           fontSize: 11.5,
-          border: "none",
+          border: "1px solid var(--paper-edge)",
+          boxShadow: draft.trim() ? "var(--neu-raised)" : "none",
         }}
       >
         {t("common.save")}

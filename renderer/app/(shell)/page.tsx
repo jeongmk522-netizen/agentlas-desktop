@@ -305,13 +305,12 @@ export default function HomePage() {
                 gap: 6,
                 padding: "8px 16px",
                 borderRadius: 999,
-                background: busy || !input.trim() ? "var(--paper-2)" : "var(--ink)",
-                color: busy || !input.trim() ? "var(--muted-deep)" : "white",
+                background: busy || !input.trim() ? "var(--paper-2)" : "var(--paper)",
+                color: busy || !input.trim() ? "var(--muted-deep)" : "var(--ink)",
                 fontWeight: 600,
                 fontSize: 12.5,
-                border: "none",
-                boxShadow:
-                  busy || !input.trim() ? "none" : "0 4px 14px rgba(11,11,15,0.18)",
+                border: "1px solid var(--paper-edge)",
+                boxShadow: busy || !input.trim() ? "none" : "var(--neu-raised)",
               }}
             >
               {busy ? t("home.starting") : t("home.send")}

@@ -159,7 +159,7 @@ export default function LibraryAgentsPage() {
                 <IconSparkles size={13} />
                 {t("library.agents.import_cloud")}
               </button>
-              <Link href="/marketplace" style={{ ...ghostBtn, background: "var(--accent)", color: "white", border: "1px solid var(--accent)", textDecoration: "none" }}>
+              <Link href="/marketplace" style={{ ...ghostBtn, background: "var(--paper)", color: "var(--ink)", border: "1px solid var(--paper-edge)", boxShadow: "var(--neu-raised)", textDecoration: "none" }}>
                 <IconPlus size={13} />
                 {t("library.agents.add")}
               </Link>

@@ -201,6 +201,7 @@ export function WorkspacePanel({ chatId, onClose, persistence }: Props) {
       style={{
         position: "relative",
         width,
+        maxWidth: "45vw",
         flexShrink: 0,
         height: "100%",
         background: "var(--paper)",
@@ -333,12 +334,12 @@ function EmptyState({ onPick, t }: { onPick: () => void; t: ReturnType<typeof us
         style={{
           padding: "8px 14px",
           borderRadius: 999,
-          background: "var(--accent)",
-          color: "white",
+          background: "var(--paper)",
+          color: "var(--ink)",
           fontSize: 12.5,
           fontWeight: 600,
-          border: "none",
-          boxShadow: "var(--shadow-1)",
+          border: "1px solid var(--paper-edge)",
+          boxShadow: "var(--neu-raised)",
           cursor: "pointer",
         }}
       >

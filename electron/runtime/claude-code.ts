@@ -183,8 +183,9 @@ export const runClaudeCode: Runner = async (
     const child = spawnCli(bin, args, {
       stdio: ["ignore", "pipe", "pipe"],
       env: process.env,
-      // 패키지된 앱의 cwd는 비쓰기/루트라 claude가 exit 1. 쓰기 가능한 전용 폴더에서 실행.
-      cwd: agentRunCwd(),
+      // 사용자가 워킹 폴더(프로젝트)를 지정했으면 거기서 실행 — 빌드/파일 생성이 프로젝트에 일어난다.
+      // 미지정이면 쓰기 가능한 전용 폴더(packaged 앱은 cwd가 비쓰기/루트라 claude가 exit 1).
+      cwd: req.cwd ?? agentRunCwd(),
     });
 
     // 취소 — 사용자가 Stop을 누르면 자식 프로세스 종료. 병렬 세션 각각 독립 취소.

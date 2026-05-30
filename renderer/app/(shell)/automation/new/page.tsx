@@ -176,11 +176,12 @@ export default function NewAutomationPage() {
             style={{
               padding: "10px 18px",
               borderRadius: "var(--radius-md)",
-              background: canSubmit ? "var(--accent)" : "var(--paper-2)",
-              color: canSubmit ? "white" : "var(--muted-deep)",
+              background: canSubmit ? "var(--paper)" : "var(--paper-2)",
+              color: canSubmit ? "var(--ink)" : "var(--muted-deep)",
               fontWeight: 600,
               fontSize: 13,
-              border: "none",
+              border: "1px solid var(--paper-edge)",
+              boxShadow: canSubmit ? "var(--neu-raised)" : "none",
             }}
           >
             {t("project.btn.create")}

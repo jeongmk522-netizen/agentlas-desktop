@@ -31,11 +31,11 @@ function toChat(row: ChatRow): Chat {
   };
 }
 
-/** 사이드바용 — 활성 채팅만 (보관된 것 제외) */
+/** 사이드바용 — 활성 사용자 채팅만 (보관·숨김 본부 세션 제외) */
 export function listRecentChats(limit = 50): Chat[] {
   const rows = getDb()
     .prepare(
-      "SELECT * FROM chats WHERE archived_at IS NULL ORDER BY updated_at DESC LIMIT ?",
+      "SELECT * FROM chats WHERE archived_at IS NULL AND kind = 'user' ORDER BY updated_at DESC LIMIT ?",
     )
     .all(limit) as ChatRow[];
   return rows.map(toChat);
@@ -52,14 +52,14 @@ export function listArchivedChats(): Chat[] {
 
 export function listChatsByProject(projectId: string): Chat[] {
   const rows = getDb()
-    .prepare("SELECT * FROM chats WHERE project_id = ? ORDER BY updated_at DESC")
+    .prepare("SELECT * FROM chats WHERE project_id = ? AND kind = 'user' ORDER BY updated_at DESC")
     .all(projectId) as ChatRow[];
   return rows.map(toChat);
 }
 
 export function listChatsByFirm(firmId: string): Chat[] {
   const rows = getDb()
-    .prepare("SELECT * FROM chats WHERE firm_id = ? ORDER BY updated_at DESC")
+    .prepare("SELECT * FROM chats WHERE firm_id = ? AND kind = 'user' ORDER BY updated_at DESC")
     .all(firmId) as ChatRow[];
   return rows.map(toChat);
 }
@@ -76,6 +76,10 @@ export function createChat(input: {
   firmId?: string | null;
   projectId?: string | null;
   title?: string;
+  /** 'user'(기본, 사이드바 노출) | 'division'(백그라운드 본부 세션, 숨김) */
+  kind?: "user" | "division";
+  /** 본부 세션 → 부모 firm 채팅 링크 */
+  parentChatId?: string | null;
 }): Chat {
   let resolvedAgentId = input.agentId;
   if (input.firmId && !resolvedAgentId) {
@@ -93,8 +97,8 @@ export function createChat(input: {
   // 첫 user 메시지 도착 시 autoTitleFromFirstMessage가 채움.
   getDb()
     .prepare(
-      `INSERT INTO chats (id, project_id, firm_id, agent_id, title, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO chats (id, project_id, firm_id, agent_id, title, kind, parent_chat_id, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     .run(
       id,
@@ -102,11 +106,41 @@ export function createChat(input: {
       input.firmId ?? null,
       resolvedAgentId,
       input.title?.trim() ?? "",
+      input.kind ?? "user",
+      input.parentChatId ?? null,
       now,
       now,
     );
   if (input.projectId) touchProject(input.projectId);
   return getChat(id) as Chat;
+}
+
+/** 본부(division) 지속 세션을 찾거나 만든다 — 부모 firm 채팅에 종속된 숨김 sub-chat.
+ *  히스토리·메모리가 턴 간 유지된다. divisionId는 ResolvedNode.id(안정 식별자).
+ *  fkAgentId는 installed_agents에 존재하는 실 agent id여야 한다(FK) — 본부에 실에이전트가
+ *  없으면 호출부가 CEO agentId를 넘긴다. 메모리/텔레메트리 정체성은 divisionId로 분리된다. */
+export function getOrCreateDivisionSession(
+  parentChatId: string,
+  divisionId: string,
+  fkAgentId: string,
+): Chat {
+  const marker = `⟦div⟧${divisionId}`;
+  const db = getDb();
+  const existing = db
+    .prepare(
+      "SELECT * FROM chats WHERE parent_chat_id = ? AND kind = 'division' AND title = ? LIMIT 1",
+    )
+    .get(parentChatId, marker) as ChatRow | undefined;
+  if (existing) return toChat(existing);
+  const parent = getChat(parentChatId);
+  return createChat({
+    agentId: fkAgentId,
+    firmId: parent?.firmId ?? null,
+    projectId: parent?.projectId ?? null,
+    title: marker,
+    kind: "division",
+    parentChatId,
+  });
 }
 
 export function renameChat(id: string, title: string): Chat {

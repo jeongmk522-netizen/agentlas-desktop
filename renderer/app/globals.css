@@ -1,5 +1,7 @@
 /* 웹 포털 paper tokens 기반 + Apple 글래스모피즘 레이어 */
 :root {
+  color-scheme: light;
+
   /* ── Color (paper/tokens.ts) ───────────────────────────── */
   --ink: #0b0b0f;
   --ink-soft: #3f3f46;
@@ -66,6 +68,69 @@
   --shadow-1: 0 1px 0 rgba(11, 11, 15, 0.04), 0 1px 2px rgba(11, 11, 15, 0.04);
   --shadow-2: 0 2px 8px rgba(11, 11, 15, 0.06);
   --hairline: 1px solid var(--paper-edge);
+
+  /* ── Neumorphism (버튼·박스 soft-UI 음영) ───────────────── */
+  /* 글래스는 chrome(사이드바·헤더·챗 입력)에, 뉴모피즘은 버튼·박스에. */
+  --neu-raised: 0 1px 2px rgba(11, 11, 15, 0.05), 0 3px 8px rgba(11, 11, 15, 0.06);
+  --neu-raised-strong: 0 2px 4px rgba(11, 11, 15, 0.07), 0 8px 18px rgba(11, 11, 15, 0.09);
+  --neu-inset: inset 0 1px 3px rgba(11, 11, 15, 0.12), inset 0 -1px 2px rgba(255, 255, 255, 0.55);
+}
+
+/* ── Dark theme — 동일 토큰을 재정의 (data-theme="dark" on <html>) ──── */
+/* 인디고 브랜드에서 파생한 뉴트럴 다크 팔레트. 컴포넌트는 토큰만 참조하므로 */
+/* 여기 값만 바꾸면 전 화면 다크모드가 일관되게 적용된다. */
+:root[data-theme="dark"] {
+  color-scheme: dark;
+
+  --ink: #ececf1;
+  --ink-soft: #b6b6c0;
+  --paper: #131316;
+  --paper-2: #1c1c20;
+  --paper-edge: #2c2c33;
+  --muted: #6d6d77;
+  --muted-deep: #9b9ba6;
+
+  --accent: #7b77ee;
+  --accent-soft: rgba(123, 119, 238, 0.22);
+  --accent-strong: #938fff;
+  --fill-1: rgba(123, 119, 238, 0.13);
+  --fill-2: rgba(123, 119, 238, 0.24);
+
+  --peach: #ff8a64;
+  --peach-soft: rgba(255, 122, 85, 0.22);
+  --peach-ink: #ff9d7a;
+
+  --blue: #9a96f0;
+  --blue-deep: #8a86e8;
+  --green: #9bd98f;
+  --green-deep: #7fc46f;
+  --purple: #cbb0ff;
+  --purple-deep: #b79aff;
+  --amber: #f5cd84;
+  --amber-deep: #e3b56a;
+  --red: #ff9a9a;
+  --red-deep: #ff7d7d;
+
+  --glass-bg: rgba(28, 28, 32, 0.66);
+  --glass-bg-strong: rgba(28, 28, 32, 0.85);
+  --glass-bg-thin: rgba(20, 20, 23, 0.55);
+  --glass-border: rgba(255, 255, 255, 0.08);
+  --glass-border-strong: rgba(255, 255, 255, 0.14);
+  --glass-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.04) inset,
+    0 1px 2px rgba(0, 0, 0, 0.4),
+    0 12px 32px -8px rgba(0, 0, 0, 0.5);
+  --glass-shadow-lift:
+    0 1px 0 rgba(255, 255, 255, 0.05) inset,
+    0 2px 6px rgba(0, 0, 0, 0.45),
+    0 22px 50px -12px rgba(0, 0, 0, 0.6);
+
+  --shadow-1: 0 1px 0 rgba(0, 0, 0, 0.3), 0 1px 2px rgba(0, 0, 0, 0.4);
+  --shadow-2: 0 2px 8px rgba(0, 0, 0, 0.45);
+
+  --neu-raised: 0 1px 2px rgba(0, 0, 0, 0.45), 0 3px 10px rgba(0, 0, 0, 0.45);
+  --neu-raised-strong: 0 2px 6px rgba(0, 0, 0, 0.55), 0 10px 24px rgba(0, 0, 0, 0.6);
+  --neu-inset: inset 0 1px 3px rgba(0, 0, 0, 0.6), inset 0 -1px 2px rgba(255, 255, 255, 0.03);
 }
 
 * {
@@ -155,6 +220,59 @@ a:hover {
   box-shadow: var(--glass-shadow-lift);
 }
 
+/* ── Neumorphism utilities (버튼 / 섹션 토글 / 박스) ──────────── */
+/* 모두 모노크롬 — 밝은 색 없이 음영으로만 구분. 인라인 background/색은 제거하고 */
+/* 이 클래스를 쓴다 (인라인 스타일이 클래스를 덮어쓰므로). */
+.neu {
+  background: var(--paper);
+  border: 1px solid var(--paper-edge);
+  box-shadow: var(--neu-raised);
+}
+/* 보조(secondary) 버튼 — 은은한 중성 펄 */
+.neu-btn {
+  background: var(--paper);
+  border: 1px solid var(--paper-edge);
+  box-shadow: var(--neu-raised);
+  color: var(--ink-soft);
+  transition: box-shadow 0.13s ease, transform 0.05s ease, color 0.13s ease;
+}
+.neu-btn:hover {
+  box-shadow: var(--neu-raised-strong);
+  color: var(--ink);
+}
+.neu-btn:active {
+  box-shadow: var(--neu-inset);
+  transform: translateY(0.5px);
+}
+/* 주요(primary) 버튼 — 밝은 중성 펄 (강한 음영 + 잉크 글자로 강조, 색은 안 씀) */
+.neu-btn-primary {
+  background: var(--paper);
+  border: 1px solid var(--paper-edge);
+  box-shadow: var(--neu-raised-strong);
+  color: var(--ink);
+  font-weight: 600;
+  transition: box-shadow 0.13s ease, transform 0.05s ease, color 0.13s ease;
+}
+.neu-btn-primary:hover {
+  box-shadow: var(--neu-raised-strong);
+}
+.neu-btn-primary:active {
+  box-shadow: var(--neu-inset);
+  transform: translateY(0.5px);
+}
+/* 세그먼트(섹션 버튼) 트랙 — 눌린 듯한 홈 */
+.neu-track {
+  background: var(--paper-2);
+  border: 1px solid var(--paper-edge);
+  box-shadow: var(--neu-inset);
+}
+/* 세그먼트 활성 칩 — 떠오른 느낌 */
+.neu-seg {
+  background: var(--paper);
+  box-shadow: var(--neu-raised);
+  color: var(--ink);
+}
+
 /* 미니 키캡 (단축키 표시) */
 .kbd {
   display: inline-flex;
@@ -190,6 +308,23 @@ a:hover {
 }
 ::-webkit-scrollbar-track {
   background: transparent;
+}
+
+/* ── Dark theme surface tweaks ───────────────────────────── */
+:root[data-theme="dark"] body {
+  background:
+    radial-gradient(900px 600px at 12% -10%, rgba(123, 119, 238, 0.12), transparent 65%),
+    radial-gradient(700px 500px at 100% 110%, rgba(255, 122, 85, 0.06), transparent 65%),
+    var(--paper);
+  background-attachment: fixed;
+}
+:root[data-theme="dark"] ::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.16);
+  background-clip: padding-box;
+}
+:root[data-theme="dark"] ::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.26);
+  background-clip: padding-box;
 }
 
 /* ── 채팅 워킹 패널 애니메이션 — Codex/Claude 데스크톱 톤 ────────── */

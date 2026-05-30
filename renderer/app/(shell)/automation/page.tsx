@@ -85,10 +85,12 @@ export default function AutomationListPage() {
             gap: 6,
             padding: "8px 14px",
             borderRadius: "var(--radius-md)",
-            background: "var(--accent)",
-            color: "white",
+            background: "var(--paper)",
+            color: "var(--ink)",
             fontWeight: 600,
             fontSize: 13,
+            border: "1px solid var(--paper-edge)",
+            boxShadow: "var(--neu-raised)",
             textDecoration: "none",
           }}
         >
@@ -141,8 +143,18 @@ export default function AutomationListPage() {
               >
                 <IconBolt size={16} style={{ color: a.enabled ? "var(--accent)" : "var(--muted)" }} />
                 <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontWeight: 600, fontSize: 13 }}>{a.name}</div>
-                  <div style={{ fontSize: 11, color: "var(--muted-deep)" }}>
+                  <div
+                    style={{
+                      fontWeight: 600,
+                      fontSize: 13,
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                      whiteSpace: "nowrap",
+                    }}
+                  >
+                    {a.name}
+                  </div>
+                  <div style={{ fontSize: 11, color: "var(--muted-deep)", overflowWrap: "anywhere" }}>
                     {a.scheduleHuman} ·{" "}
                     <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
                       {targetLabel(a).icon}

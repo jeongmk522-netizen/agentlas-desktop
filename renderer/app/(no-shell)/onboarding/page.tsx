@@ -165,15 +165,15 @@ export default function OnboardingPage() {
           style={{
             padding: "10px 24px",
             borderRadius: 999,
-            background: "var(--accent)",
-            color: "white",
+            background: "var(--paper)",
+            color: "var(--ink)",
             fontWeight: 600,
             fontSize: 13,
-            border: "none",
+            border: "1px solid var(--paper-edge)",
+            boxShadow: "var(--neu-raised)",
             display: "inline-flex",
             alignItems: "center",
             gap: 6,
-            boxShadow: "var(--shadow-2)",
           }}
         >
           {step === 4 ? t("onb.step.start") : t("onb.step.next")}
@@ -436,11 +436,19 @@ function StepBackend() {
                     >
                       <IconCheck size={14} />
                     </span>
-                    <div style={{ flex: 1 }}>
+                    <div style={{ flex: 1, minWidth: 0 }}>
                       <div style={{ fontWeight: 600, fontSize: 13 }}>
                         {labelOf(s.kind)} · {backendLabel(s.backend)}
                       </div>
-                      <div style={{ fontSize: 11, color: "var(--muted-deep)" }}>
+                      <div
+                        style={{
+                          fontSize: 11,
+                          color: "var(--muted-deep)",
+                          overflow: "hidden",
+                          textOverflow: "ellipsis",
+                          whiteSpace: "nowrap",
+                        }}
+                      >
                         {s.source}
                         {s.version && ` · v${s.version}`}
                       </div>
@@ -502,9 +510,10 @@ function StepBackend() {
                   fontSize: 12,
                   fontWeight: 600,
                   borderRadius: "var(--radius-md)",
-                  background: draft[b].trim() ? "var(--accent)" : "var(--paper-2)",
-                  color: draft[b].trim() ? "white" : "var(--muted-deep)",
-                  border: "none",
+                  background: draft[b].trim() ? "var(--paper)" : "var(--paper-2)",
+                  color: draft[b].trim() ? "var(--ink)" : "var(--muted-deep)",
+                  border: "1px solid var(--paper-edge)",
+                  boxShadow: draft[b].trim() ? "var(--neu-raised)" : "none",
                 }}
               >
                 {t("onb.backend.byok_save")}

@@ -10,43 +10,34 @@ import type {
   ImageAttachment,
   InstalledAgent,
   InstalledFirm,
+  ResolvedOrg,
   McpInvocationEvent,
   Project,
   RuntimeCommand,
   RuntimeStatus,
 } from "@/lib/types";
-import { CONTEXT_MANAGED_BY } from "@shared/models";
-
-/** picker 모델 옵션 — runtime.listModels가 실시간 조회해 채워준다. */
-type ModelOption = { id: string; label: string; tag?: string };
 import { ChatStream, type StreamMessage } from "@/components/ChatStream";
 import { extractQuestions } from "@/lib/ask-question";
 import { ChatInput } from "@/components/ChatInput";
 import { ArtifactPanel } from "@/components/ArtifactPanel";
 import { WorkspacePanel } from "@/components/WorkspacePanel";
+import { AgentNetworkPanel, type LiveAgent, type NetTimelineItem } from "@/components/AgentNetworkPanel";
+import { ProjectFolderBar } from "@/components/ProjectFolderBar";
 import { AgentAvatar } from "@/components/AgentAvatar";
 import type { CodeArtifact } from "@/components/Markdown";
-import { IconBuilding, IconChevronRight, IconFolder, IconSparkles, IconTrash } from "@/components/Icon";
+import { IconBuilding, IconChevronRight, IconFolder, IconNetwork, IconSparkles, IconTrash } from "@/components/Icon";
 import { pickLocalized, useT } from "@/lib/i18n";
 
 function uid(): string {
   return Math.random().toString(36).slice(2);
 }
 
-const CLI_RUNTIME_LABEL: Record<string, string> = {
-  "claude-code": "Claude Code",
-  codex: "Codex",
-  gemini: "Gemini",
-};
+// 우측 워크스페이스 패널 열림/접힘 선호값 — 채팅 간 이동에도 유지.
+const WORKSPACE_OPEN_KEY = "agentlas.workspace.open";
+const NETWORK_OPEN_KEY = "agentlas.network.open";
 
-/** 헤더 칩 라벨 — 실시간 모델 옵션(opts)에서 현재 모델 라벨을 찾아 조립. */
-function runtimeChipLabel(s: RuntimeStatus, opts: ModelOption[]): string {
-  const label = opts.find((o) => o.id === s.model)?.label ?? s.model ?? undefined;
-  if (s.kind === "ollama") return label ? `Ollama · ${label}` : "Ollama";
-  if (s.kind === "byok") return label ?? "API";
-  const base = CLI_RUNTIME_LABEL[s.kind] ?? s.kind;
-  return label ? `${base} · ${label}` : base;
-}
+/** picker 모델 옵션 — runtime.listModels가 실시간 조회해 채워준다. */
+type ModelOption = { id: string; label: string; tag?: string };
 
 export default function ChatPageWrapper() {
   // useSearchParams는 Suspense boundary를 요구함 (Next 15)
@@ -72,9 +63,13 @@ function ChatPage() {
   const [allEnvKeys, setAllEnvKeys] = useState<string[]>([]);
   const [cliCommands, setCliCommands] = useState<RuntimeCommand[]>([]);
   const [firm, setFirm] = useState<InstalledFirm | null>(null);
+  const [resolvedOrg, setResolvedOrg] = useState<ResolvedOrg | null>(null);
   const [project, setProject] = useState<Project | null>(null);
   const [messages, setMessages] = useState<StreamMessage[]>([]);
   const [busy, setBusy] = useState(false);
+  // 멀티 에이전트 실시간 텔레메트리 — 속성(agentId) 이벤트로 채워지는 네트워크 패널 상태.
+  const [liveAgents, setLiveAgents] = useState<Record<string, LiveAgent>>({});
+  const [netTimeline, setNetTimeline] = useState<NetTimelineItem[]>([]);
   const [editingTitle, setEditingTitle] = useState(false);
   const [titleDraft, setTitleDraft] = useState("");
   const subRef = useRef<(() => void) | null>(null);
@@ -87,6 +82,28 @@ function ChatPage() {
   const [artifact, setArtifact] = useState<CodeArtifact | null>(null);
   // 우측 워크스페이스 패널 — 채팅 진입 시 working_folder가 저장돼 있으면 자동 노출
   const [workspaceOpen, setWorkspaceOpen] = useState(false);
+  // 우측 팀 네트워크 패널 — 에이전트 명령/응답 흐름 비주얼
+  const [networkOpen, setNetworkOpen] = useState(false);
+  // 슬래시 명령(/folder·/global)으로 워킹 폴더를 바꾸면 하단 폴더 바를 다시 읽게 하는 토큰
+  const [folderReload, setFolderReload] = useState(0);
+
+  // 사용자가 직접 패널을 접고/펴면 선호값을 영속화 (자동 노출과 구분).
+  const setWorkspaceOpenPersisted = useCallback((open: boolean) => {
+    setWorkspaceOpen(open);
+    try {
+      window.localStorage.setItem(WORKSPACE_OPEN_KEY, open ? "1" : "0");
+    } catch {
+      // sandbox/private mode — 영속화 생략
+    }
+  }, []);
+  const setNetworkOpenPersisted = useCallback((open: boolean) => {
+    setNetworkOpen(open);
+    try {
+      window.localStorage.setItem(NETWORK_OPEN_KEY, open ? "1" : "0");
+    } catch {
+      // ignore
+    }
+  }, []);
 
   // Esc로 artifact 패널 닫기
   useEffect(() => {
@@ -132,9 +149,28 @@ function ChatPage() {
         if (!cancelled) setActiveRuntime(list.find((r) => r.active) ?? null);
       });
       setAgent(agents.find((a) => a.id === c.agentId) ?? null);
-      // working_folder가 이미 저장돼 있으면 자동으로 패널 노출 (다음 진입 시 복원)
+      // 패널 노출 결정: 사용자가 명시적으로 접고/편 선호값이 있으면 그것을 우선,
+      // 없으면 working_folder가 저장돼 있을 때만 자동 노출.
       const savedFolder = await api.workspace.get(chatId);
-      if (!cancelled && savedFolder) setWorkspaceOpen(true);
+      let storedOpen: string | null = null;
+      try {
+        storedOpen = window.localStorage.getItem(WORKSPACE_OPEN_KEY);
+      } catch {
+        // ignore
+      }
+      if (!cancelled) {
+        if (storedOpen === "1") setWorkspaceOpen(true);
+        else if (storedOpen === "0") setWorkspaceOpen(false);
+        else if (savedFolder) setWorkspaceOpen(true);
+      }
+      // 팀 네트워크 패널 — 저장된 선호값 복원 (기본 닫힘)
+      let storedNet: string | null = null;
+      try {
+        storedNet = window.localStorage.getItem(NETWORK_OPEN_KEY);
+      } catch {
+        // ignore
+      }
+      if (!cancelled) setNetworkOpen(storedNet === "1");
       if (c.projectId) {
         const p = await api.projects.get(c.projectId);
         if (!cancelled) setProject(p);
@@ -142,8 +178,13 @@ function ChatPage() {
       if (c.firmId) {
         const f = await api.firms.get(c.firmId);
         if (!cancelled) setFirm(f);
+        // 네트워크 패널 명단용 — 정규화된 3-tier 조직 (리졸버 결과 또는 orgChart 파생)
+        void api.firms.getResolvedOrg(c.firmId).then((o) => {
+          if (!cancelled) setResolvedOrg(o);
+        });
       } else {
         setFirm(null);
+        setResolvedOrg(null);
       }
       setMessages(
         history.map((e) => ({
@@ -214,6 +255,8 @@ function ChatPage() {
         },
       ]);
       setBusy(true);
+      setLiveAgents({});
+      setNetTimeline([]);
 
       // locale을 동봉 — main이 emit하는 상태/오류 메시지가 사용자 언어로 나오도록.
       const { runId } = await api.invoke.run({
@@ -229,6 +272,53 @@ function ChatPage() {
       // 같은 status가 연달아 오면 중복 push 방지 — runner는 onStatus를 throttle 안 해서 partial과 섞이기도.
       const lastStatusRef = { text: "" };
       subRef.current = events.on(channel, (ev: McpInvocationEvent) => {
+        // ── 속성(agentId) 이벤트 → 네트워크 패널 (메인 버블 안 건드림) ──
+        if (ev.agentId) {
+          const aid = ev.agentId;
+          setLiveAgents((prev) => ({
+            ...prev,
+            [aid]: {
+              name: ev.agentName ?? prev[aid]?.name ?? aid,
+              role: ev.role ?? prev[aid]?.role ?? "",
+              tier: ev.tier ?? prev[aid]?.tier,
+              active: true,
+              status: ev.status ?? prev[aid]?.status,
+              delegateTo: ev.delegateTo ?? prev[aid]?.delegateTo,
+            },
+          }));
+          // 타임라인은 discrete 활동(tool/status/handoff)만 — partial 토큰 폭주 방지
+          if (ev.kind === "tool-use") {
+            const label = ev.tool ? ev.tool.name : ev.status?.trim() ?? "";
+            if (label) {
+              setNetTimeline((tl) => [
+                ...tl,
+                {
+                  key: uid(),
+                  agentId: aid,
+                  name: ev.agentName ?? aid,
+                  role: ev.role ?? "",
+                  tier: ev.tier,
+                  kind: ev.delegateTo ? "handoff" : ev.tool ? "tool" : "status",
+                  text: ev.status?.trim() || label,
+                },
+              ]);
+            }
+          } else if (ev.kind === "thinking" && ev.status?.trim()) {
+            setNetTimeline((tl) => [
+              ...tl,
+              {
+                key: uid(),
+                agentId: aid,
+                name: ev.agentName ?? aid,
+                role: ev.role ?? "",
+                tier: ev.tier,
+                kind: "status",
+                text: ev.status!.trim(),
+              },
+            ]);
+          }
+          return;
+        }
         if (ev.kind === "tool-use" && ev.tool) {
           // Claude Code식 tool-use 블록 — 이름 + 인자(접기/펴기)
           setMessages((m) =>
@@ -292,6 +382,9 @@ function ChatPage() {
             }),
           );
           setBusy(false);
+          setLiveAgents((prev) =>
+            Object.fromEntries(Object.entries(prev).map(([k, v]) => [k, { ...v, active: false }])),
+          );
           runIdRef.current = null;
           subRef.current?.();
           subRef.current = null;
@@ -303,6 +396,9 @@ function ChatPage() {
             { id: uid(), role: "system", text: `⚠️ ${ev.error?.message ?? t("chat.err.unknown")}` },
           ]);
           setBusy(false);
+          setLiveAgents((prev) =>
+            Object.fromEntries(Object.entries(prev).map(([k, v]) => [k, { ...v, active: false }])),
+          );
           runIdRef.current = null;
           subRef.current?.();
           subRef.current = null;
@@ -319,22 +415,25 @@ function ChatPage() {
     void api.invoke.cancel(runIdRef.current);
   }, []);
 
-  // 활성 모델을 채팅 헤더에서 바로 변경 — BYOK 및 CLI(claude-code) 공통.
-  // model === "" 이면 모델 미지정(구독 기본)으로 되돌린다.
-  async function switchModel(model: string) {
+  // 활성 모델/작업량을 입력창 picker에서 바로 변경 — BYOK 및 CLI 공통.
+  // model === "" 이면 모델 미지정(구독 기본). effort는 명시할 때만 갱신.
+  async function applySelection(patch: { model?: string; effort?: string }) {
     const api = ipc();
     if (!api || !activeRuntime) return;
     await api.runtime.setActive({
       kind: activeRuntime.kind,
       backend: activeRuntime.backend,
       source: activeRuntime.source,
-      model: model || undefined,
+      model: patch.model !== undefined ? patch.model || undefined : activeRuntime.model ?? undefined,
       longContext:
         activeRuntime.kind === "byok" ? (activeRuntime.longContextEnabled ?? false) : undefined,
+      effort: patch.effort,
     });
     const list = await api.runtime.detect();
     setActiveRuntime(list.find((r) => r.active) ?? null);
   }
+  const switchModel = (model: string) => void applySelection({ model });
+  const switchEffort = (effort: string) => void applySelection({ effort });
 
   /**
    * 에이전트가 emit한 질문(<<agentlas-ask>>)에 사용자가 답함.
@@ -386,11 +485,23 @@ function ChatPage() {
         void api.chats
           .create({ agentId: chat.agentId, projectId: chat.projectId, firmId: chat.firmId })
           .then((c) => router.push(`/chat?id=${c.id}`));
+      } else if (cmd === "/folder") {
+        void api.fs.pickDirectory().then((p) => {
+          if (!p) return;
+          void api.workspace.set(chat.id, p).then(() => {
+            setWorkspaceOpenPersisted(true);
+            setFolderReload((n) => n + 1);
+          });
+        });
+      } else if (cmd === "/global") {
+        void api.workspace.set(chat.id, null).then(() => setFolderReload((n) => n + 1));
+      } else if (cmd === "/rename") {
+        setEditingTitle(true);
       } else if (cmd === "/help") {
         setMessages((m) => [...m, { id: uid(), role: "system", text: t("chatinput.cmd.help_text") }]);
       }
     },
-    [chat, router, t],
+    [chat, router, t, setWorkspaceOpenPersisted],
   );
 
   async function switchAgent(agentId: string) {
@@ -459,8 +570,8 @@ function ChatPage() {
                     width: 26,
                     height: 26,
                     borderRadius: 8,
-                    background: "var(--accent)",
-                    color: "white",
+                    background: "var(--paper-edge)",
+                    color: "var(--ink-soft)",
                     display: "inline-flex",
                     alignItems: "center",
                     justifyContent: "center",
@@ -471,7 +582,17 @@ function ChatPage() {
               ) : (
                 <AgentAvatar name={pickLocalized(agent, locale).name} tone={agent.tone} size={26} />
               )}
-              <span style={{ fontSize: 12, fontWeight: 600, color: "var(--ink)" }}>
+              <span
+                style={{
+                  fontSize: 12,
+                  fontWeight: 600,
+                  color: "var(--ink)",
+                  maxWidth: 180,
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                  whiteSpace: "nowrap",
+                }}
+              >
                 {pickLocalized(agent, locale).name}
               </span>
               {firm && (
@@ -480,9 +601,14 @@ function ChatPage() {
                     fontSize: 10,
                     padding: "2px 6px",
                     borderRadius: 999,
-                    background: "var(--accent)",
-                    color: "white",
+                    background: "var(--paper-2)",
+                    color: "var(--ink-soft)",
+                    border: "1px solid var(--paper-edge)",
                     fontWeight: 700,
+                    maxWidth: 200,
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                    whiteSpace: "nowrap",
                   }}
                 >
                   CEO · {pickLocalized(firm, locale).name}
@@ -610,7 +736,23 @@ function ChatPage() {
           </button>
         )}
         <button
-          onClick={() => setWorkspaceOpen((v) => !v)}
+          onClick={() => setNetworkOpenPersisted(!networkOpen)}
+          className="titlebar-nodrag"
+          aria-label={t("chat.network_panel")}
+          title={t("chat.network_panel")}
+          style={{
+            color: networkOpen ? "var(--accent)" : "var(--muted-deep)",
+            background: networkOpen ? "var(--fill-1)" : "transparent",
+            padding: 6,
+            borderRadius: 6,
+            border: "none",
+            cursor: "pointer",
+          }}
+        >
+          <IconNetwork size={16} />
+        </button>
+        <button
+          onClick={() => setWorkspaceOpenPersisted(!workspaceOpen)}
           className="titlebar-nodrag"
           aria-label={t("chat.workspace_panel")}
           title={t("chat.workspace_panel")}
@@ -649,11 +791,23 @@ function ChatPage() {
         onOpenArtifact={setArtifact}
         onAnswerQuestion={answerQuestion}
       />
+      {/* Codex식: 이 대화가 폴더(프로젝트)에서 작업하는지 / 전역 대화인지 선택 */}
+      <div style={{ padding: "6px 16px 0", display: "flex" }}>
+        <ProjectFolderBar
+          chatId={chatId || null}
+          reloadToken={folderReload}
+          onOpenPanel={() => setWorkspaceOpenPersisted(true)}
+          onChanged={(f) => {
+            if (f) setWorkspaceOpenPersisted(true);
+          }}
+        />
+      </div>
       <ChatInput
         onSend={(text, opts) => {
           void send(text, { images: opts?.images, permissions: opts?.permissions });
         }}
         onCommand={handleCommand}
+        onCallAgent={(agentId) => void switchAgent(agentId)}
         busy={busy}
         disabled={!agent}
         context={{
@@ -663,11 +817,27 @@ function ChatPage() {
           envKeys: allEnvKeys,
           commands: cliCommands,
         }}
+        runtime={activeRuntime}
+        modelOptions={modelOptions}
+        onSelectModel={switchModel}
+        onSelectEffort={switchEffort}
       />
       </div>
       <ArtifactPanel artifact={artifact} onClose={() => setArtifact(null)} />
       {workspaceOpen && (
-        <WorkspacePanel chatId={chatId || null} onClose={() => setWorkspaceOpen(false)} />
+        <WorkspacePanel chatId={chatId || null} onClose={() => setWorkspaceOpenPersisted(false)} />
+      )}
+      {networkOpen && (
+        <AgentNetworkPanel
+          firm={firm}
+          org={resolvedOrg}
+          agent={agent}
+          agents={allAgents}
+          busy={busy}
+          liveAgents={liveAgents}
+          timeline={netTimeline}
+          onClose={() => setNetworkOpenPersisted(false)}
+        />
       )}
     </div>
   );

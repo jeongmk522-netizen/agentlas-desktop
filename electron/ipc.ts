@@ -45,6 +45,8 @@ import {
 } from "./store/firms";
 import { listAgentFiles, readAgentFile, writeAgentFile } from "./agents/files";
 import { importLocalFolder } from "./agents/import-local";
+import { getResolvedOrg } from "./store/org-spec";
+import { resolveTeamOrg } from "./agents/org-resolver";
 import { runMcpInvocation } from "./mcp/client";
 import { checkSafely as updaterCheck, getUpdaterState, quitAndInstall as updaterInstall } from "./updater";
 import { listDirectory, pickDirectory, readTextFilePreview } from "./fs/workspace";
@@ -288,6 +290,13 @@ export function registerIpcHandlers(): void {
   ipcMain.handle("firms:get", (_e, id: string) => getFirm(id));
   ipcMain.handle("firms:install", (_e, slug: string) => installFirm(slug));
   ipcMain.handle("firms:uninstall", (_e, id: string) => uninstallFirm(id));
+  // 정규화된 3-tier 조직 스펙 조회 (저장된 리졸버 결과 또는 orgChart 파생)
+  ipcMain.handle("firms:getResolvedOrg", (_e, id: string) => {
+    const firm = getFirm(id);
+    return firm ? getResolvedOrg(firm) : null;
+  });
+  // LLM으로 팀 폴더를 분석해 3-tier 조직 스펙 생성 (임포트 팀용)
+  ipcMain.handle("firms:resolveOrg", (_e, id: string) => resolveTeamOrg(id));
 
   // ── projects ───────────────────────────────────────────
   ipcMain.handle("projects:list", () => listProjects());

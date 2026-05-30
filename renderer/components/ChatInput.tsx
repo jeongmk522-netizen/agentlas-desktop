@@ -92,12 +92,15 @@ interface AutocompleteOption {
   replacement: string;
   /** true면 앱 액션 실행(/new·/clear·/help). false/undefined면 텍스트 삽입(멘션·CLI 슬래시). */
   appAction?: boolean;
+  /** 멘션(@agent/@firm) 선택 시 이 에이전트로 활성 에이전트를 전환(=에이전트 콜). 있으면 텍스트 삽입 대신 전환. */
+  switchAgentId?: string;
 }
 
 type PermissionLevel = "read" | "write" | "full";
 
 export function ChatInput({
   onSend,
+  onCallAgent,
   onCommand,
   busy,
   disabled,
@@ -110,6 +113,8 @@ export function ChatInput({
   onSend: (text: string, opts?: SendOptions) => void;
   /** 슬래시 커맨드(/new, /clear, /help …) 실행 — 텍스트 삽입이 아니라 액션 */
   onCommand?: (cmd: string) => void;
+  /** @멘션으로 에이전트/회사를 고르면 그 에이전트를 호출(활성 에이전트 전환). */
+  onCallAgent?: (agentId: string) => void;
   busy: boolean;
   disabled?: boolean;
   context?: MentionContext;
@@ -129,7 +134,9 @@ export function ChatInput({
   const [plusSubmenu, setPlusSubmenu] = useState<"plugins" | null>(null);
   const [planMode, setPlanMode] = useState(false);
   const [goalMode, setGoalMode] = useState(false);
-  const [permissions, setPermissions] = useState<PermissionLevel>("read");
+  // 기본값을 write로 — 바이브코딩 앱에서 read-only 기본은 첫 "만들어줘"가 파일을 못 써 조용히 실패한다.
+  // write는 cwd 파일 편집만 허용(셸·외부 자동호출은 차단)이라 안전한 기본값.
+  const [permissions, setPermissions] = useState<PermissionLevel>("write");
   const [permOpen, setPermOpen] = useState(false);
   const [modelOpen, setModelOpen] = useState(false);
   // / 슬래시 + @ 멘션 인라인 자동완성
@@ -205,25 +212,39 @@ export function ChatInput({
     setActiveIndex(autocompleteOptions.length > 0 ? 0 : -1);
   }, [autocompleteOptions]);
 
-  function applyAutocomplete(opt: AutocompleteOption) {
+  // fillOnly=true(Tab): 실행/전환 없이 텍스트만 자동완성해 넣는다(절대 전송 안 함).
+  // fillOnly=false(Enter): 앱 명령은 실행, @agent/@firm은 에이전트 전환, 그 외는 텍스트 삽입.
+  function applyAutocomplete(opt: AutocompleteOption, fillOnly = false) {
     if (!trigger) return;
     const before = input.slice(0, trigger.startIndex);
     const caret = textareaRef.current?.selectionStart ?? input.length;
     const after = input.slice(caret);
-    // 앱 슬래시 명령(/new·/clear·/help)은 텍스트로 넣지 않고 액션 실행 — "/..." 토큰 제거.
-    if (opt.appAction && onCommand) {
-      setInput(`${before}${after}`.trimStart());
-      setTrigger(null);
-      onCommand(opt.replacement);
-      setTimeout(() => textareaRef.current?.focus(), 0);
-      return;
+
+    if (!fillOnly) {
+      // @agent / @firm 선택 = 그 에이전트 호출(활성 에이전트 전환) — 텍스트는 넣지 않고 토큰 제거.
+      if (opt.switchAgentId && onCallAgent) {
+        setInput(`${before}${after}`.trimStart());
+        setTrigger(null);
+        onCallAgent(opt.switchAgentId);
+        setTimeout(() => textareaRef.current?.focus(), 0);
+        return;
+      }
+      // 앱 슬래시 명령(/new·/folder·…)은 텍스트로 넣지 않고 액션 실행 — "/..." 토큰 제거.
+      if (opt.appAction && onCommand) {
+        setInput(`${before}${after}`.trimStart());
+        setTrigger(null);
+        onCommand(opt.replacement);
+        setTimeout(() => textareaRef.current?.focus(), 0);
+        return;
+      }
     }
-    // 멘션 + CLI 슬래시 명령 → 텍스트 삽입 (전송 시 CLI가 확장).
-    const next = `${before}${opt.replacement} ${after}`;
+    // (fillOnly이거나) 멘션/CLI 슬래시 → 텍스트 삽입. fillOnly는 트레일링 공백 없이 채워 계속 편집 가능.
+    const tail = fillOnly ? "" : " ";
+    const next = `${before}${opt.replacement}${tail}${after}`;
     setInput(next);
     setTrigger(null);
     setTimeout(() => {
-      const pos = `${before}${opt.replacement} `.length;
+      const pos = `${before}${opt.replacement}${tail}`.length;
       textareaRef.current?.focus();
       textareaRef.current?.setSelectionRange(pos, pos);
     }, 0);
@@ -412,7 +433,7 @@ export function ChatInput({
           value={input}
           onChange={onInputChange}
           onKeyDown={(e) => {
-            // 자동완성 popover가 떠 있을 때만 ↑↓/Enter/Tab/Esc 가로챔
+            // 자동완성 popover가 떠 있을 때 ↑↓/Enter/Tab/Esc 가로챔
             if (trigger && autocompleteOptions.length > 0) {
               if (e.key === "ArrowDown") {
                 e.preventDefault();
@@ -428,15 +449,24 @@ export function ChatInput({
                 );
                 return;
               }
-              if (e.key === "Enter" || e.key === "Tab") {
-                // 자동완성 선택 — ⌘↵ 전송과 충돌하지 않도록 modifier 없을 때만
-                if (!e.metaKey && !e.ctrlKey) {
-                  e.preventDefault();
-                  const opt = autocompleteOptions[activeIndex];
-                  if (opt) applyAutocomplete(opt);
-                  return;
-                }
+              // Tab = 텍스트만 자동완성(실행/전송 안 함). Enter = 선택(앱 명령 실행 / 에이전트 콜 / 텍스트 삽입).
+              if (e.key === "Tab") {
+                e.preventDefault();
+                const opt = autocompleteOptions[activeIndex];
+                if (opt) applyAutocomplete(opt, true);
+                return;
               }
+              if (e.key === "Enter" && !e.metaKey && !e.ctrlKey) {
+                e.preventDefault();
+                const opt = autocompleteOptions[activeIndex];
+                if (opt) applyAutocomplete(opt);
+                return;
+              }
+            }
+            // 슬래시/멘션 토큰을 입력 중이면(매칭 0개라도) Enter/Tab으로 메시지를 전송하지 않는다.
+            if (trigger && (e.key === "Enter" || e.key === "Tab") && !e.metaKey && !e.ctrlKey) {
+              e.preventDefault();
+              return;
             }
             if (trigger && e.key === "Escape") {
               setTrigger(null);
@@ -629,13 +659,13 @@ export function ChatInput({
               height: 32,
               flexShrink: 0,
               borderRadius: "50%",
-              background: submitDisabled ? "var(--paper-2)" : "var(--ink)",
-              color: submitDisabled ? "var(--muted-deep)" : "white",
-              border: "none",
+              background: submitDisabled ? "var(--paper-2)" : "var(--paper)",
+              color: submitDisabled ? "var(--muted-deep)" : "var(--ink)",
+              border: "1px solid var(--paper-edge)",
               display: "inline-flex",
               alignItems: "center",
               justifyContent: "center",
-              boxShadow: submitDisabled ? "none" : "0 4px 14px rgba(11,11,15,0.18)",
+              boxShadow: submitDisabled ? "none" : "var(--neu-raised)",
             }}
           >
             {busy ? <span className="agentlas-spinner" aria-hidden /> : <IconArrowUp size={15} />}
@@ -662,6 +692,9 @@ function buildAutocompleteOptions(
     // 앱 명령 — 실행(appAction)
     const cmds = [
       { key: "/new", desc: t("chatinput.cmd.new") },
+      { key: "/folder", desc: t("chatinput.cmd.folder") },
+      { key: "/global", desc: t("chatinput.cmd.global") },
+      { key: "/rename", desc: t("chatinput.cmd.rename") },
       { key: "/clear", desc: t("chatinput.cmd.clear") },
       { key: "/help", desc: t("chatinput.cmd.help") },
     ].filter((c) => !q || c.key.includes(q) || c.desc.toLowerCase().includes(q));
@@ -728,6 +761,7 @@ function buildAutocompleteOptions(
       title: loc.name,
       subtitle: loc.tagline,
       replacement: `@${loc.name}`,
+      switchAgentId: a.id, // @agent = 그 에이전트 호출(활성 에이전트 전환)
     });
   }
   for (const f of firms) {
@@ -739,6 +773,7 @@ function buildAutocompleteOptions(
       title: loc.name,
       subtitle: loc.tagline,
       replacement: `@${loc.name}`,
+      switchAgentId: f.ceoAgentId, // @firm = 그 회사 CEO 호출
     });
   }
   for (const p of projects) {

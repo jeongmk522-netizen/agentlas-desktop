@@ -104,6 +104,8 @@ const api: AgentlasIpc = {
     get: (id: string) => ipcRenderer.invoke("firms:get", id),
     install: (slug: string) => ipcRenderer.invoke("firms:install", slug),
     uninstall: (id: string) => ipcRenderer.invoke("firms:uninstall", id),
+    getResolvedOrg: (id: string) => ipcRenderer.invoke("firms:getResolvedOrg", id),
+    resolveOrg: (id: string) => ipcRenderer.invoke("firms:resolveOrg", id),
   },
   projects: {
     list: () => ipcRenderer.invoke("projects:list"),

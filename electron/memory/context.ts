@@ -1,6 +1,12 @@
 // Builds the memory context injected into the system prompt before a run.
 // Kept compact (token-bounded) on purpose — it runs on every turn.
-import { listGlobalMemory, listMemoryByPath, type MemoryEntry } from "./store";
+import {
+  listGlobalMemory,
+  listGlobalMemoryForAgent,
+  listMemoryByPath,
+  listMemoryByPathForAgent,
+  type MemoryEntry,
+} from "./store";
 import { readProjectSoul, readSitemap } from "./project-files";
 
 const SOUL_MAX_CHARS = 1800;
@@ -31,8 +37,14 @@ function entryLines(entries: MemoryEntry[]): string {
  * Returns a memory context block (or empty string). When `projectPath` is set, prefers
  * the folder's curated memory + soul + sitemap; otherwise falls back to global memory.
  */
-export function buildMemoryContext(projectPath: string | null): string {
+export function buildMemoryContext(
+  projectPath: string | null,
+  agentId?: string | null,
+): string {
   const sections: string[] = [];
+  // agentId가 주어지면 per-agent 스코프(공유 + 본인 agent_repo만)로 읽어, 각 본부/전문가
+  // 세션이 자기 메모리만 보게 한다. 미지정이면 기존 동작(전체) 유지(단일 에이전트 경로).
+  const perAgent = agentId !== undefined;
 
   if (projectPath) {
     const soul = readProjectSoul(projectPath);
@@ -43,14 +55,18 @@ export function buildMemoryContext(projectPath: string | null): string {
     }
     const sitemap = summarizeSitemap(projectPath);
     if (sitemap) sections.push(sitemap);
-    const entries = listMemoryByPath(projectPath, MAX_ENTRIES).filter(
-      (e) => e.scope !== "session",
-    );
+    const entries = (
+      perAgent
+        ? listMemoryByPathForAgent(projectPath, agentId ?? null, MAX_ENTRIES)
+        : listMemoryByPath(projectPath, MAX_ENTRIES)
+    ).filter((e) => e.scope !== "session");
     if (entries.length > 0) {
       sections.push(`### Recent curated memory\n${entryLines(entries)}`);
     }
   } else {
-    const entries = listGlobalMemory(MAX_ENTRIES);
+    const entries = perAgent
+      ? listGlobalMemoryForAgent(agentId ?? null, MAX_ENTRIES)
+      : listGlobalMemory(MAX_ENTRIES);
     if (entries.length > 0) {
       sections.push(`### Curated memory (global)\n${entryLines(entries)}`);
     }

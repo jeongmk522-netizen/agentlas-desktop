@@ -256,6 +256,41 @@ export interface InstalledFirm {
   installedAt: string;
 }
 
+// ── 정규화된 3-tier 조직 스펙 (멀티 에이전트 오케스트레이션의 입력) ──────
+// firm.orgChart(또는 LLM 리졸버)를 CEO → 본부(division) → 전문가(specialist)
+// 3계층으로 정규화한다. 오케스트레이터는 이 스펙만 보고 실행하므로 소스(시드/임포트)와 분리된다.
+export interface ResolvedNode {
+  /** 안정적 id — 실 installed agent면 그 id, 아니면 slug/role 파생 */
+  id: string;
+  /** 표시 이름 */
+  name: string;
+  /** 회사 내 역할 ("CEO" / "마케팅 본부장" / ...) */
+  role: string;
+  /** 실제 installed agent에 매핑되면 그 id (없으면 라벨/리졸버 생성 노드) */
+  agentId?: string;
+  /** 이 노드를 실행할 시스템 프롬프트 (에이전트 프롬프트 또는 리졸버 생성). */
+  prompt?: string;
+  /** 인라인 prompt 대신 런타임에 읽을 프롬프트 파일 절대경로 (리졸버 출력용). */
+  promptFileRef?: string;
+}
+
+export interface ResolvedDivision extends ResolvedNode {
+  /** 이 본부 산하 전문가 (tier 3, ephemeral worker) */
+  specialists: ResolvedNode[];
+}
+
+export interface ResolvedOrg {
+  /** 어떻게 만들어졌는가 — orgChart 파생 / LLM 리졸버 */
+  source: "orgchart" | "resolver";
+  ceo: ResolvedNode;
+  /** tier 2 본부들. 비어있으면 = 단일 에이전트처럼 CEO만 실행 */
+  divisions: ResolvedDivision[];
+  /** 리졸버가 생성한 경우 원본 팀 폴더 절대경로 (재-resolve·sidecar용) */
+  sourcePath?: string;
+  /** 만들어진 시각 (ISO) */
+  resolvedAt?: string;
+}
+
 // ── 프로젝트 / 채팅 (Claude Desktop / Codex 스타일) ──────────
 export interface Project {
   id: string;
@@ -342,6 +377,19 @@ export interface McpInvocationEvent {
   tool?: { name: string; args?: string };
   /** 생성 토큰 수 (final에 동봉) — "N tokens" 표시용 */
   tokens?: number;
+  // ── 멀티 에이전트 속성 (firm 오케스트레이션) — 없으면 단일 CEO/에이전트 ──
+  /** 이 이벤트를 낸 노드의 안정 id (ResolvedNode.id) — 네트워크 패널 per-agent 버킷 키 */
+  agentId?: string;
+  /** 표시 이름 */
+  agentName?: string;
+  /** 회사 내 역할 ("CEO" / "마케팅 본부장" / ...) */
+  role?: string;
+  /** 계층: 1=CEO, 2=본부, 3=전문가 */
+  tier?: 1 | 2 | 3;
+  /** 오케스트레이션 단계 — plan(위임 결정) / delegate(하위 실행) / synthesize(종합) */
+  phase?: "plan" | "delegate" | "synthesize";
+  /** 위임 흐름 표시용 — 이 노드가 위임한 대상 노드 id들 (handoff 엣지) */
+  delegateTo?: string[];
 }
 
 /** 워킹 폴더 트리의 한 엔트리 — lazy expand. dir이면 hasChildren 힌트로 chevron 표시. */
@@ -587,6 +635,10 @@ export interface AgentlasIpc {
     get: (id: string) => Promise<InstalledFirm | null>;
     install: (slug: string) => Promise<InstalledFirm>;
     uninstall: (id: string) => Promise<void>;
+    /** 정규화된 3-tier 조직 스펙 (저장된 리졸버 결과 또는 orgChart 파생) */
+    getResolvedOrg: (id: string) => Promise<ResolvedOrg | null>;
+    /** LLM으로 팀 폴더를 분석해 3-tier 조직 스펙 생성 (임포트 팀용) */
+    resolveOrg: (id: string) => Promise<{ ok: boolean; org?: ResolvedOrg; error?: string }>;
   };
   projects: {
     list: () => Promise<Project[]>;

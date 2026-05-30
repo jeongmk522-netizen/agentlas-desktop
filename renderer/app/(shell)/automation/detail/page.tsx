@@ -137,6 +137,7 @@ function AutomationDetailPage() {
             <pre
               style={{
                 whiteSpace: "pre-wrap",
+                overflowWrap: "anywhere",
                 fontFamily: "var(--font-body)",
                 fontSize: 13,
                 background: "var(--paper)",

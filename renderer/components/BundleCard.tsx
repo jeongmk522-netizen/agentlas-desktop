@@ -76,11 +76,14 @@ export function BundleCard({
               alignItems: "center",
               fontSize: 12,
               color: "var(--ink-soft)",
+              minWidth: 0,
             }}
           >
             <AgentAvatar name={a.name} tone={a.tone} size={22} />
-            <span style={{ fontWeight: 600 }}>{a.name}</span>
-            <span style={{ color: "var(--muted-deep)" }}>— {a.tagline}</span>
+            <span style={{ fontWeight: 600, flexShrink: 0 }}>{a.name}</span>
+            <span style={{ color: "var(--muted-deep)", flex: 1, minWidth: 0, overflowWrap: "anywhere" }}>
+              — {a.tagline}
+            </span>
           </li>
         ))}
       </ul>
@@ -92,11 +95,12 @@ export function BundleCard({
           marginTop: "auto",
           padding: "10px 16px",
           borderRadius: "var(--radius-md)",
-          background: installing ? "var(--paper-2)" : "var(--accent)",
-          color: installing ? "var(--muted-deep)" : "white",
+          background: installing ? "var(--paper-2)" : "var(--paper)",
+          color: installing ? "var(--muted-deep)" : "var(--ink)",
           fontWeight: 600,
           fontSize: 13,
-          border: "none",
+          border: "1px solid var(--paper-edge)",
+          boxShadow: installing ? "none" : "var(--neu-raised)",
         }}
       >
         {installing ? t("generic.installing") : t("market.bundle.install")}

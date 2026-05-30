@@ -781,18 +781,21 @@ function spawnRuntime(kind, systemPrompt, prompt, opts) {
 function cmdList(db) {
   const agents = listAgents(db);
   const ar = activeRuntime(db);
+  let lang = "en";
+  try { lang = require("./agentlas-config.cjs").loadPrefs(userDataDir()).lang || "en"; } catch { /* default en */ }
+  const nm = (a) => (lang === "en" && a.name_en && a.name_en !== a.name ? a.name_en : a.name);
   out(`Active runtime: ${ar ? `${ar.kind}${ar.backend ? " · " + ar.backend : ""}${ar.model ? " · " + ar.model : ""}` : "(none)"}`);
   out(`${agents.length} agent(s) installed:`);
   const routes = routesMap();
   for (const a of agents) {
     const local = routes[a.id] ? "  [local]" : "";
     const arch = a.builtin ? "  [architecture]" : "";
-    out(`  ${a.slug.padEnd(28)} ${a.name}${arch}${local}`);
+    out(`  ${a.slug.padEnd(28)} ${nm(a)}${arch}${local}`);
   }
   const firms = listFirms(db);
   if (firms.length) {
     out(`\n${firms.length} company(ies):`);
-    for (const f of firms) out(`  ${f.slug.padEnd(28)} ${f.name}  (CEO)`);
+    for (const f of firms) out(`  ${f.slug.padEnd(28)} ${nm(f)}  (CEO)`);
   }
   out("\nRun: agentlas <agent>  ·  agentlas firm <firm>  ·  agentlas run <agent> \"...\"");
 }
@@ -891,7 +894,7 @@ async function cmdFirm(db, query, prompt, runtimeOverride) {
     slug: firm.slug,
     label: firm.name + " CEO",
     system: sys,
-    capAgent: { name: firm.name, name_en: firm.name, tagline: firm.tagline, system_prompt: sys },
+    capAgent: { name: firm.name, name_en: firm.name_en || firm.name, tagline: firm.tagline, system_prompt: sys },
   };
   return launchTui(db, subject, runtimeOverride);
 }

@@ -221,6 +221,12 @@ function startRepl(opts) {
     ui.warn(ui.t("runtimeUsage"));
   }
 
+  // Show the English name when the chosen language is English (agents carry name_en).
+  function displayName(a) {
+    if (!a) return "";
+    if (ui.lang === "en" && a.name_en && a.name_en !== a.name) return a.name_en;
+    return a.name || a.name_en || "";
+  }
   function installedKinds() {
     return caps.CLI_KINDS.filter((k) => H.which(H.RUNTIME_BIN[k]));
   }
@@ -252,7 +258,7 @@ function startRepl(opts) {
       kind: "agent",
       id: agent.id,
       slug: agent.slug,
-      label: agent.name,
+      label: displayName(agent),
       system: agent.system_prompt || `You are ${agent.name}.`,
       capAgent: agent,
     };
@@ -265,9 +271,9 @@ function startRepl(opts) {
       kind: "firm",
       id: firm.ceo_agent_id,
       slug: firm.slug,
-      label: firm.name + " CEO",
+      label: displayName(firm) + " CEO",
       system: sys,
-      capAgent: { name: firm.name, name_en: firm.name, tagline: firm.tagline, system_prompt: sys },
+      capAgent: { name: firm.name, name_en: firm.name_en || firm.name, tagline: firm.tagline, system_prompt: sys },
     };
     state.history = [];
     applyRuntimeFor(state.subject);
@@ -302,13 +308,13 @@ function startRepl(opts) {
       const bdg = caps.needsImage(a) ? (caps.capsFor(spec).image ? "🖼" : "🖼⚠") : "";
       ui.line(
         "   " + ui.c.faint(String(i + 1).padStart(2)) + "  " + ui.c.emerald(a.slug.padEnd(26)) + " " +
-          ui.c.text((a.name || "").padEnd(16)) + " " + ui.c.blue(spec) + (bdg ? " " + bdg : ""),
+          ui.c.text((displayName(a) || "").padEnd(16)) + " " + ui.c.blue(spec) + (bdg ? " " + bdg : ""),
       );
     });
     if (firms.length) {
       ui.line(ui.c.dim("  " + ui.t("picker.companies")));
       firms.forEach((f) =>
-        ui.line("       " + ui.c.emerald(("firm " + f.slug).padEnd(26)) + " " + ui.c.text(f.name) + ui.c.dim(" (CEO)")),
+        ui.line("       " + ui.c.emerald(("firm " + f.slug).padEnd(26)) + " " + ui.c.text(displayName(f)) + ui.c.dim(" (CEO)")),
       );
     }
     if (!ags.length && !firms.length) ui.line("   " + ui.c.dim(ui.t("picker.none")));
@@ -537,7 +543,11 @@ function startRepl(opts) {
       }
     }
     baseRuntime = state.runtime; // lock in the session default (post-wizard) before per-agent routing
-    if (state.subject && state.subject.capAgent) applyRuntimeFor(state.subject);
+    if (state.subject && state.subject.capAgent) {
+      applyRuntimeFor(state.subject);
+      // refresh the label for the chosen language (initial subject came pre-built from the entry)
+      state.subject.label = displayName(state.subject.capAgent) + (state.subject.kind === "firm" ? " CEO" : "");
+    }
     showBanner();
     if (state.subject) {
       routingNote(state.subject);

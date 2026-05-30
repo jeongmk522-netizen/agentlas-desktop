@@ -552,6 +552,8 @@ const dict = {
 
     // Ask the user
     "ask.submit": "보내기",
+    "ask.other": "기타 (직접 입력)",
+    "ask.other_placeholder": "직접 입력…",
 
     // 내 에이전트/팀 가져오기 팝업 (①+③)
     "import.title": "내 에이전트 가져오기",
@@ -1095,6 +1097,8 @@ const dict = {
 
     // Ask the user
     "ask.submit": "Send",
+    "ask.other": "Other (type your own)",
+    "ask.other_placeholder": "Type your answer…",
 
     // Import my agents/teams popup (①+③)
     "import.title": "Import your agents",

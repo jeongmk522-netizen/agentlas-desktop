@@ -322,6 +322,32 @@ function ChatPage() {
               },
             ]);
           }
+          // 메인 버블에도 활동 반영 — 접기요약(WorkingPanel)이 "돌아가는 중 + 도구 N개"를
+          // 보여줘 긴 멀티에이전트 실행 중 불안을 줄인다 (per-agent 상세는 네트워크 패널).
+          setMessages((m) =>
+            m.map((msg) => {
+              if (msg.id !== placeholderId) return msg;
+              const steps = msg.steps ?? [];
+              if (ev.kind === "tool-use" && ev.tool) {
+                return {
+                  ...msg,
+                  steps: [
+                    ...steps,
+                    { id: uid(), kind: "tool", text: ev.tool.name, tool: ev.tool.name, args: ev.tool.args },
+                  ],
+                };
+              }
+              const st = ev.status?.trim();
+              if (st && ev.kind !== "partial") {
+                const who = ev.role || ev.agentName;
+                return {
+                  ...msg,
+                  steps: [...steps, { id: uid(), kind: "thinking", text: who ? `${who} · ${st}` : st }],
+                };
+              }
+              return msg;
+            }),
+          );
           return;
         }
         if (ev.kind === "tool-use" && ev.tool) {

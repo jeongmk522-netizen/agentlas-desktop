@@ -6,7 +6,7 @@ import { useSearchParams } from "next/navigation";
 import { ipc } from "@/lib/ipc";
 import { pickLocalized, useT, type Locale } from "@/lib/i18n";
 import { navigate } from "@/lib/navigation";
-import type { Chat, InstalledAgent, InstalledFirm } from "@/lib/types";
+import type { Chat, InstalledAgent, InstalledFirm, ResolvedOrg, ResolvedNode } from "@/lib/types";
 import { AgentAvatar } from "@/components/AgentAvatar";
 import { IconBuilding, IconChat, IconTrash, IconUsers } from "@/components/Icon";
 
@@ -27,6 +27,7 @@ function FirmDetailPage() {
   const [chats, setChats] = useState<Chat[]>([]);
   const [resolving, setResolving] = useState(false);
   const [resolveMsg, setResolveMsg] = useState("");
+  const [resolvedOrg, setResolvedOrg] = useState<ResolvedOrg | null>(null);
   // 조직도 패널 너비 — 가운데 분할선을 끌어 조절 (Agents 화면과 동일 UX). localStorage 영속.
   const [orgWidth, setOrgWidth] = useState(360);
   useEffect(() => {
@@ -66,10 +67,11 @@ function FirmDetailPage() {
   const refresh = useCallback(async () => {
     const api = ipc();
     if (!api || !id) return;
-    const [f, ag, cs] = await Promise.all([
+    const [f, ag, cs, org] = await Promise.all([
       api.firms.get(id),
       api.team.list(),
       api.chats.listByFirm(id),
+      api.firms.getResolvedOrg(id),
     ]);
     if (!f) {
       navigate("/marketplace?tab=firms", "replace");
@@ -78,6 +80,7 @@ function FirmDetailPage() {
     setFirm(f);
     setAgents(ag);
     setChats(cs);
+    setResolvedOrg(org);
   }, [id]);
 
   useEffect(() => {
@@ -100,6 +103,7 @@ function FirmDetailPage() {
     try {
       const r = await api.firms.resolveOrg(firm.id);
       setResolveMsg(r.ok ? t("firm.resolve_ok") : t("firm.resolve_fail", { error: r.error ?? "?" }));
+      if (r.ok && r.org) setResolvedOrg(r.org); // 차트 즉시 3-tier로 갱신
     } finally {
       setResolving(false);
     }
@@ -303,7 +307,14 @@ function FirmDetailPage() {
               {t("firm.section.orgchart")}
             </div>
             <div style={{ fontSize: 11, color: "var(--muted-deep)" }}>
-              {resolveMsg || t("firm.orgchart_sub", { n: firm.orgChart.length })}
+              {resolveMsg ||
+                t("firm.orgchart_sub", {
+                  n: resolvedOrg
+                    ? 1 +
+                      resolvedOrg.divisions.length +
+                      resolvedOrg.divisions.reduce((a, d) => a + d.specialists.length, 0)
+                    : firm.orgChart.length,
+                })}
             </div>
           </div>
           <button
@@ -328,9 +339,93 @@ function FirmDetailPage() {
           </button>
         </header>
         <div style={{ flex: 1, overflowY: "auto", padding: 16 }}>
-          <OrgChart firm={firm} agentMap={agentMap} locale={locale} />
+          {resolvedOrg ? (
+            <ResolvedOrgChart org={resolvedOrg} />
+          ) : (
+            <OrgChart firm={firm} agentMap={agentMap} locale={locale} />
+          )}
         </div>
       </aside>
+    </div>
+  );
+}
+
+// ── 정규화된 3-tier 조직 렌더 — CEO → 본부 → 전문가(들여쓰기 중첩) ──────────
+function ResolvedOrgChart({ org }: { org: ResolvedOrg }) {
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+      <OrgNodeCard node={org.ceo} tier={1} />
+      {org.divisions.map((d) => (
+        <div key={d.id}>
+          <OrgNodeCard node={d} tier={2} />
+          {d.specialists.length > 0 && (
+            <div
+              style={{
+                marginLeft: 28,
+                paddingLeft: 14,
+                borderLeft: "1px solid var(--paper-edge)",
+                display: "flex",
+                flexDirection: "column",
+                gap: 8,
+                marginTop: 8,
+              }}
+            >
+              {d.specialists.map((s) => (
+                <OrgNodeCard key={s.id} node={s} tier={3} />
+              ))}
+            </div>
+          )}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function OrgNodeCard({ node, tier }: { node: ResolvedNode; tier: 1 | 2 | 3 }) {
+  const isCeo = tier === 1;
+  return (
+    <div
+      style={{
+        display: "flex",
+        alignItems: "center",
+        gap: 12,
+        padding: "10px 14px",
+        background: isCeo ? "var(--fill-1)" : "var(--paper)",
+        border: isCeo ? "1px solid var(--accent-soft)" : "1px solid var(--paper-edge)",
+        borderRadius: "var(--radius-md)",
+      }}
+    >
+      <AgentAvatar name={node.name} size={tier === 3 ? 26 : 32} />
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
+          <strong
+            style={{
+              fontSize: tier === 3 ? 12.5 : 13,
+              minWidth: 0,
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              whiteSpace: "nowrap",
+            }}
+          >
+            {node.name}
+          </strong>
+          {node.role && node.role !== node.name && (
+            <span
+              style={{
+                flexShrink: 0,
+                fontSize: 10,
+                padding: "2px 8px",
+                borderRadius: 999,
+                background: isCeo ? "var(--ink)" : "var(--paper-2)",
+                color: isCeo ? "var(--paper)" : "var(--ink-soft)",
+                fontWeight: 600,
+              }}
+            >
+              {node.role}
+            </span>
+          )}
+        </div>
+      </div>
     </div>
   );
 }

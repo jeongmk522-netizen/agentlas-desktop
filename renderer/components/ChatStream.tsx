@@ -332,7 +332,15 @@ function QuestionBlock({
 }) {
   const { t } = useT();
   const [picked, setPicked] = useState<Set<string>>(new Set(question.answer ?? []));
+  const [otherText, setOtherText] = useState("");
   const answered = !!question.answer && question.answer.length > 0;
+
+  // 기타(직접 입력) — 제공된 선택지 외 자유 답변. multiSelect면 고른 것과 합쳐 보냄.
+  function submitOther() {
+    const v = otherText.trim();
+    if (!v || answered || disabled) return;
+    onAnswer(question.multiSelect ? [...picked, v] : [v]);
+  }
 
   function toggle(label: string) {
     if (answered) return;
@@ -454,6 +462,65 @@ function QuestionBlock({
           );
         })}
       </div>
+      {/* 기타 (직접 입력) — 선택지에 없는 답을 자유 입력 */}
+      {!answered && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+          <span
+            style={{
+              fontSize: 10,
+              fontWeight: 700,
+              letterSpacing: 0.4,
+              textTransform: "uppercase",
+              color: "var(--muted)",
+              fontFamily: "var(--font-mono)",
+            }}
+          >
+            {t("ask.other")}
+          </span>
+          <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+            <input
+              value={otherText}
+              onChange={(e) => setOtherText(e.target.value)}
+              placeholder={t("ask.other_placeholder")}
+              disabled={disabled}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  submitOther();
+                }
+              }}
+              style={{
+                flex: 1,
+                minWidth: 0,
+                padding: "8px 12px",
+                borderRadius: 10,
+                border: "1px solid var(--paper-edge)",
+                background: "var(--paper-2)",
+                color: "var(--ink)",
+                fontSize: 12.5,
+              }}
+            />
+            <button
+              onClick={submitOther}
+              disabled={!otherText.trim() || disabled}
+              style={{
+                flexShrink: 0,
+                padding: "8px 14px",
+                borderRadius: 999,
+                fontSize: 12,
+                fontWeight: 600,
+                background: otherText.trim() ? "var(--paper)" : "var(--paper-2)",
+                color: otherText.trim() ? "var(--ink)" : "var(--muted-deep)",
+                border: "1px solid var(--paper-edge)",
+                boxShadow: otherText.trim() ? "var(--neu-raised)" : "none",
+                cursor: otherText.trim() ? "pointer" : "default",
+              }}
+            >
+              {t("ask.submit")}
+            </button>
+          </div>
+        </div>
+      )}
       {question.multiSelect && !answered && (
         <button
           onClick={submit}

@@ -102,8 +102,43 @@ function resolveRendererFile(url: string): string {
   return path.join(rendererRoot, "404.html");
 }
 
+const LOCAL_IMAGE_EXTS = new Set([
+  ".png",
+  ".jpg",
+  ".jpeg",
+  ".webp",
+  ".gif",
+  ".svg",
+  ".avif",
+  ".bmp",
+]);
+
 function registerRendererProtocol(): void {
   protocol.handle("agentlas", (request) => {
+    // 로컬 이미지 인라인 서빙 — agentlas://localfile/?p=<encoded abs path>.
+    // 채팅에 에이전트가 생성한 이미지를 띄우기 위함 (webSecurity로 file:// 직접 로드는 차단됨).
+    // 안전: 이미지 확장자 + 절대경로 + 실제 파일만 서빙.
+    try {
+      const url = new URL(request.url);
+      if (url.hostname === "localfile") {
+        const p = url.searchParams.get("p");
+        if (p) {
+          const abs = path.normalize(decodeURIComponent(p));
+          const ext = path.extname(abs).toLowerCase();
+          if (
+            LOCAL_IMAGE_EXTS.has(ext) &&
+            path.isAbsolute(abs) &&
+            fs.existsSync(abs) &&
+            fs.statSync(abs).isFile()
+          ) {
+            return net.fetch(pathToFileURL(abs).toString());
+          }
+        }
+        return new Response("not found", { status: 404 });
+      }
+    } catch {
+      // fall through to renderer resolution
+    }
     const filePath = resolveRendererFile(request.url);
     return net.fetch(pathToFileURL(filePath).toString());
   });

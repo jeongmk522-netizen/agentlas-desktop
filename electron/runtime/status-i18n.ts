@@ -48,7 +48,8 @@ const DICT = {
       "로컬 Ollama 서버에 연결하지 못했습니다 ({host}). `ollama serve`가 실행 중인지 확인하세요.",
     errOllamaNoModel:
       "사용할 Ollama 모델이 없습니다. 터미널에서 `ollama pull gemma3` 등으로 모델을 받은 뒤 설정에서 선택하세요.",
-    sysGuide: "사용자는 한국어로 대화합니다. 답변도 한국어로 합니다 (영어 요청이면 영어).",
+    sysGuide:
+      "사용자의 인터페이스 언어는 한국어입니다. 사용자가 어떤 언어로 입력하든 항상 한국어로 답변하세요. 사용자가 이번 메시지에서 다른 언어로 답하라고 명시적으로 요청할 때만 그 언어를 쓰세요.",
     sysHeader: "당신은 Agentlas Desktop에서 사용자가 설치한 전문 어시스턴트입니다.",
     sysToolsOff:
       "도구 호출이나 코드 실행은 할 수 없습니다 (MCP 도구 연결은 차기 버전에서 추가). 현재는 텍스트 답변만 가능합니다.",
@@ -95,7 +96,8 @@ const DICT = {
       "Couldn't reach the local Ollama server ({host}). Make sure `ollama serve` is running.",
     errOllamaNoModel:
       "No Ollama model available. Pull one in your terminal (e.g. `ollama pull gemma3`), then select it in Settings.",
-    sysGuide: "The user speaks English. Reply in English (or match the user's input language).",
+    sysGuide:
+      "The user's interface language is English. Always reply in English, regardless of the language the user writes in. Only use another language if the user explicitly asks you to in this message.",
     sysHeader: "You are a specialist assistant installed by the user in Agentlas Desktop.",
     sysToolsOff:
       "You cannot invoke tools or execute code (MCP tool integration ships in the next version). For now, text-only replies.",

@@ -127,7 +127,7 @@ function startRepl(opts) {
   });
 
   function ctxNow() {
-    return { projectPath: state.projectPath, agentId: state.subject && state.subject.id, permission: state.permission, cwd: state.cwd };
+    return { projectPath: state.projectPath, agentId: state.subject && state.subject.id, permission: state.permission, cwd: state.cwd, lang: ui.lang };
   }
 
   // ── run one turn ──

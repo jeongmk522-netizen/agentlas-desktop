@@ -95,13 +95,16 @@ import type {
 
 // 진행 중인 실행 레지스트리 — runId → { 취소 컨트롤러, 대상 chatId, 방출 이벤트 버퍼 }.
 // 병렬 세션을 각각 독립 추적/취소하고, 채팅을 떠났다 돌아와도 진행 중 실행에 재접속할 수 있게
-// 이벤트를 버퍼링한다(partial은 누적 전체 텍스트라 마지막 것만 유지 → 메모리 바운드).
+// 이벤트를 버퍼링한다. 텍스트 partial은 누적 전체 텍스트라 마지막 것만 유지하지만
+// tool/thinking/agentId 이벤트는 누적되므로 MAX_BUFFERED_EVENTS로 상한을 둔다(오래된 것부터 폐기).
 interface RunRecord {
   controller: AbortController;
   chatId: string;
   events: McpInvocationEvent[];
 }
 const activeRuns = new Map<string, RunRecord>();
+// tool 폭주하는 긴 실행/대형 firm 실행의 버퍼 무한증가 방지 상한 (재접속 리플레이는 최근 위주).
+const MAX_BUFFERED_EVENTS = 4000;
 
 /** 현재 실행 중인 chatId 목록(중복 제거). */
 function activeChatIds(): string[] {
@@ -401,19 +404,27 @@ export function registerIpcHandlers(): void {
       req,
       (ev) => {
         // 재접속용 버퍼링 — partial은 매번 누적 전체 텍스트라, 직전이 partial이면 교체해
-        // 메모리를 바운드한다(tool/thinking/agentId 이벤트는 누적 단계라 모두 보존).
+        // 메모리를 바운드한다(tool/thinking/agentId 이벤트는 누적 단계라 보존하되 상한 적용).
         const last = record.events[record.events.length - 1];
         if (ev.kind === "partial" && !ev.agentId && last && last.kind === "partial" && !last.agentId) {
           record.events[record.events.length - 1] = ev;
         } else {
           record.events.push(ev);
         }
+        if (record.events.length > MAX_BUFFERED_EVENTS) {
+          record.events.splice(0, record.events.length - MAX_BUFFERED_EVENTS);
+        }
         win?.webContents.send(channel, ev);
+        // 종료 이벤트는 즉시 레지스트리에서 제거 — 답변은 final emit 직전에 이미 영속화되므로(client.ts),
+        // 재접속(attach)이 '끝난 실행'을 반환해 히스토리 행과 답변이 중복 렌더되는 창을 닫는다.
+        if (ev.kind === "final" || ev.kind === "error") {
+          if (activeRuns.delete(runId)) broadcastActiveChats();
+        }
       },
       controller.signal,
     ).finally(() => {
-      activeRuns.delete(runId);
-      broadcastActiveChats();
+      // 위 sink에서 이미 지워졌으면(정상 종료) no-op — abort/throw로 종료 이벤트가 없던 경우만 정리.
+      if (activeRuns.delete(runId)) broadcastActiveChats();
     });
 
     return { runId };
@@ -422,8 +433,7 @@ export function registerIpcHandlers(): void {
   // 진행 중인 실행 취소 — CLI 자식 프로세스 kill / API fetch abort.
   ipcMain.handle("invoke:cancel", (_e, runId: string) => {
     activeRuns.get(runId)?.controller.abort();
-    activeRuns.delete(runId);
-    broadcastActiveChats();
+    if (activeRuns.delete(runId)) broadcastActiveChats();
   });
 
   // 현재 실행 중인 chatId 목록 — 사이드바 인디케이터 초기 시드용.

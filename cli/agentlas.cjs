@@ -408,13 +408,13 @@ function cliMemoryContext(db, projectPath) {
   if (tableExists(db, "memory_entries")) {
     try {
       const rows = projectPath
-        ? db.prepare("SELECT kind, content FROM memory_entries WHERE project_path=? AND superseded_at IS NULL AND scope!='session' ORDER BY created_at DESC LIMIT 12").all(projectPath)
+        ? db.prepare("SELECT kind, content FROM memory_entries WHERE superseded_at IS NULL AND scope!='session' AND (project_path=? OR (project_path IS NULL AND scope IN ('user_identity','team_memory','agent_team'))) ORDER BY created_at DESC LIMIT 12").all(projectPath)
         : db.prepare("SELECT kind, content FROM memory_entries WHERE project_path IS NULL AND scope!='session' AND superseded_at IS NULL ORDER BY created_at DESC LIMIT 12").all();
       if (rows.length) sections.push((projectPath ? "### Recent curated memory\n" : "### Curated memory (global)\n") + rows.map((r) => `- [${r.kind}] ${r.content}`).join("\n"));
     } catch { /* ignore */ }
   }
   if (!sections.length) return "";
-  return "## Agentlas memory (read before answering; build on it)\n\n" + sections.join("\n\n");
+  return "## Agentlas memory (read before answering; five-scope model: user_identity, team_memory, project, agent_repo, session)\n\n" + sections.join("\n\n");
 }
 function parseMemoryEventsCli(text) {
   const heading = loadArch().eventsHeading;
@@ -440,9 +440,13 @@ function curateCliReply(db, text, ctx) {
     if (!content) continue;
     if (ev.sensitivity === "secret" || SECRET_RE.some((re) => re.test(content))) continue;
     const kind = arch.kinds.includes(ev.memory_kind) ? ev.memory_kind : "fact";
-    let scope = arch.scopes.includes(ev.suggested_scope) ? ev.suggested_scope : "session";
+    let scope = ev.suggested_scope === "agent_team"
+      ? "team_memory"
+      : arch.scopes.includes(ev.suggested_scope) ? ev.suggested_scope : "session";
+    const kindAllowsUserIdentity = ["fact", "decision", "preference", "procedure"].includes(kind);
+    if (scope === "user_identity" && (ev.confidence !== "high" || !kindAllowsUserIdentity)) scope = "session";
     if (scope === "discard" || scope === "session") { logCli(ctx.projectPath, { action: scope, kind, content, at: now }); continue; }
-    if (scope === "project" && !ctx.projectPath) scope = "agent_team";
+    if (scope === "project" && !ctx.projectPath) scope = "team_memory";
     const ppath = scope === "project" ? ctx.projectPath : null;
     try {
       const dup = db.prepare("SELECT 1 FROM memory_entries WHERE scope=? AND kind=? AND lower(trim(content))=? AND superseded_at IS NULL AND (project_path IS ? OR project_path=?) LIMIT 1").get(scope, kind, content.toLowerCase(), ppath, ppath);

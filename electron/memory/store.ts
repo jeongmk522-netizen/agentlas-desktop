@@ -118,7 +118,11 @@ export function listMemoryByPath(projectPath: string, limit = 40): MemoryEntry[]
   const rows = getDb()
     .prepare(
       `SELECT * FROM memory_entries
-       WHERE project_path = ? AND superseded_at IS NULL
+       WHERE superseded_at IS NULL
+         AND (
+           project_path = ?
+           OR (project_path IS NULL AND scope IN ('user_identity', 'team_memory', 'agent_team'))
+         )
        ORDER BY created_at DESC LIMIT ?`,
     )
     .all(projectPath, limit) as Row[];
@@ -147,11 +151,16 @@ export function listMemoryByPathForAgent(
   const rows = getDb()
     .prepare(
       `SELECT * FROM memory_entries
-       WHERE project_path = ? AND superseded_at IS NULL
+       WHERE superseded_at IS NULL
+         AND (
+           project_path = ?
+           OR (project_path IS NULL AND scope IN ('user_identity', 'team_memory', 'agent_team'))
+           OR (project_path IS NULL AND scope = 'agent_repo' AND agent_id IS ?)
+         )
          AND (scope != 'agent_repo' OR agent_id IS ?)
        ORDER BY created_at DESC LIMIT ?`,
     )
-    .all(projectPath, agentId, limit) as Row[];
+    .all(projectPath, agentId, agentId, limit) as Row[];
   return rows.map(toEntry);
 }
 

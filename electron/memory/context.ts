@@ -74,7 +74,7 @@ export function buildMemoryContext(
 
   if (sections.length === 0) return "";
   return [
-    "## Agentlas memory (read before answering; build on it, don't repeat questions)",
+    "## Agentlas memory (read before answering; five-scope model: user_identity, team_memory, project, agent_repo, session)",
     ...sections,
   ].join("\n\n");
 }

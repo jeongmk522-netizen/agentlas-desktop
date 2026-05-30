@@ -29,6 +29,7 @@ function coerceKind(v: unknown): MemoryKind {
 }
 
 function coerceScope(v: unknown): MemoryScope {
+  if (v === "agent_team") return "team_memory";
   return MEMORY_SCOPES.includes(v as MemoryScope) ? (v as MemoryScope) : "session";
 }
 

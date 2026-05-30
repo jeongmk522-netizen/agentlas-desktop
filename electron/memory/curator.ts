@@ -46,10 +46,26 @@ const SOUL_KINDS: ReadonlySet<MemoryKind> = new Set<MemoryKind>([
   "procedure",
 ]);
 
+const USER_IDENTITY_KINDS: ReadonlySet<MemoryKind> = new Set<MemoryKind>([
+  "fact",
+  "decision",
+  "preference",
+  "procedure",
+]);
+
 function resolveScope(ev: RawMemoryEvent, ctx: CurationContext): MemoryScope {
+  if (ev.suggested_scope === "agent_team") {
+    return "team_memory";
+  }
+  if (ev.suggested_scope === "user_identity") {
+    if (ev.confidence !== "high" || !USER_IDENTITY_KINDS.has(ev.memory_kind)) {
+      return "session";
+    }
+    return "user_identity";
+  }
   if (ev.suggested_scope === "project" && !ctx.projectPath) {
-    // No folder bound to this chat → keep it durable but global.
-    return "agent_team";
+    // No folder bound to this chat → keep it durable but shared.
+    return "team_memory";
   }
   return ev.suggested_scope;
 }

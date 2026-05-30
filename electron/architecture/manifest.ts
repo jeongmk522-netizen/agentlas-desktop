@@ -24,13 +24,16 @@
 // This module is intentionally DATA + tiny pure helpers only (no electron/node imports)
 // so it compiles into dist/electron/** (packaged) and can be required by the JSON generator.
 
-export const ARCHITECTURE_VERSION = "1.0.0";
+export const ARCHITECTURE_VERSION = "1.1.0";
 
 // ── Memory contract ────────────────────────────────────────────────────────
 // Mirrors agent_memory_curator_agent/docs/integration-contract.md + memory-taxonomy.md.
 
 export type MemoryScope =
+  | "user_identity"
+  | "team_memory"
   | "agent_repo"
+  /** Legacy alias from the v1 paper/export contract. Normalize to team_memory on write. */
   | "agent_team"
   | "project"
   | "session"
@@ -48,6 +51,8 @@ export type MemoryKind =
   | "conflict";
 
 export const MEMORY_SCOPES: readonly MemoryScope[] = [
+  "user_identity",
+  "team_memory",
   "agent_repo",
   "agent_team",
   "project",
@@ -90,7 +95,8 @@ Rules:
 - Never include secrets, credentials, API keys, raw logs, or full transcripts.
 - One event per durable item. Keep "content" to one or two sentences.
 - "memory_kind": fact | decision | preference | risk | procedure | hypothesis | evidence | deprecation | conflict
-- "suggested_scope": project (this folder) | agent_repo | agent_team | session (temporary) | discard
+- "suggested_scope": user_identity | team_memory | project (this folder) | agent_repo | session (temporary) | discard
+- "agent_team" is accepted only as a legacy alias for team_memory.
 - Suggest a scope; the Memory Curator decides the final destination.
 
 Format (omit entirely if empty):
@@ -159,7 +165,9 @@ task — you manage memory QUALITY. Agents emit Memory Events; you own durable m
 ## Responsibilities
 - Validate incoming memory events; reject/redact secrets, credentials, private logs,
   customer data, and unsafe content.
-- Classify each event into a scope: agent_repo | agent_team | project | session | discard.
+- Classify each event into a scope: user_identity | team_memory | project |
+  agent_repo | session | discard. Treat agent_team as a legacy alias for
+  team_memory.
 - Classify the kind: fact | decision | preference | risk | procedure | hypothesis |
   evidence | deprecation | conflict.
 - Deduplicate against existing memory; detect conflicts instead of silently overwriting.
@@ -170,9 +178,10 @@ task — you manage memory QUALITY. Agents emit Memory Events; you own durable m
 ## Routing rules
 | Event | Scope |
 |---|---|
-| Agent-specific design rule | agent_repo |
-| Cross-agent handoff convention | agent_team |
+| Explicit stable operator preference | user_identity |
+| Cross-agent/HQ handoff convention | team_memory |
 | Project decision / risk / state / preference | project |
+| Agent-specific design rule | agent_repo |
 | Temporary finding during the current task | session |
 | Unverified speculation, duplicate, or unsafe content | discard |
 
@@ -181,9 +190,10 @@ Do not solve the engineering/design/finance/research task. Do not store entire
 transcripts, logs, or files. Do not turn every observation into durable memory. Do not
 write public memory if the event contains private project context.
 
-When asked to "curate", read the relevant ${PROJECT_MEMORY_DIR}/${PROJECT_SOUL_FILE} and
-${PROJECT_MEMORY_DIR}/${MEMORY_LOG_FILE}, then return the smallest useful set of writes,
-proposals, conflict notices, and rejections.`;
+When asked to "curate", read the relevant ${PROJECT_MEMORY_DIR}/${PROJECT_SOUL_FILE},
+${PROJECT_MEMORY_DIR}/${MEMORY_LOG_FILE}, and any Memory Source Map provided by the
+workspace, then return the smallest useful set of writes, proposals, conflict
+notices, and rejections.`;
 
 const TASK_BIAS_PROMPT = `# Task Bias Curator (Agentlas built-in)
 

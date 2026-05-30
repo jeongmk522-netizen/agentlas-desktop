@@ -8,7 +8,7 @@ import path from "node:path";
 import type { ResolvedDivision, ResolvedNode, ResolvedOrg } from "../../shared/types";
 import { getFirm } from "../store/firms";
 import { getAgentById } from "../mcp/registry";
-import { saveResolvedOrg } from "../store/org-spec";
+import { saveResolvedOrg, getResolvedOrg } from "../store/org-spec";
 import { pickActiveRunner } from "../mcp/client";
 import { PROJECT_MEMORY_DIR } from "../architecture/manifest";
 
@@ -156,7 +156,9 @@ export async function resolveTeamOrg(
   const ceoAgent = getAgentById(firm.ceoAgentId);
   const sourcePath = ceoAgent?.localPath;
   if (!ceoAgent || !sourcePath || !fs.existsSync(sourcePath)) {
-    return { ok: false, error: "no local source folder for this team" };
+    // 로컬 소스 폴더가 없는 회사(웹/시드 마켓 설치) — LLM 재스캔 대상이 아니다.
+    // 저장된/조직도-파생 3-tier를 그대로 반환해 "Resolve team"이 무반응·에러로 끝나지 않게 한다.
+    return { ok: true, org: getResolvedOrg(firm) };
   }
   const picked = await pickActiveRunner();
   if (!picked) return { ok: false, error: "no active LLM runtime" };

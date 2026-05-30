@@ -104,6 +104,9 @@ function FirmDetailPage() {
       const r = await api.firms.resolveOrg(firm.id);
       setResolveMsg(r.ok ? t("firm.resolve_ok") : t("firm.resolve_fail", { error: r.error ?? "?" }));
       if (r.ok && r.org) setResolvedOrg(r.org); // 차트 즉시 3-tier로 갱신
+    } catch (e) {
+      // IPC가 reject해도 무반응으로 끝나지 않게 — 항상 메시지로 피드백.
+      setResolveMsg(t("firm.resolve_fail", { error: e instanceof Error ? e.message : String(e) }));
     } finally {
       setResolving(false);
     }

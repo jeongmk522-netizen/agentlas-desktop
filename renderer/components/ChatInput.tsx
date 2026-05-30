@@ -102,6 +102,7 @@ export function ChatInput({
   onSend,
   onCallAgent,
   onCommand,
+  onStop,
   busy,
   disabled,
   context,
@@ -115,6 +116,8 @@ export function ChatInput({
   onCommand?: (cmd: string) => void;
   /** @멘션으로 에이전트/회사를 고르면 그 에이전트를 호출(활성 에이전트 전환). */
   onCallAgent?: (agentId: string) => void;
+  /** 진행 중 실행 취소 — 제공되면 busy일 때 전송 버튼이 정지 버튼으로 변신(Esc도 정지). */
+  onStop?: () => void;
   busy: boolean;
   disabled?: boolean;
   context?: MentionContext;
@@ -433,6 +436,9 @@ export function ChatInput({
           value={input}
           onChange={onInputChange}
           onKeyDown={(e) => {
+            // 한글 등 IME 조합 중에는 어떤 단축키도 가로채지 않는다 — 조합 중 Enter는 글자 확정,
+            // Esc는 조합 취소다. 가로채면 한글 입력 중 조기 전송 / 실행 정지가 오발동한다.
+            if (e.nativeEvent.isComposing || e.keyCode === 229) return;
             // 자동완성 popover가 떠 있을 때 ↑↓/Enter/Tab/Esc 가로챔
             if (trigger && autocompleteOptions.length > 0) {
               if (e.key === "ArrowDown") {
@@ -471,6 +477,12 @@ export function ChatInput({
             if (trigger && e.key === "Escape") {
               setTrigger(null);
               e.preventDefault();
+              return;
+            }
+            // 실행 중 Esc = 정지 (자동완성 popover가 닫힌 뒤, Claude Code식 인터럽트)
+            if (busy && onStop && e.key === "Escape") {
+              e.preventDefault();
+              onStop();
               return;
             }
             // Enter = 즉시 전송, Shift+Enter = 줄바꿈. (자동완성 열림 시는 위에서 선택 처리)
@@ -649,27 +661,53 @@ export function ChatInput({
             {t("chatinput.goal_mode")}
           </button>
 
-          {/* 보내기 */}
-          <button
-            onClick={submit}
-            disabled={submitDisabled}
-            aria-label={t("chatinput.send")}
-            style={{
-              width: 32,
-              height: 32,
-              flexShrink: 0,
-              borderRadius: "50%",
-              background: submitDisabled ? "var(--paper-2)" : "var(--paper)",
-              color: submitDisabled ? "var(--muted-deep)" : "var(--ink)",
-              border: "1px solid var(--paper-edge)",
-              display: "inline-flex",
-              alignItems: "center",
-              justifyContent: "center",
-              boxShadow: submitDisabled ? "none" : "var(--neu-raised)",
-            }}
-          >
-            {busy ? <span className="agentlas-spinner" aria-hidden /> : <IconArrowUp size={15} />}
-          </button>
+          {/* 보내기 / 정지 — 실행 중(busy)이고 onStop이 있으면 정지 버튼으로 변신 */}
+          {(() => {
+            const showStop = busy && !!onStop;
+            return (
+              <button
+                onClick={showStop ? onStop : submit}
+                disabled={showStop ? false : submitDisabled}
+                aria-label={showStop ? t("chat.stop") : t("chatinput.send")}
+                title={showStop ? t("chat.stop") : undefined}
+                style={{
+                  width: 32,
+                  height: 32,
+                  flexShrink: 0,
+                  borderRadius: "50%",
+                  background: showStop || !submitDisabled ? "var(--paper)" : "var(--paper-2)",
+                  color: showStop
+                    ? "var(--red-deep)"
+                    : submitDisabled
+                      ? "var(--muted-deep)"
+                      : "var(--ink)",
+                  border: "1px solid var(--paper-edge)",
+                  display: "inline-flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  boxShadow: showStop || !submitDisabled ? "var(--neu-raised)" : "none",
+                  cursor: showStop ? "pointer" : undefined,
+                }}
+              >
+                {showStop ? (
+                  <span
+                    style={{
+                      width: 10,
+                      height: 10,
+                      background: "currentColor",
+                      borderRadius: 2,
+                      display: "inline-block",
+                    }}
+                    aria-hidden
+                  />
+                ) : busy ? (
+                  <span className="agentlas-spinner" aria-hidden />
+                ) : (
+                  <IconArrowUp size={15} />
+                )}
+              </button>
+            );
+          })()}
         </div>
       </div>
     </footer>

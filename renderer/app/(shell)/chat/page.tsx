@@ -79,6 +79,8 @@ function ChatPage() {
   // 활성 런타임의 모델 목록 — 실시간 조회(BYOK는 provider API, ollama 동적, CLI 카탈로그).
   const [modelOptions, setModelOptions] = useState<ModelOption[]>([]);
   const runIdRef = useRef<string | null>(null);
+  // runId가 도착하기 전(invoke:run 왕복 중)에 Stop을 누른 경우를 기억 — 도착 즉시 취소한다.
+  const cancelRequestedRef = useRef(false);
   const [artifact, setArtifact] = useState<CodeArtifact | null>(null);
   // 우측 워크스페이스 패널 — 채팅 진입 시 working_folder가 저장돼 있으면 자동 노출
   const [workspaceOpen, setWorkspaceOpen] = useState(false);
@@ -108,6 +110,8 @@ function ChatPage() {
   // Esc로 artifact 패널 닫기
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
+      // 입력창의 Esc 핸들러(자동완성 닫기 / 실행 정지)가 이미 처리했으면 중복 동작 안 함.
+      if (e.defaultPrevented) return;
       if (e.key === "Escape" && artifact) setArtifact(null);
     }
     window.addEventListener("keydown", onKey);
@@ -255,6 +259,7 @@ function ChatPage() {
         },
       ]);
       setBusy(true);
+      cancelRequestedRef.current = false;
       setLiveAgents({});
       setNetTimeline([]);
 
@@ -404,14 +409,24 @@ function ChatPage() {
           subRef.current = null;
         }
       });
+      // runId 도착 전에 Stop을 눌렀다면(레이스) 구독을 건 직후 즉시 취소 — abort 종료 이벤트를 수신해 busy 해제.
+      if (cancelRequestedRef.current) {
+        cancelRequestedRef.current = false;
+        void api.invoke.cancel(runId);
+      }
     },
     [chat, busy, locale, t],
   );
 
-  // 진행 중 실행 취소 — 헤더 Stop 버튼. 병렬 세션 각각 독립 취소.
+  // 진행 중 실행 취소 — 입력창의 정지 버튼(전송 버튼이 busy일 때 변신) / Esc.
   const stop = useCallback(() => {
     const api = ipc();
-    if (!api || !runIdRef.current) return;
+    if (!api) return;
+    // runId가 아직 안 왔으면(invoke:run 왕복 중) 취소 의사만 기록 → 도착 즉시 취소된다.
+    if (!runIdRef.current) {
+      cancelRequestedRef.current = true;
+      return;
+    }
     void api.invoke.cancel(runIdRef.current);
   }, []);
 
@@ -703,38 +718,6 @@ function ChatPage() {
             </div>
           )}
         </div>
-        {busy && (
-          <button
-            onClick={stop}
-            className="titlebar-nodrag"
-            aria-label={t("chat.stop")}
-            title={t("chat.stop")}
-            style={{
-              display: "inline-flex",
-              alignItems: "center",
-              gap: 6,
-              padding: "5px 12px",
-              borderRadius: 999,
-              fontSize: 12,
-              fontWeight: 600,
-              color: "var(--red-deep)",
-              background: "var(--paper-2)",
-              border: "1px solid var(--paper-edge)",
-              cursor: "pointer",
-            }}
-          >
-            <span
-              style={{
-                width: 9,
-                height: 9,
-                background: "currentColor",
-                borderRadius: 2,
-                display: "inline-block",
-              }}
-            />
-            {t("chat.stop")}
-          </button>
-        )}
         <button
           onClick={() => setNetworkOpenPersisted(!networkOpen)}
           className="titlebar-nodrag"
@@ -808,6 +791,7 @@ function ChatPage() {
         }}
         onCommand={handleCommand}
         onCallAgent={(agentId) => void switchAgent(agentId)}
+        onStop={stop}
         busy={busy}
         disabled={!agent}
         context={{

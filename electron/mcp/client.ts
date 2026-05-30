@@ -92,6 +92,10 @@ export async function runMcpInvocation(
   sink: EventSink,
   signal?: AbortSignal,
 ): Promise<void> {
+  // 한 마이크로태스크 양보 — ipc:run 핸들러가 { runId }를 반환하고 렌더러가 이벤트 채널을
+  // 구독한 뒤에야 sink가 발화하도록 보장한다. 이게 없으면 동기 early-return(no-chat/no-agent)
+  // 에러가 구독 전에 발화돼 렌더러가 종료 이벤트를 놓치고 busy(정지 버튼)가 영구 고착된다.
+  await Promise.resolve();
   const locale = pickLocale(req);
   const chat = getChat(req.chatId);
   if (!chat) {

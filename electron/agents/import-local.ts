@@ -10,7 +10,9 @@ import { randomUUID } from "node:crypto";
 import { getDb } from "../store/db";
 import { setRoute, listRoutes, type RuntimeLabel } from "./routes";
 import { upsertLocalTeamFirm } from "../store/firms";
-import type { FirmOrgNode, InstalledAgent } from "../../shared/types";
+import { analyzeFolder } from "./org-resolver";
+import { saveResolvedOrg } from "../store/org-spec";
+import type { FirmOrgNode, InstalledAgent, InstalledFirm, ResolvedOrg } from "../../shared/types";
 
 const TONES: InstalledAgent["tone"][] = ["blue", "green", "purple", "amber", "peach"];
 
@@ -42,24 +44,76 @@ export function detectRuntimeLabels(dir: string): RuntimeLabel[] {
   return labels;
 }
 
-function detectKind(dir: string): "agent" | "team" {
-  // 루트 마커
-  if (
-    exists(path.join(dir, "TEAM.md")) ||
-    isDir(path.join(dir, "ceo")) ||
-    isDir(path.join(dir, "hr-departments")) ||
-    isDir(path.join(dir, "projects"))
-  ) {
-    return "team";
+// 에이전트 1명을 정의하는 흔한 파일들 (하위 폴더가 에이전트인지 판별용).
+const AGENT_DEF_FILES = [
+  "AGENT.md",
+  "CLAUDE.md",
+  "AGENTS.md",
+  "GEMINI.md",
+  "system-prompt.md",
+  "system.md",
+  "soul.md",
+  "prompt.md",
+  "persona.md",
+  "manifest.md",
+];
+// 팀의 멤버/부서를 담는 흔한 컨테이너 디렉토리명 (프레임워크마다 다양).
+const TEAM_CONTAINER_DIRS = [
+  "agents",
+  "team",
+  "teams",
+  "crew",
+  "members",
+  "roles",
+  "subagents",
+  "sub-agents",
+  "squad",
+  "staff",
+  "hr-departments",
+  "departments",
+];
+// 팀 전체를 선언하는 흔한 스펙/매니페스트 파일.
+const TEAM_SPEC_FILES = [
+  "orgspec.yaml",
+  "orgspec.yml",
+  "orgspec.json",
+  "team.yaml",
+  "team.yml",
+  "team.json",
+  "crew.yaml",
+  "crew.yml",
+  "agents.yaml",
+  "agents.yml",
+  "TEAM.md",
+];
+
+function hasAgentDef(d: string): boolean {
+  return AGENT_DEF_FILES.some((f) => exists(path.join(d, f)));
+}
+
+/** 에이전트 정의를 가진 하위 폴더 수 (≥2면 멀티에이전트 팀으로 본다). */
+function countAgentLikeSubdirs(root: string): number {
+  try {
+    return fs
+      .readdirSync(root, { withFileTypes: true })
+      .filter((e) => e.isDirectory() && !e.name.startsWith(".") && e.name !== "node_modules")
+      .filter((e) => hasAgentDef(path.join(root, e.name))).length;
+  } catch {
+    return 0;
   }
-  // .claude/ 중첩 팀 구조 (appbridge 처럼 팀 정의가 .claude/ 아래에 있는 경우)
-  if (
-    isDir(path.join(dir, ".claude", "ceo")) ||
-    isDir(path.join(dir, ".claude", "hr-departments")) ||
-    isDir(path.join(dir, ".claude", "agents")) ||
-    exists(path.join(dir, ".claude", "orgspec.yaml"))
-  ) {
-    return "team";
+}
+
+// 임의 구조의 팀을 일반적으로 인식 — AppBridge 전용이 아니라 흔한 멀티에이전트 레이아웃 전반.
+// (구체적 3-tier 구조는 임포트 후 "Resolve team" LLM 리졸버가 폴더를 읽어 정제한다.)
+function detectKind(dir: string): "agent" | "team" {
+  for (const base of [dir, path.join(dir, ".claude")]) {
+    // 1) 팀 스펙/매니페스트 파일
+    if (TEAM_SPEC_FILES.some((f) => exists(path.join(base, f)))) return "team";
+    // 2) CEO/오케스트레이터 + 멤버 컨테이너 디렉토리
+    if (isDir(path.join(base, "ceo")) || isDir(path.join(base, "projects"))) return "team";
+    if (TEAM_CONTAINER_DIRS.some((d) => isDir(path.join(base, d)))) return "team";
+    // 3) 일반 휴리스틱: 에이전트 정의를 가진 하위 폴더가 2개 이상
+    if (countAgentLikeSubdirs(base) >= 2) return "team";
   }
   return "agent";
 }
@@ -70,10 +124,27 @@ function detectKind(dir: string): "agent" | "team" {
  * (CEO 브레인은 ./playbook.md, ../orgspec.yaml 같은 상대경로를 쓰므로 그냥 쓰면 다른 cwd에서 깨진다.)
  */
 function buildTeamSystemPrompt(dir: string, name: string): string {
-  const ceoBrain = readFirst(dir, [path.join(".claude", "ceo", "AGENT.md")], 12000);
+  const ceoBrain = readFirst(
+    dir,
+    [
+      path.join(".claude", "ceo", "AGENT.md"),
+      path.join("ceo", "AGENT.md"),
+      path.join("ceo", "CLAUDE.md"),
+      path.join("ceo", "system-prompt.md"),
+      "ceo.md",
+      "orchestrator.md",
+      "lead.md",
+      "TEAM.md",
+    ],
+    12000,
+  );
   const brain =
     ceoBrain ||
-    readFirst(dir, ["AGENTS.md", "CLAUDE.md", path.join(".claude", "CLAUDE.md")], 12000) ||
+    readFirst(
+      dir,
+      ["AGENTS.md", "CLAUDE.md", path.join(".claude", "CLAUDE.md"), "manifest.md", "README.md"],
+      12000,
+    ) ||
     `Act as the orchestrating CEO of ${name}.`;
   const claudeRoot = path.join(dir, ".claude");
   const header =
@@ -139,17 +210,44 @@ export interface LocalImportResult {
   path: string;
 }
 
-/** 팀 폴더의 부서 목록 — hr-departments/ 또는 .claude/hr-departments/ 의 하위 디렉토리명. */
+/** 팀 폴더의 부서/멤버 목록 — 흔한 컨테이너 디렉토리, 없으면 에이전트 정의를 가진 하위 폴더.
+ *  (정확한 3-tier는 "Resolve team" LLM 리졸버가 정제. 여기선 firm 생성용 대략 목록.) */
 function readTeamDepartments(dir: string): string[] {
-  for (const root of [path.join(dir, "hr-departments"), path.join(dir, ".claude", "hr-departments")]) {
-    try {
-      if (isDir(root)) {
-        return fs
-          .readdirSync(root, { withFileTypes: true })
-          .filter((e) => e.isDirectory() && !e.name.startsWith("."))
-          .map((e) => e.name)
-          .sort();
+  // 1) 알려진 컨테이너 디렉토리(루트/.claude)의 하위 폴더명
+  for (const base of [dir, path.join(dir, ".claude")]) {
+    for (const c of TEAM_CONTAINER_DIRS) {
+      const root = path.join(base, c);
+      try {
+        if (isDir(root)) {
+          const names = fs
+            .readdirSync(root, { withFileTypes: true })
+            .filter((e) => e.isDirectory() && !e.name.startsWith("."))
+            .map((e) => e.name)
+            .sort();
+          if (names.length > 0) return names;
+        }
+      } catch {
+        // continue
       }
+    }
+  }
+  // 2) 폴백: 루트(또는 .claude)에서 에이전트 정의를 가진 하위 폴더들
+  for (const base of [dir, path.join(dir, ".claude")]) {
+    try {
+      const names = fs
+        .readdirSync(base, { withFileTypes: true })
+        .filter(
+          (e) =>
+            e.isDirectory() &&
+            !e.name.startsWith(".") &&
+            e.name !== "ceo" &&
+            e.name !== "projects" &&
+            e.name !== "node_modules" &&
+            hasAgentDef(path.join(base, e.name)),
+        )
+        .map((e) => e.name)
+        .sort();
+      if (names.length > 0) return names;
     } catch {
       // continue
     }
@@ -167,29 +265,53 @@ function deptLabel(name: string): string {
     .join(" ");
 }
 
-/** 팀이면 회사(firm)로도 등록 — CEO = 팀 에이전트, 부서는 조직도 정보 노드. slug 기준 멱등. */
-function registerTeamAsFirm(dir: string, agentId: string, slug: string, name: string, tagline: string): void {
-  const depts = readTeamDepartments(dir);
-  const orgChart: Array<FirmOrgNode & { agentId: string }> = [
-    { agentSlug: slug, agentId, role: "CEO", reportsTo: null },
-    ...depts.map((d) => ({ agentSlug: `${slug}-${d}`, agentId: "", role: deptLabel(d), reportsTo: slug })),
-  ];
+/** 팀이면 회사(firm)로도 등록 — CEO = 팀 에이전트, 부서는 조직도 정보 노드. slug 기준 멱등.
+ *  LLM 분석 divisions가 있으면 그것으로 3-tier 조직도(본부+전문가)를 구성, 없으면 휴리스틱 부서 스캔. */
+function registerTeamAsFirm(
+  dir: string,
+  agentId: string,
+  slug: string,
+  name: string,
+  tagline: string,
+  divisions?: ResolvedOrg["divisions"],
+): InstalledFirm | null {
+  let orgChart: Array<FirmOrgNode & { agentId: string }>;
+  if (divisions && divisions.length > 0) {
+    orgChart = [{ agentSlug: slug, agentId, role: "CEO", reportsTo: null }];
+    for (const d of divisions) {
+      const dSlug = `${slug}-${d.id}`;
+      orgChart.push({ agentSlug: dSlug, agentId: "", role: d.role || d.name, reportsTo: slug });
+      for (const s of d.specialists ?? []) {
+        orgChart.push({ agentSlug: `${dSlug}-${s.id}`, agentId: "", role: s.role || s.name, reportsTo: dSlug });
+      }
+    }
+  } else {
+    const depts = readTeamDepartments(dir);
+    orgChart = [
+      { agentSlug: slug, agentId, role: "CEO", reportsTo: null },
+      ...depts.map((d) => ({ agentSlug: `${slug}-${d}`, agentId: "", role: deptLabel(d), reportsTo: slug })),
+    ];
+  }
   try {
-    upsertLocalTeamFirm({ slug: `firm-${slug}`, name, tagline, ceoAgentId: agentId, orgChart });
+    return upsertLocalTeamFirm({ slug: `firm-${slug}`, name, tagline, ceoAgentId: agentId, orgChart });
   } catch (err) {
     console.error("[import] registerTeamAsFirm failed:", err);
+    return null;
   }
 }
 
 /** 로컬 폴더를 분석·등록하고 라우팅 저장. 원본 파일은 건드리지 않는다. */
-export function importLocalFolder(absPath: string): LocalImportResult {
+export async function importLocalFolder(absPath: string): Promise<LocalImportResult> {
   const dir = path.resolve(absPath);
   if (!isDir(dir)) throw new Error(`Not a folder: ${absPath}`);
 
   const labels = detectRuntimeLabels(dir);
   const runtime = labels[0];
-  const kind = detectKind(dir);
   const name = readName(dir);
+  // 활성 LLM(CLI/BYOK)으로 폴더를 인식 — 단일 에이전트 vs 팀 + 3-tier 구조. 하드코딩 폴더명 매칭 아님.
+  // 런타임이 없거나 실패하면 null → 휴리스틱(detectKind)으로 폴백.
+  const analysis = await analyzeFolder(dir, name).catch(() => null);
+  const kind = analysis ? analysis.kind : detectKind(dir);
   const tagline = readTagline(dir) || (kind === "team" ? "Imported local team" : "Imported local agent");
   const systemPrompt =
     kind === "team"
@@ -251,7 +373,21 @@ export function importLocalFolder(absPath: string): LocalImportResult {
   setRoute({ agentId: id, path: dir, runtime, labels, kind, importedAt: now });
 
   // 팀이면 FIRMS에도 등록 → 사이드바 FIRMS 목록에 뜨고 "Command CEO" 가능.
-  if (kind === "team") registerTeamAsFirm(dir, id, slug, name, tagline);
+  if (kind === "team") {
+    const firm = registerTeamAsFirm(dir, id, slug, name, tagline, analysis?.divisions);
+    // LLM이 구조를 인식했으면 ResolvedOrg로 저장 → 오케스트레이터/조직도가 즉시 진짜 3-tier로 동작.
+    // 원본 폴더는 절대 수정하지 않는다 (앱 설정 + .agentlas sidecar에만 기록).
+    if (firm && analysis && analysis.divisions.length > 0) {
+      const org: ResolvedOrg = {
+        source: "resolver",
+        ceo: { id, name, role: "CEO", agentId: id, prompt: systemPrompt },
+        divisions: analysis.divisions,
+        sourcePath: dir,
+        resolvedAt: now,
+      };
+      saveResolvedOrg(firm.id, org);
+    }
+  }
 
   const agent: InstalledAgent = {
     id,

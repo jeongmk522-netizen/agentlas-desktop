@@ -261,7 +261,7 @@ export function registerIpcHandlers(): void {
   ipcMain.handle("team:installMine", (_e, id: string) => installMyAgent(id));
   ipcMain.handle("team:uninstall", (_e, id: string) => uninstallAgent(id));
   // 로컬 폴더 임포트 — 런타임 감지 + 라우팅 저장 후 설치된 에이전트로 반환
-  ipcMain.handle("team:importLocalFolder", (_e, absPath: string) => importLocalFolder(absPath).agent);
+  ipcMain.handle("team:importLocalFolder", async (_e, absPath: string) => (await importLocalFolder(absPath)).agent);
 
   // ── agentFiles (에이전트 폴더 파일 — 우측 패널 에디터) ──
   ipcMain.handle("agentFiles:list", (_e, agentId: string) => listAgentFiles(agentId));

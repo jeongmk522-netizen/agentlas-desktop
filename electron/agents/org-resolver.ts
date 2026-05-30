@@ -245,3 +245,76 @@ function writeSidecar(root: string, org: ResolvedOrg): void {
     // best-effort — app config에는 이미 저장됨
   }
 }
+
+const ANALYZE_SYSTEM = `You are Agentlas's folder analyzer. Given a map (file list + excerpts) of a folder the user just imported, decide whether it is a SINGLE agent or a MULTI-AGENT TEAM, and if a team, infer its structure. Folder layouts vary wildly across frameworks — judge by meaning, not by fixed folder names.
+
+Rules:
+- Output ONLY one JSON object, no prose, no markdown fence.
+- Shape: {"kind":"agent"|"team","divisions":[{"role":"...","name":"...","promptFileRef":"relative/path or null","specialists":[{"role":"...","name":"...","promptFileRef":"relative/path or null"}]}]}
+- "team" when multiple distinct agents/roles are defined (subfolders each with an agent/persona/prompt file, a roster/orgspec/manifest listing members, several personas). "agent" when it is a single assistant.
+- The CEO/orchestrator is implicit — do NOT include it; list its direct reports as "divisions" and their reports as "specialists".
+- promptFileRef = the relative file path whose content defines that agent, or null.
+- If kind is "agent", divisions = [].
+- Be faithful to the folder; do not invent agents that aren't represented.`;
+
+/** 임포트된 폴더를 활성 LLM(CLI/BYOK)으로 분석 — 단일 에이전트인지 팀인지 + (팀이면) 3-tier 구조.
+ *  하드코딩 폴더명 매칭이 아니라 LLM이 임의 구조를 의미로 판단한다.
+ *  LLM이 없거나 실패하면 null → 호출부가 휴리스틱으로 폴백. */
+export async function analyzeFolder(
+  dir: string,
+  name: string,
+): Promise<{ kind: "agent" | "team"; divisions: ResolvedDivision[] } | null> {
+  const picked = await pickActiveRunner();
+  if (!picked) return null;
+  let text = "";
+  try {
+    const result = await picked.runner(
+      {
+        systemPrompt: ANALYZE_SYSTEM,
+        history: [],
+        userPrompt: `Imported folder: ${name}\n\nFolder map:\n${buildFolderMap(dir)}`,
+        backendLabel: picked.label,
+        model: picked.active.model ?? undefined,
+        locale: "en",
+      },
+      { onPartial: () => {}, onStatus: () => {} },
+    );
+    text = result.text;
+  } catch {
+    return null;
+  }
+  const data = extractJson(text);
+  if (!data) return null;
+  const rawDivisions = Array.isArray(data.divisions) ? (data.divisions as unknown[]) : [];
+  const kind: "agent" | "team" = data.kind === "team" || rawDivisions.length > 0 ? "team" : "agent";
+
+  const used = new Set<string>();
+  const mkId = (role: string, nm: string) => {
+    const b = slugify(nm || role);
+    let id = b;
+    let i = 2;
+    while (used.has(id)) id = `${b}-${i++}`;
+    used.add(id);
+    return id;
+  };
+  const toNode = (raw: unknown): ResolvedNode => {
+    const o = (raw && typeof raw === "object" ? raw : {}) as Record<string, unknown>;
+    const role = typeof o.role === "string" ? o.role : typeof o.name === "string" ? o.name : "Agent";
+    const nm = typeof o.name === "string" ? o.name : role;
+    return {
+      id: mkId(role, nm),
+      name: nm,
+      role,
+      prompt: readPromptFile(dir, o.promptFileRef),
+      promptFileRef: typeof o.promptFileRef === "string" ? o.promptFileRef : undefined,
+    };
+  };
+  const divisions: ResolvedDivision[] = rawDivisions.slice(0, 24).map((d) => {
+    const o = (d && typeof d === "object" ? d : {}) as Record<string, unknown>;
+    const specialists = Array.isArray(o.specialists)
+      ? (o.specialists as unknown[]).slice(0, 24).map(toNode)
+      : [];
+    return { ...toNode(d), specialists };
+  });
+  return { kind, divisions };
+}

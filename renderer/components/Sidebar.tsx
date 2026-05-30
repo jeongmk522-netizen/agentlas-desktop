@@ -4,7 +4,7 @@
 import { Suspense, useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname, useSearchParams } from "next/navigation";
-import { ipc } from "@/lib/ipc";
+import { ipc, ipcEvents } from "@/lib/ipc";
 import { navigate } from "@/lib/navigation";
 import type {
   Automation,
@@ -97,6 +97,24 @@ function SidebarInner({ refreshKey: refreshKeyProp = 0 }: { refreshKey?: number 
   const [refreshTick, setRefreshTick] = useState(0);
   const refreshKey = refreshKeyProp + refreshTick;
   const triggerRefresh = () => setRefreshTick((n) => n + 1);
+  // 실행 중인 chatId 집합 — 백그라운드 멀티세션 "실행 중" 인디케이터. main이 방송.
+  const [runningChats, setRunningChats] = useState<Set<string>>(new Set());
+
+  // 실행 중 chatId를 시드 + 구독 — 다른 채팅이 백그라운드로 돌고 있으면 펄스 점 표시.
+  useEffect(() => {
+    const api = ipc();
+    const events = ipcEvents();
+    if (!api || !events) return;
+    let cancelled = false;
+    void api.invoke.activeChats().then((ids) => {
+      if (!cancelled) setRunningChats(new Set(ids));
+    });
+    const off = events.onActiveChats((ids) => setRunningChats(new Set(ids)));
+    return () => {
+      cancelled = true;
+      off();
+    };
+  }, []);
 
   // 사용자 선호 영구화 — localStorage. SSR 안전.
   useEffect(() => {
@@ -417,6 +435,7 @@ function SidebarInner({ refreshKey: refreshKeyProp = 0 }: { refreshKey?: number 
                   chat={c}
                   agent={agent}
                   active={active}
+                  running={runningChats.has(c.id)}
                   onChanged={triggerRefresh}
                 />
               );

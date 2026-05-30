@@ -150,6 +150,8 @@ const api: AgentlasIpc = {
     history: (chatId: string) => ipcRenderer.invoke("invoke:history", chatId),
     clearHistory: (chatId: string) =>
       ipcRenderer.invoke("invoke:clearHistory", chatId),
+    activeChats: () => ipcRenderer.invoke("invoke:activeChats"),
+    attach: (chatId: string) => ipcRenderer.invoke("invoke:attach", chatId),
   },
 };
 
@@ -173,6 +175,12 @@ contextBridge.exposeInMainWorld("agentlasEvents", {
     if (!channel.startsWith("invoke:event:")) return () => {};
     ipcRenderer.on(channel, wrapped);
     return () => ipcRenderer.removeListener(channel, wrapped);
+  },
+  // 실행 중 chatId 목록 방송 — 사이드바 "실행 중" 인디케이터용.
+  onActiveChats: (handler: (chatIds: string[]) => void) => {
+    const wrapped = (_evt: Electron.IpcRendererEvent, chatIds: string[]) => handler(chatIds);
+    ipcRenderer.on("invoke:activeChats", wrapped);
+    return () => ipcRenderer.removeListener("invoke:activeChats", wrapped);
   },
 });
 

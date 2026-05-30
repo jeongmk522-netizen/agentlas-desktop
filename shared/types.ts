@@ -704,6 +704,10 @@ export interface AgentlasIpc {
     cancel: (runId: string) => Promise<void>;
     history: (chatId: string) => Promise<ChatHistoryEntry[]>;
     clearHistory: (chatId: string) => Promise<void>;
+    /** 현재 실행 중인 chatId 목록 — 사이드바 "실행 중" 인디케이터 초기 시드용. */
+    activeChats: () => Promise<string[]>;
+    /** 채팅 진입 시 진행 중 실행에 재접속 — 그 chat의 runId + 지금까지 버퍼된 이벤트. 없으면 null. */
+    attach: (chatId: string) => Promise<{ runId: string; events: McpInvocationEvent[] } | null>;
   };
 }
 

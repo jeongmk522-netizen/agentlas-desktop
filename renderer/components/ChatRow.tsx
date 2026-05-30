@@ -14,6 +14,7 @@ export function ChatRow({
   agent,
   active,
   archived,
+  running,
   onChanged,
 }: {
   chat: Chat;
@@ -21,6 +22,8 @@ export function ChatRow({
   active: boolean;
   /** 이 행이 보관함에서 렌더된 거면 메뉴가 '보관 해제'로 바뀜 */
   archived?: boolean;
+  /** 이 채팅에서 에이전트 실행이 진행 중이면 펄스 점 표시 (백그라운드 멀티세션) */
+  running?: boolean;
   /** 변경(이름/보관/삭제) 후 사이드바 데이터 리프레시 */
   onChanged: () => void;
 }) {
@@ -139,6 +142,20 @@ export function ChatRow({
             opacity: archived ? 0.7 : 1,
           }}
         >
+          {running && (
+            <span
+              aria-label={t("chat.running")}
+              title={t("chat.running")}
+              style={{
+                flexShrink: 0,
+                width: 7,
+                height: 7,
+                borderRadius: "50%",
+                background: "var(--green-deep)",
+                animation: "agentlas-pulse 1.4s ease-in-out infinite",
+              }}
+            />
+          )}
           <span
             style={{
               flex: 1,

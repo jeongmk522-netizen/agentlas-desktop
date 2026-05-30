@@ -52,7 +52,7 @@ const DICT = {
       "사용자의 인터페이스 언어는 한국어입니다. 사용자가 어떤 언어로 입력하든 항상 한국어로 답변하세요. 사용자가 이번 메시지에서 다른 언어로 답하라고 명시적으로 요청할 때만 그 언어를 쓰세요.",
     sysHeader: "당신은 Agentlas Desktop에서 사용자가 설치한 전문 어시스턴트입니다.",
     sysToolsOff:
-      "도구 호출이나 코드 실행은 할 수 없습니다 (MCP 도구 연결은 차기 버전에서 추가). 현재는 텍스트 답변만 가능합니다.",
+      "현재 권한에서는 도구 호출이나 코드 실행을 하지 않습니다. 브라우저/MCP 도구가 필요하면 write 또는 full 권한으로 실행하세요.",
     sysAgentDef: "── 에이전트 정의 ──",
     histPrev: "── 이전 대화 ──",
     histThis: "── 이번 요청 ──",
@@ -100,7 +100,7 @@ const DICT = {
       "The user's interface language is English. Always reply in English, regardless of the language the user writes in. Only use another language if the user explicitly asks you to in this message.",
     sysHeader: "You are a specialist assistant installed by the user in Agentlas Desktop.",
     sysToolsOff:
-      "You cannot invoke tools or execute code (MCP tool integration ships in the next version). For now, text-only replies.",
+      "Do not invoke tools or execute code in the current permission mode. Switch to write or full permission when browser/MCP tools are needed.",
     sysAgentDef: "── Agent definition ──",
     histPrev: "── Previous turns ──",
     histThis: "── Current request ──",

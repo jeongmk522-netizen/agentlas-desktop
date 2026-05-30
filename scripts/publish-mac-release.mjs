@@ -42,11 +42,17 @@ function cleanupAppleDouble() {
   if (!existsSync(releaseDir)) return;
   run("find", [releaseDir, "-name", "._*", "-delete"]);
   if (process.platform === "darwin") {
-    run("/usr/bin/dot_clean", ["-m", releaseDir]);
+    const dotClean = spawnSync("sh", ["-lc", "command -v dot_clean || test ! -x /usr/sbin/dot_clean || printf /usr/sbin/dot_clean"], {
+      cwd: desktopRoot,
+      encoding: "utf8",
+      env: process.env,
+    }).stdout.trim();
+    if (dotClean) run(dotClean, ["-m", releaseDir]);
   }
 }
 
 run("node", ["scripts/verify-mac-release.mjs", "--write-env", `--repo=${repo}`, `--tag=${tag}`, `--version=${version}`]);
+run("node", ["scripts/fix-mac-latest-zip.mjs"]);
 cleanupAppleDouble();
 
 const notesPath = join(releaseDir, "github-release-notes.md");
@@ -70,8 +76,12 @@ cleanupAppleDouble();
 const files = [
   requireFile(join(releaseDir, `Agentlas-${version}-arm64.dmg`)),
   requireFile(join(releaseDir, `Agentlas-${version}-arm64.dmg.blockmap`)),
+  requireFile(join(releaseDir, `Agentlas-${version}-arm64.zip`)),
+  requireFile(join(releaseDir, `Agentlas-${version}-arm64.zip.blockmap`)),
   requireFile(join(releaseDir, `Agentlas-${version}-x64.dmg`)),
   requireFile(join(releaseDir, `Agentlas-${version}-x64.dmg.blockmap`)),
+  requireFile(join(releaseDir, `Agentlas-${version}-x64.zip`)),
+  requireFile(join(releaseDir, `Agentlas-${version}-x64.zip.blockmap`)),
   requireFile(join(releaseDir, "latest-mac.yml")),
   requireFile(join(releaseDir, "desktop-release-verification.json")),
   requireFile(join(releaseDir, "desktop-release.production.env")),

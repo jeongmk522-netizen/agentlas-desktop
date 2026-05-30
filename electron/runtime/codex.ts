@@ -63,7 +63,7 @@ async function getBin(): Promise<string | null> {
 }
 
 function buildPrompt(req: RunnerRequest): string {
-  const sys = wrapSystemPrompt(req.systemPrompt, req.locale);
+  const sys = wrapSystemPrompt(req.systemPrompt, req.locale, req.permission);
   const user = tStatus(req.locale, "speakerUser");
   const assistant = tStatus(req.locale, "speakerAssistant");
   const parts: string[] = [`[SYSTEM]\n${sys}`, ""];
@@ -77,6 +77,15 @@ function buildPrompt(req: RunnerRequest): string {
   }
   parts.push(tStatus(req.locale, "histThisSection"), req.userPrompt);
   return parts.join("\n");
+}
+
+function permissionArgs(permission?: RunnerRequest["permission"]): string[] {
+  if (permission === "write" || permission === "full") {
+    // Agentlas runs Codex as a local, user-owned automation runtime. For browser
+    // setup flows, confirmation prompts break the "do it for me" contract.
+    return ["--dangerously-bypass-approvals-and-sandbox"];
+  }
+  return ["--sandbox", "read-only", "--ask-for-approval", "never"];
 }
 
 export const runCodex: Runner = async (
@@ -95,11 +104,16 @@ export const runCodex: Runner = async (
   }
 
   const prompt = buildPrompt(req);
+  const permArgs = permissionArgs(req.permission);
+  const mcpArgs =
+    req.mcpCodexConfigArgs && req.mcpCodexConfigArgs.length > 0
+      ? req.mcpCodexConfigArgs
+      : [];
 
   return new Promise<RunnerResult>((resolve, reject) => {
     // codex CLI의 비대화형 실행 모드 — exec 서브명령.
     // --skip-git-repo-check: cwd가 git 레포가 아니어도 실행 ("not inside a trusted directory" 방지).
-    const child = spawnCli(bin, ["exec", "--skip-git-repo-check", prompt], {
+    const child = spawnCli(bin, ["exec", "--skip-git-repo-check", ...permArgs, ...mcpArgs, prompt], {
       stdio: ["ignore", "pipe", "pipe"],
       env: process.env,
       // 사용자가 지정한 프로젝트 폴더에서 실행 — 미지정이면 전용 폴더.

@@ -21,6 +21,7 @@ import { MEMORY_EMITTER_BLOCK } from "../architecture/manifest";
 import { AUTOMATION_PROTOCOL, parseAutomations } from "../automation-emitter";
 import { createAutomation } from "../store/automations";
 import { runClaudeCode } from "../runtime/claude-code";
+import { buildMcpConfigFile } from "../mcp-tools/mcp-config";
 import { runCodex } from "../runtime/codex";
 import { runGemini } from "../runtime/gemini";
 import {
@@ -227,6 +228,26 @@ export async function runMcpInvocation(
   appendChatMessage(chat.id, "user", req.userPrompt);
   if (history.length === 0) autoTitleFromFirstMessage(chat.id, req.userPrompt);
 
+  // ── MCP 툴 브리지 ──────────────────────────────────────────
+  // Claude Code/Codex 러너 + write/full 권한일 때만, 설치·활성 MCP 서버(브라우저 Playwright 포함)를
+  // 런타임별 설정으로 직렬화해 넘긴다. read 권한이나 다른 런타임에서는 생략.
+  let mcpConfigPath: string | undefined;
+  let mcpAllowedTools: string[] | undefined;
+  let mcpCodexConfigArgs: string[] | undefined;
+  const runtimeCanUseMcp = active.kind === "claude-code" || active.kind === "codex";
+  if (runtimeCanUseMcp && (req.permissions === "write" || req.permissions === "full")) {
+    try {
+      const cfg = await buildMcpConfigFile();
+      if (cfg) {
+        mcpConfigPath = cfg.configPath;
+        mcpAllowedTools = cfg.allowedTools;
+        mcpCodexConfigArgs = cfg.codexConfigArgs;
+      }
+    } catch (err) {
+      console.error("[mcp] buildMcpConfigFile failed:", err);
+    }
+  }
+
   sink({ kind: "thinking", status: tStatus(locale, "thinking", { agent: agent.name }) });
 
   try {
@@ -242,6 +263,9 @@ export async function runMcpInvocation(
         effort: active.effort ?? undefined,
         signal,
         permission: req.permissions,
+        mcpConfigPath,
+        mcpAllowedTools,
+        mcpCodexConfigArgs,
         // 사용자가 지정한 워킹 폴더(프로젝트)에서 에이전트를 실행 — 빌드/파일 생성이 거기서 일어난다.
         // 활성화(2회 방문) 게이팅과 무관하게, 폴더가 지정돼 있으면 즉시 cwd로 사용한다.
         cwd: workingFolder ?? undefined,

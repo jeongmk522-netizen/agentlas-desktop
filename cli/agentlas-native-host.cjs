@@ -13,6 +13,39 @@
  * 스키마는 실측으로 확인됨 (cli/agentlas.cjs 상단 주석 참고).
  */
 const { spawn } = require("node:child_process");
+const fs = require("node:fs");
+const os = require("node:os");
+const path = require("node:path");
+
+function userDataDir() {
+  const override = process.env.AGENTLAS_USER_DATA_DIR;
+  if (override) return override;
+  const home = os.homedir();
+  if (process.platform === "darwin") return path.join(home, "Library", "Application Support", "Agentlas");
+  if (process.platform === "win32") return path.join(process.env.APPDATA || path.join(home, "AppData", "Roaming"), "Agentlas");
+  return path.join(process.env.XDG_CONFIG_HOME || path.join(home, ".config"), "Agentlas");
+}
+
+function cliMcpConfigPath() {
+  const dir = path.join(userDataDir(), "mcp");
+  fs.mkdirSync(dir, { recursive: true });
+  const file = path.join(dir, "agentlas-cli-mcp.json");
+  fs.writeFileSync(
+    file,
+    JSON.stringify({
+      mcpServers: {
+        playwright: { command: "npx", args: ["-y", "@playwright/mcp@latest"] },
+      },
+    }, null, 2),
+    "utf8",
+  );
+  return file;
+}
+
+const CODEX_PLAYWRIGHT_MCP_ARGS = [
+  "-c", 'mcp_servers.playwright.command="npx"',
+  "-c", 'mcp_servers.playwright.args=["-y","@playwright/mcp@latest"]',
+];
 
 // 툴 input(JSON)에서 사람이 읽을 대표 인자 한 줄 추출.
 function summarizeToolInput(name, input) {
@@ -66,6 +99,9 @@ function claudeArgs({ prompt, systemPrompt, permission, session }) {
     "--verbose",
     ...perm,
   ];
+  if (permission === "write" || permission === "full") {
+    args.push("--mcp-config", cliMcpConfigPath(), "--allowedTools", "mcp__playwright");
+  }
   if (session && session.id) {
     args.push("--resume", session.id);
   } else if (systemPrompt) {
@@ -165,15 +201,14 @@ function prettyToolName(name) {
 // ── codex ────────────────────────────────────────────────
 function codexArgs({ prompt, systemPrompt, permission, session, cwd }) {
   const sandbox =
-    permission === "full"
+    permission === "full" || permission === "write"
       ? ["--dangerously-bypass-approvals-and-sandbox"]
-      : permission === "write"
-        ? ["--full-auto"]
-        : ["--sandbox", "read-only"];
+      : ["--sandbox", "read-only", "--ask-for-approval", "never"];
+  const mcp = permission === "write" || permission === "full" ? CODEX_PLAYWRIGHT_MCP_ARGS : [];
   const full = systemPrompt && !(session && session.id) ? `[SYSTEM]\n${systemPrompt}\n\n${prompt}` : prompt;
   // -C/--sandbox/--skip-git-repo-check 는 `codex exec` 옵션이라 `resume <id>` 토큰 *앞에* 와야 한다.
   // (codex-cli 0.133: resume 뒤에 두면 `unexpected argument` 로 거부 → 멀티턴 전부 실패. 실측 검증됨.)
-  const base = ["exec", "--json", "--skip-git-repo-check", "-C", cwd, ...sandbox];
+  const base = ["exec", "--json", "--skip-git-repo-check", "-C", cwd, ...sandbox, ...mcp];
   if (session && session.id) {
     return [...base, "resume", session.id, full];
   }

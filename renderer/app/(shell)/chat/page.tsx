@@ -107,6 +107,159 @@ function ChatPage() {
     }
   }, []);
 
+  // 한 실행의 이벤트(라이브 스트림 OR 재접속 리플레이)를 메인 버블 + 네트워크 패널에 반영.
+  // send()의 인라인 핸들러를 추출해 재접속 경로와 공유 — lastStatusRef는 중복 status 억제용(공유).
+  const consumeEvent = useCallback(
+    (ev: McpInvocationEvent, placeholderId: string, lastStatusRef: { text: string }) => {
+      // ── 속성(agentId) 이벤트 → 네트워크 패널 (메인 버블 안 건드림) ──
+      if (ev.agentId) {
+        const aid = ev.agentId;
+        setLiveAgents((prev) => ({
+          ...prev,
+          [aid]: {
+            name: ev.agentName ?? prev[aid]?.name ?? aid,
+            role: ev.role ?? prev[aid]?.role ?? "",
+            tier: ev.tier ?? prev[aid]?.tier,
+            active: true,
+            status: ev.status ?? prev[aid]?.status,
+            delegateTo: ev.delegateTo ?? prev[aid]?.delegateTo,
+          },
+        }));
+        if (ev.kind === "tool-use") {
+          const label = ev.tool ? ev.tool.name : ev.status?.trim() ?? "";
+          if (label) {
+            setNetTimeline((tl) => [
+              ...tl,
+              {
+                key: uid(),
+                agentId: aid,
+                name: ev.agentName ?? aid,
+                role: ev.role ?? "",
+                tier: ev.tier,
+                kind: ev.delegateTo ? "handoff" : ev.tool ? "tool" : "status",
+                text: ev.status?.trim() || label,
+              },
+            ]);
+          }
+        } else if (ev.kind === "thinking" && ev.status?.trim()) {
+          setNetTimeline((tl) => [
+            ...tl,
+            {
+              key: uid(),
+              agentId: aid,
+              name: ev.agentName ?? aid,
+              role: ev.role ?? "",
+              tier: ev.tier,
+              kind: "status",
+              text: ev.status!.trim(),
+            },
+          ]);
+        }
+        return;
+      }
+      if (ev.kind === "tool-use" && ev.tool) {
+        setMessages((m) =>
+          m.map((msg) =>
+            msg.id === placeholderId
+              ? {
+                  ...msg,
+                  steps: [
+                    ...(msg.steps ?? []),
+                    { id: uid(), kind: "tool", text: ev.tool!.name, tool: ev.tool!.name, args: ev.tool!.args },
+                  ],
+                }
+              : msg,
+          ),
+        );
+      } else if (ev.kind === "thinking" || ev.kind === "tool-use") {
+        const status = ev.status?.trim();
+        if (!status || status === lastStatusRef.text) return;
+        lastStatusRef.text = status;
+        setMessages((m) =>
+          m.map((msg) =>
+            msg.id === placeholderId
+              ? {
+                  ...msg,
+                  steps: [
+                    ...(msg.steps ?? []),
+                    { id: uid(), kind: ev.kind === "thinking" ? "thinking" : "tool", text: status },
+                  ],
+                }
+              : msg,
+          ),
+        );
+      } else if (ev.kind === "partial") {
+        setMessages((m) =>
+          m.map((msg) => {
+            if (msg.id !== placeholderId) return msg;
+            const raw = ev.text ?? "";
+            const { text, questions } = extractQuestions(raw, msg.id);
+            return {
+              ...msg,
+              text,
+              streaming: true,
+              questions: questions.length > 0 ? questions : msg.questions,
+            };
+          }),
+        );
+      } else if (ev.kind === "final") {
+        setMessages((m) =>
+          m.map((msg) => {
+            if (msg.id !== placeholderId) return msg;
+            const raw = ev.text ?? "";
+            const { text, questions } = extractQuestions(raw, msg.id);
+            return {
+              ...msg,
+              text,
+              busy: false,
+              streaming: false,
+              tokens: ev.tokens ?? msg.tokens,
+              questions: questions.length > 0 ? questions : msg.questions,
+            };
+          }),
+        );
+        setBusy(false);
+        setLiveAgents((prev) =>
+          Object.fromEntries(Object.entries(prev).map(([k, v]) => [k, { ...v, active: false }])),
+        );
+        runIdRef.current = null;
+        subRef.current?.();
+        subRef.current = null;
+        // 첫 메시지였으면 main이 자동 제목 생성 → 갱신해서 사이드바도 반영
+        const api = ipc();
+        void api?.chats.get(chatId).then((c) => c && setChat(c));
+      } else if (ev.kind === "error") {
+        setMessages((m) => [
+          ...m.filter((msg) => msg.id !== placeholderId),
+          { id: uid(), role: "system", text: `⚠️ ${ev.error?.message ?? t("chat.err.unknown")}` },
+        ]);
+        setBusy(false);
+        setLiveAgents((prev) =>
+          Object.fromEntries(Object.entries(prev).map(([k, v]) => [k, { ...v, active: false }])),
+        );
+        runIdRef.current = null;
+        subRef.current?.();
+        subRef.current = null;
+      }
+    },
+    [chatId, t],
+  );
+
+  // runId 채널 구독 — send()와 재접속 경로 공용. lastStatusRef를 받으면(리플레이 후) 이어서 쓴다.
+  const subscribeRun = useCallback(
+    (runId: string, placeholderId: string, lastStatusRef: { text: string } = { text: "" }) => {
+      const api = ipc();
+      const events = ipcEvents();
+      if (!api || !events) return;
+      const channel = api.invoke.eventChannel(runId);
+      subRef.current?.();
+      subRef.current = events.on(channel, (ev: McpInvocationEvent) =>
+        consumeEvent(ev, placeholderId, lastStatusRef),
+      );
+    },
+    [consumeEvent],
+  );
+
   // Esc로 artifact 패널 닫기
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
@@ -123,6 +276,13 @@ function ChatPage() {
     const api = ipc();
     if (!api || !chatId) return;
     let cancelled = false;
+    // 채팅 전환 시 이전 채팅의 진행 상태(busy/정지버튼/스트림)가 새 뷰로 새지 않게 리셋.
+    // (Next 클라 네비게이션은 같은 컴포넌트를 재사용 → state가 남는다)
+    setBusy(false);
+    runIdRef.current = null;
+    cancelRequestedRef.current = false;
+    setLiveAgents({});
+    setNetTimeline([]);
     void (async () => {
       const c = await api.chats.get(chatId);
       if (cancelled || !c) {
@@ -197,13 +357,63 @@ function ChatPage() {
           text: e.text,
         })),
       );
+      // 진행 중 실행 재접속 — 이 채팅이 백그라운드로 돌고 있으면(다른 채팅 갔다 옴) 스트림·정지버튼 복구.
+      // 버퍼된 이벤트를 리플레이해 진행 중 버블을 재구성하고, runId 채널을 구독해 이후 스트림을 받는다.
+      const attached = await api.invoke.attach(chatId);
+      if (!cancelled && attached) {
+        const placeholderId = uid();
+        const startedAt = Date.now();
+        setMessages((m) => [
+          ...m,
+          {
+            id: placeholderId,
+            role: "agent",
+            text: "",
+            busy: true,
+            startedAt,
+            steps: [{ id: uid(), kind: "thinking", text: t("chat.status.sending") }],
+          },
+        ]);
+        setBusy(true);
+        runIdRef.current = attached.runId;
+        const lastStatusRef = { text: "" };
+        for (const ev of attached.events) consumeEvent(ev, placeholderId, lastStatusRef);
+        subscribeRun(attached.runId, placeholderId, lastStatusRef);
+      }
     })();
     return () => {
       cancelled = true;
       subRef.current?.();
       subRef.current = null;
     };
-  }, [chatId, router]);
+  }, [chatId, router, consumeEvent, subscribeRun, t]);
+
+  // 재접속 안전망 — 진행 중이라 여겼는데(runIdRef) main의 실행 목록에서 이 채팅이 빠졌으면
+  // (attach 스냅샷↔구독 틈에 final 이벤트를 놓친 경우) 히스토리를 다시 읽어 최종 답변으로 화해.
+  useEffect(() => {
+    const api = ipc();
+    const events = ipcEvents();
+    if (!api || !events || !chatId) return;
+    return events.onActiveChats((ids) => {
+      if (!runIdRef.current || ids.includes(chatId)) return;
+      runIdRef.current = null;
+      subRef.current?.();
+      subRef.current = null;
+      setBusy(false);
+      setLiveAgents((prev) =>
+        Object.fromEntries(Object.entries(prev).map(([k, v]) => [k, { ...v, active: false }])),
+      );
+      void api.invoke.history(chatId).then((h) => {
+        setMessages(
+          h.map((e) => ({
+            id: e.id,
+            role: e.role === "assistant" ? "agent" : e.role === "user" ? "user" : "system",
+            text: e.text,
+          })),
+        );
+      });
+    });
+  }, [chatId]);
 
   // 활성 런타임이 바뀌면 모델 목록을 실시간 조회 (BYOK provider API / ollama / CLI 카탈로그).
   useEffect(() => {
@@ -272,150 +482,15 @@ function ChatPage() {
         permissions: opts?.permissions,
       });
       runIdRef.current = runId;
-      const channel = api.invoke.eventChannel(runId);
-      subRef.current?.();
-      // 같은 status가 연달아 오면 중복 push 방지 — runner는 onStatus를 throttle 안 해서 partial과 섞이기도.
-      const lastStatusRef = { text: "" };
-      subRef.current = events.on(channel, (ev: McpInvocationEvent) => {
-        // ── 속성(agentId) 이벤트 → 네트워크 패널 (메인 버블 안 건드림) ──
-        if (ev.agentId) {
-          const aid = ev.agentId;
-          setLiveAgents((prev) => ({
-            ...prev,
-            [aid]: {
-              name: ev.agentName ?? prev[aid]?.name ?? aid,
-              role: ev.role ?? prev[aid]?.role ?? "",
-              tier: ev.tier ?? prev[aid]?.tier,
-              active: true,
-              status: ev.status ?? prev[aid]?.status,
-              delegateTo: ev.delegateTo ?? prev[aid]?.delegateTo,
-            },
-          }));
-          // 타임라인은 discrete 활동(tool/status/handoff)만 — partial 토큰 폭주 방지
-          if (ev.kind === "tool-use") {
-            const label = ev.tool ? ev.tool.name : ev.status?.trim() ?? "";
-            if (label) {
-              setNetTimeline((tl) => [
-                ...tl,
-                {
-                  key: uid(),
-                  agentId: aid,
-                  name: ev.agentName ?? aid,
-                  role: ev.role ?? "",
-                  tier: ev.tier,
-                  kind: ev.delegateTo ? "handoff" : ev.tool ? "tool" : "status",
-                  text: ev.status?.trim() || label,
-                },
-              ]);
-            }
-          } else if (ev.kind === "thinking" && ev.status?.trim()) {
-            setNetTimeline((tl) => [
-              ...tl,
-              {
-                key: uid(),
-                agentId: aid,
-                name: ev.agentName ?? aid,
-                role: ev.role ?? "",
-                tier: ev.tier,
-                kind: "status",
-                text: ev.status!.trim(),
-              },
-            ]);
-          }
-          return;
-        }
-        if (ev.kind === "tool-use" && ev.tool) {
-          // Claude Code식 tool-use 블록 — 이름 + 인자(접기/펴기)
-          setMessages((m) =>
-            m.map((msg) =>
-              msg.id === placeholderId
-                ? {
-                    ...msg,
-                    steps: [
-                      ...(msg.steps ?? []),
-                      { id: uid(), kind: "tool", text: ev.tool!.name, tool: ev.tool!.name, args: ev.tool!.args },
-                    ],
-                  }
-                : msg,
-            ),
-          );
-        } else if (ev.kind === "thinking" || ev.kind === "tool-use") {
-          const status = ev.status?.trim();
-          if (!status || status === lastStatusRef.text) return;
-          lastStatusRef.text = status;
-          setMessages((m) =>
-            m.map((msg) =>
-              msg.id === placeholderId
-                ? {
-                    ...msg,
-                    steps: [
-                      ...(msg.steps ?? []),
-                      { id: uid(), kind: ev.kind === "thinking" ? "thinking" : "tool", text: status },
-                    ],
-                  }
-                : msg,
-            ),
-          );
-        } else if (ev.kind === "partial") {
-          setMessages((m) =>
-            m.map((msg) => {
-              if (msg.id !== placeholderId) return msg;
-              const raw = ev.text ?? "";
-              const { text, questions } = extractQuestions(raw, msg.id);
-              return {
-                ...msg,
-                text,
-                streaming: true,
-                questions: questions.length > 0 ? questions : msg.questions,
-              };
-            }),
-          );
-        } else if (ev.kind === "final") {
-          setMessages((m) =>
-            m.map((msg) => {
-              if (msg.id !== placeholderId) return msg;
-              const raw = ev.text ?? "";
-              const { text, questions } = extractQuestions(raw, msg.id);
-              return {
-                ...msg,
-                text,
-                busy: false,
-                streaming: false,
-                tokens: ev.tokens ?? msg.tokens,
-                questions: questions.length > 0 ? questions : msg.questions,
-              };
-            }),
-          );
-          setBusy(false);
-          setLiveAgents((prev) =>
-            Object.fromEntries(Object.entries(prev).map(([k, v]) => [k, { ...v, active: false }])),
-          );
-          runIdRef.current = null;
-          subRef.current?.();
-          subRef.current = null;
-          // 첫 메시지였으면 main 프로세스가 자동 제목 생성 → 갱신해서 사이드바도 반영
-          void api.chats.get(chat.id).then((c) => c && setChat(c));
-        } else if (ev.kind === "error") {
-          setMessages((m) => [
-            ...m.filter((msg) => msg.id !== placeholderId),
-            { id: uid(), role: "system", text: `⚠️ ${ev.error?.message ?? t("chat.err.unknown")}` },
-          ]);
-          setBusy(false);
-          setLiveAgents((prev) =>
-            Object.fromEntries(Object.entries(prev).map(([k, v]) => [k, { ...v, active: false }])),
-          );
-          runIdRef.current = null;
-          subRef.current?.();
-          subRef.current = null;
-        }
-      });
+      // 이벤트 처리는 consumeEvent로 추출됨 — 재접속(attach) 경로와 동일 로직 공유.
+      subscribeRun(runId, placeholderId);
       // runId 도착 전에 Stop을 눌렀다면(레이스) 구독을 건 직후 즉시 취소 — abort 종료 이벤트를 수신해 busy 해제.
       if (cancelRequestedRef.current) {
         cancelRequestedRef.current = false;
         void api.invoke.cancel(runId);
       }
     },
-    [chat, busy, locale, t],
+    [chat, busy, locale, t, subscribeRun],
   );
 
   // 진행 중 실행 취소 — 입력창의 정지 버튼(전송 버튼이 busy일 때 변신) / Esc.

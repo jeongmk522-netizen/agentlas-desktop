@@ -83,6 +83,7 @@ import {
 } from "./store/automations";
 import type {
   Automation,
+  McpInvocationEvent,
   McpInvocationRequest,
   McpTransport,
   MigrationOptions,
@@ -92,8 +93,28 @@ import type {
   RuntimeSelection,
 } from "../shared/types";
 
-// 진행 중인 실행 레지스트리 — runId → AbortController. 병렬 세션을 각각 독립 추적/취소.
-const activeRuns = new Map<string, AbortController>();
+// 진행 중인 실행 레지스트리 — runId → { 취소 컨트롤러, 대상 chatId, 방출 이벤트 버퍼 }.
+// 병렬 세션을 각각 독립 추적/취소하고, 채팅을 떠났다 돌아와도 진행 중 실행에 재접속할 수 있게
+// 이벤트를 버퍼링한다(partial은 누적 전체 텍스트라 마지막 것만 유지 → 메모리 바운드).
+interface RunRecord {
+  controller: AbortController;
+  chatId: string;
+  events: McpInvocationEvent[];
+}
+const activeRuns = new Map<string, RunRecord>();
+
+/** 현재 실행 중인 chatId 목록(중복 제거). */
+function activeChatIds(): string[] {
+  return [...new Set([...activeRuns.values()].map((r) => r.chatId))];
+}
+
+/** 사이드바 "실행 중" 인디케이터용 — 실행 시작/종료/취소 때마다 모든 창에 방송. */
+function broadcastActiveChats(): void {
+  const chatIds = activeChatIds();
+  for (const w of BrowserWindow.getAllWindows()) {
+    if (!w.isDestroyed()) w.webContents.send("invoke:activeChats", chatIds);
+  }
+}
 
 export function registerIpcHandlers(): void {
   // ── app ─────────────────────────────────────────────────
@@ -372,23 +393,50 @@ export function registerIpcHandlers(): void {
 
     // 실행마다 AbortController를 등록 — 병렬 실행이 서로 독립적으로 취소 가능.
     const controller = new AbortController();
-    activeRuns.set(runId, controller);
+    const record: RunRecord = { controller, chatId: req.chatId, events: [] };
+    activeRuns.set(runId, record);
+    broadcastActiveChats();
 
     void runMcpInvocation(
       req,
       (ev) => {
+        // 재접속용 버퍼링 — partial은 매번 누적 전체 텍스트라, 직전이 partial이면 교체해
+        // 메모리를 바운드한다(tool/thinking/agentId 이벤트는 누적 단계라 모두 보존).
+        const last = record.events[record.events.length - 1];
+        if (ev.kind === "partial" && !ev.agentId && last && last.kind === "partial" && !last.agentId) {
+          record.events[record.events.length - 1] = ev;
+        } else {
+          record.events.push(ev);
+        }
         win?.webContents.send(channel, ev);
       },
       controller.signal,
-    ).finally(() => activeRuns.delete(runId));
+    ).finally(() => {
+      activeRuns.delete(runId);
+      broadcastActiveChats();
+    });
 
     return { runId };
   });
 
   // 진행 중인 실행 취소 — CLI 자식 프로세스 kill / API fetch abort.
   ipcMain.handle("invoke:cancel", (_e, runId: string) => {
-    activeRuns.get(runId)?.abort();
+    activeRuns.get(runId)?.controller.abort();
     activeRuns.delete(runId);
+    broadcastActiveChats();
+  });
+
+  // 현재 실행 중인 chatId 목록 — 사이드바 인디케이터 초기 시드용.
+  ipcMain.handle("invoke:activeChats", () => activeChatIds());
+
+  // 채팅 진입 시 진행 중 실행에 재접속 — 그 chat의 최신 실행 runId + 버퍼된 이벤트를 돌려준다.
+  // 렌더러는 events를 리플레이해 진행 중 버블을 복원하고, runId 채널을 구독해 이후 스트림을 받는다.
+  ipcMain.handle("invoke:attach", (_e, chatId: string) => {
+    let found: { runId: string; events: McpInvocationEvent[] } | null = null;
+    for (const [runId, rec] of activeRuns) {
+      if (rec.chatId === chatId) found = { runId, events: rec.events.slice() };
+    }
+    return found;
   });
 
   ipcMain.handle("invoke:history", (_e, chatId: string) => listChatMessages(chatId));

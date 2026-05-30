@@ -6,6 +6,8 @@ interface AgentlasEvents {
     channel: string,
     handler: (event: McpInvocationEvent) => void,
   ) => () => void;
+  /** 실행 중 chatId 목록 방송 구독 — 사이드바 "실행 중" 인디케이터. unsubscribe 반환. */
+  onActiveChats: (handler: (chatIds: string[]) => void) => () => void;
 }
 
 interface AgentlasFilesBridge {

@@ -8,6 +8,7 @@ import {
   type MemoryKind,
   type MemoryScope,
 } from "../architecture/manifest";
+import type { RequestContext } from "./store";
 
 export interface RawMemoryEvent {
   memory_kind: MemoryKind;
@@ -16,6 +17,7 @@ export interface RawMemoryEvent {
   confidence: "high" | "medium" | "low";
   sensitivity: "public" | "internal" | "private" | "confidential" | "secret";
   evidence_refs: string[];
+  request_context?: RequestContext;
 }
 
 export interface ParsedMemory {
@@ -43,6 +45,44 @@ function coerceSensitivity(v: unknown): RawMemoryEvent["sensitivity"] {
     : "internal";
 }
 
+function coerceString(v: unknown, max: number): string | undefined {
+  if (typeof v !== "string") return undefined;
+  const trimmed = v.trim();
+  if (!trimmed) return undefined;
+  return trimmed.slice(0, max);
+}
+
+function coerceStringOrNull(v: unknown, max: number): string | null | undefined {
+  if (v === null) return null;
+  return coerceString(v, max);
+}
+
+function coerceRequestContext(v: unknown): RequestContext | undefined {
+  if (!v || typeof v !== "object") return undefined;
+  const o = v as Record<string, unknown>;
+  const triggerTerms = Array.isArray(o.trigger_terms)
+    ? o.trigger_terms
+        .filter((x): x is string => typeof x === "string")
+        .map((x) => x.trim().slice(0, 40))
+        .filter(Boolean)
+        .slice(0, 12)
+    : undefined;
+  const ctx: RequestContext = {};
+  const userIntent = coerceString(o.user_intent, 240);
+  const cwdAtRequest = coerceStringOrNull(o.cwd_at_request, 500);
+  const targetProject = coerceStringOrNull(o.target_project, 120);
+  const targetPath = coerceStringOrNull(o.target_path, 500);
+  const outcome = coerceStringOrNull(o.outcome, 240);
+  if (userIntent) ctx.userIntent = userIntent;
+  if (triggerTerms && triggerTerms.length > 0) ctx.triggerTerms = triggerTerms;
+  if (cwdAtRequest !== undefined) ctx.cwdAtRequest = cwdAtRequest;
+  if (targetProject !== undefined) ctx.targetProject = targetProject;
+  if (targetPath !== undefined) ctx.targetPath = targetPath;
+  if (typeof o.cross_context === "boolean") ctx.crossContext = o.cross_context;
+  if (outcome !== undefined) ctx.outcome = outcome;
+  return Object.keys(ctx).length > 0 ? ctx : undefined;
+}
+
 function normalize(raw: unknown): RawMemoryEvent | null {
   if (!raw || typeof raw !== "object") return null;
   const o = raw as Record<string, unknown>;
@@ -51,7 +91,7 @@ function normalize(raw: unknown): RawMemoryEvent | null {
   const evidence = Array.isArray(o.evidence_refs)
     ? o.evidence_refs.filter((x): x is string => typeof x === "string")
     : [];
-  return {
+  const event: RawMemoryEvent = {
     memory_kind: coerceKind(o.memory_kind),
     content,
     suggested_scope: coerceScope(o.suggested_scope),
@@ -59,6 +99,9 @@ function normalize(raw: unknown): RawMemoryEvent | null {
     sensitivity: coerceSensitivity(o.sensitivity),
     evidence_refs: evidence,
   };
+  const requestContext = coerceRequestContext(o.request_context);
+  if (requestContext) event.request_context = requestContext;
+  return event;
 }
 
 /**

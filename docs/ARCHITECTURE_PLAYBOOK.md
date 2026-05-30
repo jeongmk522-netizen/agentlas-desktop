@@ -78,6 +78,13 @@ legacy alias for `team_memory`. The active project should also carry
 `.agentlas/memory-map.json` so Desktop, terminal, AppBridge, and llm-wiki can
 agree on where memory lives, who can write it, and how corrections are promoted.
 
+### Request-context recall
+Each durable memory entry can also carry a compact `request_context` capsule:
+`user_intent`, `trigger_terms`, `cwd_at_request`, `target_project`,
+`target_path`, `cross_context`, and `outcome`. This is a redacted provenance
+summary for recall, not the raw user prompt. It lets a later request from another
+folder find the relevant memory by the situation that created it.
+
 ## 3. The upgrade contract (DO THIS to extend safely)
 
 The whole point: research and change the architecture repeatedly **without corrupting

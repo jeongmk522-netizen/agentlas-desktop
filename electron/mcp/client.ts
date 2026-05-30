@@ -284,6 +284,7 @@ export async function runMcpInvocation(
         projectId: chat.projectId ?? null,
         agentId: chat.agentId,
         chatId: chat.id,
+        cwdAtRequest: workingFolder,
       });
       displayText = cleanedText || displayText;
     } catch (err) {

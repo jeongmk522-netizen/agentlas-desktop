@@ -44,6 +44,23 @@
   "scope_aliases": {
     "agent_team": "team_memory"
   },
+  "request_context_capsule": {
+    "purpose": "Contextual recall for similar future user requests without storing raw prompts.",
+    "fields": [
+      "user_intent",
+      "trigger_terms",
+      "cwd_at_request",
+      "target_project",
+      "target_path",
+      "cross_context",
+      "outcome"
+    ],
+    "stored_in": [
+      "agentlas.sqlite:memory_entries.context_json",
+      ".agentlas/memory-log.jsonl request_context"
+    ],
+    "raw_prompt_policy": "never store raw user messages or full transcripts"
+  },
   "promotion_path": [
     "session memory-log.jsonl",
     "project .agentlas or Claude project memory",

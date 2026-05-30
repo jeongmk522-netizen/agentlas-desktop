@@ -6,7 +6,7 @@ import {
   appendMemoryLog,
   appendSoulMemory,
 } from "./project-files";
-import { hasEquivalentMemory, insertMemoryEntry } from "./store";
+import { hasEquivalentMemory, insertMemoryEntry, type RequestContext } from "./store";
 import { parseMemoryEvents, type RawMemoryEvent } from "./events";
 import type { MemoryKind, MemoryScope } from "../architecture/manifest";
 
@@ -29,6 +29,7 @@ export interface CurationContext {
   projectId: string | null;
   agentId: string | null;
   chatId: string | null;
+  cwdAtRequest?: string | null;
 }
 
 export interface CurationReport {
@@ -68,6 +69,57 @@ function resolveScope(ev: RawMemoryEvent, ctx: CurationContext): MemoryScope {
     return "team_memory";
   }
   return ev.suggested_scope;
+}
+
+function compactContext(ctx: RequestContext): RequestContext | null {
+  const next: RequestContext = {};
+  if (ctx.userIntent) next.userIntent = ctx.userIntent.slice(0, 240);
+  if (ctx.triggerTerms && ctx.triggerTerms.length > 0) {
+    next.triggerTerms = [...new Set(ctx.triggerTerms.map((t) => t.trim()).filter(Boolean))]
+      .slice(0, 12)
+      .map((t) => t.slice(0, 40));
+  }
+  if (ctx.cwdAtRequest !== undefined) next.cwdAtRequest = ctx.cwdAtRequest;
+  if (ctx.targetProject !== undefined) next.targetProject = ctx.targetProject;
+  if (ctx.targetPath !== undefined) next.targetPath = ctx.targetPath;
+  if (ctx.crossContext !== undefined) next.crossContext = ctx.crossContext;
+  if (ctx.outcome !== undefined) next.outcome = ctx.outcome ? ctx.outcome.slice(0, 240) : ctx.outcome;
+  if (looksSecret(JSON.stringify(next))) return null;
+  return Object.keys(next).length > 0 ? next : null;
+}
+
+function buildRequestContext(
+  ev: RawMemoryEvent,
+  ctx: CurationContext,
+  projectPath: string | null,
+): RequestContext | null {
+  const provided = ev.request_context ?? {};
+  const targetProject = provided.targetProject ?? ctx.projectId ?? null;
+  const targetPath = provided.targetPath ?? projectPath;
+  const cwdAtRequest = provided.cwdAtRequest ?? ctx.cwdAtRequest ?? ctx.projectPath ?? null;
+  const crossContext =
+    provided.crossContext ??
+    Boolean(cwdAtRequest && targetPath && cwdAtRequest !== targetPath);
+  return compactContext({
+    ...provided,
+    cwdAtRequest,
+    targetProject,
+    targetPath,
+    crossContext,
+  });
+}
+
+function requestContextForLog(ctx: RequestContext | null): Record<string, unknown> | null {
+  if (!ctx) return null;
+  return {
+    user_intent: ctx.userIntent,
+    trigger_terms: ctx.triggerTerms,
+    cwd_at_request: ctx.cwdAtRequest,
+    target_project: ctx.targetProject,
+    target_path: ctx.targetPath,
+    cross_context: ctx.crossContext,
+    outcome: ctx.outcome,
+  };
 }
 
 /** Curate a batch of raw events into durable memory. Pure side effects + a report. */
@@ -118,6 +170,7 @@ export function curateEvents(
     }
 
     const projectPath = scope === "project" ? ctx.projectPath : null;
+    const requestContext = buildRequestContext(ev, ctx, projectPath);
     if (hasEquivalentMemory(scope, ev.memory_kind, ev.content, projectPath)) {
       report.deduped += 1;
       continue;
@@ -134,6 +187,7 @@ export function curateEvents(
       confidence: ev.confidence,
       sensitivity: ev.sensitivity,
       evidence: ev.evidence_refs,
+      requestContext,
     });
     report.written += 1;
 
@@ -143,6 +197,7 @@ export function curateEvents(
         scope,
         kind: ev.memory_kind,
         content: ev.content,
+        request_context: requestContextForLog(requestContext),
         at: new Date().toISOString(),
       });
       if (SOUL_KINDS.has(ev.memory_kind) && scope === "project") {

@@ -223,6 +223,7 @@ async function runNodeTurn(p: FirmRunParams, turn: NodeTurn): Promise<{ text: st
       projectId: p.chat.projectId ?? null,
       agentId: node.id,
       chatId: turn.chatId,
+      cwdAtRequest: workingFolder,
     });
     display = c2 || display;
   } catch {

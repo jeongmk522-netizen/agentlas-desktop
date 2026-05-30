@@ -9,7 +9,7 @@ import { app } from "electron";
 
 let _db: Database.Database | null = null;
 
-const SCHEMA_VERSION = 15;
+const SCHEMA_VERSION = 16;
 
 export function initStore(): void {
   if (_db) return;
@@ -342,6 +342,18 @@ export function initStore(): void {
       );
       CREATE INDEX IF NOT EXISTS idx_automations_due ON automations(enabled, next_run_at);
     `);
+  }
+
+  // ── v15 → v16: memory_entries request-context capsule ─
+  // Stores a curated, redacted provenance summary for contextual recall. This is
+  // not a raw user prompt or transcript.
+  if (userVersion < 16) {
+    const memoryCols = _db
+      .prepare("PRAGMA table_info(memory_entries)")
+      .all() as Array<{ name: string }>;
+    if (memoryCols.length > 0 && !memoryCols.some((c) => c.name === "context_json")) {
+      _db.exec("ALTER TABLE memory_entries ADD COLUMN context_json TEXT NOT NULL DEFAULT '{}'");
+    }
   }
 
   _db.pragma(`user_version = ${SCHEMA_VERSION}`);

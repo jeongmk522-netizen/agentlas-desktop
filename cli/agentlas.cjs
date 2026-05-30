@@ -295,6 +295,13 @@ function tableExists(db, name) {
 function columnExists(db, table, col) {
   try { return db.prepare(`PRAGMA table_info(${table})`).all().some((c) => c.name === col); } catch { return false; }
 }
+function ensureMemoryContextColumn(db) {
+  try {
+    if (tableExists(db, "memory_entries") && !columnExists(db, "memory_entries", "context_json")) {
+      db.exec("ALTER TABLE memory_entries ADD COLUMN context_json TEXT NOT NULL DEFAULT '{}'");
+    }
+  } catch { /* ignore */ }
+}
 // 앱의 seedBuiltinAgents와 동일한 멱등·버전 게이팅 로직(CJS 버전). 스키마가 아직 v12가 아니면
 // (= 앱이 마이그레이션 전) 건너뜀 — 앱을 한 번 켜면 마이그레이션+시드가 수행된다.
 function seedBuiltins(db) {
@@ -361,6 +368,53 @@ function logCli(projectPath, rec) {
     fs.appendFileSync(path.join(dir, loadArch().logFile), JSON.stringify(rec) + "\n", "utf8");
   } catch { /* ignore */ }
 }
+function coerceText(v, max) {
+  if (typeof v !== "string") return undefined;
+  const s = v.trim();
+  return s ? s.slice(0, max) : undefined;
+}
+function coerceNullableText(v, max) {
+  if (v === null) return null;
+  return coerceText(v, max);
+}
+function normalizeRequestContext(ev, ctx, projectPath) {
+  const raw = ev && ev.request_context && typeof ev.request_context === "object" ? ev.request_context : {};
+  const triggerTerms = Array.isArray(raw.trigger_terms)
+    ? [...new Set(raw.trigger_terms.filter((x) => typeof x === "string").map((x) => x.trim()).filter(Boolean))]
+        .slice(0, 12)
+        .map((x) => x.slice(0, 40))
+    : undefined;
+  const cwd = coerceNullableText(raw.cwd_at_request, 500) ?? ctx.cwdAtRequest ?? ctx.cwd ?? ctx.projectPath ?? null;
+  const targetProject = coerceNullableText(raw.target_project, 120) ?? ctx.projectId ?? null;
+  const targetPath = coerceNullableText(raw.target_path, 500) ?? projectPath ?? null;
+  const out = {};
+  const userIntent = coerceText(raw.user_intent, 240);
+  const outcome = coerceNullableText(raw.outcome, 240);
+  if (userIntent) out.user_intent = userIntent;
+  if (triggerTerms && triggerTerms.length) out.trigger_terms = triggerTerms;
+  if (cwd !== undefined) out.cwd_at_request = cwd;
+  if (targetProject !== undefined) out.target_project = targetProject;
+  if (targetPath !== undefined) out.target_path = targetPath;
+  out.cross_context = typeof raw.cross_context === "boolean" ? raw.cross_context : !!(cwd && targetPath && cwd !== targetPath);
+  if (outcome !== undefined) out.outcome = outcome;
+  if (SECRET_RE.some((re) => re.test(JSON.stringify(out)))) return {};
+  return Object.keys(out).length ? out : {};
+}
+function contextLine(json) {
+  try {
+    const ctx = JSON.parse(json || "{}");
+    const parts = [
+      ctx.user_intent || ctx.userIntent,
+      (ctx.target_project || ctx.targetProject) ? `target:${ctx.target_project || ctx.targetProject}` : null,
+      Array.isArray(ctx.trigger_terms || ctx.triggerTerms) && (ctx.trigger_terms || ctx.triggerTerms).length
+        ? `terms:${(ctx.trigger_terms || ctx.triggerTerms).join(",")}`
+        : null,
+    ].filter(Boolean);
+    return parts.length ? ` (context: ${parts.join("; ").slice(0, 180)})` : "";
+  } catch {
+    return "";
+  }
+}
 // 작업 폴더 반복 방문 → 활성화(.agentlas 생성). 앱의 activation.ts와 동일한 정책(2회).
 function recordCliFolderVisit(db, projectPath) {
   if (!tableExists(db, "folder_activity")) return { activated: false };
@@ -395,6 +449,7 @@ function activeProjectPath(db) {
 function cliMemoryContext(db, projectPath) {
   const sections = [];
   const arch = loadArch();
+  ensureMemoryContextColumn(db);
   if (projectPath) {
     try {
       const soulPath = path.join(projectPath, arch.memoryDir, arch.soulFile);
@@ -408,13 +463,13 @@ function cliMemoryContext(db, projectPath) {
   if (tableExists(db, "memory_entries")) {
     try {
       const rows = projectPath
-        ? db.prepare("SELECT kind, content FROM memory_entries WHERE superseded_at IS NULL AND scope!='session' AND (project_path=? OR (project_path IS NULL AND scope IN ('user_identity','team_memory','agent_team'))) ORDER BY created_at DESC LIMIT 12").all(projectPath)
-        : db.prepare("SELECT kind, content FROM memory_entries WHERE project_path IS NULL AND scope!='session' AND superseded_at IS NULL ORDER BY created_at DESC LIMIT 12").all();
-      if (rows.length) sections.push((projectPath ? "### Recent curated memory\n" : "### Curated memory (global)\n") + rows.map((r) => `- [${r.kind}] ${r.content}`).join("\n"));
+        ? db.prepare("SELECT kind, content, context_json FROM memory_entries WHERE superseded_at IS NULL AND scope!='session' AND (project_path=? OR (project_path IS NULL AND scope IN ('user_identity','team_memory','agent_team'))) ORDER BY created_at DESC LIMIT 12").all(projectPath)
+        : db.prepare("SELECT kind, content, context_json FROM memory_entries WHERE project_path IS NULL AND scope!='session' AND superseded_at IS NULL ORDER BY created_at DESC LIMIT 12").all();
+      if (rows.length) sections.push((projectPath ? "### Recent curated memory\n" : "### Curated memory (global)\n") + rows.map((r) => `- [${r.kind}] ${r.content}${contextLine(r.context_json)}`).join("\n"));
     } catch { /* ignore */ }
   }
   if (!sections.length) return "";
-  return "## Agentlas memory (read before answering; five-scope model: user_identity, team_memory, project, agent_repo, session)\n\n" + sections.join("\n\n");
+  return "## Agentlas memory (read before answering; five-scope + request_context recall)\n\n" + sections.join("\n\n");
 }
 function parseMemoryEventsCli(text) {
   const heading = loadArch().eventsHeading;
@@ -432,6 +487,7 @@ function parseMemoryEventsCli(text) {
 function curateCliReply(db, text, ctx) {
   const { events, cleaned } = parseMemoryEventsCli(text);
   if (!events.length || !tableExists(db, "memory_entries")) return cleaned;
+  ensureMemoryContextColumn(db);
   const arch = loadArch();
   const { randomUUID } = require("node:crypto");
   const now = new Date().toISOString();
@@ -448,11 +504,12 @@ function curateCliReply(db, text, ctx) {
     if (scope === "discard" || scope === "session") { logCli(ctx.projectPath, { action: scope, kind, content, at: now }); continue; }
     if (scope === "project" && !ctx.projectPath) scope = "team_memory";
     const ppath = scope === "project" ? ctx.projectPath : null;
+    const requestContext = normalizeRequestContext(ev, ctx, ppath);
     try {
       const dup = db.prepare("SELECT 1 FROM memory_entries WHERE scope=? AND kind=? AND lower(trim(content))=? AND superseded_at IS NULL AND (project_path IS ? OR project_path=?) LIMIT 1").get(scope, kind, content.toLowerCase(), ppath, ppath);
       if (dup) continue;
-      db.prepare("INSERT INTO memory_entries (id,scope,kind,content,project_id,project_path,agent_id,chat_id,confidence,sensitivity,evidence_json,superseded_at,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,NULL,?)").run(randomUUID(), scope, kind, content, null, ppath, ctx.agentId || null, null, ev.confidence || "medium", ev.sensitivity || "internal", JSON.stringify(Array.isArray(ev.evidence_refs) ? ev.evidence_refs : []), now);
-      logCli(ctx.projectPath, { action: "written", scope, kind, content, at: now });
+      db.prepare("INSERT INTO memory_entries (id,scope,kind,content,project_id,project_path,agent_id,chat_id,confidence,sensitivity,evidence_json,context_json,superseded_at,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,NULL,?)").run(randomUUID(), scope, kind, content, ctx.projectId || null, ppath, ctx.agentId || null, null, ev.confidence || "medium", ev.sensitivity || "internal", JSON.stringify(Array.isArray(ev.evidence_refs) ? ev.evidence_refs : []), JSON.stringify(requestContext), now);
+      logCli(ctx.projectPath, { action: "written", scope, kind, content, request_context: requestContext, at: now });
     } catch { /* ignore */ }
   }
   return cleaned;
@@ -575,6 +632,7 @@ async function runApi(backend, model, system, prompt) {
 // ctx = { projectPath, agentId } — 메모리 주입/큐레이션에 사용.
 async function executeOnce(db, system, prompt, override, ctx) {
   ctx = ctx || { projectPath: null, agentId: null };
+  if (!ctx.cwdAtRequest) ctx.cwdAtRequest = projectCwd();
   const rt = resolveRuntime(db, override);
   if (rt.mode === "cli") {
     // 네이티브 CLI는 자체 세션을 가지므로 emitter는 넣지 않고(노이즈 방지) 메모리 컨텍스트만 주입.
@@ -597,6 +655,7 @@ async function executeOnce(db, system, prompt, override, ctx) {
 // 매 턴 메모리 컨텍스트 + emitter를 주입하고 답변에서 메모리를 큐레이션한다.
 function apiRepl(db, backend, model, system, label, ctx) {
   ctx = ctx || { projectPath: null, agentId: null };
+  if (!ctx.cwdAtRequest) ctx.cwdAtRequest = ctx.cwd || projectCwd();
   const readline = require("node:readline");
   process.stderr.write(`▸ ${label} (${backend}${model ? " · " + model : ""}) — 종료: /exit\n`);
   const rl = readline.createInterface({ input: process.stdin, output: process.stderr });

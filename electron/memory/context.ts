@@ -11,6 +11,7 @@ import { readProjectSoul, readSitemap } from "./project-files";
 
 const SOUL_MAX_CHARS = 1800;
 const MAX_ENTRIES = 12;
+const CONTEXT_MAX_CHARS = 180;
 
 function summarizeSitemap(projectPath: string): string | null {
   const sm = readSitemap(projectPath);
@@ -29,7 +30,19 @@ function summarizeSitemap(projectPath: string): string | null {
 function entryLines(entries: MemoryEntry[]): string {
   return entries
     .slice(0, MAX_ENTRIES)
-    .map((e) => `- [${e.kind}] ${e.content}`)
+    .map((e) => {
+      const ctx = e.requestContext;
+      const parts = [
+        ctx?.userIntent,
+        ctx?.targetProject ? `target:${ctx.targetProject}` : null,
+        ctx?.triggerTerms && ctx.triggerTerms.length > 0 ? `terms:${ctx.triggerTerms.join(",")}` : null,
+      ].filter(Boolean);
+      const suffix =
+        parts.length > 0
+          ? ` (context: ${parts.join("; ").slice(0, CONTEXT_MAX_CHARS)})`
+          : "";
+      return `- [${e.kind}] ${e.content}${suffix}`;
+    })
     .join("\n");
 }
 
@@ -74,7 +87,7 @@ export function buildMemoryContext(
 
   if (sections.length === 0) return "";
   return [
-    "## Agentlas memory (read before answering; five-scope model: user_identity, team_memory, project, agent_repo, session)",
+    "## Agentlas memory (read before answering; five-scope + request_context recall)",
     ...sections,
   ].join("\n\n");
 }

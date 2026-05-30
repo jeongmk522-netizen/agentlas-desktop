@@ -3,6 +3,16 @@ import { randomUUID } from "node:crypto";
 import { getDb } from "../store/db";
 import type { MemoryKind, MemoryScope } from "../architecture/manifest";
 
+export interface RequestContext {
+  userIntent?: string;
+  triggerTerms?: string[];
+  cwdAtRequest?: string | null;
+  targetProject?: string | null;
+  targetPath?: string | null;
+  crossContext?: boolean;
+  outcome?: string | null;
+}
+
 export interface MemoryEntry {
   id: string;
   scope: MemoryScope;
@@ -15,6 +25,7 @@ export interface MemoryEntry {
   confidence: "high" | "medium" | "low";
   sensitivity: "public" | "internal" | "private" | "confidential" | "secret";
   evidence: string[];
+  requestContext: RequestContext | null;
   supersededAt: string | null;
   createdAt: string;
 }
@@ -31,8 +42,29 @@ interface Row {
   confidence: string;
   sensitivity: string;
   evidence_json: string;
+  context_json?: string;
   superseded_at: string | null;
   created_at: string;
+}
+
+function parseRequestContext(json?: string | null): RequestContext | null {
+  if (!json) return null;
+  try {
+    const raw = JSON.parse(json) as RequestContext & Record<string, unknown>;
+    if (!raw || typeof raw !== "object" || Object.keys(raw).length === 0) return null;
+    return {
+      userIntent: raw.userIntent ?? (raw.user_intent as string | undefined),
+      triggerTerms:
+        raw.triggerTerms ?? (Array.isArray(raw.trigger_terms) ? (raw.trigger_terms as string[]) : undefined),
+      cwdAtRequest: raw.cwdAtRequest ?? (raw.cwd_at_request as string | null | undefined),
+      targetProject: raw.targetProject ?? (raw.target_project as string | null | undefined),
+      targetPath: raw.targetPath ?? (raw.target_path as string | null | undefined),
+      crossContext: raw.crossContext ?? (raw.cross_context as boolean | undefined),
+      outcome: raw.outcome as string | null | undefined,
+    };
+  } catch {
+    return null;
+  }
 }
 
 function toEntry(r: Row): MemoryEntry {
@@ -54,6 +86,7 @@ function toEntry(r: Row): MemoryEntry {
     confidence: r.confidence as MemoryEntry["confidence"],
     sensitivity: r.sensitivity as MemoryEntry["sensitivity"],
     evidence,
+    requestContext: parseRequestContext(r.context_json),
     supersededAt: r.superseded_at,
     createdAt: r.created_at,
   };
@@ -70,6 +103,7 @@ export interface NewMemoryEntry {
   confidence?: MemoryEntry["confidence"];
   sensitivity?: MemoryEntry["sensitivity"];
   evidence?: string[];
+  requestContext?: RequestContext | null;
 }
 
 export function insertMemoryEntry(e: NewMemoryEntry): MemoryEntry {
@@ -79,8 +113,8 @@ export function insertMemoryEntry(e: NewMemoryEntry): MemoryEntry {
     .prepare(
       `INSERT INTO memory_entries
        (id, scope, kind, content, project_id, project_path, agent_id, chat_id,
-        confidence, sensitivity, evidence_json, superseded_at, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?)`,
+        confidence, sensitivity, evidence_json, context_json, superseded_at, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?)`,
     )
     .run(
       id,
@@ -94,6 +128,7 @@ export function insertMemoryEntry(e: NewMemoryEntry): MemoryEntry {
       e.confidence ?? "medium",
       e.sensitivity ?? "internal",
       JSON.stringify(e.evidence ?? []),
+      JSON.stringify(e.requestContext ?? {}),
       now,
     );
   return {
@@ -108,6 +143,7 @@ export function insertMemoryEntry(e: NewMemoryEntry): MemoryEntry {
     confidence: e.confidence ?? "medium",
     sensitivity: e.sensitivity ?? "internal",
     evidence: e.evidence ?? [],
+    requestContext: e.requestContext ?? null,
     supersededAt: null,
     createdAt: now,
   };

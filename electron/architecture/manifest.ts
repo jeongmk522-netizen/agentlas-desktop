@@ -24,7 +24,7 @@
 // This module is intentionally DATA + tiny pure helpers only (no electron/node imports)
 // so it compiles into dist/electron/** (packaged) and can be required by the JSON generator.
 
-export const ARCHITECTURE_VERSION = "1.1.0";
+export const ARCHITECTURE_VERSION = "1.2.0";
 
 // ── Memory contract ────────────────────────────────────────────────────────
 // Mirrors agent_memory_curator_agent/docs/integration-contract.md + memory-taxonomy.md.
@@ -97,6 +97,9 @@ Rules:
 - "memory_kind": fact | decision | preference | risk | procedure | hypothesis | evidence | deprecation | conflict
 - "suggested_scope": user_identity | team_memory | project (this folder) | agent_repo | session (temporary) | discard
 - "agent_team" is accepted only as a legacy alias for team_memory.
+- Add "request_context" when it improves future recall: user_intent, trigger_terms,
+  cwd_at_request, target_project, target_path, cross_context, outcome.
+- Never put the raw user prompt or transcript in request_context.
 - Suggest a scope; the Memory Curator decides the final destination.
 
 Format (omit entirely if empty):
@@ -104,7 +107,22 @@ Format (omit entirely if empty):
 ${MEMORY_EVENTS_HEADING}
 \`\`\`json
 [
-  { "memory_kind": "decision", "content": "...", "suggested_scope": "project", "confidence": "high", "evidence_refs": [] }
+  {
+    "memory_kind": "decision",
+    "content": "...",
+    "suggested_scope": "project",
+    "confidence": "high",
+    "evidence_refs": [],
+    "request_context": {
+      "user_intent": "...",
+      "trigger_terms": ["..."],
+      "cwd_at_request": null,
+      "target_project": null,
+      "target_path": null,
+      "cross_context": false,
+      "outcome": "..."
+    }
+  }
 ]
 \`\`\``;
 
@@ -173,6 +191,8 @@ task — you manage memory QUALITY. Agents emit Memory Events; you own durable m
 - Deduplicate against existing memory; detect conflicts instead of silently overwriting.
 - Require evidence for durable fact/decision/procedure writes; mark low-confidence or
   stale items as session/discard.
+- Preserve request context as a compact provenance capsule for recall. Never store
+  raw prompts, full transcripts, credentials, or private logs in the capsule.
 - Return a concise curation report: what was written, proposed, rejected, or deferred.
 
 ## Routing rules

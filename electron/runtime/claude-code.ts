@@ -165,6 +165,18 @@ export const runClaudeCode: Runner = async (
   // 작업량(reasoning effort) — low/medium/high/xhigh/max. 미지정이면 CLI 기본.
   const effortArgs = req.effort && req.effort.trim() ? ["--effort", req.effort.trim()] : [];
 
+  // MCP 서버 구성 주입 — mcp/client.ts가 설치·활성 서버를 .mcp.json으로 직렬화해 경로를 넘긴다.
+  // 이게 있어야 에이전트가 브라우저(Playwright) 등 실제 MCP 툴을 호출한다. (사용자 config와 병합)
+  const mcpArgs = req.mcpConfigPath ? ["--mcp-config", req.mcpConfigPath] : [];
+  // write/full 권한이면 헤드리스에서 권한 프롬프트로 막히지 않도록 MCP 툴을 미리 허용.
+  const allowedToolArgs =
+    req.mcpConfigPath &&
+    req.mcpAllowedTools &&
+    req.mcpAllowedTools.length > 0 &&
+    (req.permission === "write" || req.permission === "full")
+      ? ["--allowedTools", req.mcpAllowedTools.join(",")]
+      : [];
+
   return new Promise<RunnerResult>((resolve, reject) => {
     // stream-json + verbose: tool_use / 텍스트 / 토큰(usage) 이벤트를 NDJSON으로 받아
     // Claude Code식 tool-use 블록 + 토큰 표시를 가능하게 한다.
@@ -179,6 +191,8 @@ export const runClaudeCode: Runner = async (
       ...modelArgs,
       ...effortArgs,
       ...permArgs,
+      ...mcpArgs,
+      ...allowedToolArgs,
     ];
     const child = spawnCli(bin, args, {
       stdio: ["ignore", "pipe", "pipe"],

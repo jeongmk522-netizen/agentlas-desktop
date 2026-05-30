@@ -13,7 +13,11 @@ cleanup_appledouble() {
   for target in "$@"; do
     if [[ -e "$target" ]]; then
       find "$target" -name '._*' -delete 2>/dev/null || true
-      /usr/bin/dot_clean -m "$target" 2>/dev/null || true
+      if command -v dot_clean >/dev/null 2>&1; then
+        dot_clean -m "$target" 2>/dev/null || true
+      elif [[ -x /usr/sbin/dot_clean ]]; then
+        /usr/sbin/dot_clean -m "$target" 2>/dev/null || true
+      fi
     fi
   done
 }

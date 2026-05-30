@@ -2,6 +2,7 @@
 // mcp/client.ts가 활성 런타임 → 적절한 러너로 라우팅한다.
 import type { ChatHistoryEntry, ImageAttachment } from "../../shared/types";
 import { tStatus, type RuntimeLocale } from "./status-i18n";
+import { GLOBAL_CONNECTION_SKILL } from "./global-skill";
 
 export interface RunnerRequest {
   systemPrompt: string;
@@ -26,6 +27,14 @@ export interface RunnerRequest {
    * 미설정이면 러너가 안전한 기본 폴더(agentRunCwd)를 쓴다. 파일 생성·빌드는 이 폴더에서 일어난다.
    */
   cwd?: string;
+  /**
+   * MCP 서버 구성 파일 경로(.mcp.json). 설정되면 Claude Code 러너가 `--mcp-config`로 전달한다.
+   */
+  mcpConfigPath?: string;
+  /** 위 구성의 MCP 툴 이름 prefix 목록(예: "mcp__playwright"). write/full 권한에서 자동 승인용. */
+  mcpAllowedTools?: string[];
+  /** Codex CLI `exec`에 붙이는 MCP config override args (`-c mcp_servers...`). */
+  mcpCodexConfigArgs?: string[];
   /** 상태/오류 메시지 i18n에 사용. renderer가 동봉, fallback "en" */
   locale: RuntimeLocale;
 }
@@ -84,6 +93,10 @@ export function wrapSystemPrompt(
     toolsLine,
     "",
     ASK_PROTOCOL,
+    "",
+    // 항상-켜진 백그라운드 스킬 — 사용자가 "API/MCP"를 몰라도 에이전트가 브라우저로 가입·로그인·키
+    // 발급을 손잡고 안내한 뒤 저장하게 한다. 사용자에게는 보이지 않는다(시스템 프롬프트 내부).
+    GLOBAL_CONNECTION_SKILL,
     "",
     tStatus(locale, "sysAgentDef"),
     agentSystemPrompt,

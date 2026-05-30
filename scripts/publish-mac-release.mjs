@@ -42,7 +42,12 @@ function cleanupAppleDouble() {
   if (!existsSync(releaseDir)) return;
   run("find", [releaseDir, "-name", "._*", "-delete"]);
   if (process.platform === "darwin") {
-    run("/usr/bin/dot_clean", ["-m", releaseDir]);
+    const dotClean = spawnSync("sh", ["-lc", "command -v dot_clean || test ! -x /usr/sbin/dot_clean || printf /usr/sbin/dot_clean"], {
+      cwd: desktopRoot,
+      encoding: "utf8",
+      env: process.env,
+    }).stdout.trim();
+    if (dotClean) run(dotClean, ["-m", releaseDir]);
   }
 }
 

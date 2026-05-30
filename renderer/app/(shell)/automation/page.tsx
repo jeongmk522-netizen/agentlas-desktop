@@ -1,4 +1,4 @@
-// 자동화 — 리스트. M0 stub.
+// 자동화 — 리스트. 영구 SQLite + 백그라운드 스케줄러(60초)로 실제 실행.
 "use client";
 import { useEffect, useState } from "react";
 import Link from "next/link";

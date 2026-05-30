@@ -321,7 +321,7 @@ const dict = {
     // Automation
     "auto.title": "자동화",
     "auto.new": "새 자동화",
-    "auto.stub_note": "M0 stub — UI는 동작하지만 실제 스케줄링은 V1에서 활성화됩니다. 기록한 항목은 앱을 다시 열면 사라집니다.",
+    "auto.stub_note": "자동화는 백그라운드 스케줄러가 1분마다 예약을 확인해 실행합니다. 항목은 저장되어 앱을 다시 열어도 유지됩니다.",
     "auto.empty": "등록된 자동화가 없습니다. 우측 상단 새 자동화로 시작하세요.",
     "auto.on": "활성",
     "auto.off": "꺼짐",
@@ -349,7 +349,7 @@ const dict = {
     "auto.detail.last_run": "마지막 실행",
     "auto.detail.never": "아직 실행된 적 없음",
     "auto.detail.prompt": "프롬프트",
-    "auto.detail.stub": "M0 stub — 실제 스케줄링은 V1에서. 앱을 다시 열면 메모리 저장이 비워집니다.",
+    "auto.detail.stub": "이 자동화는 예약에 따라 백그라운드에서 실행됩니다. 비활성화하면 다음 실행이 멈춥니다.",
 
     // Agent files (Library > Agents 우측 패널)
     "agentfiles.title": "에이전트 파일",
@@ -590,7 +590,7 @@ const dict = {
     "sidebar.archive": "Archived",
     "sidebar.empty_chats": "Your chats will appear here",
     "sidebar.empty_firms_install": "Install a firm",
-    "sidebar.empty_firms_hint": "A full-package company you command a CEO",
+    "sidebar.empty_firms_hint": "A full-package company — you just command the CEO",
     "sidebar.empty_projects": "Create your first project",
     "sidebar.empty_automations": "Create an automation",
     "sidebar.collapse": "Collapse sidebar",
@@ -867,7 +867,7 @@ const dict = {
     // Automation
     "auto.title": "Automations",
     "auto.new": "New automation",
-    "auto.stub_note": "M0 stub — UI works but real scheduling activates in V1. Entries vanish on app restart.",
+    "auto.stub_note": "Automations run in the background — the scheduler checks every minute and entries persist across restarts.",
     "auto.empty": "No automations. Use New automation at the top right.",
     "auto.on": "On",
     "auto.off": "Off",
@@ -895,7 +895,7 @@ const dict = {
     "auto.detail.last_run": "Last run",
     "auto.detail.never": "Never run",
     "auto.detail.prompt": "Prompt",
-    "auto.detail.stub": "M0 stub — real scheduling lands in V1. Memory store resets on restart.",
+    "auto.detail.stub": "This automation runs in the background on schedule. Disable it to stop the next run.",
 
     // Agent files (Library > Agents right panel)
     "agentfiles.title": "Agent files",

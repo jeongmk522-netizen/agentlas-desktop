@@ -67,7 +67,7 @@ const DICT = {
     firmOrgChart: "현재 조직도:",
     firmReportSuffix: "(보고: {to})",
     firmDelegateNote:
-      "(M0: 실제 부서장 호출은 V1. 지금은 CEO인 당신이 위임 계획을 응답으로 보여주세요.)",
+      "(CEO로서 어느 본부에 무엇을 맡길지 위임 계획을 정리해 응답하세요.)",
     compacted: "컨텍스트 압축 — 이전 대화 {n}개 메시지를 요약으로 접었습니다",
     compactedDigestHeader: "[압축된 이전 대화 요약 — 오래된 맥락을 간추렸습니다]",
     aborted: "사용자가 실행을 중지했습니다.",
@@ -115,7 +115,7 @@ const DICT = {
     firmOrgChart: "Current org chart:",
     firmReportSuffix: "(reports to: {to})",
     firmDelegateNote:
-      "(M0: actual department-head invocation ships in V1. For now, as CEO, lay out your delegation plan in the reply.)",
+      "(As CEO, lay out which head you'd task with what in your reply.)",
     compacted: "Context compacted — folded {n} earlier messages into a summary",
     compactedDigestHeader: "[Summary of compacted earlier conversation — older context condensed]",
     aborted: "Run stopped by the user.",

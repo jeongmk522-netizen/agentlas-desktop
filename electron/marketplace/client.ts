@@ -245,7 +245,7 @@ const SEED_LISTINGS: SeedListing[] = [
       "1. **Command summary** — one line of what the owner wants\n" +
       "2. **Delegation plan** — what you'll task each head with (bullets)\n" +
       "3. **CEO decision** — priority · expected output · ETA\n\n" +
-      "(M0: actual department calls land in V1. For now show how you'd dispatch the work.)",
+      "Delegate each item to the right department head, then synthesize their outputs into the final decision.",
   },
   {
     slug: "firm-ceo-marketer",
@@ -269,7 +269,7 @@ const SEED_LISTINGS: SeedListing[] = [
       "1. **Command summary**\n" +
       "2. **Delegation plan** (bullets)\n" +
       "3. **CEO decision** — priority · output · ETA\n\n" +
-      "(M0: department calls land in V1. Show how you'd dispatch.)",
+      "Delegate each item to the right head, then synthesize the results.",
   },
 ];
 

@@ -226,7 +226,7 @@ export async function runMigration(opts: MigrationOptions): Promise<MigrationRes
   // ── 2) API 키 → 키체인/env vault ─────────────────────────
   const keysImported = importKeys ? await importKeysFrom(src) : [];
 
-  // ── 3) cron → automations (M0: 세션 한정 stub) ───────────
+  // ── 3) cron → automations (영구 SQLite + 백그라운드 스케줄러로 실행) ─
   let automationsImported = 0;
   for (const job of src.cronJobs) {
     if (!job.promptTemplate) continue;
@@ -238,11 +238,6 @@ export async function runMigration(opts: MigrationOptions): Promise<MigrationRes
       promptTemplate: job.promptTemplate,
     });
     automationsImported += 1;
-  }
-  if (automationsImported > 0) {
-    warnings.push(
-      "가져온 자동화는 이 빌드(M0)에서 세션 동안만 유지됩니다 — 영구 스케줄러는 V1.",
-    );
   }
 
   // ── 4) 메모리/워크스페이스 → 프로젝트 컨텍스트 ───────────

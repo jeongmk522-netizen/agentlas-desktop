@@ -1,0 +1,156 @@
+"use strict";
+/*
+ * Tiny i18n for the agentlas terminal chrome. Language is chosen in the first-run
+ * onboarding wizard and stored in cli-prefs.json. Missing keys fall back to English.
+ * Technical tokens (/slash commands, runtime/model names, "runtime"/"perm"/"cwd") stay as-is.
+ */
+
+const LANGS = [
+  { code: "en", label: "English" },
+  { code: "ko", label: "한국어" },
+];
+
+const STRINGS = {
+  en: {
+    // banner
+    "banner.help": "for commands",
+    "banner.quit": "to quit",
+    "banner.interrupt": "to interrupt",
+    // picker
+    "picker.agents": "Agents",
+    "picker.companies": "Companies",
+    "picker.none": "(none yet — open the Agentlas app to install agents, or /import <path>)",
+    "picker.prompt": "pick a number or name (or 'firm <name>', /help, /import <path>, /exit) › ",
+    "picker.noNum": "no agent at that number",
+    "picker.noFirm": "no such company",
+    "picker.noMatch": 'no match for "%s" — try a number or a name',
+    // repl
+    "interrupted": "interrupted",
+    "bye": "bye",
+    "stalled": "stream stalled — interrupted (idle timeout)",
+    "noKey": "No %s API key. Add one in the app (Settings → BYOK), or switch with /runtime.",
+    "runtimeSet": "runtime → %s",
+    "runtimeNotInstalled": "%s CLI is not installed.",
+    "runtimeUsage": "usage: /runtime claude-code|codex|gemini|anthropic|openai|google|ollama",
+    "modelOnlyApi": "/model only applies to BYOK/Ollama (api) runtimes.",
+    "modelSet": "model → %s",
+    "modelDefault": "(default)",
+    "permSet": "permission → %s",
+    "permUsage": "usage: /permission read|write|full",
+    "noAgent": "no agent: %s",
+    "noCompany": "no company: %s",
+    "agentUsage": "usage: /agent <name>",
+    "firmUsage": "usage: /firm <name>",
+    "importUsage": "usage: /import <folder>",
+    "cwdNoPath": "no such path: %s",
+    "cwdSet": "cwd → %s",
+    "noMemory": "(no memory yet)",
+    "imported": "imported: %s (%s)",
+    "updated": "updated: %s (%s)",
+    "switched": "→ %s",
+    "unknownCmd": "unknown command: /%s  (/help)",
+    // help rows
+    "help.talk": "talk to the current agent/company — streaming + tools",
+    "help.agents": "list installed agents",
+    "help.agent": "switch to another agent",
+    "help.firms": "list companies / switch to one",
+    "help.runtime": "switch runtime (claude-code|codex|gemini|anthropic|openai|google|ollama)",
+    "help.model": "set the model (BYOK/Ollama only)",
+    "help.permission": "what it may do (read|write|full)",
+    "help.cwd": "show or change the working folder",
+    "help.memory": "show the memory being injected",
+    "help.import": "import a local folder (agent or team)",
+    "help.clear": "clear the chat and redraw",
+    "help.doctor": "check runtimes and data",
+    "help.exit": "quit (Ctrl-C: stop the turn / quit when idle)",
+    "help.talkKey": "(type a message)",
+    // onboarding wizard
+    "wiz.welcome": "Welcome to Agentlas — let's set things up.",
+    "wiz.langQ": "Choose your language",
+    "wiz.runtimeQ": "Which AI should run your agents by default?",
+    "wiz.runtimeAuto": "Use the app's active runtime",
+    "wiz.runtimeInstalled": "installed",
+    "wiz.runtimeMissing": "not installed",
+    "wiz.permQ": "How much should agents be allowed to do by default?",
+    "wiz.permRead": "read — look only (no changes)",
+    "wiz.permWrite": "write — read + create/edit files (recommended)",
+    "wiz.permFull": "full — everything, including shell commands",
+    "wiz.pick": "Enter a number › ",
+    "wiz.saved": "All set. You can change any of this later with /runtime, /permission.",
+    "wiz.changeLang": "Tip: re-run setup anytime with  agentlas setup",
+  },
+  ko: {
+    "banner.help": "명령 보기",
+    "banner.quit": "종료",
+    "banner.interrupt": "턴 중단",
+    "picker.agents": "에이전트",
+    "picker.companies": "회사",
+    "picker.none": "(아직 없음 — Agentlas 앱에서 에이전트를 설치하거나 /import <경로>)",
+    "picker.prompt": "번호나 이름을 고르세요 (또는 'firm <이름>', /help, /import <경로>, /exit) › ",
+    "picker.noNum": "그 번호의 에이전트가 없습니다",
+    "picker.noFirm": "그런 회사가 없습니다",
+    "picker.noMatch": '"%s"에 맞는 항목이 없습니다 — 번호나 이름으로',
+    "interrupted": "중단됨",
+    "bye": "안녕",
+    "stalled": "응답이 지연되어 중단했습니다 (idle timeout)",
+    "noKey": "%s API 키가 없습니다. 앱 설정 → BYOK에서 등록하거나 /runtime으로 전환하세요.",
+    "runtimeSet": "런타임 → %s",
+    "runtimeNotInstalled": "%s CLI가 설치돼 있지 않습니다.",
+    "runtimeUsage": "사용법: /runtime claude-code|codex|gemini|anthropic|openai|google|ollama",
+    "modelOnlyApi": "/model은 BYOK/Ollama(api) 런타임에서만 적용됩니다.",
+    "modelSet": "모델 → %s",
+    "modelDefault": "(기본값)",
+    "permSet": "권한 → %s",
+    "permUsage": "사용법: /permission read|write|full",
+    "noAgent": "에이전트 없음: %s",
+    "noCompany": "회사 없음: %s",
+    "agentUsage": "사용법: /agent <이름>",
+    "firmUsage": "사용법: /firm <이름>",
+    "importUsage": "사용법: /import <폴더>",
+    "cwdNoPath": "경로 없음: %s",
+    "cwdSet": "작업 폴더 → %s",
+    "noMemory": "(메모리 없음)",
+    "imported": "임포트됨: %s (%s)",
+    "updated": "갱신됨: %s (%s)",
+    "switched": "→ %s",
+    "unknownCmd": "알 수 없는 명령: /%s  (/help)",
+    "help.talk": "현재 에이전트/회사와 대화 — 스트리밍 + 툴",
+    "help.agents": "설치된 에이전트 목록",
+    "help.agent": "다른 에이전트로 전환",
+    "help.firms": "회사 목록 / 전환",
+    "help.runtime": "런타임 전환 (claude-code|codex|gemini|anthropic|openai|google|ollama)",
+    "help.model": "모델 지정 (BYOK/Ollama만)",
+    "help.permission": "허용 범위 (read|write|full)",
+    "help.cwd": "작업 폴더 보기/변경",
+    "help.memory": "주입되는 메모리 보기",
+    "help.import": "로컬 폴더(에이전트/팀) 임포트",
+    "help.clear": "대화 비우고 다시 그리기",
+    "help.doctor": "런타임/데이터 점검",
+    "help.exit": "종료 (Ctrl-C: 턴 중단 / 유휴 시 종료)",
+    "help.talkKey": "(메시지 입력)",
+    "wiz.welcome": "Agentlas에 오신 걸 환영합니다 — 먼저 설정할게요.",
+    "wiz.langQ": "언어를 선택하세요",
+    "wiz.runtimeQ": "기본으로 어떤 AI가 에이전트를 실행할까요?",
+    "wiz.runtimeAuto": "앱의 활성 런타임 사용",
+    "wiz.runtimeInstalled": "설치됨",
+    "wiz.runtimeMissing": "미설치",
+    "wiz.permQ": "에이전트가 기본적으로 어디까지 할 수 있게 할까요?",
+    "wiz.permRead": "read — 보기만 (변경 없음)",
+    "wiz.permWrite": "write — 읽기 + 파일 생성/편집 (권장)",
+    "wiz.permFull": "full — 셸 명령 포함 전부",
+    "wiz.pick": "번호 입력 › ",
+    "wiz.saved": "완료. 나중에 /runtime, /permission으로 언제든 바꿀 수 있어요.",
+    "wiz.changeLang": "팁: 언제든  agentlas setup  으로 다시 설정",
+  },
+};
+
+function t(lang, key, ...args) {
+  const table = STRINGS[lang] || STRINGS.en;
+  let s = table[key];
+  if (s == null) s = STRINGS.en[key];
+  if (s == null) return key;
+  let i = 0;
+  return s.replace(/%s/g, () => (i < args.length ? String(args[i++]) : "%s"));
+}
+
+module.exports = { t, LANGS, STRINGS };

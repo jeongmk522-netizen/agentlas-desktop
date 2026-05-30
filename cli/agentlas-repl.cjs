@@ -1,9 +1,11 @@
 "use strict";
 /*
- * agentlas-repl: the interactive shell of the Boston Terrier terminal.
+ * agentlas-repl: the interactive shell of the agentlas terminal.
  * agentlas is always the host — when the active runtime is claude/codex/gemini it drives them
  * headless and renders inside this TUI (subscription auth preserved); for BYOK/Ollama it runs
  * its own agent loop (api-agent). agentlas.cjs injects DB helpers via the `helpers` object.
+ *
+ * First launch runs an onboarding wizard (language → runtime → permission), stored in prefs.
  */
 const readline = require("node:readline");
 const { Ui } = require("./agentlas-ui.cjs");
@@ -74,12 +76,12 @@ function makeMemoryGuard(ui, heading) {
   };
 }
 
-// startRepl({ db, subject|null, runtime, permission, cwd, helpers })
-//   subject = { kind:'agent'|'firm', id, label, system }  (null → show an interactive picker first)
+// startRepl({ db, subject|null, runtime, permission, cwd, helpers, prefs, savePrefs })
 function startRepl(opts) {
   const { db } = opts;
-  const ui = new Ui();
   const H = opts.helpers;
+  const prefs = opts.prefs || {};
+  const ui = new Ui({ lang: prefs.lang || "en" });
   const state = {
     subject: opts.subject || null,
     runtime: opts.runtime,
@@ -100,7 +102,6 @@ function startRepl(opts) {
       cwd: state.cwd,
     });
   }
-  showBanner();
 
   const rl = readline.createInterface({ input: process.stdin, output: process.stdout, terminal: !!process.stdin.isTTY });
   let busy = false;
@@ -110,14 +111,13 @@ function startRepl(opts) {
     closed = true;
     if (!busy) process.exit(0);
   });
-
   rl.on("SIGINT", () => {
     if (busy && currentAbort) {
       currentAbort.abort();
-      ui.warn("interrupted");
+      ui.warn(ui.t("interrupted"));
     } else {
       ui.line("");
-      ui.line(ui.c.paw("🐾 ") + ui.c.dim("bye"));
+      ui.line(ui.c.emerald("🦖 ") + ui.c.dim(ui.t("bye")));
       rl.close();
       process.exit(0);
     }
@@ -150,17 +150,15 @@ function startRepl(opts) {
           ui,
           signal,
         });
-        // Don't record empty turns (tool-only / error / interrupt) — empty content breaks the next API turn (Anthropic 400).
         const at = (res.text || "").trim();
         if (at && !res.error) state.history.push({ role: "user", text: prompt }, { role: "assistant", text: at });
       } else {
-        // API path — append emitter block, hide the trailing block via the guard, then curate.
         const sys = H.augmentSystem(db, state.subject.system, ctx, true);
         let apiKey = null;
         if (rt.backend !== "ollama") {
           apiKey = await H.apiKey(rt.backend);
           if (!apiKey) {
-            ui.error(`No ${rt.backend} API key. Add one in the app (Settings → BYOK), or switch with /runtime.`);
+            ui.error(ui.t("noKey", rt.backend));
             return;
           }
         }
@@ -185,9 +183,9 @@ function startRepl(opts) {
     } catch (e) {
       ui.stopSpinner();
       if (signal.aborted) {
-        // user Ctrl-C — the SIGINT handler already printed "interrupted"
+        // user Ctrl-C — SIGINT handler already printed
       } else if (e && e.name === "AbortError") {
-        ui.warn("stream stalled — interrupted (idle timeout)");
+        ui.warn(ui.t("stalled"));
       } else {
         ui.error((e && e.message) || String(e));
       }
@@ -205,19 +203,19 @@ function startRepl(opts) {
     if (a === "claude") a = "claude-code";
     if (cliKinds[a]) {
       const bin = H.which(H.RUNTIME_BIN[a]);
-      if (!bin) return ui.error(`${a} CLI is not installed.`);
+      if (!bin) return ui.error(ui.t("runtimeNotInstalled", a));
       state.runtime = { mode: "cli", kind: a };
       state.native = {};
-      return ui.ok(`runtime → ${a}`);
+      return ui.ok(ui.t("runtimeSet", a));
     }
     if (apiBackends[a]) {
       state.runtime =
         a === "ollama"
           ? { mode: "api", backend: "ollama", model: state.runtime.backend === "ollama" ? state.runtime.model : null }
           : { mode: "api", backend: a, model: null };
-      return ui.ok(`runtime → ${runtimeLabel(state.runtime)}`);
+      return ui.ok(ui.t("runtimeSet", runtimeLabel(state.runtime)));
     }
-    ui.warn("usage: /runtime claude-code|codex|gemini|anthropic|openai|google|ollama");
+    ui.warn(ui.t("runtimeUsage"));
   }
 
   function setSubjectAgent(agent) {
@@ -233,31 +231,31 @@ function startRepl(opts) {
   function switchSubject(kind, query) {
     if (kind === "agent") {
       const agent = H.resolveAgent(db, query);
-      if (!agent) return ui.error(`no agent: ${query}`);
+      if (!agent) return ui.error(ui.t("noAgent", query));
       setSubjectAgent(agent);
     } else {
       const firm = H.resolveFirm(db, query);
-      if (!firm) return ui.error(`no company: ${query}`);
+      if (!firm) return ui.error(ui.t("noCompany", query));
       setSubjectFirm(firm);
     }
-    ui.ok(`→ ${state.subject.label}`);
+    ui.ok(ui.t("switched", state.subject.label));
   }
 
   function printRoster() {
     const ags = H.listAgents(db);
     const firms = H.listFirms(db);
     ui.line("");
-    ui.line(ui.c.dim("  Agents"));
+    ui.line(ui.c.dim("  " + ui.t("picker.agents")));
     ags.forEach((a, i) =>
       ui.line("   " + ui.c.faint(String(i + 1).padStart(2)) + "  " + ui.c.emerald(a.slug.padEnd(28)) + ui.c.text(a.name)),
     );
     if (firms.length) {
-      ui.line(ui.c.dim("  Companies"));
+      ui.line(ui.c.dim("  " + ui.t("picker.companies")));
       firms.forEach((f) =>
         ui.line("       " + ui.c.emerald(("firm " + f.slug).padEnd(28)) + ui.c.text(f.name) + ui.c.dim(" (CEO)")),
       );
     }
-    if (!ags.length && !firms.length) ui.line(ui.c.dim("   (none yet — open the Agentlas app to install agents, or /import <path>)"));
+    if (!ags.length && !firms.length) ui.line("   " + ui.c.dim(ui.t("picker.none")));
   }
 
   async function handleSlash(line) {
@@ -278,27 +276,27 @@ function startRepl(opts) {
         return true;
       }
       case "agent":
-        if (!arg) return ui.warn("usage: /agent <name>"), true;
+        if (!arg) return ui.warn(ui.t("agentUsage")), true;
         switchSubject("agent", arg);
         return true;
       case "firm":
-        if (!arg) return ui.warn("usage: /firm <name>"), true;
+        if (!arg) return ui.warn(ui.t("firmUsage")), true;
         switchSubject("firm", arg);
         return true;
       case "runtime":
         setRuntime(arg);
         return true;
       case "model":
-        if (state.runtime.mode !== "api") return ui.warn("/model only applies to BYOK/Ollama (api) runtimes."), true;
+        if (state.runtime.mode !== "api") return ui.warn(ui.t("modelOnlyApi")), true;
         state.runtime.model = arg || null;
-        ui.ok(`model → ${state.runtime.model || "(default)"}`);
+        ui.ok(ui.t("modelSet", state.runtime.model || ui.t("modelDefault")));
         return true;
       case "permission":
       case "perm": {
         const p = (arg || "").toLowerCase();
-        if (!["read", "write", "full"].includes(p)) return ui.warn("usage: /permission read|write|full"), true;
+        if (!["read", "write", "full"].includes(p)) return ui.warn(ui.t("permUsage")), true;
         state.permission = p;
-        ui.ok(`permission → ${p}`);
+        ui.ok(ui.t("permSet", p));
         return true;
       }
       case "cwd":
@@ -306,11 +304,11 @@ function startRepl(opts) {
           const path = require("node:path");
           const fs = require("node:fs");
           const next = path.resolve(state.cwd, arg);
-          if (!fs.existsSync(next)) return ui.error(`no such path: ${next}`), true;
+          if (!fs.existsSync(next)) return ui.error(ui.t("cwdNoPath", next)), true;
           state.cwd = next;
-          state.native = {}; // working folder changed → reset native sessions
-          if (H.projectPathFor) state.projectPath = H.projectPathFor(db, next); // memory follows the active folder
-          ui.ok(`cwd → ${banner.shorten(next)}`);
+          state.native = {};
+          if (H.projectPathFor) state.projectPath = H.projectPathFor(db, next);
+          ui.ok(ui.t("cwdSet", banner.shorten(next)));
         } else {
           ui.info(state.cwd);
         }
@@ -318,7 +316,7 @@ function startRepl(opts) {
       case "memory": {
         const mem = H.cliMemoryContext(db, state.projectPath);
         ui.line("");
-        ui.markdown(mem || "(no memory yet)");
+        ui.markdown(mem || ui.t("noMemory"));
         return true;
       }
       case "clear":
@@ -328,10 +326,10 @@ function startRepl(opts) {
         showBanner();
         return true;
       case "import":
-        if (!arg) return ui.warn("usage: /import <folder>"), true;
+        if (!arg) return ui.warn(ui.t("importUsage")), true;
         try {
           const r = H.importLocal(db, arg);
-          ui.ok(`${r.updated ? "updated" : "imported"}: ${r.name} (${r.kind}) — switch with /agent ${r.slug} or /firm`);
+          ui.ok(ui.t(r.updated ? "updated" : "imported", r.name, r.kind));
         } catch (e) {
           ui.error((e && e.message) || String(e));
         }
@@ -345,80 +343,66 @@ function startRepl(opts) {
       case "exit":
       case "quit":
       case "q":
-        ui.line(ui.c.paw("🐾 ") + ui.c.dim("bye"));
+        ui.line(ui.c.emerald("🦖 ") + ui.c.dim(ui.t("bye")));
         rl.close();
         process.exit(0);
         return false;
       default:
-        ui.warn(`unknown command: /${cmd}  (/help)`);
+        ui.warn(ui.t("unknownCmd", cmd));
         return true;
     }
   }
 
   // ── interactive picker (when no agent was given) ──
+  function chooseAndStart(setter, row) {
+    setter(row);
+    ui.ok(ui.t("switched", state.subject.label));
+    ask();
+  }
   function pick() {
     if (closed) return process.exit(0);
     printRoster();
-    rl.question(
-      "\n" + ui.c.emerald("pick") + ui.c.dim(" a number or name (or 'firm <name>', /help, /import <path>, /exit) › "),
-      (line) => {
-        const t = (line || "").trim();
-        if (!t) return pick();
-        if (t === "/exit" || t === "/quit" || t === "/q") {
-          ui.line(ui.c.paw("🐾 ") + ui.c.dim("bye"));
-          rl.close();
-          return process.exit(0);
-        }
-        if (t === "/help" || t === "/?") {
-          printHelp(ui);
-          return pick();
-        }
-        if (/^\/import\s+/.test(t)) {
-          try {
-            const r = H.importLocal(db, t.replace(/^\/import\s+/, "").trim());
-            ui.ok(`${r.updated ? "updated" : "imported"}: ${r.name} (${r.kind})`);
-          } catch (e) {
-            ui.error((e && e.message) || String(e));
-          }
-          return pick();
-        }
-        const ags = H.listAgents(db);
-        if (/^\d+$/.test(t)) {
-          const n = parseInt(t, 10);
-          if (n >= 1 && n <= ags.length) {
-            setSubjectAgent(ags[n - 1]);
-            ui.ok(`→ ${state.subject.label}`);
-            return ask();
-          }
-          ui.warn("no agent at that number");
-          return pick();
-        }
-        if (/^firm\s+/i.test(t)) {
-          const f = H.resolveFirm(db, t.replace(/^firm\s+/i, "").trim());
-          if (f) {
-            setSubjectFirm(f);
-            ui.ok(`→ ${state.subject.label}`);
-            return ask();
-          }
-          ui.warn("no such company");
-          return pick();
-        }
-        const a = H.resolveAgent(db, t);
-        if (a) {
-          setSubjectAgent(a);
-          ui.ok(`→ ${state.subject.label}`);
-          return ask();
-        }
-        const f = H.resolveFirm(db, t);
-        if (f) {
-          setSubjectFirm(f);
-          ui.ok(`→ ${state.subject.label}`);
-          return ask();
-        }
-        ui.warn(`no match for "${t}" — try a number or a name`);
+    rl.question("\n   " + ui.c.emerald(ui.t("picker.prompt")), (line) => {
+      const t = (line || "").trim();
+      if (!t) return pick();
+      if (t === "/exit" || t === "/quit" || t === "/q") {
+        ui.line(ui.c.emerald("🦖 ") + ui.c.dim(ui.t("bye")));
+        rl.close();
+        return process.exit(0);
+      }
+      if (t === "/help" || t === "/?") {
+        printHelp(ui);
         return pick();
-      },
-    );
+      }
+      if (/^\/import\s+/.test(t)) {
+        try {
+          const r = H.importLocal(db, t.replace(/^\/import\s+/, "").trim());
+          ui.ok(ui.t(r.updated ? "updated" : "imported", r.name, r.kind));
+        } catch (e) {
+          ui.error((e && e.message) || String(e));
+        }
+        return pick();
+      }
+      const ags = H.listAgents(db);
+      if (/^\d+$/.test(t)) {
+        const n = parseInt(t, 10);
+        if (n >= 1 && n <= ags.length) return chooseAndStart(setSubjectAgent, ags[n - 1]);
+        ui.warn(ui.t("picker.noNum"));
+        return pick();
+      }
+      if (/^firm\s+/i.test(t)) {
+        const f = H.resolveFirm(db, t.replace(/^firm\s+/i, "").trim());
+        if (f) return chooseAndStart(setSubjectFirm, f);
+        ui.warn(ui.t("picker.noFirm"));
+        return pick();
+      }
+      const a = H.resolveAgent(db, t);
+      if (a) return chooseAndStart(setSubjectAgent, a);
+      const f = H.resolveFirm(db, t);
+      if (f) return chooseAndStart(setSubjectFirm, f);
+      ui.warn(ui.t("picker.noMatch", t));
+      return pick();
+    });
   }
 
   // ── main loop ──
@@ -437,26 +421,47 @@ function startRepl(opts) {
     });
   }
 
-  if (state.subject) ask();
-  else pick();
+  // ── boot: first-run wizard, then banner + picker/loop ──
+  async function bootstrap() {
+    if (!prefs.onboarded) {
+      try {
+        const { runOnboard } = require("./agentlas-onboard.cjs");
+        const result = await runOnboard({ ui, rl, helpers: H });
+        Object.assign(prefs, result);
+        ui.lang = prefs.lang || "en";
+        state.permission = prefs.permission || state.permission;
+        if (prefs.runtime && prefs.runtime !== "auto" && H.RUNTIME_BIN[prefs.runtime] && H.which(H.RUNTIME_BIN[prefs.runtime])) {
+          state.runtime = { mode: "cli", kind: prefs.runtime };
+        }
+        if (opts.savePrefs) opts.savePrefs(prefs);
+        ui.line("");
+      } catch (e) {
+        ui.error((e && e.message) || String(e));
+      }
+    }
+    showBanner();
+    if (state.subject) ask();
+    else pick();
+  }
+  bootstrap();
 }
 
 function printHelp(ui) {
   const c = ui.c;
   const rows = [
-    ["(type a message)", "talk to the current agent/company — streaming + tools"],
-    ["/agents", "list installed agents"],
-    ["/agent <name>", "switch to another agent"],
-    ["/firms · /firm <name>", "list companies / switch to one"],
-    ["/runtime <kind>", "switch runtime (claude-code|codex|gemini|anthropic|openai|google|ollama)"],
-    ["/model <id>", "set the model (BYOK/Ollama only)"],
-    ["/permission <lvl>", "what it may do (read|write|full)"],
-    ["/cwd [path]", "show or change the working folder"],
-    ["/memory", "show the memory being injected"],
-    ["/import <path>", "import a local folder (agent or team)"],
-    ["/clear", "clear the chat and redraw"],
-    ["/doctor", "check runtimes and data"],
-    ["/exit", "quit (Ctrl-C: stop the turn / quit when idle)"],
+    [ui.t("help.talkKey"), ui.t("help.talk")],
+    ["/agents", ui.t("help.agents")],
+    ["/agent <name>", ui.t("help.agent")],
+    ["/firms · /firm <name>", ui.t("help.firms")],
+    ["/runtime <kind>", ui.t("help.runtime")],
+    ["/model <id>", ui.t("help.model")],
+    ["/permission <lvl>", ui.t("help.permission")],
+    ["/cwd [path]", ui.t("help.cwd")],
+    ["/memory", ui.t("help.memory")],
+    ["/import <path>", ui.t("help.import")],
+    ["/clear", ui.t("help.clear")],
+    ["/doctor", ui.t("help.doctor")],
+    ["/exit", ui.t("help.exit")],
   ];
   ui.line("");
   for (const [k, v] of rows) ui.line("  " + c.emerald(k.padEnd(24)) + c.dim(v));

@@ -40,6 +40,7 @@ const ENV_PREFIX = "env:";
 // 도구 사용 권한 (read|write|full). 빌드/파일 생성이 기본 동작이므로 기본값 write.
 // `--permission full` 로 셸 명령 포함 전체 자동(npm/mkdir 등) 허용. main()에서 설정.
 let PERMISSION = "write";
+let PERMISSION_EXPLICIT = false; // true once --permission is passed (overrides saved prefs)
 
 function dbPath() {
   return path.join(userDataDir(), "agentlas.sqlite");
@@ -726,21 +727,33 @@ function buildHelpers(db) {
 }
 
 function launchTui(db, subject, runtimeOverride) {
-  let startRepl;
+  let startRepl, config;
   try {
     ({ startRepl } = require("./agentlas-repl.cjs"));
+    config = require("./agentlas-config.cjs");
   } catch (e) {
-    fail("터미널 UI 모듈을 불러올 수 없습니다: " + (e && e.message));
+    fail("Failed to load the terminal UI module: " + (e && e.message));
   }
-  const runtime = resolveRuntime(db, runtimeOverride);
+  const dir = userDataDir();
+  const prefs = config.loadPrefs(dir);
+  // Runtime: explicit --runtime wins; else a saved default (cli kind, installed); else app's active runtime.
+  let override = runtimeOverride;
+  if (!override && prefs.runtime && prefs.runtime !== "auto" && RUNTIME_BIN[prefs.runtime] && which(RUNTIME_BIN[prefs.runtime])) {
+    override = prefs.runtime;
+  }
+  const runtime = resolveRuntime(db, override);
+  // Permission: explicit --permission wins; else the saved default; else "write".
+  const permission = PERMISSION_EXPLICIT ? PERMISSION : prefs.permission || PERMISSION;
   startRepl({
     db,
     subject,
     runtime,
-    permission: PERMISSION,
+    permission,
     cwd: projectCwd(),
     projectPath: activeProjectPath(db),
     helpers: buildHelpers(db),
+    prefs,
+    savePrefs: (p) => config.savePrefs(dir, p),
   });
 }
 
@@ -913,6 +926,7 @@ function cmdHelp() {
       "  list                  agents/companies + active runtime",
       "  env                   shared env key names",
       "  doctor                check runtimes and data",
+      "  setup                 re-run first-launch setup (language · runtime · permission)",
       "",
       "Options: --runtime claude-code|codex|gemini  ·  --permission read|write|full (default write)",
     ].join("\n"),
@@ -949,6 +963,7 @@ async function main() {
       const p = (argv[++i] || "").toLowerCase();
       if (!["read", "write", "full"].includes(p)) fail(`알 수 없는 권한: ${p} (read|write|full)`);
       PERMISSION = p;
+      PERMISSION_EXPLICIT = true;
     } else {
       rest.push(argv[i]);
     }
@@ -986,6 +1001,15 @@ async function main() {
       return cmdEnv(db);
     case "doctor":
       return cmdDoctor(db);
+    case "setup": {
+      // re-run the first-launch onboarding wizard (language → runtime → permission)
+      const cfg = require("./agentlas-config.cjs");
+      const dir = userDataDir();
+      const p = cfg.loadPrefs(dir);
+      delete p.onboarded;
+      cfg.savePrefs(dir, p);
+      return launchTui(db, null, runtimeOverride);
+    }
     default: {
       // 알려진 명령이 아니면 에이전트명 → (없으면) 회사명 → 대화형 세션
       const agent = resolveAgent(db, cmd);

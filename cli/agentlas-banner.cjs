@@ -1,20 +1,17 @@
 "use strict";
 /*
- * Agentlas brand splash — the Boston Terrier terminal.
- * openclaw's lobster banner / Claude's glyph equivalent: a small mascot + wordmark.
+ * Agentlas terminal splash — small dinosaur mascot (Chrome-dino style) + wordmark + status.
  */
 const path = require("node:path");
 const os = require("node:os");
 
-// Boston Terrier mascot — pointy bat ears, rounded tuxedo face, button nose, little smile.
-const DOG_ART = [
-  "    ◢◣     ◢◣",
-  "    ██     ██",
-  "╭───◥█─────█◤───╮",
-  "│   ●       ●   │",
-  "│       ▼       │",
-  "│     ╲___╱     │",
-  "╰───────────────╯",
+// Small T-Rex (side view, facing right) — eye is ●.
+const DINO_ART = [
+  "          ▟████▙",
+  "          █●  ▜█▙",
+  "   ▖      ████████",
+  "   ▜█▄▄▄▄▄███",
+  "    ▀▀▀█▌ █▌",
 ];
 
 const WORDMARK = "A G E N T L A S";
@@ -33,46 +30,47 @@ function shorten(p) {
   return p.startsWith(home) ? "~" + p.slice(home.length) : p;
 }
 
-// Main splash. ctx = { ui, version, runtimeLabel, subjectLabel, permission, cwd, tagline }
+// Just the mascot lines (used by the onboarding wizard header).
+function renderMascot(ui) {
+  const c = ui.c;
+  if (!ui.enabled) {
+    ui.line("  🦖 Agentlas");
+    return;
+  }
+  for (let i = 0; i < DINO_ART.length; i++) {
+    const row = DINO_ART[i];
+    ui.line("   " + (i === 1 ? c.text(row).split("●").join(c.emerald("●")) : c.text(row)));
+  }
+}
+
+// Main splash. ctx = { ui, version, runtimeLabel, subjectLabel, permission, cwd }
 function renderBanner(ctx) {
   const ui = ctx.ui;
   const c = ui.c;
   const cols = ui.out.columns || 80;
   const version = ctx.version || readVersion();
-  const tagline = ctx.tagline || "the Boston Terrier terminal · your AI agents, no GUI";
 
-  // Narrow / no-color → one-line banner
   if (!ui.enabled || cols < 40) {
-    ui.line(`🐾 Agentlas ${version}  —  ${tagline}`);
+    ui.line(`🦖 Agentlas v${version}`);
     renderStatus(ctx);
     return;
   }
 
   ui.line("");
-  // mascot in warm white, with crimson nose + emerald eyes accents per line
-  for (let i = 0; i < DOG_ART.length; i++) {
-    const row = DOG_ART[i];
-    let colored;
-    if (i === 3) colored = c.text(row).split("●").join(c.emerald("●")); // eyes
-    else if (i === 4) colored = c.text(row).split("▼").join(c.paw("▼")); // nose (brand crimson)
-    else if (i === 5) colored = c.text(row).split("╲___╱").join(c.pink("╲___╱")); // smile
-    else colored = c.text(row);
-    ui.line("   " + colored);
-  }
+  renderMascot(ui);
   ui.line("");
   ui.line("   " + c.bold(c.emerald(WORDMARK)) + (version ? "  " + c.dim("v" + version) : ""));
-  ui.line("   " + c.dim(tagline));
   ui.line("");
   renderStatus(ctx);
   ui.line("");
   ui.line(
     "   " +
       c.faint("/help") +
-      c.dim(" for commands · ") +
+      c.dim(" " + ui.t("banner.help") + " · ") +
       c.faint("/exit") +
-      c.dim(" to quit · ") +
+      c.dim(" " + ui.t("banner.quit") + " · ") +
       c.faint("Ctrl-C") +
-      c.dim(" to interrupt"),
+      c.dim(" " + ui.t("banner.interrupt")),
   );
   ui.line("");
 }
@@ -82,7 +80,7 @@ function renderStatus(ctx) {
   const ui = ctx.ui;
   const c = ui.c;
   const parts = [];
-  if (ctx.subjectLabel) parts.push(c.paw("🐾 ") + c.bold(c.text(ctx.subjectLabel)));
+  if (ctx.subjectLabel) parts.push(c.emerald("◆ ") + c.bold(c.text(ctx.subjectLabel)));
   if (ctx.runtimeLabel) parts.push(c.dim("runtime ") + c.blue(ctx.runtimeLabel));
   if (ctx.permission) parts.push(c.dim("perm ") + permColor(c, ctx.permission)(ctx.permission));
   if (ctx.cwd) parts.push(c.dim("cwd ") + c.lime(shorten(ctx.cwd)));
@@ -95,4 +93,4 @@ function permColor(c, p) {
   return c.green; // read
 }
 
-module.exports = { renderBanner, renderStatus, readVersion, shorten, DOG_ART };
+module.exports = { renderBanner, renderStatus, renderMascot, readVersion, shorten, DINO_ART };

@@ -7,6 +7,8 @@
  * 브랜드 팔레트는 보스턴테리어 paw 마크(크림슨) + agentlas-desktop-banner.svg(그린/틸 액센트)에서 가져왔다.
  */
 
+const i18n = require("./agentlas-i18n.cjs");
+
 const RESET = "\x1b[0m";
 
 function colorEnabled() {
@@ -69,6 +71,8 @@ class Ui {
     this.enabled = opts.color != null ? opts.color : colorEnabled();
     this.c = makePalette(this.enabled);
     this.out = opts.stream || process.stdout;
+    this.lang = opts.lang || "en";
+    this.t = (key, ...args) => i18n.t(this.lang, key, ...args);
     this._spinTimer = null;
     this._spinText = "";
     this._spinFrame = 0;

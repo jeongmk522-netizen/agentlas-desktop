@@ -37,6 +37,9 @@ function userDataDir() {
 
 const SERVICE = "com.agentlas.desktop";
 const ENV_PREFIX = "env:";
+// 도구 사용 권한 (read|write|full). 빌드/파일 생성이 기본 동작이므로 기본값 write.
+// `--permission full` 로 셸 명령 포함 전체 자동(npm/mkdir 등) 허용. main()에서 설정.
+let PERMISSION = "write";
 
 function dbPath() {
   return path.join(userDataDir(), "agentlas.sqlite");
@@ -101,6 +104,176 @@ function agentFolder(agent) {
   const r = routes[agent.id];
   if (r && r.path) return r.path; // 로컬 임포트는 원본 폴더
   return path.join(userDataDir(), "agents", agent.slug);
+}
+
+// ── 로컬 폴더 임포트 (앱의 electron/agents/import-local.ts 와 동일 규칙) ──
+// 터미널에서 "폴더 드래그" = `agentlas import <path>`. 앱과 같은 DB/라우트를 공유한다.
+function exists(p) { try { fs.accessSync(p); return true; } catch { return false; } }
+function isDir(p) { try { return fs.statSync(p).isDirectory(); } catch { return false; } }
+function readFileSafe(p, maxChars) {
+  try { const s = fs.readFileSync(p, "utf8"); return maxChars ? s.slice(0, maxChars) : s; } catch { return ""; }
+}
+function readFirst(dir, names, maxChars) {
+  for (const n of names) {
+    const p = path.join(dir, n);
+    if (exists(p) && !isDir(p)) { const s = readFileSafe(p, maxChars || 8000); if (s) return s; }
+  }
+  return "";
+}
+function detectRuntimeLabels(dir) {
+  const labels = [];
+  if (exists(path.join(dir, "CLAUDE.md")) || isDir(path.join(dir, ".claude"))) labels.push("claude-code");
+  if (exists(path.join(dir, "AGENTS.md"))) labels.push("codex");
+  if (exists(path.join(dir, "GEMINI.md"))) labels.push("gemini");
+  if (isDir(path.join(dir, ".cursor")) || exists(path.join(dir, ".cursorrules"))) labels.push("cursor");
+  if (!labels.length) labels.push("generic");
+  return labels;
+}
+// 팀 감지 — 루트뿐 아니라 .claude/ 중첩 구조도 인식한다 (appbridge 처럼).
+function detectKind(dir) {
+  const rootMarkers = ["TEAM.md", "ceo", "hr-departments", "projects"];
+  for (const m of rootMarkers) if (exists(path.join(dir, m))) return "team";
+  const nestedMarkers = [".claude/ceo", ".claude/hr-departments", ".claude/agents", ".claude/orgspec.yaml"];
+  for (const m of nestedMarkers) if (exists(path.join(dir, m))) return "team";
+  return "agent";
+}
+function readImportName(dir) {
+  const text = readFirst(dir, ["manifest.md", "AGENT.md", "CLAUDE.md", "README.md"], 2000);
+  const m = text.match(/^#\s+(.+)$/m);
+  if (m) { const n = m[1].replace(/\(.*?\)/g, "").trim().slice(0, 60); if (n) return n; }
+  return path.basename(dir);
+}
+function readImportTagline(dir) {
+  const text = readFirst(dir, ["README.md", "soul.md", "AGENT.md"], 2000);
+  for (const line of text.split("\n")) {
+    const t = line.trim();
+    if (t && !t.startsWith("#") && !t.startsWith(">")) return t.slice(0, 140);
+  }
+  // 팀 orgspec mission 첫 줄 fallback
+  const org = readFileSafe(path.join(dir, ".claude", "orgspec.yaml"), 4000);
+  const mm = org.match(/mission:\s*\|?\s*\n?\s*(.+)/);
+  if (mm) return mm[1].trim().slice(0, 140);
+  return "";
+}
+// 팀이면 CEO 두뇌를 시스템 프롬프트로 잡고, 임의 cwd에서도 동작하도록 절대경로 헤더를 붙인다.
+function buildImportSystemPrompt(dir, name, kind) {
+  if (kind === "team") {
+    const ceoBrain = readFileSafe(path.join(dir, ".claude", "ceo", "AGENT.md"));
+    const rootAgents = readFileSafe(path.join(dir, "AGENTS.md"));
+    const rootClaude = readFileSafe(path.join(dir, "CLAUDE.md"));
+    const nestedClaude = readFileSafe(path.join(dir, ".claude", "CLAUDE.md"));
+    let brain = ceoBrain || rootAgents || rootClaude || nestedClaude;
+    const claudeRoot = path.join(dir, ".claude");
+    const header =
+      `You are the CEO / orchestrator of the "${name}" agent team, now launched through Agentlas.\n\n` +
+      `TEAM ROOT: ${dir}\n` +
+      `Team definition (org spec, playbooks, department & role agents) lives under: ${claudeRoot}\n` +
+      `When the instructions below reference team files with relative paths (e.g. ./playbook.md, ../orgspec.yaml, .claude/...), resolve them as ABSOLUTE paths under that team root and read them as needed.\n\n` +
+      `TARGET PROJECT: your current working directory is the user's target project. Do ALL building, file creation, and delivery in the current working directory — never inside the team root. Route work to the right department/specialist, sequence multi-step work, keep a brief CEO-style status in Korean, and apply read-only-first safety gates for high-risk actions (billing/auth/security/deploy).\n\n` +
+      `--- TEAM BRAIN ---\n`;
+    return (header + (brain || `Act as the orchestrating CEO of ${name}.`)).slice(0, 16000);
+  }
+  const sys = readFirst(dir, ["system-prompt.md", "soul.md", "AGENT.md", "CLAUDE.md", "AGENTS.md", "GEMINI.md"]);
+  return sys || `You are ${name}, a locally imported agent.`;
+}
+function importLocalFolderCli(db, absPath) {
+  const dir = path.resolve(absPath);
+  if (!isDir(dir)) fail(`폴더가 아닙니다: ${absPath}`);
+  const labels = detectRuntimeLabels(dir);
+  const runtime = labels[0];
+  const kind = detectKind(dir);
+  const name = readImportName(dir);
+  const tagline = readImportTagline(dir) || (kind === "team" ? "Imported local team" : "Imported local agent");
+  const systemPrompt = buildImportSystemPrompt(dir, name, kind);
+
+  // 같은 경로가 이미 임포트돼 있으면 그 에이전트를 갱신(멱등).
+  const routes = routesMap();
+  let existingId = null;
+  for (const [aid, r] of Object.entries(routes)) {
+    if (r && path.resolve(r.path || "") === dir) { existingId = aid; break; }
+  }
+  const now = new Date().toISOString();
+  const TONES = ["blue", "green", "purple", "amber", "peach"];
+  let id, slug;
+  if (existingId) {
+    id = existingId;
+    const row = db.prepare("SELECT slug FROM installed_agents WHERE id=?").get(id);
+    slug = row ? row.slug : null;
+    if (slug) {
+      db.prepare("UPDATE installed_agents SET name=?, name_en=?, tagline=?, tagline_en=?, system_prompt=? WHERE id=?")
+        .run(name, name, tagline, tagline, systemPrompt, id);
+    } else { existingId = null; }
+  }
+  if (!existingId) {
+    const base = "local-" + (path.basename(dir).toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 40) || "agent");
+    slug = base; let n = 1;
+    while (db.prepare("SELECT 1 FROM installed_agents WHERE slug=?").get(slug)) slug = `${base}-${++n}`;
+    id = require("node:crypto").randomUUID();
+    let h = 0; for (let i = 0; i < slug.length; i++) h = (h << 5) - h + slug.charCodeAt(i);
+    const tone = TONES[Math.abs(h) % TONES.length];
+    db.prepare(
+      "INSERT INTO installed_agents (id, slug, name, name_en, tagline, tagline_en, system_prompt, mcp_servers_json, env_requirements_json, preferred_backend, trust_grade, installed_at, tone, builtin) VALUES (?,?,?,?,?,?,?,'[]','[]',NULL,'A',?,?,0)",
+    ).run(id, slug, name, name, tagline, tagline, systemPrompt, now, tone);
+  }
+  // 라우트 저장
+  routes[id] = { agentId: id, path: dir, runtime, labels, kind, importedAt: now };
+  fs.writeFileSync(path.join(userDataDir(), "agent-routes.json"), JSON.stringify(routes, null, 2), "utf8");
+
+  // 팀이면 회사(firm)로도 등록 → 앱 FIRMS 목록 + `agentlas firm <slug>` 사용 가능. slug 기준 멱등.
+  let firm = null;
+  if (kind === "team") {
+    try { firm = upsertLocalTeamFirmCli(db, dir, id, slug, name, tagline); } catch { /* best-effort */ }
+  }
+  return { id, slug, name, tagline, runtime, labels, kind, path: dir, updated: !!existingId, firmSlug: firm ? firm.slug : null };
+}
+// 팀 폴더 → 회사(firm) upsert (앱의 upsertLocalTeamFirm 과 동일). slug 기준 멱등.
+function readTeamDepartmentsCli(dir) {
+  for (const root of [path.join(dir, "hr-departments"), path.join(dir, ".claude", "hr-departments")]) {
+    try {
+      if (isDir(root)) {
+        return fs.readdirSync(root, { withFileTypes: true })
+          .filter((e) => e.isDirectory() && !e.name.startsWith("."))
+          .map((e) => e.name).sort();
+      }
+    } catch { /* continue */ }
+  }
+  return [];
+}
+function deptLabelCli(name) {
+  return name.replace(/[-_]+/g, " ").split(" ").filter(Boolean)
+    .map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join(" ");
+}
+function upsertLocalTeamFirmCli(db, dir, ceoAgentId, agentSlug, name, tagline) {
+  if (!tableExists(db, "firms")) return null;
+  const depts = readTeamDepartmentsCli(dir);
+  const orgChart = [
+    { agentSlug, agentId: ceoAgentId, role: "CEO", reportsTo: null },
+    ...depts.map((d) => ({ agentSlug: `${agentSlug}-${d}`, agentId: "", role: deptLabelCli(d), reportsTo: agentSlug })),
+  ];
+  const firmSlug = `firm-${agentSlug}`;
+  const chartJson = JSON.stringify(orgChart);
+  const existing = db.prepare("SELECT id FROM firms WHERE slug=?").get(firmSlug);
+  if (existing) {
+    db.prepare("UPDATE firms SET name=?, name_en=?, tagline=?, tagline_en=?, persona=?, ceo_agent_id=?, org_chart_json=? WHERE id=?")
+      .run(name, name, tagline, tagline, "", ceoAgentId, chartJson, existing.id);
+    return { id: existing.id, slug: firmSlug };
+  }
+  const id = require("node:crypto").randomUUID();
+  db.prepare(
+    "INSERT INTO firms (id, slug, name, name_en, tagline, tagline_en, persona, ceo_agent_id, org_chart_json, installed_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
+  ).run(id, firmSlug, name, name, tagline, tagline, "", ceoAgentId, chartJson, new Date().toISOString());
+  return { id, slug: firmSlug };
+}
+function cmdImport(db, absPath) {
+  if (!absPath) fail("사용법: agentlas import <폴더경로>");
+  const r = importLocalFolderCli(db, absPath);
+  out(`${r.updated ? "갱신" : "임포트"} 완료: ${r.name}  (${r.kind})`);
+  out(`  slug:    ${r.slug}`);
+  out(`  runtime: ${r.runtime}  [${r.labels.join(", ")}]`);
+  out(`  path:    ${r.path}`);
+  if (r.firmSlug) out(`  firm:    ${r.firmSlug}  (FIRMS 등록됨 — 앱 사이드바 + 'agentlas firm ${r.firmSlug}')`);
+  out("");
+  out(`실행: agentlas ${r.slug} "..."   ·   agentlas run ${r.slug} "..."   (대상 프로젝트 폴더에서 실행)`);
 }
 
 // ── Agentlas 아키텍처 (앱과 동일한 빌트인 에이전트 + 메모리) ────────────
@@ -382,8 +555,10 @@ async function executeOnce(db, system, prompt, override, ctx) {
   if (rt.mode === "cli") {
     // 네이티브 CLI는 자체 세션을 가지므로 emitter는 넣지 않고(노이즈 방지) 메모리 컨텍스트만 주입.
     const sys = augmentSystem(db, system, ctx, false);
-    process.stderr.write(`▸ ${rt.kind}\n`);
-    return spawnRuntime(rt.kind, sys, prompt);
+    const cwd = ctx.projectPath || projectCwd();
+    const permission = ctx.permission || "write";
+    process.stderr.write(`▸ ${rt.kind} · ${permission} · ${cwd}\n`);
+    return spawnRuntime(rt.kind, sys, prompt, { cwd, permission });
   }
   // API 경로 — emitter 동봉 → 답변에서 메모리 이벤트를 파싱·큐레이션하고 블록은 제거.
   const sys = augmentSystem(db, system, ctx, true);
@@ -453,36 +628,129 @@ function runCwd() {
   }
 }
 
-function buildArgs(kind, systemPrompt, prompt) {
-  if (kind === "claude-code") return ["-p", prompt, "--append-system-prompt", systemPrompt];
-  if (kind === "codex") return ["exec", "--skip-git-repo-check", `[SYSTEM]\n${systemPrompt}\n\n${prompt}`];
-  if (kind === "gemini") return ["--prompt", `[SYSTEM]\n${systemPrompt}\n\n${prompt}`];
+// 에이전트가 실제로 실행될 작업 폴더 = 사용자가 명령을 친 현재 디렉터리(= 대상 프로젝트).
+// 단, home/userData/agent-cwd 같은 "프로젝트 아님" 위치면 안전한 전용 폴더로 폴백한다.
+function projectCwd() {
+  try {
+    const cwd = process.cwd();
+    if (!cwd || cwd === os.homedir() || cwd === userDataDir() || cwd === runCwd()) return runCwd();
+    return cwd;
+  } catch {
+    return runCwd();
+  }
+}
+
+// 권한 → 네이티브 CLI 권한 모드 매핑 (앱의 claude-code.ts 와 동일 의미).
+//   read=기본(헤드리스에서 위험 툴 자동 거부) · write=편집 허용 · full=셸 포함 전체 자동.
+function buildArgs(kind, systemPrompt, prompt, permission) {
+  if (kind === "claude-code") {
+    const perm =
+      permission === "full"
+        ? ["--permission-mode", "bypassPermissions"]
+        : permission === "write"
+          ? ["--permission-mode", "acceptEdits"]
+          : [];
+    return ["-p", prompt, "--append-system-prompt", systemPrompt, ...perm];
+  }
+  if (kind === "codex") {
+    // codex exec: write 이상이면 자동 승인+워크스페이스 쓰기, full이면 샌드박스/승인 우회.
+    const perm =
+      permission === "full"
+        ? ["--dangerously-bypass-approvals-and-sandbox"]
+        : permission === "write"
+          ? ["--full-auto"]
+          : [];
+    return ["exec", "--skip-git-repo-check", ...perm, `[SYSTEM]\n${systemPrompt}\n\n${prompt}`];
+  }
+  if (kind === "gemini") {
+    const perm = permission === "full" || permission === "write" ? ["--yolo"] : [];
+    return ["--prompt", `[SYSTEM]\n${systemPrompt}\n\n${prompt}`, ...perm];
+  }
   return [prompt];
 }
 
 // `claude` 치면 바로 대화형 세션 뜨듯이 — 에이전트 폴더(CLAUDE.md/AGENTS.md/GEMINI.md 보유)에서
 // 네이티브 CLI를 인자 없이(대화형) 실행. 에이전트 페르소나는 그 폴더의 프로젝트 지시로 자동 로드. (A+B 결합)
+// 보스턴테리어 터미널(대화형 TUI)로 진입. agentlas 가 항상 "호스트"다 —
+// 활성 런타임이 claude/codex/gemini면 native-host로 headless 구동해 이 TUI 안에서 렌더하고,
+// BYOK/Ollama면 자체 에이전트 루프(api-agent)를 돌린다. (apiRepl/네이티브 인계는 대체됨)
 function launchInteractive(db, agent, runtimeOverride) {
-  const rt = resolveRuntime(db, runtimeOverride);
-  const folder = agentFolder(agent);
-  ensureNativeFiles(agent, folder);
-  if (rt.mode === "cli") {
-    const bin = which(RUNTIME_BIN[rt.kind]) || RUNTIME_BIN[rt.kind];
-    process.stderr.write(`▸ ${agent.name} (${rt.kind}) — ${folder}\n`);
-    const child = spawn(bin, [], { cwd: folder, stdio: "inherit", env: process.env });
-    child.on("error", (err) => fail(`실행 실패(${rt.kind}): ${err.message}`));
-    child.on("close", (code) => process.exit(code ?? 0));
-    return;
-  }
-  // BYOK/Ollama는 네이티브 인터랙티브가 없으므로 API REPL로 대화.
-  apiRepl(db, rt.backend, rt.model, agent.system_prompt || "", agent.name, { projectPath: activeProjectPath(db), agentId: agent.id });
+  const subject = {
+    kind: "agent",
+    id: agent.id,
+    label: agent.name,
+    system: agent.system_prompt || `You are ${agent.name}.`,
+  };
+  return launchTui(db, subject, runtimeOverride);
 }
 
-function spawnRuntime(kind, systemPrompt, prompt) {
+// REPL이 필요로 하는 DB 헬퍼들을 한 객체로 노출 (중복 구현 방지).
+function buildHelpers(db) {
+  return {
+    which,
+    RUNTIME_BIN,
+    augmentSystem: (db_, base, ctx, emit) => augmentSystem(db_, base, ctx, emit),
+    curateCliReply: (db_, text, ctx) => curateCliReply(db_, text, ctx),
+    apiKey: (backend) => apiKey(backend),
+    eventsHeading: () => loadArch().eventsHeading,
+    defaultApiModel: (backend) => DEFAULT_API_MODEL[backend],
+    resolveAgent,
+    resolveFirm,
+    listAgents,
+    listFirms,
+    firmSystemPrompt,
+    cliMemoryContext: (db_, pp) => cliMemoryContext(db_, pp),
+    importLocal: (db_, p) => importLocalFolderCli(db_, p),
+    // /cwd 로 작업 폴더를 바꿀 때 그 폴더의 활성 프로젝트 경로(또는 null)를 재계산 — activeProjectPath의 명시-dir 버전.
+    projectPathFor: (db_, dir) => {
+      try {
+        if (!dir || dir === os.homedir() || dir === userDataDir() || dir === runCwd()) return null;
+        const v = recordCliFolderVisit(db_, dir);
+        return v.activated ? dir : null;
+      } catch {
+        return null;
+      }
+    },
+    doctor: (db_, ui) => {
+      ui.line("");
+      ui.info("userData: " + userDataDir());
+      ui.info("db: " + (fs.existsSync(dbPath()) ? "OK" : "없음"));
+      const ar = activeRuntime(db_);
+      ui.info("활성 런타임: " + (ar ? ar.kind : "(없음)"));
+      for (const [kind, bin] of Object.entries(RUNTIME_BIN)) {
+        const p = which(bin);
+        ui.info(`  ${kind.padEnd(12)} ${p ? "설치됨" : "미설치"}`);
+      }
+    },
+  };
+}
+
+function launchTui(db, subject, runtimeOverride) {
+  let startRepl;
+  try {
+    ({ startRepl } = require("./agentlas-repl.cjs"));
+  } catch (e) {
+    fail("터미널 UI 모듈을 불러올 수 없습니다: " + (e && e.message));
+  }
+  const runtime = resolveRuntime(db, runtimeOverride);
+  startRepl({
+    db,
+    subject,
+    runtime,
+    permission: PERMISSION,
+    cwd: projectCwd(),
+    projectPath: activeProjectPath(db),
+    helpers: buildHelpers(db),
+  });
+}
+
+function spawnRuntime(kind, systemPrompt, prompt, opts) {
+  opts = opts || {};
+  const cwd = opts.cwd || runCwd();
   return new Promise((resolve) => {
     const bin = which(RUNTIME_BIN[kind]) || RUNTIME_BIN[kind];
-    const child = spawn(bin, buildArgs(kind, systemPrompt, prompt), {
-      cwd: runCwd(),
+    const child = spawn(bin, buildArgs(kind, systemPrompt, prompt, opts.permission), {
+      cwd,
       stdio: ["ignore", "inherit", "inherit"],
       env: process.env,
     });
@@ -549,7 +817,7 @@ async function cmdRun(db, query, prompt, runtimeOverride) {
   if (!userPrompt) userPrompt = await readStdin();
   if (!userPrompt || !userPrompt.trim()) fail("프롬프트가 비어 있습니다. agentlas run <agent> \"...\" 또는 stdin으로 전달하세요.");
   process.stderr.write(`▸ ${agent.name}\n`);
-  const code = await executeOnce(db, agent.system_prompt || "", userPrompt.trim(), runtimeOverride, { projectPath: activeProjectPath(db), agentId: agent.id });
+  const code = await executeOnce(db, agent.system_prompt || "", userPrompt.trim(), runtimeOverride, { projectPath: activeProjectPath(db), agentId: agent.id, permission: PERMISSION });
   process.exit(code);
 }
 
@@ -598,26 +866,12 @@ async function cmdFirm(db, query, prompt, runtimeOverride) {
   const sys = firmSystemPrompt(db, firm);
   if (prompt && prompt.trim()) {
     process.stderr.write(`▸ ${firm.name} CEO\n`);
-    const code = await executeOnce(db, sys, prompt.trim(), runtimeOverride, { projectPath: activeProjectPath(db), agentId: firm.ceo_agent_id });
+    const code = await executeOnce(db, sys, prompt.trim(), runtimeOverride, { projectPath: activeProjectPath(db), agentId: firm.ceo_agent_id, permission: PERMISSION });
     process.exit(code);
   }
-  // 대화형: firm 폴더에 CEO 컨텍스트를 깔고 네이티브 CLI, 또는 API REPL.
-  const rt = resolveRuntime(db, runtimeOverride);
-  const folder = path.join(userDataDir(), "firms", firm.slug);
-  fs.mkdirSync(folder, { recursive: true });
-  const header = `# ${firm.name} — CEO\n\n${sys}\n`;
-  writeIfMissing(path.join(folder, "CLAUDE.md"), header);
-  writeIfMissing(path.join(folder, "AGENTS.md"), header);
-  writeIfMissing(path.join(folder, "GEMINI.md"), header);
-  if (rt.mode === "cli") {
-    const bin = which(RUNTIME_BIN[rt.kind]) || RUNTIME_BIN[rt.kind];
-    process.stderr.write(`▸ ${firm.name} CEO (${rt.kind}) — ${folder}\n`);
-    const child = spawn(bin, [], { cwd: folder, stdio: "inherit", env: process.env });
-    child.on("error", (err) => fail(`실행 실패(${rt.kind}): ${err.message}`));
-    child.on("close", (code) => process.exit(code ?? 0));
-    return;
-  }
-  apiRepl(db, rt.backend, rt.model, sys, firm.name + " CEO", { projectPath: activeProjectPath(db), agentId: firm.ceo_agent_id });
+  // 대화형 — 보스턴테리어 TUI. CEO 페르소나를 system으로, 작업은 현재 폴더에서.
+  const subject = { kind: "firm", id: firm.ceo_agent_id, label: firm.name + " CEO", system: sys };
+  return launchTui(db, subject, runtimeOverride);
 }
 
 function cmdEnv(db) {
@@ -654,13 +908,14 @@ function cmdHelp() {
       "  open <agent>          위와 동일 (명시적)",
       "  firm <firm> [cmd]     회사 CEO에 위임 (cmd 없으면 대화형)",
       "  run <agent> [prompt]  1회 실행 — 스크립트/파이프용 (prompt 없으면 stdin)",
+      "  import <path>         로컬 폴더(에이전트/팀)를 임포트 — 앱의 폴더 드래그와 동일",
       "  cd <agent>            에이전트 폴더 경로 — cd \"$(agentlas cd seo)\" && claude",
       "  (BYOK/Ollama 활성 시 run/대화형은 API로 호출)",
       "  list                  에이전트/회사 + 활성 런타임",
       "  env                   공유 env 키 목록",
       "  doctor                런타임/데이터 점검",
       "",
-      "옵션: --runtime claude-code|codex|gemini",
+      "옵션: --runtime claude-code|codex|gemini  ·  --permission read|write|full (기본 write)",
     ].join("\n"),
   );
 }
@@ -691,6 +946,10 @@ async function main() {
   for (let i = 0; i < argv.length; i++) {
     if (argv[i] === "--runtime") {
       runtimeOverride = argv[++i];
+    } else if (argv[i] === "--permission" || argv[i] === "-P") {
+      const p = (argv[++i] || "").toLowerCase();
+      if (!["read", "write", "full"].includes(p)) fail(`알 수 없는 권한: ${p} (read|write|full)`);
+      PERMISSION = p;
     } else {
       rest.push(argv[i]);
     }
@@ -715,6 +974,8 @@ async function main() {
   switch (cmd) {
     case "list":
       return cmdList(db);
+    case "import":
+      return cmdImport(db, rest[1]);
     case "cd":
       return cmdCd(db, rest[1]);
     case "run":

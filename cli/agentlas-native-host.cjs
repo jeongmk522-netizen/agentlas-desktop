@@ -150,7 +150,7 @@ function handleClaudeLine(line, st, ui) {
       return;
     case "rate_limit_event":
       if (obj.rate_limit_info && obj.rate_limit_info.status === "rejected") {
-        ui.warn("claude rate limit 도달");
+        ui.warn("claude rate limit reached");
       }
       return;
     default:
@@ -192,7 +192,7 @@ function handleCodexLine(line, st, ui) {
       if (obj.thread_id) st.session.id = obj.thread_id;
       return;
     case "turn.started":
-      ui.status("생각 중…");
+      ui.status("thinking…");
       return;
     case "item.started":
     case "item.updated":
@@ -243,7 +243,7 @@ function renderCodexItem(item, done, st, ui) {
       if (done && item.text) {
         ui.line(ui.c.faint("  " + ui.c.italic(truncateLines(item.text, 3))));
       } else {
-        ui.status("추론 중…");
+        ui.status("reasoning…");
       }
       return;
     }
@@ -344,7 +344,7 @@ function runNativeTurn(req) {
   }
 
   return new Promise((resolve) => {
-    ui.status(kind === "codex" ? "codex 구동 중…" : kind === "claude-code" ? "claude 구동 중…" : "gemini 구동 중…");
+    ui.status(`starting ${kind === "claude-code" ? "claude" : kind}…`);
     let child;
     try {
       child = spawn(bin, args, {
@@ -353,7 +353,7 @@ function runNativeTurn(req) {
         env: req.env || process.env,
       });
     } catch (e) {
-      ui.error(`실행 실패(${kind}): ${e.message}`);
+      ui.error(`failed to run ${kind}: ${e.message}`);
       return resolve({ text: "", session: st.session, error: e.message });
     }
 
@@ -389,7 +389,7 @@ function runNativeTurn(req) {
 
     child.on("error", (err) => {
       ui.stopSpinner();
-      ui.error(`실행 실패(${kind}): ${err.message}`);
+      ui.error(`failed to run ${kind}: ${err.message}`);
       resolve({ text: "", session: st.session, error: err.message });
     });
     child.on("close", (code) => {
@@ -402,10 +402,10 @@ function runNativeTurn(req) {
         // claude `result` is_error 등 — 이전에 표시되지 않은 에러를 노출
         ui.error(String(st.error));
       } else if (code !== 0 && !text && !aborted) {
-        ui.error(`${kind} 종료 코드 ${code}` + (stderrBuf.trim() ? `\n${stderrBuf.trim().slice(-500)}` : ""));
+        ui.error(`${kind} exited with code ${code}` + (stderrBuf.trim() ? `\n${stderrBuf.trim().slice(-500)}` : ""));
       } else if (!text && !st.error && !aborted) {
         // 정상 종료인데 출력이 비어 있음(거부/차단 등) — 무음 실패 방지
-        ui.warn(`${kind}: 출력이 없습니다` + (stderrBuf.trim() ? ` (${stderrBuf.trim().slice(-200)})` : ""));
+        ui.warn(`${kind}: no output` + (stderrBuf.trim() ? ` (${stderrBuf.trim().slice(-200)})` : ""));
       }
       if (st.usage) ui.cost(st.usage);
       resolve({ text, session: st.session, usage: st.usage, error: st.error });

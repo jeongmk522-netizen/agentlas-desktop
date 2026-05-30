@@ -1,10 +1,9 @@
 "use strict";
 /*
- * agentlas-repl: 보스턴테리어 터미널의 대화형 셸.
- * agentlas 가 항상 "호스트"다 — 활성 런타임이 claude/codex/gemini면 native-host로 headless 구동해
- * 이 TUI 안에서 렌더하고(구독 인증 유지), BYOK/Ollama면 자체 에이전트 루프(api-agent)를 돌린다.
- *
- * agentlas.cjs 가 helpers 객체로 DB 헬퍼들을 주입한다 (중복 구현 방지).
+ * agentlas-repl: the interactive shell of the Boston Terrier terminal.
+ * agentlas is always the host — when the active runtime is claude/codex/gemini it drives them
+ * headless and renders inside this TUI (subscription auth preserved); for BYOK/Ollama it runs
+ * its own agent loop (api-agent). agentlas.cjs injects DB helpers via the `helpers` object.
  */
 const readline = require("node:readline");
 const { Ui } = require("./agentlas-ui.cjs");
@@ -12,16 +11,14 @@ const banner = require("./agentlas-banner.cjs");
 const { runNativeTurn } = require("./agentlas-native-host.cjs");
 const { runApiTurn } = require("./agentlas-api-agent.cjs");
 
-const TAGLINE = "보스턴테리어 터미널 — 로컬 에이전트 플랫폼";
-
 function runtimeLabel(rt) {
-  if (!rt) return "(없음)";
+  if (!rt) return "(none)";
   if (rt.mode === "cli") return rt.kind;
   return `${rt.backend}${rt.model ? " · " + rt.model : ""}`;
 }
 
-// "## Memory Events" 트레일링 블록이 스트리밍 화면에 노출되지 않도록 막는 가드.
-// 마지막 heading.length 글자를 hold-back 하여 분할된 heading도 안전 처리. acc 전체는 큐레이션용.
+// Hides the trailing "## Memory Events" block from the live stream while keeping the full
+// text for curation. Holds back the last heading.length chars so a split heading is safe too.
 function makeMemoryGuard(ui, heading) {
   const N = heading.length;
   let acc = "";
@@ -77,15 +74,14 @@ function makeMemoryGuard(ui, heading) {
   };
 }
 
-// startRepl({ db, subject, runtime, permission, cwd, helpers })
-//   subject = { kind:'agent'|'firm', id, label, system }
-//   runtime = resolveRuntime 결과 { mode:'cli', kind } | { mode:'api', backend, model }
+// startRepl({ db, subject|null, runtime, permission, cwd, helpers })
+//   subject = { kind:'agent'|'firm', id, label, system }  (null → show an interactive picker first)
 function startRepl(opts) {
-  const { db, helpers } = opts;
+  const { db } = opts;
   const ui = new Ui();
   const H = opts.helpers;
   const state = {
-    subject: opts.subject,
+    subject: opts.subject || null,
     runtime: opts.runtime,
     permission: opts.permission || "write",
     cwd: opts.cwd,
@@ -99,10 +95,9 @@ function startRepl(opts) {
       ui,
       version: opts.version,
       runtimeLabel: runtimeLabel(state.runtime),
-      subjectLabel: state.subject.label,
+      subjectLabel: state.subject ? state.subject.label : null,
       permission: state.permission,
       cwd: state.cwd,
-      tagline: TAGLINE,
     });
   }
   showBanner();
@@ -119,7 +114,7 @@ function startRepl(opts) {
   rl.on("SIGINT", () => {
     if (busy && currentAbort) {
       currentAbort.abort();
-      ui.warn("턴 중단됨");
+      ui.warn("interrupted");
     } else {
       ui.line("");
       ui.line(ui.c.paw("🐾 ") + ui.c.dim("bye"));
@@ -129,10 +124,10 @@ function startRepl(opts) {
   });
 
   function ctxNow() {
-    return { projectPath: state.projectPath, agentId: state.subject.id, permission: state.permission, cwd: state.cwd };
+    return { projectPath: state.projectPath, agentId: state.subject && state.subject.id, permission: state.permission, cwd: state.cwd };
   }
 
-  // ── 한 턴 실행 ──
+  // ── run one turn ──
   async function runTurn(prompt) {
     busy = true;
     currentAbort = new AbortController();
@@ -155,17 +150,17 @@ function startRepl(opts) {
           ui,
           signal,
         });
-        // 빈 응답(툴만/에러/중단)은 히스토리에 넣지 않는다 — 빈 content가 다음 턴 API를 깨뜨림(특히 Anthropic 400).
+        // Don't record empty turns (tool-only / error / interrupt) — empty content breaks the next API turn (Anthropic 400).
         const at = (res.text || "").trim();
         if (at && !res.error) state.history.push({ role: "user", text: prompt }, { role: "assistant", text: at });
       } else {
-        // API 경로 — emitter 동봉 + 메모리 가드로 트레일링 블록 숨김 + 큐레이션.
+        // API path — append emitter block, hide the trailing block via the guard, then curate.
         const sys = H.augmentSystem(db, state.subject.system, ctx, true);
         let apiKey = null;
         if (rt.backend !== "ollama") {
           apiKey = await H.apiKey(rt.backend);
           if (!apiKey) {
-            ui.error(`${rt.backend} API 키가 없습니다. 앱 설정 → BYOK에서 키를 등록하거나 /runtime 으로 전환하세요.`);
+            ui.error(`No ${rt.backend} API key. Add one in the app (Settings → BYOK), or switch with /runtime.`);
             return;
           }
         }
@@ -190,9 +185,9 @@ function startRepl(opts) {
     } catch (e) {
       ui.stopSpinner();
       if (signal.aborted) {
-        // 사용자 Ctrl-C — SIGINT 핸들러가 이미 "턴 중단됨"을 출력함 (중복 방지)
+        // user Ctrl-C — the SIGINT handler already printed "interrupted"
       } else if (e && e.name === "AbortError") {
-        ui.warn("응답이 지연되어 중단했습니다 (idle timeout)");
+        ui.warn("stream stalled — interrupted (idle timeout)");
       } else {
         ui.error((e && e.message) || String(e));
       }
@@ -202,7 +197,7 @@ function startRepl(opts) {
     }
   }
 
-  // ── 슬래시 커맨드 ──
+  // ── slash commands ──
   function setRuntime(arg) {
     const cliKinds = { "claude-code": 1, claude: 1, codex: 1, gemini: 1 };
     const apiBackends = { anthropic: 1, openai: 1, google: 1, ollama: 1 };
@@ -210,34 +205,59 @@ function startRepl(opts) {
     if (a === "claude") a = "claude-code";
     if (cliKinds[a]) {
       const bin = H.which(H.RUNTIME_BIN[a]);
-      if (!bin) return ui.error(`${a} CLI가 설치돼 있지 않습니다.`);
+      if (!bin) return ui.error(`${a} CLI is not installed.`);
       state.runtime = { mode: "cli", kind: a };
       state.native = {};
-      return ui.ok(`런타임 → ${a}`);
+      return ui.ok(`runtime → ${a}`);
     }
     if (apiBackends[a]) {
       state.runtime =
         a === "ollama"
           ? { mode: "api", backend: "ollama", model: state.runtime.backend === "ollama" ? state.runtime.model : null }
           : { mode: "api", backend: a, model: null };
-      return ui.ok(`런타임 → ${runtimeLabel(state.runtime)}`);
+      return ui.ok(`runtime → ${runtimeLabel(state.runtime)}`);
     }
-    ui.warn("사용법: /runtime claude-code|codex|gemini|anthropic|openai|google|ollama");
+    ui.warn("usage: /runtime claude-code|codex|gemini|anthropic|openai|google|ollama");
   }
 
+  function setSubjectAgent(agent) {
+    state.subject = { kind: "agent", id: agent.id, label: agent.name, system: agent.system_prompt || `You are ${agent.name}.` };
+    state.history = [];
+    state.native = {};
+  }
+  function setSubjectFirm(firm) {
+    state.subject = { kind: "firm", id: firm.ceo_agent_id, label: firm.name + " CEO", system: H.firmSystemPrompt(db, firm) };
+    state.history = [];
+    state.native = {};
+  }
   function switchSubject(kind, query) {
     if (kind === "agent") {
       const agent = H.resolveAgent(db, query);
-      if (!agent) return ui.error(`에이전트를 찾을 수 없습니다: ${query}`);
-      state.subject = { kind: "agent", id: agent.id, label: agent.name, system: agent.system_prompt || `You are ${agent.name}.` };
+      if (!agent) return ui.error(`no agent: ${query}`);
+      setSubjectAgent(agent);
     } else {
       const firm = H.resolveFirm(db, query);
-      if (!firm) return ui.error(`회사를 찾을 수 없습니다: ${query}`);
-      state.subject = { kind: "firm", id: firm.ceo_agent_id, label: firm.name + " CEO", system: H.firmSystemPrompt(db, firm) };
+      if (!firm) return ui.error(`no company: ${query}`);
+      setSubjectFirm(firm);
     }
-    state.history = [];
-    state.native = {};
-    ui.ok(`전환 → ${state.subject.label}`);
+    ui.ok(`→ ${state.subject.label}`);
+  }
+
+  function printRoster() {
+    const ags = H.listAgents(db);
+    const firms = H.listFirms(db);
+    ui.line("");
+    ui.line(ui.c.dim("  Agents"));
+    ags.forEach((a, i) =>
+      ui.line("   " + ui.c.faint(String(i + 1).padStart(2)) + "  " + ui.c.emerald(a.slug.padEnd(28)) + ui.c.text(a.name)),
+    );
+    if (firms.length) {
+      ui.line(ui.c.dim("  Companies"));
+      firms.forEach((f) =>
+        ui.line("       " + ui.c.emerald(("firm " + f.slug).padEnd(28)) + ui.c.text(f.name) + ui.c.dim(" (CEO)")),
+      );
+    }
+    if (!ags.length && !firms.length) ui.line(ui.c.dim("   (none yet — open the Agentlas app to install agents, or /import <path>)"));
   }
 
   async function handleSlash(line) {
@@ -248,12 +268,9 @@ function startRepl(opts) {
       case "?":
         printHelp(ui);
         return true;
-      case "agents": {
-        const ags = H.listAgents(db);
-        ui.line("");
-        for (const a of ags) ui.line("  " + ui.c.emerald(a.slug.padEnd(28)) + ui.c.text(a.name));
+      case "agents":
+        printRoster();
         return true;
-      }
       case "firms": {
         const fs = H.listFirms(db);
         ui.line("");
@@ -261,27 +278,27 @@ function startRepl(opts) {
         return true;
       }
       case "agent":
-        if (!arg) return ui.warn("사용법: /agent <name>"), true;
+        if (!arg) return ui.warn("usage: /agent <name>"), true;
         switchSubject("agent", arg);
         return true;
       case "firm":
-        if (!arg) return ui.warn("사용법: /firm <name>"), true;
+        if (!arg) return ui.warn("usage: /firm <name>"), true;
         switchSubject("firm", arg);
         return true;
       case "runtime":
         setRuntime(arg);
         return true;
       case "model":
-        if (state.runtime.mode !== "api") return ui.warn("model은 BYOK/Ollama(api) 런타임에서만 설정합니다."), true;
+        if (state.runtime.mode !== "api") return ui.warn("/model only applies to BYOK/Ollama (api) runtimes."), true;
         state.runtime.model = arg || null;
-        ui.ok(`model → ${state.runtime.model || "(기본값)"}`);
+        ui.ok(`model → ${state.runtime.model || "(default)"}`);
         return true;
       case "permission":
       case "perm": {
         const p = (arg || "").toLowerCase();
-        if (!["read", "write", "full"].includes(p)) return ui.warn("사용법: /permission read|write|full"), true;
+        if (!["read", "write", "full"].includes(p)) return ui.warn("usage: /permission read|write|full"), true;
         state.permission = p;
-        ui.ok(`권한 → ${p}`);
+        ui.ok(`permission → ${p}`);
         return true;
       }
       case "cwd":
@@ -289,10 +306,10 @@ function startRepl(opts) {
           const path = require("node:path");
           const fs = require("node:fs");
           const next = path.resolve(state.cwd, arg);
-          if (!fs.existsSync(next)) return ui.error(`경로 없음: ${next}`), true;
+          if (!fs.existsSync(next)) return ui.error(`no such path: ${next}`), true;
           state.cwd = next;
-          state.native = {}; // 작업 폴더 바뀌면 native 세션 리셋
-          if (H.projectPathFor) state.projectPath = H.projectPathFor(db, next); // 메모리 주입/큐레이션도 새 폴더 기준으로
+          state.native = {}; // working folder changed → reset native sessions
+          if (H.projectPathFor) state.projectPath = H.projectPathFor(db, next); // memory follows the active folder
           ui.ok(`cwd → ${banner.shorten(next)}`);
         } else {
           ui.info(state.cwd);
@@ -301,7 +318,7 @@ function startRepl(opts) {
       case "memory": {
         const mem = H.cliMemoryContext(db, state.projectPath);
         ui.line("");
-        ui.markdown(mem || "(메모리 없음)");
+        ui.markdown(mem || "(no memory yet)");
         return true;
       }
       case "clear":
@@ -311,10 +328,10 @@ function startRepl(opts) {
         showBanner();
         return true;
       case "import":
-        if (!arg) return ui.warn("사용법: /import <폴더경로>"), true;
+        if (!arg) return ui.warn("usage: /import <folder>"), true;
         try {
           const r = H.importLocal(db, arg);
-          ui.ok(`${r.updated ? "갱신" : "임포트"}: ${r.name} (${r.kind}) — /agent ${r.slug} 또는 /firm 으로 전환`);
+          ui.ok(`${r.updated ? "updated" : "imported"}: ${r.name} (${r.kind}) — switch with /agent ${r.slug} or /firm`);
         } catch (e) {
           ui.error((e && e.message) || String(e));
         }
@@ -323,7 +340,7 @@ function startRepl(opts) {
         H.doctor(db, ui);
         return true;
       case "status":
-        banner.renderStatus({ ui, runtimeLabel: runtimeLabel(state.runtime), subjectLabel: state.subject.label, permission: state.permission, cwd: state.cwd });
+        banner.renderStatus({ ui, runtimeLabel: runtimeLabel(state.runtime), subjectLabel: state.subject && state.subject.label, permission: state.permission, cwd: state.cwd });
         return true;
       case "exit":
       case "quit":
@@ -333,12 +350,78 @@ function startRepl(opts) {
         process.exit(0);
         return false;
       default:
-        ui.warn(`알 수 없는 명령: /${cmd}  (/help)`);
+        ui.warn(`unknown command: /${cmd}  (/help)`);
         return true;
     }
   }
 
-  // ── 메인 루프 ──
+  // ── interactive picker (when no agent was given) ──
+  function pick() {
+    if (closed) return process.exit(0);
+    printRoster();
+    rl.question(
+      "\n" + ui.c.emerald("pick") + ui.c.dim(" a number or name (or 'firm <name>', /help, /import <path>, /exit) › "),
+      (line) => {
+        const t = (line || "").trim();
+        if (!t) return pick();
+        if (t === "/exit" || t === "/quit" || t === "/q") {
+          ui.line(ui.c.paw("🐾 ") + ui.c.dim("bye"));
+          rl.close();
+          return process.exit(0);
+        }
+        if (t === "/help" || t === "/?") {
+          printHelp(ui);
+          return pick();
+        }
+        if (/^\/import\s+/.test(t)) {
+          try {
+            const r = H.importLocal(db, t.replace(/^\/import\s+/, "").trim());
+            ui.ok(`${r.updated ? "updated" : "imported"}: ${r.name} (${r.kind})`);
+          } catch (e) {
+            ui.error((e && e.message) || String(e));
+          }
+          return pick();
+        }
+        const ags = H.listAgents(db);
+        if (/^\d+$/.test(t)) {
+          const n = parseInt(t, 10);
+          if (n >= 1 && n <= ags.length) {
+            setSubjectAgent(ags[n - 1]);
+            ui.ok(`→ ${state.subject.label}`);
+            return ask();
+          }
+          ui.warn("no agent at that number");
+          return pick();
+        }
+        if (/^firm\s+/i.test(t)) {
+          const f = H.resolveFirm(db, t.replace(/^firm\s+/i, "").trim());
+          if (f) {
+            setSubjectFirm(f);
+            ui.ok(`→ ${state.subject.label}`);
+            return ask();
+          }
+          ui.warn("no such company");
+          return pick();
+        }
+        const a = H.resolveAgent(db, t);
+        if (a) {
+          setSubjectAgent(a);
+          ui.ok(`→ ${state.subject.label}`);
+          return ask();
+        }
+        const f = H.resolveFirm(db, t);
+        if (f) {
+          setSubjectFirm(f);
+          ui.ok(`→ ${state.subject.label}`);
+          return ask();
+        }
+        ui.warn(`no match for "${t}" — try a number or a name`);
+        return pick();
+      },
+    );
+  }
+
+  // ── main loop ──
   function ask() {
     if (closed) return process.exit(0);
     rl.question("\n" + ui.promptLabel(), async (line) => {
@@ -353,28 +436,30 @@ function startRepl(opts) {
       ask();
     });
   }
-  ask();
+
+  if (state.subject) ask();
+  else pick();
 }
 
 function printHelp(ui) {
   const c = ui.c;
   const rows = [
-    ["대화", "그냥 입력하면 현재 에이전트/회사가 응답 (스트리밍 + 툴)"],
-    ["/agents", "설치된 에이전트 목록"],
-    ["/agent <name>", "다른 에이전트로 전환"],
-    ["/firms · /firm <name>", "회사(CEO) 목록 / 전환"],
-    ["/runtime <kind>", "런타임 전환 (claude-code|codex|gemini|anthropic|openai|google|ollama)"],
-    ["/model <id>", "BYOK/Ollama 모델 지정"],
-    ["/permission <lvl>", "권한 (read|write|full)"],
-    ["/cwd [path]", "작업 폴더 보기/변경"],
-    ["/memory", "주입되는 메모리 컨텍스트 보기"],
-    ["/import <path>", "로컬 폴더(에이전트/팀) 임포트"],
-    ["/clear", "대화 비우고 화면 정리"],
-    ["/doctor", "런타임/데이터 점검"],
-    ["/exit", "종료 (Ctrl-C: 턴 중단 / 유휴 시 종료)"],
+    ["(type a message)", "talk to the current agent/company — streaming + tools"],
+    ["/agents", "list installed agents"],
+    ["/agent <name>", "switch to another agent"],
+    ["/firms · /firm <name>", "list companies / switch to one"],
+    ["/runtime <kind>", "switch runtime (claude-code|codex|gemini|anthropic|openai|google|ollama)"],
+    ["/model <id>", "set the model (BYOK/Ollama only)"],
+    ["/permission <lvl>", "what it may do (read|write|full)"],
+    ["/cwd [path]", "show or change the working folder"],
+    ["/memory", "show the memory being injected"],
+    ["/import <path>", "import a local folder (agent or team)"],
+    ["/clear", "clear the chat and redraw"],
+    ["/doctor", "check runtimes and data"],
+    ["/exit", "quit (Ctrl-C: stop the turn / quit when idle)"],
   ];
   ui.line("");
-  for (const [k, v] of rows) ui.line("  " + c.emerald(k.padEnd(22)) + c.dim(v));
+  for (const [k, v] of rows) ui.line("  " + c.emerald(k.padEnd(24)) + c.dim(v));
 }
 
 module.exports = { startRepl, runtimeLabel };

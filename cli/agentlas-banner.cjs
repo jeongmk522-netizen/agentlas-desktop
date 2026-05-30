@@ -1,19 +1,20 @@
 "use strict";
 /*
- * 보스턴테리어 brand splash — openclaw의 LOBSTER_ASCII 배너에 대응하는 Agentlas 버전.
- * paw 마크(크림슨) + AGENTLAS 워드마크(에메랄드) + 상태 헤더(런타임·에이전트·권한·cwd).
+ * Agentlas brand splash — the Boston Terrier terminal.
+ * openclaw's lobster banner / Claude's glyph equivalent: a small mascot + wordmark.
  */
 const path = require("node:path");
 const os = require("node:os");
 
-// 강아지 발바닥: 토우 빈 4개 + 큰 패드. (보스턴테리어 paw 마크 ASCII화)
-const PAW_ART = [
-  "   ▟██▙   ▟██▙   ▟██▙   ▟██▙ ",
-  "   ▜██▛   ▜██▛   ▜██▛   ▜██▛ ",
-  "        ▗▄▄▄▄▄▄▄▄▄▄▖        ",
-  "      ▟████████████████▙      ",
-  "     ▜██████████████████▛     ",
-  "       ▜██████████████▛       ",
+// Boston Terrier mascot — pointy bat ears, rounded tuxedo face, button nose, little smile.
+const DOG_ART = [
+  "    ◢◣     ◢◣",
+  "    ██     ██",
+  "╭───◥█─────█◤───╮",
+  "│   ●       ●   │",
+  "│       ▼       │",
+  "│     ╲___╱     │",
+  "╰───────────────╯",
 ];
 
 const WORDMARK = "A G E N T L A S";
@@ -32,41 +33,51 @@ function shorten(p) {
   return p.startsWith(home) ? "~" + p.slice(home.length) : p;
 }
 
-// 메인 splash. ctx = { ui, runtimeLabel, subjectLabel, permission, cwd, tagline }
+// Main splash. ctx = { ui, version, runtimeLabel, subjectLabel, permission, cwd, tagline }
 function renderBanner(ctx) {
   const ui = ctx.ui;
   const c = ui.c;
   const cols = ui.out.columns || 80;
   const version = ctx.version || readVersion();
+  const tagline = ctx.tagline || "the Boston Terrier terminal · your AI agents, no GUI";
 
-  // 좁은 터미널 / 비-rich → 한 줄 배너
+  // Narrow / no-color → one-line banner
   if (!ui.enabled || cols < 40) {
-    ui.line(`🐾 Agentlas ${version}  —  ${ctx.tagline || "로컬 에이전트 플랫폼"}`);
+    ui.line(`🐾 Agentlas ${version}  —  ${tagline}`);
     renderStatus(ctx);
     return;
   }
 
   ui.line("");
-  for (const row of PAW_ART) ui.line("  " + c.paw(row));
+  // mascot in warm white, with crimson nose + emerald eyes accents per line
+  for (let i = 0; i < DOG_ART.length; i++) {
+    const row = DOG_ART[i];
+    let colored;
+    if (i === 3) colored = c.text(row).split("●").join(c.emerald("●")); // eyes
+    else if (i === 4) colored = c.text(row).split("▼").join(c.paw("▼")); // nose (brand crimson)
+    else if (i === 5) colored = c.text(row).split("╲___╱").join(c.pink("╲___╱")); // smile
+    else colored = c.text(row);
+    ui.line("   " + colored);
+  }
   ui.line("");
-  ui.line("  " + c.bold(c.emerald(WORDMARK)) + (version ? "  " + c.dim(version) : ""));
-  ui.line("  " + c.dim(ctx.tagline || "보스턴테리어 터미널 — 로컬 에이전트 플랫폼"));
+  ui.line("   " + c.bold(c.emerald(WORDMARK)) + (version ? "  " + c.dim("v" + version) : ""));
+  ui.line("   " + c.dim(tagline));
   ui.line("");
   renderStatus(ctx);
   ui.line("");
   ui.line(
-    "  " +
+    "   " +
       c.faint("/help") +
-      c.dim(" 로 명령 · ") +
+      c.dim(" for commands · ") +
       c.faint("/exit") +
-      c.dim(" 로 종료 · ") +
+      c.dim(" to quit · ") +
       c.faint("Ctrl-C") +
-      c.dim(" 로 턴 중단"),
+      c.dim(" to interrupt"),
   );
   ui.line("");
 }
 
-// 런타임 · 대상 · 권한 · 작업폴더 한 줄.
+// runtime · subject · permission · working folder
 function renderStatus(ctx) {
   const ui = ctx.ui;
   const c = ui.c;
@@ -75,7 +86,7 @@ function renderStatus(ctx) {
   if (ctx.runtimeLabel) parts.push(c.dim("runtime ") + c.blue(ctx.runtimeLabel));
   if (ctx.permission) parts.push(c.dim("perm ") + permColor(c, ctx.permission)(ctx.permission));
   if (ctx.cwd) parts.push(c.dim("cwd ") + c.lime(shorten(ctx.cwd)));
-  ui.line("  " + parts.join(c.faint("  ·  ")));
+  if (parts.length) ui.line("   " + parts.join(c.faint("  ·  ")));
 }
 
 function permColor(c, p) {
@@ -84,4 +95,4 @@ function permColor(c, p) {
   return c.green; // read
 }
 
-module.exports = { renderBanner, renderStatus, readVersion, shorten, PAW_ART };
+module.exports = { renderBanner, renderStatus, readVersion, shorten, DOG_ART };

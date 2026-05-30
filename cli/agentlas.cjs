@@ -766,20 +766,20 @@ function spawnRuntime(kind, systemPrompt, prompt, opts) {
 function cmdList(db) {
   const agents = listAgents(db);
   const ar = activeRuntime(db);
-  out(`활성 런타임: ${ar ? `${ar.kind}${ar.backend ? " · " + ar.backend : ""}${ar.model ? " · " + ar.model : ""}` : "(없음)"}`);
-  out(`설치된 에이전트 ${agents.length}개:`);
+  out(`Active runtime: ${ar ? `${ar.kind}${ar.backend ? " · " + ar.backend : ""}${ar.model ? " · " + ar.model : ""}` : "(none)"}`);
+  out(`${agents.length} agent(s) installed:`);
   const routes = routesMap();
   for (const a of agents) {
     const local = routes[a.id] ? "  [local]" : "";
-    const arch = a.builtin ? "  [아키텍처]" : "";
+    const arch = a.builtin ? "  [architecture]" : "";
     out(`  ${a.slug.padEnd(28)} ${a.name}${arch}${local}`);
   }
   const firms = listFirms(db);
   if (firms.length) {
-    out(`\n회사 ${firms.length}개:`);
+    out(`\n${firms.length} company(ies):`);
     for (const f of firms) out(`  ${f.slug.padEnd(28)} ${f.name}  (CEO)`);
   }
-  out("\n실행: agentlas <agent>  ·  agentlas firm <firm>  ·  agentlas run <agent> \"...\"  ·  cd \"$(agentlas cd seo)\" && claude");
+  out("\nRun: agentlas <agent>  ·  agentlas firm <firm>  ·  agentlas run <agent> \"...\"");
 }
 
 function ensureNativeFiles(agent, folder) {
@@ -901,21 +901,20 @@ function cmdDoctor(db) {
 function cmdHelp() {
   out(
     [
-      "agentlas — Agentlas 터미널 CLI",
+      "agentlas — the Boston Terrier terminal",
       "",
-      "  agentlas <agent>      claude처럼 바로 대화형 세션 (에이전트 페르소나 로드)",
-      "  agentlas              (에이전트 1개면 바로 대화형, 아니면 목록)",
-      "  open <agent>          위와 동일 (명시적)",
-      "  firm <firm> [cmd]     회사 CEO에 위임 (cmd 없으면 대화형)",
-      "  run <agent> [prompt]  1회 실행 — 스크립트/파이프용 (prompt 없으면 stdin)",
-      "  import <path>         로컬 폴더(에이전트/팀)를 임포트 — 앱의 폴더 드래그와 동일",
-      "  cd <agent>            에이전트 폴더 경로 — cd \"$(agentlas cd seo)\" && claude",
-      "  (BYOK/Ollama 활성 시 run/대화형은 API로 호출)",
-      "  list                  에이전트/회사 + 활성 런타임",
-      "  env                   공유 env 키 목록",
-      "  doctor                런타임/데이터 점검",
+      "  agentlas              open the terminal (mascot splash, then pick an agent)",
+      "  agentlas <agent>      jump straight into a chat with one agent",
+      "  open <agent>          same as above (explicit)",
+      "  firm <firm> [cmd]     delegate to a company's CEO (interactive if no cmd)",
+      "  run <agent> [prompt]  one-shot — for scripts/pipes (reads stdin if no prompt)",
+      "  import <path>         import a local folder (agent or team)",
+      "  cd <agent>            print the agent folder — cd \"$(agentlas cd seo)\" && claude",
+      "  list                  agents/companies + active runtime",
+      "  env                   shared env key names",
+      "  doctor                check runtimes and data",
       "",
-      "옵션: --runtime claude-code|codex|gemini  ·  --permission read|write|full (기본 write)",
+      "Options: --runtime claude-code|codex|gemini  ·  --permission read|write|full (default write)",
     ].join("\n"),
   );
 }
@@ -966,9 +965,7 @@ async function main() {
   if (cmd === "") {
     const agents = listAgents(db);
     if (agents.length === 1) return launchInteractive(db, agents[0], runtimeOverride);
-    cmdList(db);
-    out("\n사용: agentlas <agent>  (claude처럼 바로 대화형) · agentlas run <agent> \"...\" · agentlas help");
-    return;
+    return launchTui(db, null, runtimeOverride); // splash + interactive agent picker
   }
 
   switch (cmd) {

@@ -306,7 +306,7 @@ async function runOllamaLoop(req) {
       });
     } catch (e) {
       idle.clear();
-      throw new Error(`Ollama 연결 실패 (${host}) — 'ollama serve' 실행 확인: ${e.message}`);
+      throw new Error(`Ollama connection failed (${host}) — is 'ollama serve' running? ${e.message}`);
     }
     if (!resp.ok) {
       idle.clear();
@@ -410,7 +410,7 @@ async function runApiTurn(req) {
     case "google":
       return runGoogleChat(req);
     default:
-      throw new Error(`지원하지 않는 backend: ${req.backend}`);
+      throw new Error(`unsupported backend: ${req.backend}`);
   }
 }
 

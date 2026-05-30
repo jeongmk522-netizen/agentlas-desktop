@@ -1,7 +1,8 @@
-// 자동 업데이트 배너 — Claude Code 데스크톱과 동일 패턴.
-//   - downloading: 진행률 표시 (영구)
-//   - downloaded:  "재시작 업데이트" 강조 버튼 (영구, dismissed 전까지)
-//   - checking / not-available / error: 디버그용으로 잠깐(3.5s) 노출 후 자동 숨김
+// 자동 업데이트 배너 — 실제 업데이트가 있을 때만 노출 (우측 상단).
+//   - available:   새 버전 발견 (자동 다운로드 시작) 알림
+//   - downloading: 진행률 표시
+//   - downloaded:  "재시작 업데이트" 강조 버튼 (dismissed 전까지)
+//   - checking / not-available / error: 노출하지 않음 — 주기 체크(1시간)는 백그라운드로 조용히.
 //
 // 사용자가 "나중에"로 일단 닫으면 같은 다운로드 버전에 대해 다시 안 뜸 (세션 한정).
 // 새 버전이 다시 다운로드되면 자동으로 다시 노출.
@@ -16,8 +17,6 @@ export function UpdateBanner() {
   const [state, setState] = useState<UpdaterState>({ status: "idle" });
   /** 사용자가 "나중에" 누른 버전. 그 버전에 대해서는 더 이상 안 띄움 */
   const [dismissedVersion, setDismissedVersion] = useState<string | null>(null);
-  /** transient(checking/not-available/error) 상태는 자동으로 잠깐만 노출하고 사라지게 함 */
-  const [transientUntil, setTransientUntil] = useState<number>(0);
   const lastFocusCheck = useRef(0);
 
   useEffect(() => {
@@ -38,19 +37,12 @@ export function UpdateBanner() {
       void ipc()?.updater.check();
     }
     window.addEventListener("focus", onFocus);
-    // 2) 이후 변화는 broadcast로 받음
+    // 2) 이후 변화는 broadcast로 받음. checking/not-available/error는 그냥 상태만 갱신하고
+    //    배너는 띄우지 않는다 — 백그라운드 체크가 사용자 화면에 안 보이게.
     const events = updaterEvents();
     const off = events?.onState((next) => {
       if (cancelled) return;
       setState(next);
-      // transient 상태는 3.5s 후 자동 숨김 — UpdateBanner는 디버깅용 보조
-      if (
-        next.status === "checking" ||
-        next.status === "not-available" ||
-        next.status === "error"
-      ) {
-        setTransientUntil(Date.now() + 3500);
-      }
     });
     return () => {
       cancelled = true;
@@ -59,24 +51,13 @@ export function UpdateBanner() {
     };
   }, []);
 
-  // transient 상태에서 시간이 지나면 표시 종료
-  useEffect(() => {
-    if (transientUntil === 0) return;
-    const id = setTimeout(() => setTransientUntil(0), Math.max(0, transientUntil - Date.now()));
-    return () => clearTimeout(id);
-  }, [transientUntil]);
-
   const isDownloaded = state.status === "downloaded";
   // "available"도 즉시 노출 — 새 버전 발견 순간 알림(자동 다운로드 중).
   const isDownloading = state.status === "downloading" || state.status === "available";
   const isDismissed =
     isDownloaded && state.version && dismissedVersion === state.version;
-  const isTransient =
-    transientUntil > Date.now() &&
-    (state.status === "checking" ||
-      state.status === "not-available" ||
-      state.status === "error");
-  if (!isDownloaded && !isDownloading && !isTransient) return null;
+  // 실제 업데이트가 있을 때만 노출. checking/not-available/error 등 routine 백그라운드 체크는 숨김.
+  if (!isDownloaded && !isDownloading) return null;
   if (isDownloaded && isDismissed) return null;
 
   async function install() {
@@ -109,18 +90,7 @@ export function UpdateBanner() {
       role="status"
       aria-live="polite"
     >
-      {isTransient && !isDownloaded && !isDownloading ? (
-        <>
-          <Spinner />
-          <span style={{ color: "var(--ink-soft)" }}>
-            {state.status === "checking"
-              ? t("update.checking")
-              : state.status === "not-available"
-                ? t("update.uptodate")
-                : t("update.error_short")}
-          </span>
-        </>
-      ) : isDownloaded ? (
+      {isDownloaded ? (
         <>
           <span
             aria-hidden

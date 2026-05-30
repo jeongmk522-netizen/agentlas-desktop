@@ -13,6 +13,7 @@ export default function NewProjectPage() {
   const [name, setName] = useState("");
   const [contextNote, setContextNote] = useState("");
   const [defaultAgentId, setDefaultAgentId] = useState<string>("");
+  const [folderPath, setFolderPath] = useState<string>("");
   const [agents, setAgents] = useState<InstalledAgent[]>([]);
   const [busy, setBusy] = useState(false);
 
@@ -31,6 +32,7 @@ export default function NewProjectPage() {
         name: name.trim(),
         contextNote: contextNote.trim() || null,
         defaultAgentId: defaultAgentId || null,
+        folderPath: folderPath || null,
       });
       navigate(`/project/detail?id=${project.id}`, "replace");
     } finally {
@@ -96,6 +98,41 @@ export default function NewProjectPage() {
               );
             })}
           </select>
+        </Field>
+
+        <Field
+          label={locale === "ko" ? "작업 폴더 (선택)" : "Working folder (optional)"}
+          hint={
+            locale === "ko"
+              ? "이 프로젝트의 채팅은 이 폴더에서 실행되고 .agentlas 메모리가 활성화됩니다."
+              : "Chats in this project run in this folder; .agentlas memory activates here."
+          }
+        >
+          <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+            <input
+              readOnly
+              value={folderPath}
+              placeholder={locale === "ko" ? "폴더 미선택" : "No folder selected"}
+              style={{ ...inputStyle, flex: 1, color: folderPath ? "var(--ink)" : "var(--muted-deep)" }}
+            />
+            <button
+              type="button"
+              onClick={async () => {
+                const api = ipc();
+                if (!api) return;
+                const picked = await api.workspace.selectFolder();
+                if (picked) setFolderPath(picked);
+              }}
+              style={pickBtnStyle}
+            >
+              {locale === "ko" ? "선택…" : "Choose…"}
+            </button>
+            {folderPath && (
+              <button type="button" onClick={() => setFolderPath("")} style={pickBtnStyle}>
+                {locale === "ko" ? "지우기" : "Clear"}
+              </button>
+            )}
+          </div>
         </Field>
 
         <div style={{ display: "flex", gap: 10, marginTop: 24 }}>
@@ -174,4 +211,16 @@ const inputStyle: React.CSSProperties = {
   background: "var(--paper)",
   fontSize: 13,
   outline: "none",
+};
+
+const pickBtnStyle: React.CSSProperties = {
+  padding: "10px 14px",
+  borderRadius: "var(--radius-md)",
+  background: "var(--paper)",
+  border: "1px solid var(--paper-edge)",
+  fontSize: 13,
+  fontWeight: 600,
+  color: "var(--ink-soft)",
+  whiteSpace: "nowrap",
+  flexShrink: 0,
 };

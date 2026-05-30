@@ -141,6 +141,7 @@ html,
 body {
   margin: 0;
   padding: 0;
+  overflow-x: hidden; /* 어떤 패널/콘텐츠도 가로로 창을 넘기지 않도록 안전망 */
   color: var(--ink);
   font-family: var(--font-body);
   font-size: 14px;

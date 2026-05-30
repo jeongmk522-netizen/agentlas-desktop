@@ -9,7 +9,7 @@ import { app } from "electron";
 
 let _db: Database.Database | null = null;
 
-const SCHEMA_VERSION = 13;
+const SCHEMA_VERSION = 14;
 
 export function initStore(): void {
   if (_db) return;
@@ -312,6 +312,16 @@ export function initStore(): void {
       "CREATE INDEX IF NOT EXISTS idx_chats_parent ON chats(parent_chat_id);" +
         "CREATE INDEX IF NOT EXISTS idx_memory_agent ON memory_entries(agent_id, superseded_at);",
     );
+  }
+
+  // ── v13 → v14: 프로젝트에 작업 폴더(folder_path) 추가 ─
+  if (userVersion < 14) {
+    const projCols = _db
+      .prepare("PRAGMA table_info(projects)")
+      .all() as Array<{ name: string }>;
+    if (!projCols.some((c) => c.name === "folder_path")) {
+      _db.exec("ALTER TABLE projects ADD COLUMN folder_path TEXT");
+    }
   }
 
   _db.pragma(`user_version = ${SCHEMA_VERSION}`);

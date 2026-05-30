@@ -191,7 +191,10 @@ export async function runMcpInvocation(
   // ── Agentlas 아키텍처: 메모리 주입 + 항상-켜진 큐레이터 ──────────────
   // 워킹 폴더에서 반복 작업하면 그 폴더가 활성화되고, 그때부터 프로젝트 메모리(.agentlas)를
   // 시스템 프롬프트에 주입한다. 폴더가 없거나 아직 활성 전이면 전역 메모리를 주입.
-  const workingFolder = getChatWorkingFolder(chat.id);
+  // 채팅별 폴더가 없으면 프로젝트의 작업 폴더(folderPath)를 기본 cwd로 사용한다.
+  const workingFolder =
+    getChatWorkingFolder(chat.id) ??
+    (chat.projectId ? getProject(chat.projectId)?.folderPath ?? null : null);
   let activePath: string | null = null;
   if (workingFolder) {
     try {

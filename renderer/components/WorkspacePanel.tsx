@@ -202,7 +202,7 @@ export function WorkspacePanel({ chatId, onClose, persistence }: Props) {
         position: "relative",
         width,
         maxWidth: "45vw",
-        flexShrink: 0,
+        flexShrink: 1, // 좁은 창/다중 패널에서 줄어들어 화면 안에 맞춤
         height: "100%",
         background: "var(--paper)",
         borderLeft: "1px solid var(--paper-edge)",

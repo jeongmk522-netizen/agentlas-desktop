@@ -25,6 +25,7 @@ const api: AgentlasIpc = {
     readTextFile: (absPath: string) => ipcRenderer.invoke("fs:readTextFile", absPath),
   },
   workspace: {
+    selectFolder: () => ipcRenderer.invoke("workspace:selectFolder"),
     get: (chatId: string) => ipcRenderer.invoke("workspace:get", chatId),
     set: (chatId: string, absPath: string | null) =>
       ipcRenderer.invoke("workspace:set", chatId, absPath),

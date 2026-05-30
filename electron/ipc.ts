@@ -1,6 +1,6 @@
 // IPC 핸들러 일괄 등록. main.ts 앱 ready 직후 호출.
 // 각 도메인 모듈(runtime, secrets, team, marketplace, projects, chats, automations, invoke)을 thin wrapping.
-import { app, BrowserWindow, ipcMain } from "electron";
+import { app, BrowserWindow, dialog, ipcMain } from "electron";
 import { randomUUID } from "node:crypto";
 import { detectRuntimes, setActiveRuntime } from "./runtime/detect";
 import { listRuntimeModels } from "./runtime/providers";
@@ -120,6 +120,10 @@ export function registerIpcHandlers(): void {
   ipcMain.handle("fs:readTextFile", (_e, absPath: string) => readTextFilePreview(absPath));
 
   // ── workspace (채팅별 working_folder) ───────────────────
+  ipcMain.handle("workspace:selectFolder", async () => {
+    const res = await dialog.showOpenDialog({ properties: ["openDirectory", "createDirectory"] });
+    return res.canceled || !res.filePaths.length ? null : res.filePaths[0];
+  });
   ipcMain.handle("workspace:get", (_e, chatId: string) => getChatWorkingFolder(chatId));
   ipcMain.handle("workspace:set", (_e, chatId: string, absPath: string | null) =>
     setChatWorkingFolder(chatId, absPath),

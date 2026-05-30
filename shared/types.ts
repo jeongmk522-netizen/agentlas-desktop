@@ -300,6 +300,8 @@ export interface Project {
   defaultAgentId: string | null;
   /** 프로젝트 단위로 시스템 프롬프트에 더 얹을 컨텍스트 */
   contextNote: string | null;
+  /** 이 프로젝트의 작업 폴더(절대경로). 이 프로젝트의 채팅은 이 폴더를 기본 cwd로 사용 + .agentlas 메모리 활성화 */
+  folderPath: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -517,6 +519,8 @@ export interface AgentlasIpc {
   workspace: {
     get: (chatId: string) => Promise<string | null>;
     set: (chatId: string, absPath: string | null) => Promise<void>;
+    /** 네이티브 폴더 선택 다이얼로그 → 선택한 절대경로(취소 시 null) */
+    selectFolder: () => Promise<string | null>;
   };
   /** 로그인 — agentlas.cloud 구글 OAuth. BrowserWindow 열고 cookie 추출 → Keychain. */
   auth: {
@@ -642,9 +646,9 @@ export interface AgentlasIpc {
   };
   projects: {
     list: () => Promise<Project[]>;
-    create: (input: { name: string; defaultAgentId?: string | null; contextNote?: string | null }) => Promise<Project>;
+    create: (input: { name: string; defaultAgentId?: string | null; contextNote?: string | null; folderPath?: string | null }) => Promise<Project>;
     get: (id: string) => Promise<Project | null>;
-    update: (id: string, patch: Partial<Pick<Project, "name" | "contextNote" | "defaultAgentId">>) => Promise<Project>;
+    update: (id: string, patch: Partial<Pick<Project, "name" | "contextNote" | "defaultAgentId" | "folderPath">>) => Promise<Project>;
     remove: (id: string) => Promise<void>;
   };
   chats: {

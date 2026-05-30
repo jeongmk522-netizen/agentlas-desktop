@@ -102,7 +102,7 @@ export function AgentNetworkPanel({ firm, org, agent, agents, busy, liveAgents, 
       style={{
         width: 340,
         maxWidth: "45vw",
-        flexShrink: 0,
+        flexShrink: 1, // 좁은 창에서 줄어들어 화면 안에 맞춤(고정폭이면 우측으로 오버플로우)
         height: "100%",
         background: "var(--paper)",
         borderLeft: "1px solid var(--paper-edge)",

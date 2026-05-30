@@ -10,6 +10,7 @@ interface ProjectRow {
   description: string | null;
   default_agent_id: string | null;
   context_note: string | null;
+  folder_path: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -21,6 +22,7 @@ function toProject(row: ProjectRow): Project {
     description: row.description,
     defaultAgentId: row.default_agent_id,
     contextNote: row.context_note,
+    folderPath: row.folder_path ?? null,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -44,21 +46,22 @@ export function createProject(input: {
   name: string;
   defaultAgentId?: string | null;
   contextNote?: string | null;
+  folderPath?: string | null;
 }): Project {
   const id = randomUUID();
   const now = new Date().toISOString();
   getDb()
     .prepare(
-      `INSERT INTO projects (id, name, description, default_agent_id, context_note, created_at, updated_at)
-       VALUES (?, ?, NULL, ?, ?, ?, ?)`,
+      `INSERT INTO projects (id, name, description, default_agent_id, context_note, folder_path, created_at, updated_at)
+       VALUES (?, ?, NULL, ?, ?, ?, ?, ?)`,
     )
-    .run(id, input.name.trim() || "새 프로젝트", input.defaultAgentId ?? null, input.contextNote ?? null, now, now);
+    .run(id, input.name.trim() || "새 프로젝트", input.defaultAgentId ?? null, input.contextNote ?? null, input.folderPath ?? null, now, now);
   return getProject(id) as Project;
 }
 
 export function updateProject(
   id: string,
-  patch: Partial<Pick<Project, "name" | "contextNote" | "defaultAgentId">>,
+  patch: Partial<Pick<Project, "name" | "contextNote" | "defaultAgentId" | "folderPath">>,
 ): Project {
   const db = getDb();
   const now = new Date().toISOString();
@@ -67,12 +70,13 @@ export function updateProject(
 
   db.prepare(
     `UPDATE projects
-        SET name = ?, context_note = ?, default_agent_id = ?, updated_at = ?
+        SET name = ?, context_note = ?, default_agent_id = ?, folder_path = ?, updated_at = ?
       WHERE id = ?`,
   ).run(
     patch.name ?? existing.name,
     patch.contextNote ?? existing.contextNote,
     patch.defaultAgentId === undefined ? existing.defaultAgentId : patch.defaultAgentId,
+    patch.folderPath === undefined ? existing.folderPath : patch.folderPath,
     now,
     id,
   );

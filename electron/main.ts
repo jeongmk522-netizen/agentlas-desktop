@@ -14,6 +14,7 @@ import { pathToFileURL } from "node:url";
 import { registerIpcHandlers } from "./ipc";
 import { buildAppMenu } from "./menu";
 import { initStore } from "./store/db";
+import { startAutomationScheduler } from "./automation-scheduler";
 import { initAutoUpdater } from "./updater";
 import { bootAuthFromKeychain } from "./auth";
 import { materializeAllAgents } from "./agents/files";
@@ -172,6 +173,7 @@ app.whenReady().then(async () => {
   // 키체인에서 저장된 세션 복원 — 메인 윈도우가 뜨자마자 getSession()이 정상 값을 반환하도록 await
   await bootAuthFromKeychain();
   registerIpcHandlers();
+  startAutomationScheduler(); // 자동화 스케줄러 — 60초마다 due 자동화를 백그라운드로 실행
   await createWindow();
   Menu.setApplicationMenu(buildAppMenu(() => mainWindow));
   // 자동 업데이트는 production에서만. updater.ts 안에서 NODE_ENV 체크.

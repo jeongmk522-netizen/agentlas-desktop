@@ -133,7 +133,7 @@ const api: AgentlasIpc = {
   },
   automations: {
     list: () => ipcRenderer.invoke("automations:list"),
-    create: (input: Omit<Automation, "id" | "createdAt" | "lastRunAt" | "enabled">) =>
+    create: (input: Omit<Automation, "id" | "createdAt" | "lastRunAt" | "enabled" | "nextRunAt" | "createdBy">) =>
       ipcRenderer.invoke("automations:create", input),
     toggle: (id: string, enabled: boolean) =>
       ipcRenderer.invoke("automations:toggle", id, enabled),

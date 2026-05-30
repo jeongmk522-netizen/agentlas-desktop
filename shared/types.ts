@@ -345,8 +345,12 @@ export interface Automation {
   /** 실행 시 사용자 입력 대신 들어갈 프롬프트 템플릿 */
   promptTemplate: string;
   enabled: boolean;
+  /** 'user'(폼에서 사람이 생성) | 'agent'(채팅에서 에이전트가 `## Automation` 블록으로 생성) */
+  createdBy: "user" | "agent";
   createdAt: string;
   lastRunAt: string | null;
+  /** 다음 실행 예정 시각(ISO). 스케줄러가 이 값으로 due 판단 후 재계산 */
+  nextRunAt: string | null;
 }
 
 // ── invocation ───────────────────────────────────────────────
@@ -678,8 +682,7 @@ export interface AgentlasIpc {
   };
   automations: {
     list: () => Promise<Automation[]>;
-    /** M0: 메모리 stub. M1에서 SQLite + 실제 스케줄러 */
-    create: (input: Omit<Automation, "id" | "createdAt" | "lastRunAt" | "enabled">) => Promise<Automation>;
+    create: (input: Omit<Automation, "id" | "createdAt" | "lastRunAt" | "enabled" | "nextRunAt" | "createdBy">) => Promise<Automation>;
     toggle: (id: string, enabled: boolean) => Promise<Automation>;
     remove: (id: string) => Promise<void>;
   };

@@ -9,7 +9,7 @@ import { app } from "electron";
 
 let _db: Database.Database | null = null;
 
-const SCHEMA_VERSION = 14;
+const SCHEMA_VERSION = 15;
 
 export function initStore(): void {
   if (_db) return;
@@ -322,6 +322,26 @@ export function initStore(): void {
     if (!projCols.some((c) => c.name === "folder_path")) {
       _db.exec("ALTER TABLE projects ADD COLUMN folder_path TEXT");
     }
+  }
+
+  // ── v14 → v15: 자동화 영속화 (in-memory stub → SQLite) + 스케줄러 ─
+  if (userVersion < 15) {
+    _db.exec(`
+      CREATE TABLE IF NOT EXISTS automations (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        schedule TEXT NOT NULL,
+        target_type TEXT NOT NULL,
+        target_id TEXT NOT NULL,
+        prompt_template TEXT NOT NULL,
+        enabled INTEGER NOT NULL DEFAULT 1,
+        created_by TEXT NOT NULL DEFAULT 'user',
+        last_run_at TEXT,
+        next_run_at TEXT,
+        created_at TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_automations_due ON automations(enabled, next_run_at);
+    `);
   }
 
   _db.pragma(`user_version = ${SCHEMA_VERSION}`);

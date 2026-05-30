@@ -348,11 +348,11 @@ export function registerIpcHandlers(): void {
   );
   ipcMain.handle("chats:remove", (_e, id: string) => removeChat(id));
 
-  // ── automations (M0 stub) ──────────────────────────────
+  // ── automations (SQLite + scheduler) ───────────────────
   ipcMain.handle("automations:list", () => listAutomations());
   ipcMain.handle(
     "automations:create",
-    (_e, input: Omit<Automation, "id" | "createdAt" | "lastRunAt" | "enabled">) =>
+    (_e, input: Omit<Automation, "id" | "createdAt" | "lastRunAt" | "enabled" | "nextRunAt" | "createdBy">) =>
       createAutomation(input),
   );
   ipcMain.handle("automations:toggle", (_e, id: string, enabled: boolean) =>

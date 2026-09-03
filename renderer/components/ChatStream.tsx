@@ -107,7 +107,7 @@ export interface StreamMessage {
   liveTokens?: number;
   /** reasoning(thinking) 구간 상태 — 상태줄 문구 회전("생각 중…")과 "N초 동안 생각함"의 근거.
    *  lastMs는 직전 구간 지속시간으로, 이후 새 활동(텍스트/도구)이 오면 지워진다. */
-  thinking?: { active: boolean; startedAt?: number; cumMs: number; lastMs?: number };
+  thinking?: { active: boolean; startedAt?: number; cumMs: number; lastMs?: number; headline?: string };
   /** 파이프라인 단계 계획 — 있으면 메시지 상단에 스테퍼로 표시(PRD→배포 가시화). */
   pipeline?: PipelineStage[];
   /** 멀티모달 엔진 미연결 — 본문 아래에 "설정으로 가기" 버튼을 렌더한다. */
@@ -1730,6 +1730,14 @@ function runStatusPhrase(
   t: ReturnType<typeof useT>["t"],
 ): string {
   if (!thinking) return "";
+  /*
+   * ★모델이 남긴 추론 요약이 있으면 그것을 보여준다(2026-09-04, One 과 같은 규칙).
+   *
+   * 예전에는 경과 시간으로 도는 상투구("생각 중…")만 보여주고 추론 텍스트는 통째로
+   * 버렸다. 같은 순간 One 은 모델이 쓴 한 줄("Planning applypatch creation")을 그대로
+   * 띄운다 — 무엇을 하고 있는지가 보인다. 텍스트가 없을 때만 예전 문구로 되돌아간다.
+   */
+  if (thinking.active && thinking.headline) return thinking.headline;
   if (thinking.active) {
     const cumSec = Math.floor(thinking.cumMs / 1000) + activeElapsedSec;
     if (cumSec < 2) return t("chatstream.think_1");

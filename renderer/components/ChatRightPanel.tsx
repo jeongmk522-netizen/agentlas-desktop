@@ -946,7 +946,10 @@ function FileViewer({ file }: { file: WorkspaceFilePreview }) {
           <span style={fileViewerIconStyle}>{iconForViewerKind(file.viewerKind)}</span>
           <div style={{ flex: 1, minWidth: 0 }}>
             <strong style={fileViewerTitleStyle} title={file.path}>{file.name}</strong>
-            <span style={fileViewerMetaStyle}>{typeLabel} · {formatBytes(file.size)}{file.live ? <b style={{ marginLeft: 6, color: "#23724d", fontSize: 9, letterSpacing: ".04em" }}>● LIVE</b> : null}</span>
+            {/* ★크기를 모를 때 "0 B" 라고 지어내지 않는다(2026-09-04 실앱 실측: 233KB
+                스크린샷이 레일 머리글에 "이미지 · 0 B" 로 떴다). One 의 결과 카드도
+                크기를 모르면 그 칸을 통째로 생략한다(OneAdaptiveResult) — 같은 규칙을 쓴다. */}
+            <span style={fileViewerMetaStyle}>{typeLabel}{file.size > 0 ? ` · ${formatBytes(file.size)}` : ""}{file.live ? <b style={{ marginLeft: 6, color: "#23724d", fontSize: 9, letterSpacing: ".04em" }}>● LIVE</b> : null}</span>
           </div>
         </header>
       )}

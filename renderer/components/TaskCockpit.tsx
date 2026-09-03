@@ -498,6 +498,10 @@ const RIGHT_PANEL_OVERLAY_MAX_VIEWPORT = 760;
  */
 const CHAT_COLUMN_RESERVED_WIDTH = 274 + RIGHT_PANEL_MIN_WIDTH;
 const RIGHT_PANEL_RESULT_RATIO = 0.432;
+/** 좌측 사이드바 실측 폭 — 대화 열을 계산할 때 먼저 빼 둔다. */
+const CHAT_SIDEBAR_WIDTH = 274;
+/** 한국어 본문이 한 줄에 충분히 들어가는 최소 대화 열 폭(실측 기준). */
+const MIN_READABLE_CHAT_COLUMN = 520;
 // 세로 높이는 폭과 달리 기본이 '전체'다 — null 이면 키를 지워 창 크기를 그대로 따라간다.
 const RIGHT_PANEL_HEIGHT_KEY = "agentlas.chat.right_panel_height";
 
@@ -552,7 +556,16 @@ function clampRightPanelWidth(width: number): number {
     ? RIGHT_PANEL_MAX_WIDTH
     : window.innerWidth <= RIGHT_PANEL_OVERLAY_MAX_VIEWPORT
       ? Math.max(RIGHT_PANEL_MIN_WIDTH, window.innerWidth - 40)
-      : Math.max(RIGHT_PANEL_MIN_WIDTH, window.innerWidth - CHAT_COLUMN_RESERVED_WIDTH);
+      /*
+       * ★남는 자리는 대화 몫부터 뗀다(2026-09-04 실측).
+       *
+       * 예전 식(innerWidth - 274 - 레일최소)은 **레일이 최소 320 을 받도록** 남겨 두고
+       * 나머지를 대화에 줬다. 그래서 1024px 창에서 레일 430 · 작성창 288 이 됐다 —
+       * 같은 폭에서 One 은 작성창 720 을 지킨다(레일이 224 로 줄어든다).
+       * 이제 대화가 읽을 수 있는 폭을 먼저 떼고, 그러고도 레일이 자기 최소보다 작아지면
+       * 레일 최소가 이긴다(둘 다는 못 지키는 폭에서의 마지막 방어선).
+       */
+      : Math.max(RIGHT_PANEL_MIN_WIDTH, window.innerWidth - CHAT_SIDEBAR_WIDTH - MIN_READABLE_CHAT_COLUMN);
   return Math.min(RIGHT_PANEL_MAX_WIDTH, viewportMax, Math.max(RIGHT_PANEL_MIN_WIDTH, Math.round(width)));
 }
 
@@ -562,7 +575,18 @@ function preferredRichResultWidth(): number {
   // 흩어져 있어 한 곳만 고치면 반쪽만 착지했다.
   const requested = window.innerWidth <= RIGHT_PANEL_OVERLAY_MAX_VIEWPORT
     ? Math.round(window.innerWidth * 0.86)
-    : Math.round(window.innerWidth * RIGHT_PANEL_RESULT_RATIO);
+    /*
+     * ★결과가 커도 대화가 읽을 수 있어야 한다(2026-09-04 실측).
+     *
+     * 비율(0.432)만 보고 넓히면 1240px 창에서 레일 536 · 작성창 398 이 됐다. 한국어 본문이
+     * 한 줄에 서른 자쯤에서 꺾이는 폭이다(같은 창에서 One 은 720). 그래서 비율은 그대로 두되
+     * **대화 열의 최소 폭을 먼저 떼어 놓고** 남는 만큼만 결과에 준다. 큰 화면에서는 예전처럼
+     * 비율이 이기고, 좁은 화면에서만 이 상한이 걸린다.
+     */
+    : Math.min(
+        Math.round(window.innerWidth * RIGHT_PANEL_RESULT_RATIO),
+        window.innerWidth - CHAT_SIDEBAR_WIDTH - MIN_READABLE_CHAT_COLUMN,
+      );
   return clampRightPanelWidth(requested);
 }
 
@@ -1020,6 +1044,24 @@ function mcpStepsFromLedger(events: RunEventUi[], limit = 32): StreamStep[] {
  * 열면 첫 실행에서 만든 파일이 없어졌다(2026-09-03 실측: 산출물 2개 중 1개만 남음).
  * One 은 이미 같은 원장(runLedger.chatTimeline)으로 지난 턴을 되살린다.
  */
+/**
+ * 추론 텍스트에서 상태줄에 실을 한 줄을 고른다.
+ *
+ * 모델의 사고는 문단으로 흐르므로 **마지막 완성 문장**이 지금 하는 일에 가장 가깝다.
+ * 마크다운 장식과 제어 표식은 걷어내고, 너무 길면 자른다. 뽑을 것이 없으면 null 이라
+ * 호출부가 예전 문구로 되돌아간다.
+ */
+function reasoningHeadline(text: string | undefined): string | null {
+  if (!text) return null;
+  const lines = text
+    .split(/\n+/)
+    .map((line) => line.replace(/^[#>*\-\s]+/, "").replace(/[*_`]/g, "").trim())
+    .filter((line) => line.length >= 4 && !line.startsWith("{") && !line.startsWith("["));
+  const last = lines[lines.length - 1];
+  if (!last) return null;
+  return last.length > 90 ? `${last.slice(0, 89)}…` : last;
+}
+
 function stepsByMessageFromTimeline(
   history: readonly { id: string; role: string; createdAt?: string }[],
   timeline: readonly { receipt: InvocationRunReceipt; events: RunEventUi[] }[],
@@ -1434,6 +1476,23 @@ function ChatPage() {
   const [rightPanelOpen, setRightPanelOpen] = useState(false);
   const [rightPanelTab, setRightPanelTab] = useState<ChatRightPanelTab>("agent");
   const [rightPanelWidth, setRightPanelWidth] = useState(() => readRightPanelWidth());
+  /*
+   * ★창이 좁아지면 레일도 같이 줄어든다(2026-09-04 실측).
+   *
+   * 폭은 열 때 한 번만 계산했고 창 크기 변화에는 반응하지 않았다. 그래서 1240px 에서
+   * 결과를 연 뒤 1024px 로 줄이면 레일은 446 을 그대로 붙들고 작성창이 **272px** 로
+   * 눌렸다 — 고치기 전(398)보다 나빴다. 저장은 하지 않는다: 창 크기에 맞춰 줄어든 값은
+   * 사용자가 고른 폭이 아니라 지금 화면이 허용하는 폭이다.
+   */
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const onResize = () => setRightPanelWidth((current) => {
+      const next = clampRightPanelWidth(current);
+      return next === current ? current : next;
+    });
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, []);
   const [rightPanelHeight, setRightPanelHeight] = useState<number | null>(() => readRightPanelHeight());
   const workspaceOpen = rightPanelOpen && rightPanelTab === "file";
   const networkOpen = rightPanelOpen && rightPanelTab === "agent";
@@ -1576,11 +1635,16 @@ function ChatPage() {
     setRightPanelOpen(true);
     writeRightPanelPreference(true, tab);
     if (tab === "panel") {
-      setRightPanelWidth((current) => {
-        const next = Math.max(current, preferredRichResultWidth());
-        if (next !== current) writeRightPanelWidth(next);
-        return next;
-      });
+      /*
+       * ★자동으로 넓힌 폭은 사용자의 선택이 아니므로 저장하지 않는다(2026-09-03 실측).
+       *
+       * 예전에는 여기서 넓힌 값을 그대로 기록했고, 넓히기는 Math.max 라 줄어들지 않았다.
+       * 그래서 결과를 한 번 연 것만으로 레일이 1240px 창에서 536px 을 영구 점유했고,
+       * 이후 **모든 대화**가 작성창 398px 로 눌렸다(같은 창에서 One 은 레일 252 · 작성창 720).
+       * 빈 레일이 대화보다 넓은 화면은 그렇게 만들어졌다. 수리 뒤 새 대화는 레일 392 ·
+       * 작성창 542 로 돌아온다(실측). 손으로 끌어 정한 폭은 그대로 저장된다 — 그건 선택이다.
+       */
+      setRightPanelWidth((current) => Math.max(current, preferredRichResultWidth()));
     }
   }, []);
   const closeRightPanel = useCallback(() => {
@@ -1957,6 +2021,12 @@ function ChatPage() {
             const th = msg.thinking ?? { active: false, cumMs: 0 };
             if (phase === "start") {
               return { ...msg, thinking: { active: true, startedAt: Date.now(), cumMs: th.cumMs } };
+            }
+            if (phase === "delta") {
+              // ★모델이 쓴 추론의 첫 줄을 상태줄에 싣는다 — 예전에는 이 텍스트를 버리고
+              //   시간만 기록해서 화면에 "생각 중…" 만 돌았다(One 은 이 줄을 보여준다).
+              const line = reasoningHeadline(ev.reasoning?.text);
+              return line ? { ...msg, thinking: { ...th, active: true, headline: line } } : msg;
             }
             const dur = durationMs ?? (th.startedAt != null ? Date.now() - th.startedAt : 0);
             return {
@@ -4279,7 +4349,14 @@ function ChatPage() {
 
   return (
     <div className="task-cockpit-shell" style={{ display: "flex", height: "100%", width: "100%", minWidth: 0, overflow: "hidden" }}>
-      <div className="task-cockpit-main" style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0 }}>
+      {/* ★대화 영역은 One 과 같이 흰 면 위에 놓는다(2026-09-04 실측).
+          예전에는 이 열이 투명이라 페이지 배경(#fcfcfc)이 그대로 비쳤고, 작성창만 흰
+          카드로 떠 보였다. One 은 workspace 전체가 #fff 라 대화가 한 장의 면 위에 앉는다.
+          같은 뜻의 토큰(--paper, #ffffff)을 쓴다 — 다크 테마에서도 함께 따라간다. */}
+      <div
+        className="task-cockpit-main"
+        style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0, background: "var(--paper)" }}
+      >
       <header
         className="task-cockpit-header titlebar-drag"
         style={{
@@ -4413,7 +4490,12 @@ function ChatPage() {
         </div>
       </header>
 
-      <KeyStatusBanner mode="banner" />
+      {/* ★상단 알림도 아래 배너와 같은 여백을 쓴다(2026-09-04 오너 제보).
+          이 배너만 감싸는 것이 없어 창 양끝에 그대로 붙었고, 바로 아래 배너는
+          margin 0 16px 라 두 줄이 서로 어긋나 보였다. */}
+      <div style={{ margin: "0 16px" }}>
+        <KeyStatusBanner mode="banner" />
+      </div>
 
       <div style={{ margin: "0 16px" }}>
         <OneSuggestionReviewHandoffBanner surface="work" locale={locale} />

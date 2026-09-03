@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import http from "node:http";
+import os from "node:os";
 import path from "node:path";
 import { createHash, randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
 import { userDataPath } from "../runtime-paths";
@@ -5451,6 +5452,50 @@ function writePrivate(target: string, value: unknown): void {
   if (process.platform !== "win32") fs.chmodSync(target, 0o600);
 }
 
+/**
+ * A Codex home that carries this turn's Science boundary and nothing the machine happens to have.
+ *
+ * Codex reads `$CODEX_HOME` for both its MCP server table and its global AGENTS.md. Inheriting the
+ * user's home meant a Science turn silently ran with every server that machine had installed and a
+ * 13 KB global router persona on top of the Research Director's own contract -- measured on a live
+ * astronomy study: 58 bash calls, 8 repl calls, and calls into an unrelated network server, against
+ * ZERO Science tools, while the turn's own prompt said "Agentlas Science is the only MCP server
+ * enabled for this turn". The sentence was true of the config we wrote and false of the process we
+ * launched, which is the worst combination: the boundary reads as enforced and is not.
+ *
+ * Only `auth.json` is carried over, by symlink so a token refresh still lands in the real home.
+ * Everything else is left behind on purpose; a file this directory does not have is a capability
+ * this turn does not get.
+ */
+function materializeScienceCodexHome(invocationRunId: string, serverKey: string, command: string, args: string[], envVars: string[]): string {
+  const home = userDataPath("science-codex-home", invocationRunId);
+  fs.mkdirSync(home, { recursive: true, mode: 0o700 });
+  const config = [
+    "# Generated per Science turn. Not user configuration -- edits here are discarded.",
+    `[mcp_servers.${serverKey}]`,
+    `command = ${toml(command)}`,
+    `args = ${tomlArray(args)}`,
+    `env_vars = ${tomlArray(envVars)}`,
+    "",
+  ].join("\n");
+  const temp = `${path.join(home, "config.toml")}.${process.pid}.${randomUUID()}.tmp`;
+  fs.writeFileSync(temp, config, { encoding: "utf8", mode: 0o600 });
+  fs.renameSync(temp, path.join(home, "config.toml"));
+
+  // Sign-in state is the one thing the isolated home cannot invent. A symlink keeps the refresh
+  // write landing in the real home, so isolating a turn never costs the user their session.
+  const realHome = process.env.CODEX_HOME || path.join(os.homedir(), ".codex");
+  const auth = path.join(realHome, "auth.json");
+  const link = path.join(home, "auth.json");
+  try {
+    if (fs.existsSync(auth) && !fs.existsSync(link)) fs.symlinkSync(auth, link);
+  } catch {
+    // No sign-in file to carry, or the link already exists. Codex reports its own auth failure,
+    // which is a better message than anything this function could invent.
+  }
+  return home;
+}
+
 function toml(value: string): string { return JSON.stringify(value); }
 function tomlArray(values: string[]): string { return `[${values.map(toml).join(",")}]`; }
 
@@ -5567,7 +5612,12 @@ export async function materializeScienceMcpGrant(context: ScienceContext, baseCo
       "-c", `mcp_servers.${SERVER_KEY}.args=${tomlArray(args)}`,
       "-c", `mcp_servers.${SERVER_KEY}.env_vars=${tomlArray([TOKEN_ENV, ENDPOINT_ENV, CATALOG_ENV])}`,
     ],
-    runtimeEnv: { [TOKEN_ENV]: token, [ENDPOINT_ENV]: controlEndpoint, [CATALOG_ENV]: encodedCatalog },
+    runtimeEnv: {
+      [TOKEN_ENV]: token, [ENDPOINT_ENV]: controlEndpoint, [CATALOG_ENV]: encodedCatalog,
+      // The config args above only ADD our server to whatever Codex already had. The isolated home
+      // is what makes "only this server" true of the launched process rather than of our file.
+      CODEX_HOME: materializeScienceCodexHome(context.invocationRunId, SERVER_KEY, process.execPath, args, [TOKEN_ENV, ENDPOINT_ENV, CATALOG_ENV]),
+    },
     includedServer: { serverId: SERVER_KEY, catalogId: SERVER_KEY, configKey: SERVER_KEY },
   };
 }

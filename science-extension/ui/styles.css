@@ -3753,9 +3753,16 @@ dl dd:empty::after {
    아이콘 레일로 접는다. 채팅은 끝까지 남긴다 -- 연구를 진행시키는 곳이 거기다. */
 @media (max-width: 1180px) {
   :root { --science-chat-width: 340px; --science-chat-width-compact: 320px; --rail-expanded: 244px; }
+  /* 워드마크는 잘리기 전에 줄어든다. 사이드바가 좁아지자 "Agentlas Science*" 가
+     "Agentlas Sci" 에서 끊겼다 -- 제품 이름이 반만 보이는 것은 줄임표로 다듬어질
+     문제가 아니다. 이름은 전부 보이거나(작게라도) 아예 빠져야 한다. 900px 아래에서는
+     접힌 레일과 같은 규칙으로 발자국만 남는다. */
+  .railBrandWordmark strong { font-size: 18.4px; }
 }
 @media (max-width: 1040px) {
   :root { --science-chat-width: 312px; --science-chat-width-compact: 300px; --rail-expanded: 224px; }
+  .railBrandWordmark strong { font-size: 17px; }
+  .railBrand { gap: 6px; padding-right: 12px; padding-left: 12px; }
 }
 @media (max-width: 900px) {
   /* 여기서부터는 줄여도 본문이 안 나온다. 사이드바를 아이콘만 남기고 접는다 --

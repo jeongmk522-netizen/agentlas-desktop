@@ -71,7 +71,11 @@ assert.match(orgChart, /Only agents you bookmarked in Hub appear here/);
 assert.match(createAgent, /LLM 모델/);
 assert.match(createAgent, /runtimeSelectionKey\(runtimeSelection\)/);
 assert.match(createAgent, /선택한 모델이 안 되면 Worker 런타임, 그다음 연결된 정상 런타임/);
-assert.match(runtimeSelection, /selected model -> orchestrator's worker role[\s\S]*?fallbackStage: "worker"[\s\S]*?fallbackStage: "connected"/);
+// 2026-08-27 리팩터: "선택 모델 -> orchestrator worker 풀 -> 아무 연결된 런타임"이라는 고정
+// 순서 대신, 역할별 우선순위 풀(rolePriorityRuntimes)로 바뀌었다 — 스페셜리스트는 worker
+// 풀, CEO/컨트롤러는 orchestrator 풀에서만 대체를 찾고, 탐지 순서를 숨은 폴백으로 쓰지
+// 않는다. fallbackStage 두 단계(worker/connected) 계약은 그대로다.
+assert.match(runtimeSelection, /Never use detection order as the hidden fallback[\s\S]*?fallbackStage: role === "worker" \|\| unavailableReason === "model-unavailable"[\s\S]*?\? "worker"[\s\S]*?: "connected",[\s\S]*?fallbackStage: "connected",/);
 assert.match(modalStyles, /\.layer\s*\{[\s\S]*?place-items:\s*center/);
 assert.match(orgChart, /setToolsTab\("plugins"\)/);
 assert.match(orgChart, /setToolsTab\("mcp"\)/);
@@ -101,7 +105,17 @@ assert.match(oneShell, /appendOneUserMessage\(targetChat\.id, explicitValue\)/);
 assert.match(oneShell, /<DescribeAutomation[\s\S]*?presentation="chat"[\s\S]*?openAfterCreate=\{false\}/);
 assert.doesNotMatch(oneShell, /OneUseCaseChips|useCaseChipsVisible/, "One's empty home should greet instead of rendering shortcut suggestions");
 assert.doesNotMatch(oneShell, /OneTeamUpgradeIntro|<OneActivation(?:\s|>)/, "One's empty home should greet instead of rendering onboarding cards");
-assert.doesNotMatch(oneShell, /router\.(?:push|replace)\([`"']\/(?:workspace\/task|dashboard|automation(?:\/|["']))/, "One and @graph must remain conversation-first");
+// Exception: when a user-triggered "run this automation now" finishes with no
+// safe textual summary to show inline, One opens that automation's own durable
+// run history instead of faking a generic "completed" toast (see the comment
+// above the router.push in OneShell.tsx). That is the only sanctioned
+// OneShell-level navigation into /automation; anything else must stay
+// conversation-first, same as /workspace/task and /dashboard always must.
+assert.doesNotMatch(
+  oneShell.replace("router.push(`/automation/flow?id=${encodeURIComponent(automationId)}`)", ""),
+  /router\.(?:push|replace)\([`"']\/(?:workspace\/task|dashboard|automation(?:\/|["']))/,
+  "One and @graph must remain conversation-first",
+);
 assert.doesNotMatch(adaptiveResult, /router\.push\(`\/automation\/flow/, "One automation cards must not navigate to Work");
 assert.match(adaptiveResult, /intent:\s*"run_automation"[\s\S]*?targetRef:\s*`automation:\$\{automationId\}`/);
 assert.match(adaptiveResult, /intent:\s*"open_automation"[\s\S]*?Edit with @graph/);
@@ -113,7 +127,9 @@ assert.match(electronIpc, /staffingBudgetMs = Math\.max\(1, Math\.min\(8_000, in
 // A running task accepts steering and lets the owner prepare next-turn model,
 // effort, permission, and fast-mode choices. Only attachment mutation stays
 // blocked because it cannot join an already-materialized run safely.
-assert.match(oneShell, /const composerSettingsBlocked = !busy && !teamPreflightBusy && selectedReadOnly/);
+// activeDirectSessionUnavailable 이 추가돼(직접 세션이 끊긴 경우도 막는다) 계약이 넓어졌다 —
+// 약화가 아니라 강화다.
+assert.match(oneShell, /const composerSettingsBlocked = !busy && !teamPreflightBusy && \(selectedReadOnly \|\| activeDirectSessionUnavailable\)/);
 assert.match(oneShell, /const composerInteractionBlocked = composerSettingsBlocked \|\| teamDecisionPending/);
 assert.doesNotMatch(oneShell, /const composerSettingsBlocked[^\n]*teamDecisionPending/);
 assert.match(oneShell, /data-one-composer-trigger="model"[\s\S]*?disabled=\{composerSettingsBlocked\}/);

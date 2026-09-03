@@ -24,7 +24,10 @@ assert.match(taskForce, /const managerRunnerBase = taskForceRunnerBase\(p, "read
 assert.match(taskForce, /permission: role === "worker" \? workerPermission : "read"/);
 assert.match(taskForce, /permissions: workerPermission/);
 assert.match(codex, /approvalPolicy: policy\.approvalPolicy,[\s\S]{0,120}approvalsReviewer,[\s\S]{0,180}sandboxPolicy: policy\.sandboxPolicy/, "resident turns must reassert both approval policy and reviewer");
-assert.match(codex, /writableRoots: \[writableRoot\][\s\S]{0,360}excludeTmpdirEnvVar: false[\s\S]{0,80}excludeSlashTmp: false/, "workspace-write turns must carry a complete cwd-rooted typed policy");
+// 보안 강화: Codex 기본 tmp 쓰기 권한(TMPDIR·"/tmp")을 켜 두면 워커가 지정된 프로젝트
+// 루트 밖(형제·부모 디렉터리)에 쓸 수 있어, 이제 둘 다 명시적으로 꺼(exclude*: true)
+// writableRoots 하나로만 쓰기 경계를 좁힌다.
+assert.match(codex, /writableRoots: \[writableRoot\][\s\S]{0,360}excludeTmpdirEnvVar: true[\s\S]{0,80}excludeSlashTmp: true/, "workspace-write turns must carry a complete cwd-rooted typed policy with default tmp grants excluded");
 assert.match(firm, /export function firmNodePermission/);
 assert.match(firm, /turn\.phase === "delegate" \? "write" : "read"/);
 assert.match(firm, /permission: .*nodePermission/);

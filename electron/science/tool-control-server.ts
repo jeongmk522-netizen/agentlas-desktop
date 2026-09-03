@@ -5128,6 +5128,8 @@ async function handle(request: http.IncomingMessage, response: http.ServerRespon
   }
   const grant = authorize(request.headers.authorization);
   if (!grant) {
+    // A stale grant looks identical to a missing one from the model's side; say which route asked.
+    console.error(`[science-tool] refused route=${String(request.url ?? "")} code=science-tool-control-unauthorized`);
     respond(response, 401, { ok: false, code: "science-tool-control-unauthorized" });
     return;
   }
@@ -5412,6 +5414,13 @@ async function handle(request: http.IncomingMessage, response: http.ServerRespon
     respond(response, 200, withStudyProgress(result, grant.context.projectId));
   } catch (error) {
     const code = error instanceof Error ? error.message.slice(0, 240) : "science-tool-control-failed";
+    // A refused tool call left no trace anywhere an operator could reach: the turn event records
+    // only isError, and the code lived solely in the model's own tool result. So a study that could
+    // not call a single Science tool looked, from every log and every screen, exactly like a study
+    // whose model chose not to. Measured: six live runs, every Science call refused, and the only
+    // report of it was the model saying "the Science host declined". Route and code only -- never
+    // the body, which carries project content.
+    console.error(`[science-tool] refused route=${route} code=${code}`);
     respond(response, 400, { ok: false, code });
   }
 }

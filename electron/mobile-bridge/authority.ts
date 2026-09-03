@@ -110,7 +110,11 @@ import {
 import { OwnerCloudActionError } from "../marketplace/mcp-source";
 import { resumeMobileOneAutoRecovery } from "../one/mobile-auto-recovery";
 import { autoResolveOneTeamPreflight, prepareOneTeamPreflight } from "../one/team-preflight";
-import { isOneInvocationChat, iterateRecentChatOneArtifactEvents } from "../store/run-events";
+import {
+  isOneInvocationChat,
+  iterateRecentChatOneArtifactEvents,
+  listRecentOneArtifactsForMobile,
+} from "../store/run-events";
 import {
   createDesktopMobileBridgeBuildActions,
   createDesktopMobileBridgeCloudAgentActions,
@@ -206,6 +210,7 @@ import type {
 const REQUEST_ID_RE = /^[^\u0000-\u001f]{1,128}$/;
 const IDENTIFIER_RE = /^[^\u0000-\u001f]{1,256}$/;
 const RUN_ID_RE = /^[^\u0000-\u001f]{1,160}$/;
+const MOBILE_ONE_ARTIFACT_CURSOR_RE = /^[A-Za-z0-9_-]{1,512}$/;
 /** 도구 승인 id — tool-approval 이 발급하는 `approval:<t>:<rand>` / `denied:<t>:<rand>`. */
 const TOOL_APPROVAL_ID_RE = /^(approval|denied):[a-z0-9]{1,16}:[a-z0-9]{1,16}$/;
 const TERMINAL_APPROVAL_ID_RE = /^approval:[a-z0-9]{1,16}:[a-z0-9]{1,16}$/;
@@ -2485,11 +2490,17 @@ export class AgentlasDesktopMobileBridgeAuthority implements MobileBridgeAuthori
         return preview ? asJsonValue(preview, request.method) : null;
       }
       case "one.artifacts.recent": {
-        const params = guardedParams(request, ["chatId", "limit"]);
+        const params = guardedParams(request, ["chatId", "limit", "cursor"]);
         const chatId = requiredIdentifier(params, "chatId");
-        const limit = optionalInteger(params, "limit", 1, RECENT_ONE_ARTIFACT_LIMIT)
-          ?? RECENT_ONE_ARTIFACT_LIMIT;
-        return asJsonValue(projectMobileBridgeRecentOneArtifacts(chatId, limit), request.method);
+        requireChat(chatId);
+        const limit = optionalInteger(params, "limit", 1, 100) ?? 100;
+        const cursor = params.cursor === undefined
+          ? undefined
+          : requiredIdentifier(params, "cursor", MOBILE_ONE_ARTIFACT_CURSOR_RE);
+        return asJsonValue(
+          listRecentOneArtifactsForMobile({ chatId, limit, cursor }),
+          request.method,
+        );
       }
       case "chat.attachment.imagePreview": {
         const params = guardedParams(request, ["chatId", "messageId", "attachmentId"]);

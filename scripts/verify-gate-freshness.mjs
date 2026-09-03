@@ -7,6 +7,11 @@
 //   1. 게이트가 읽는 저장소 경로가 더 이상 존재하지 않음 (dead path)
 //   2. assert.match 용 정규식 리터럴이, 그 게이트가 읽는 어떤 소스에도 매치되지 않음 (dead anchor)
 // 판정은 STALE-SUSPECT 보고까지다. 고치는 건 사람이(또는 그 게이트 소유 세션이) 계약 단위로.
+//
+// gate-args: --baseline
+// (run-bound-gates.mjs가 이 파일이 읽는 gate-staleness-baseline.json 변경에 묶어 이 게이트를
+// 재실행할 때, 인자 없이 부르면 "원장에 이미 있는 낡음"까지 전부 새로 실패로 본다. 그러면
+// 원장을 갱신하는 커밋 자체가 항상 막히는 자기모순이 생긴다 — --baseline이 진짜 의도다.)
 import fs from "node:fs";
 import path from "node:path";
 import { execFileSync } from "node:child_process";

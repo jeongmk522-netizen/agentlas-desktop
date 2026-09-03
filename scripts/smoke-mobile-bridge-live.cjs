@@ -282,10 +282,12 @@ async function main() {
         userPrompt: "Steering test: stop the previous task, use the terminal to run `sleep 20`, then reply with MOBILE_BRIDGE_STEERED only.",
         locale: "en",
         permissions: "write",
+        steeringMode: "interrupt",
         expectedRunId: startedRunId,
       });
       assert.equal(steer.accepted, true);
       assert.equal(steer.queued, true);
+      assert.equal(steer.interruptsCurrent, true);
       assert.equal(steer.activeRunId, startedRunId);
       steered = true;
 

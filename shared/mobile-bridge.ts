@@ -200,6 +200,8 @@ export interface MobileBridgeInvokeSteerParams {
   userPrompt: string;
   locale?: "ko" | "en";
   permissions?: "read" | "write" | "full";
+  /** Interactive One/Work steering settles the current one-shot run after the replacement is durable. */
+  steeringMode?: "queue" | "interrupt";
   planMode?: boolean;
   goalMode?: boolean;
   networkMode?: boolean;
@@ -2176,6 +2178,7 @@ function validateInvokeOptions(
     optionalBoolean(params, "networkMode"),
     optionalBoolean(params, "appsGenerateMode"),
     optionalBoolean(params, "stormbreakerMode"),
+    validateEnum(params, "steeringMode", ["queue", "interrupt"]),
     params.runtimeSelection === undefined
       ? null
       : validateRuntimeSelectionValue(params.runtimeSelection, "orchestrator"),
@@ -2602,7 +2605,7 @@ function validateParams(method: MobileBridgeMethod, params: Record<string, unkno
       }
       return validateInvokeOptions(params);
     case "invoke.steer":
-      if (!hasOnlyKeys(params, ["runId", "chatId", "userPrompt", "locale", "permissions", "planMode", "goalMode", "networkMode", "appsGenerateMode", "stormbreakerMode", "taskForceTargets", "images", "runtimeSelection", "expectedRunId", "expectedQuestionMessageId", "expectedTaskId", "expectedTaskVersion", "expectedDecisionContractVersion"])) {
+      if (!hasOnlyKeys(params, ["runId", "chatId", "userPrompt", "locale", "permissions", "steeringMode", "planMode", "goalMode", "networkMode", "appsGenerateMode", "stormbreakerMode", "taskForceTargets", "images", "runtimeSelection", "expectedRunId", "expectedQuestionMessageId", "expectedTaskId", "expectedTaskVersion", "expectedDecisionContractVersion"])) {
         return "invoke.steer contains unsupported fields";
       }
       return firstError(validateInvokeOptions(params, true), requiredString(params, "expectedRunId", 160));

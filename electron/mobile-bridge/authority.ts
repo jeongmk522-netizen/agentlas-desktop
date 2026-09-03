@@ -851,6 +851,7 @@ function invocationParams(
           "userPrompt",
           "locale",
           "permissions",
+          "steeringMode",
           "planMode",
           "goalMode",
           "networkMode",
@@ -893,6 +894,9 @@ function invocationParams(
   const runId = optionalIdentifier(params, "runId", 160);
   const locale = optionalEnum(params, "locale", ["ko", "en"] as const);
   const permissions = optionalEnum(params, "permissions", ["read", "write", "full"] as const);
+  const steeringMode = steering
+    ? optionalEnum(params, "steeringMode", ["queue", "interrupt"] as const)
+    : undefined;
   const planMode = optionalBoolean(params, "planMode");
   const goalMode = optionalBoolean(params, "goalMode");
   const networkMode = optionalBoolean(params, "networkMode");
@@ -931,6 +935,14 @@ function invocationParams(
   if (runId !== undefined) invocation.runId = runId;
   if (locale !== undefined) invocation.locale = locale;
   if (permissions !== undefined) invocation.permissions = permissions;
+  if (steeringMode !== undefined) {
+    invocation.steeringMode = steeringMode;
+  } else if (steering && getChat(chatId)?.kind === "user") {
+    // Older Mobile builds do not know the steeringMode field. Their One/Work
+    // steering must still follow the Desktop interactive contract rather than
+    // silently falling back to the old additive queue behavior.
+    invocation.steeringMode = "interrupt";
+  }
   if (planMode !== undefined) invocation.planMode = planMode;
   if (goalMode !== undefined) invocation.goalMode = goalMode;
   if (networkMode !== undefined) invocation.sessionRouting = networkMode;

@@ -15,6 +15,10 @@ const Database = require("better-sqlite3");
 const { chromium } = require("playwright");
 const { WebSocket } = require("ws");
 
+const MOBILE_BRIDGE_PAIR_ASSERTION_AUDIENCE = "agentlas_desktop_mobile_pair";
+const DEVICE_NONCE_RE = /^[A-Za-z0-9_-]{32,128}$/;
+const PAIRING_ASSERTION_RE = /^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]{43}$/;
+
 const userData = process.env.AGENTLAS_LIVE_USER_DATA || path.join(os.homedir(), "Library", "Application Support", "Agentlas");
 const bridgeDirectory = path.join(userData, "mobile-bridge");
 const manifest = JSON.parse(fs.readFileSync(path.join(bridgeDirectory, "endpoint.json"), "utf8"));
@@ -83,16 +87,39 @@ async function issueProductionPairingPayload() {
   assert.equal(payload.version, 1);
   assert.equal(payload.hostId, manifest.hostId);
   assert.match(payload.code, /^[A-Za-z0-9_-]{22}$/);
+  assert.match(payload.pairingAttemptId, /^[A-Za-z0-9][A-Za-z0-9._:-]{15,127}$/);
+  assert.match(payload.desktopAccountProof, /^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]{43}$/);
+  assert.match(payload.accountAuthorityOrigin, /^https:\/\//);
   assert.ok(Date.parse(payload.expiresAt) > Date.now());
   return payload;
 }
 
-function exchangePairingPayload(payload) {
+function productionPairingBinding() {
+  const pairingAssertion = process.env.AGENTLAS_LIVE_PAIRING_ASSERTION;
+  const deviceNonce = process.env.AGENTLAS_LIVE_PAIRING_DEVICE_NONCE;
+  if (typeof pairingAssertion !== "string" || typeof deviceNonce !== "string") {
+    throw new Error(
+      "Live production pairing requires AGENTLAS_LIVE_PAIRING_ASSERTION and AGENTLAS_LIVE_PAIRING_DEVICE_NONCE from the signed-in Mobile account-authority flow; the Desktop cannot mint them.",
+    );
+  }
+  if (!PAIRING_ASSERTION_RE.test(pairingAssertion) || !DEVICE_NONCE_RE.test(deviceNonce)) {
+    throw new Error(
+      "Live production pairing credentials have an invalid shape; obtain a fresh account assertion and device nonce from the Mobile pairing flow.",
+    );
+  }
+  return { pairingAssertion, deviceNonce };
+}
+
+function exchangePairingPayload(payload, binding) {
   const body = JSON.stringify({
     v: 1,
     type: "pair.exchange",
     id: `live_pair_${Date.now()}`,
     code: payload.code,
+    pairingAttemptId: payload.pairingAttemptId,
+    deviceNonce: binding.deviceNonce,
+    pairingAssertion: binding.pairingAssertion,
+    audience: MOBILE_BRIDGE_PAIR_ASSERTION_AUDIENCE,
     device: {
       name: "Agentlas Mobile installed-app QA",
       platform: "ios",
@@ -129,7 +156,16 @@ function exchangePairingPayload(payload) {
       response.on("end", () => {
         try {
           const envelope = JSON.parse(Buffer.concat(chunks).toString("utf8"));
-          assert.equal(response.statusCode, 200);
+          if (response.statusCode !== 200 || envelope?.ok !== true) {
+            const errorEnvelope = envelope && typeof envelope === "object" ? envelope.error : null;
+            const code = typeof errorEnvelope?.code === "string"
+              ? errorEnvelope.code
+              : `http_${response.statusCode}`;
+            const message = typeof errorEnvelope?.message === "string"
+              ? `: ${errorEnvelope.message}`
+              : "";
+            throw new Error(`Pairing exchange rejected (${code})${message}`);
+          }
           assert.equal(envelope.v, 1);
           assert.equal(envelope.type, "pair.exchange.response");
           assert.equal(envelope.ok, true);
@@ -181,8 +217,9 @@ async function main() {
     await openAuthenticatedSocket(bootstrap.token);
     authSource = "development-bootstrap";
   } else {
+    const binding = productionPairingBinding();
     const payload = await issueProductionPairingPayload();
-    const credential = await exchangePairingPayload(payload);
+    const credential = await exchangePairingPayload(payload, binding);
     pairedDeviceId = credential.deviceId;
     await openAuthenticatedSocket(credential.token);
   }

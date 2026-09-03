@@ -480,6 +480,49 @@ export function naturalLanguageRequiresImageGeneration(prompt: unknown): boolean
   return clauses.some((clause) => visual.test(clause) && generation.test(clause));
 }
 
+/**
+ * 사용자가 **화면을 찍어 보여 달라**고 했는가.
+ *
+ * `naturalLanguageRequiresImageGeneration` 과 일부러 나눠 둔다. 그쪽 깃발은 멀티모달
+ * 엔진으로 그림을 **생성**까지 하므로, 스크린샷 요청에 그 깃발을 켜면 python.org 를
+ * 찍는 대신 python.org 를 그려 버린다. 여기서 필요한 것은 생성이 아니라 **증거 요구**다.
+ *
+ * 배경(2026-09-04 실측): "파이썬 공식 사이트 화면 한 장 찍어서 보여줘" 에 모델이
+ * "캡처해 위에 표시했습니다" 라고 답했는데 채팅에 이미지가 없고 새 파일도 없었다.
+ * 그리기 요청에는 이미 증거 관문이 있었지만 어휘가 이미지·사진·그림뿐이라
+ * 화면·스크린샷·캡처는 통과했다.
+ */
+export function naturalLanguageRequiresScreenCapture(prompt: unknown): boolean {
+  if (typeof prompt !== "string") return false;
+  const text = prompt
+    .normalize("NFKC")
+    .replace(/\b(?:do\s+not|don't|never)\s+(?:capture|screenshot|screengrab)\b/giu, " ")
+    .replace(/(?:찍|캡처|캡쳐)(?:지\s*(?:마|말|않)|하지\s*(?:마|말|않))/gu, " ")
+    .toLowerCase();
+  const clauses = text
+    .split(/(?:[.!?\n;:。！？；：]+|\s+(?:그리고|하지만|또는|및|and|but|or|then)\s+)/iu)
+    .map((clause) => clause.trim())
+    .filter(Boolean);
+  const surface = /(?:화면|스크린샷|스크린\s*샷|캡처|캡쳐|screenshot|screen\s*shot|screen\s*capture|screengrab)/iu;
+  /*
+   * 명사를 지운 **뒤에** 동사가 남아야 한다.
+   *
+   * 캡처·screenshot 은 명사이자 동사라, 둘을 각각 찾으면 한 단어가 두 조건을 혼자
+   * 만족시킨다. 그래서 "캡처가 안 된 이유를 알려줘" 같은 **질문**이 캡처 요청으로
+   * 읽혔다(2026-09-04 게이트가 잡음). 오탐은 정상 대화를 오류로 끝내므로 값이 크다.
+   */
+  const capture = /(?:찍|담아|떠\s*(?:줘|주|서)|take|grab|get|make)/iu;
+  // 명사에 곧바로 붙은 동사형(캡처해줘 · 스크린샷 찍어)은 위 규칙으로는 명사만 남으므로
+  // 따로 받는다. 일반 "해줘" 를 동사 목록에 넣으면 "설명해줘" 까지 잡힌다.
+  const attached = /(?:캡처|캡쳐)\s*(?:해|하)|스크린샷\s*(?:떠|찍|해)/iu;
+  return clauses.some((clause) => {
+    if (!surface.test(clause)) return false;
+    if (attached.test(clause)) return true;
+    const withoutNoun = clause.replace(surface, " ");
+    return capture.test(withoutNoun);
+  });
+}
+
 function wrapOneRecoveryProposal(text: string, locale: "ko" | "en"): string {
   const proposal = text
     .replace(/<<agentlas-ask>>[\s\S]*?(?:<<\/agentlas-ask>>|$)/gu, "")
@@ -2892,6 +2935,15 @@ ${effectiveUserPrompt}`;
     && !req.oneMode
     && chat.kind !== "division"
     && naturalLanguageRequiresImageGeneration(req.userPrompt);
+  /*
+   * ★찍어 달라고 했으면 찍은 것이 있어야 한다 — 그리라고는 하지 않았으므로 생성은 하지 않고
+   * 결과만 요구한다(위 판정기 주석의 실측 참고).
+   */
+  const screenCaptureRequired = !req.agentAppMode
+    && !req.oneMode
+    && chat.kind !== "division"
+    && !naturalLanguageRequiresImageGeneration(req.userPrompt)
+    && naturalLanguageRequiresScreenCapture(req.userPrompt);
   let observedImageArtifactEvidence = false;
   const pendingWorkToolImages: Array<{ sourcePath: string; image: ImageAttachment }> = [];
   const generatedImageSourcePaths = new Set<string>();
@@ -5552,6 +5604,10 @@ ${effectiveUserPrompt}`;
       : [];
     if (imageGenerationRequired && (!observedImageArtifactEvidence || finalWorkImages.length === 0) && !signal?.aborted) {
       throw new Error("image_tool_unavailable: the generated image was not durably bound");
+    }
+    // 찍어 달라고 한 실행이 이미지 하나 없이 끝나면, 답이 무슨 말을 했든 사실이 아니다.
+    if (screenCaptureRequired && finalWorkImages.length === 0 && !signal?.aborted) {
+      throw new Error("screen_capture_unavailable: the requested screen capture was never produced");
     }
     const finalImageOptions = finalWorkImages.length > 0 ? { images: finalWorkImages } : undefined;
     let durableAssistantEntry: ReturnType<typeof appendChatMessage> | null = null;

@@ -28,6 +28,7 @@
   "scripts": {
     "test:work-20-step-journey": "node scripts/qa-work-20-step-journey.cjs",
     "test:work-agent-screen-rail": "node scripts/qa-work-agent-screen-rail.cjs",
+    "test:work-capture-evidence": "node scripts/qa-work-capture-evidence.cjs",
     "test:work-browser-capture-artifacts": "node scripts/qa-work-browser-capture-artifacts.cjs",
     "test:work-browser-intent-selection": "electron scripts/qa-work-browser-intent-selection.cjs",
     "test:work-generated-image": "node scripts/qa-work-generated-image.cjs",

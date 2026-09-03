@@ -2471,8 +2471,76 @@ button.manuscriptBinding:hover { border-color: var(--line-strong); background: v
 }
 .manuscriptBlockPaper .manuscriptDocumentTitle p { max-width: 520px; margin: 12px auto 0; color: #7b7b7b; font-family: Inter, ui-sans-serif, system-ui, sans-serif; font-size: 11px; line-height: 1.55; text-align: center; }
 .manuscriptBlocks { margin-top: 22px; }
-.manuscriptBlock { outline: none; user-select: text; }
-.manuscriptBlock:focus { border-radius: 5px; box-shadow: 0 0 0 3px rgba(52, 73, 60, .11); }
+/*
+ * A block is invisible at rest and lifts on hover.
+ *
+ * The reading view has to be the paper: at rest there is no border, no tint and no toolbar, so a
+ * block is indistinguishable from the prose around it. Hover is what separates it -- a small
+ * elevation and a paper-white ground, which reads as depth rather than as a card. The padding and
+ * negative margin are permanent so that gaining the hover ground never reflows the text; a block
+ * that shifts under the pointer is worse than one with no affordance at all.
+ */
+.manuscriptBlock {
+  position: relative;
+  outline: none;
+  user-select: text;
+  margin: 0 -14px;
+  border-radius: 7px;
+  padding: 6px 14px;
+  transition: box-shadow 120ms ease, background-color 120ms ease;
+}
+.manuscriptBlock:hover {
+  background: #fff;
+  box-shadow: 0 1px 2px rgba(24, 27, 22, .05), 0 6px 18px rgba(24, 27, 22, .09);
+}
+.manuscriptBlock:focus { box-shadow: 0 0 0 3px rgba(52, 73, 60, .11); }
+.manuscriptBlock:focus-within .manuscriptBlockAffordance,
+.manuscriptBlock:hover .manuscriptBlockAffordance { opacity: 1; pointer-events: auto; }
+
+/* Top-right, and only while the block is hovered or holds focus. */
+.manuscriptBlockAffordance {
+  position: absolute;
+  z-index: 4;
+  top: 2px;
+  right: 4px;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 120ms ease;
+}
+.manuscriptBlockAction {
+  display: grid;
+  place-content: center;
+  width: 26px;
+  height: 26px;
+  border: 1px solid rgba(24, 27, 22, .1);
+  border-radius: 7px;
+  background: #fff;
+  padding: 0;
+  color: #5a5f57;
+  cursor: pointer;
+  box-shadow: 0 1px 3px rgba(24, 27, 22, .1);
+}
+.manuscriptBlockAction:hover { border-color: rgba(24, 27, 22, .2); color: #23261f; }
+.manuscriptBlockAction .uiIcon { width: 15px; height: 15px; }
+@media (prefers-reduced-motion: reduce) {
+  .manuscriptBlock, .manuscriptBlockAffordance { transition: none; }
+}
+
+/*
+ * Caption typography, journal convention: the label and number are a bold run at the head of the
+ * caption sentence, tables caption above the rule, figures below the image.
+ */
+.manuscriptFloatCaption {
+  margin: 0;
+  color: #333;
+  font-family: "Times New Roman", "Nimbus Roman No9 L", "Liberation Serif", Georgia, serif;
+  font-size: 11px;
+  line-height: 1.4;
+  text-align: left;
+}
+.manuscriptFloatCaption strong { font-weight: 700; }
+.manuscriptFloatCaptionTop { margin-bottom: 7px; }
+.manuscriptEmbeddedFigure .manuscriptFloatCaption { margin-top: 8px; }
 .manuscriptHeadingBlock h2,
 .manuscriptHeadingBlock h3,
 .manuscriptHeadingBlock h4 {
@@ -2499,8 +2567,6 @@ button.manuscriptBinding:hover { border-color: var(--line-strong); background: v
 .manuscriptEmbeddedFigure img { width: auto; max-width: 100%; max-height: 430px; display: block; margin: 0 auto; object-fit: contain; background: var(--surface); }
 .manuscriptEmbeddedFigure figcaption { margin-top: 8px; color: #333; font-family: "Times New Roman", "Nimbus Roman No9 L", "Liberation Serif", Georgia, serif; font-size: 11px; line-height: 1.35; text-align: left; }
 .manuscriptEmbeddedFigure figcaption strong { font-weight: 700; }
-.manuscriptEmbeddedFigureMeta { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 5px; color: #858585; font-family: Inter, ui-sans-serif, system-ui, sans-serif; font-size: 10px; }
-.manuscriptEmbeddedFigureMeta em { font-style: normal; white-space: nowrap; }
 .manuscriptEmbeddedFigureMissing { min-height: 170px; display: grid; place-content: center; gap: 7px; border: 1px dashed #d3d3d3; color: #838383; font-family: Inter, ui-sans-serif, system-ui, sans-serif; font-size: 11px; }
 .manuscriptEmbeddedFigureMissing .uiIcon { width: 22px; height: 22px; margin: 0 auto; }
 .manuscriptRuleBlock hr { border: 0; border-top: 1px solid #dedede; }
@@ -2615,11 +2681,7 @@ button.manuscriptBinding:hover { border-color: var(--line-strong); background: v
 .manuscriptInsertPanel > footer button { min-height: 34px; font-size: 11px; }
 .manuscriptInsertError { margin: 7px 14px 0; color: #a73d35; font-size: 11px; line-height: 1.45; }
 
-.manuscriptEmbeddedTable { margin: 8px 0; background: var(--surface); padding: 4px 0; }
-.manuscriptEmbeddedTableHeader { display: flex; align-items: baseline; gap: 8px; margin-bottom: 10px; }
-.manuscriptEmbeddedTableHeader span { color: #222; font-family: "Times New Roman", "Nimbus Roman No9 L", "Liberation Serif", Georgia, serif; font-size: 11px; font-weight: 700; }
-.manuscriptEmbeddedTableHeader strong { min-width: 0; overflow: hidden; font-family: "Times New Roman", "Nimbus Roman No9 L", "Liberation Serif", Georgia, serif; font-size: 11px; font-weight: 400; text-overflow: ellipsis; white-space: nowrap; }
-.manuscriptEmbeddedTableHeader em { margin-left: auto; color: #477257; font-size: 11px; font-style: normal; white-space: nowrap; }
+.manuscriptEmbeddedTable { margin: 0; background: transparent; padding: 0; }
 .manuscriptSemanticTableViewport { overflow-x: auto; }
 .manuscriptSemanticTableViewport table { width: 100%; border-collapse: collapse; border-top: 1.5px solid #222; border-bottom: 1.5px solid #222; font-family: "Times New Roman", "Nimbus Roman No9 L", "Liberation Serif", Georgia, serif; font-size: 10px; font-variant-numeric: tabular-nums; }
 .manuscriptSemanticTableViewport th,
@@ -2636,6 +2698,40 @@ button.manuscriptBinding:hover { border-color: var(--line-strong); background: v
 .manuscriptDepthIssues strong { font-size: 10px; text-transform: capitalize; }
 .manuscriptDepthIssues span, .manuscriptDepthBoundary { color: var(--muted); font-size: 10px; line-height: 1.45; }
 .manuscriptDepthBoundary { margin: 11px 0 0; }
+
+/* The block menu, anchored under the hover control at the block's top-right corner. */
+.manuscriptBlockMenu {
+  position: absolute;
+  z-index: 20;
+  display: grid;
+  gap: 2px;
+  min-width: 168px;
+  border: 1px solid rgba(24, 27, 22, .1);
+  border-radius: 10px;
+  background: #fff;
+  padding: 6px;
+  box-shadow: 0 10px 30px rgba(24, 27, 22, .16);
+}
+.manuscriptBlockMenu button {
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  padding: 7px 9px;
+  color: #23261f;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+.manuscriptBlockMenu button:hover { background: #f2f3f0; }
+.manuscriptBlockMenuDanger { color: #a3352b; }
+.manuscriptBlockMenuDanger:hover { background: #fbeeec; }
+.manuscriptBlockMenuMeta {
+  margin: 2px 9px 6px;
+  color: #7b7f76;
+  font-size: 10px;
+  line-height: 1.4;
+  word-break: break-word;
+}
 
 .manuscriptSelectionAction {
   position: absolute;

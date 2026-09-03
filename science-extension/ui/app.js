@@ -2781,50 +2781,113 @@ import { formatScienceCell } from "./format-cell.js";
     state.manuscriptInsertion = null;
   }
 
-  function manuscriptArtifactTableMarkup(node) {
+  /**
+   * Table and figure numbers, in document order.
+   *
+   * A manuscript refers to "Table 2" in its text, so the float has to carry the same number the
+   * prose does, and the number depends on everything before it. Tables and figures are counted
+   * separately, the way every journal does it.
+   */
+  /**
+   * The one control a block shows, and only while the pointer is on it.
+   *
+   * The reading view has to look like a paper, so a block carries no border, no badge and no
+   * toolbar at rest -- it is indistinguishable from the prose around it. On hover the block lifts
+   * slightly and this button appears in its top-right corner. Provenance that used to sit in the
+   * printed flow (the source artifact and its exact version) moves into the button's title, where
+   * the person editing can still reach it and the reader never sees it.
+   */
+  function manuscriptBlockAffordanceMarkup(node) {
+    if (state.manuscriptView === "preview") return "";
+    const provenance = manuscriptBlockProvenanceText(node);
+    return `<div class="manuscriptBlockAffordance" contenteditable="false" aria-hidden="false">
+      <button type="button" class="manuscriptBlockAction" data-action="open-manuscript-block-menu"
+        data-node-id="${escapeHtml(node.id)}"
+        title="${escapeHtml(provenance || "블록 동작")}"
+        aria-label="블록 동작">${heroIcon("ellipsis")}</button>
+    </div>`;
+  }
+
+  /** Source artifact and exact version for a bound float, or null for ordinary prose. */
+  function manuscriptBlockProvenanceText(node) {
+    if (!node || !node.locator) return null;
+    const binding = manuscriptBindingForLocator(node.locator);
+    const context = binding ? state.manuscriptArtifactContexts.get(binding.target.artifactId) : null;
+    if (!context) return null;
+    const version = context.selectedVersion;
+    return version
+      ? `${context.artifact?.title || node.locator} · exact v${version.version}`
+      : `${context.artifact?.title || node.locator} · binding unavailable`;
+  }
+
+  function manuscriptFloatOrdinals(nodes) {
+    const ordinals = new Map();
+    let tables = 0;
+    let figures = 0;
+    for (const node of nodes || []) {
+      if (node.kind === "table") ordinals.set(node.id, { label: "Table", number: (tables += 1) });
+      else if (node.kind === "figure") ordinals.set(node.id, { label: "Figure", number: (figures += 1) });
+    }
+    return ordinals;
+  }
+
+  /**
+   * A table as a journal prints one: numbered caption above the rule, then the table. No card, no
+   * header bar, no badge.
+   *
+   * The provenance the header bar used to show (source artifact and exact version) still matters,
+   * but it is apparatus, not manuscript: it belongs to the person editing, not to the page a
+   * reviewer reads. It moves to the block's hover affordance, so the reading view is the paper.
+   */
+  function manuscriptArtifactTableMarkup(node, ordinal) {
     const binding = manuscriptBindingForLocator(node.locator);
     const context = binding ? state.manuscriptArtifactContexts.get(binding.target.artifactId) : null;
     const version = context?.selectedVersion;
+    const caption = node.caption || context?.artifact?.version?.semantic?.summary || "Validated project table";
     return `<figure class="manuscriptEmbeddedTable" data-manuscript-artifact-table data-locator="${escapeHtml(node.locator)}">
-      <div class="manuscriptEmbeddedTableHeader"><span>Table</span><strong>${escapeHtml(context?.artifact?.title || node.locator)}</strong>${version ? `<em>validated · exact v${escapeHtml(version.version)}</em>` : `<em>binding unavailable</em>`}</div>
+      <figcaption class="manuscriptFloatCaption manuscriptFloatCaptionTop">${manuscriptFloatLabelMarkup(ordinal, "Table")}${escapeHtml(caption)}</figcaption>
       ${manuscriptTablePreviewMarkup(paleontologyPublicationTablePayload(version) || statisticsAnalysisTablePublicationPayload(version, node.locator) || version?.payload)}
-      <figcaption>${escapeHtml(node.caption || context?.artifact?.version?.semantic?.summary || "Validated project table")}</figcaption>
     </figure>`;
   }
 
-  function manuscriptArtifactFigureMarkup(node) {
+  /** `Table 2.` in the caption's own run, bold, exactly as a journal sets it. */
+  function manuscriptFloatLabelMarkup(ordinal, fallbackLabel) {
+    const label = ordinal?.label || fallbackLabel;
+    return `<strong>${escapeHtml(label)}${ordinal ? ` ${escapeHtml(ordinal.number)}` : ""}.</strong> `;
+  }
+
+  /** A figure as a journal prints one: the image, then a numbered caption below it. */
+  function manuscriptArtifactFigureMarkup(node, ordinal) {
     const binding = manuscriptBindingForLocator(node.locator);
     const context = binding ? state.manuscriptArtifactContexts.get(binding.target.artifactId) : null;
-    const version = context?.selectedVersion;
     const previewUrl = binding ? state.manuscriptArtifactPreviewUrls.get(binding.target.artifactId) : null;
-    const caption = node.caption || version?.semantic?.summary || context?.artifact?.title || node.locator;
+    const caption = node.caption || context?.selectedVersion?.semantic?.summary || context?.artifact?.title || node.locator;
     return `<figure class="manuscriptEmbeddedFigure" data-manuscript-artifact-figure data-locator="${escapeHtml(node.locator)}">
       ${previewUrl ? `<img src="${escapeHtml(previewUrl)}" alt="${escapeHtml(context?.artifact?.title || node.locator)}">` : `<div class="manuscriptEmbeddedFigureMissing">${heroIcon("photo")}<span>Verified figure preview unavailable</span></div>`}
-      <figcaption><strong>Figure.</strong> ${escapeHtml(caption)}</figcaption>
-      <div class="manuscriptEmbeddedFigureMeta"><span>${escapeHtml(context?.artifact?.title || node.locator)}</span>${version ? `<em>publication verified · exact v${escapeHtml(version.version)}</em>` : `<em>binding unavailable</em>`}</div>
+      <figcaption class="manuscriptFloatCaption">${manuscriptFloatLabelMarkup(ordinal, "Figure")}${escapeHtml(caption)}</figcaption>
     </figure>`;
   }
 
-  function manuscriptNodeMarkup(node) {
+  function manuscriptNodeMarkup(node, ordinal) {
     const identity = `data-manuscript-node-id="${escapeHtml(node.id)}" data-node-kind="${escapeHtml(node.kind)}" data-node-revision="${escapeHtml(node.revision)}" data-node-content-sha256="${escapeHtml(node.contentSha256)}"`;
     if (node.kind === "heading") {
       const level = Math.max(2, Math.min(4, Number(node.level) + 1));
-      return `<section class="manuscriptBlock manuscriptHeadingBlock" ${identity}><h${level}>${escapeHtml(node.text)}</h${level}></section>`;
+      return `<section class="manuscriptBlock manuscriptHeadingBlock" ${identity}><h${level}>${escapeHtml(node.text)}</h${level}>${manuscriptBlockAffordanceMarkup(node)}</section>`;
     }
-    if (node.kind === "paragraph") return `<section class="manuscriptBlock manuscriptParagraphBlock" ${identity}><p>${escapeHtml(node.markdown)}</p></section>`;
-    if (node.kind === "equation") return `<section class="manuscriptBlock manuscriptEquationBlock" ${identity}><pre>${escapeHtml(node.tex)}</pre>${node.label ? `<span>${escapeHtml(node.label)}</span>` : ""}</section>`;
-    if (node.kind === "figure") return `<section class="manuscriptBlock manuscriptFigureBlock" ${identity}>${manuscriptArtifactFigureMarkup(node)}</section>`;
-    if (node.kind === "table" && node.mode === "artifact") return `<section class="manuscriptBlock manuscriptTableBlock" ${identity}>${manuscriptArtifactTableMarkup(node)}</section>`;
+    if (node.kind === "paragraph") return `<section class="manuscriptBlock manuscriptParagraphBlock" ${identity}><p>${escapeHtml(node.markdown)}</p>${manuscriptBlockAffordanceMarkup(node)}</section>`;
+    if (node.kind === "equation") return `<section class="manuscriptBlock manuscriptEquationBlock" ${identity}><pre>${escapeHtml(node.tex)}</pre>${node.label ? `<span>${escapeHtml(node.label)}</span>` : ""}${manuscriptBlockAffordanceMarkup(node)}</section>`;
+    if (node.kind === "figure") return `<section class="manuscriptBlock manuscriptFigureBlock" ${identity}>${manuscriptArtifactFigureMarkup(node, ordinal)}${manuscriptBlockAffordanceMarkup(node)}</section>`;
+    if (node.kind === "table" && node.mode === "artifact") return `<section class="manuscriptBlock manuscriptTableBlock" ${identity}>${manuscriptArtifactTableMarkup(node, ordinal)}${manuscriptBlockAffordanceMarkup(node)}</section>`;
     if (node.kind === "table") {
       const payload = { schema: "agentlas.science-table/v1", columns: node.header.map((name) => ({ name })), rows: node.rows.map((row) => Object.fromEntries(node.header.map((name, index) => [name, row[index]]))), profile: { rowCount: node.rows.length, columnCount: node.header.length } };
-      return `<section class="manuscriptBlock manuscriptTableBlock" ${identity}><figure class="manuscriptEmbeddedTable">${manuscriptTablePreviewMarkup(payload)}<figcaption>${escapeHtml(node.caption || "Inline table")}</figcaption></figure></section>`;
+      return `<section class="manuscriptBlock manuscriptTableBlock" ${identity}><figure class="manuscriptEmbeddedTable"><figcaption class="manuscriptFloatCaption manuscriptFloatCaptionTop">${manuscriptFloatLabelMarkup(ordinal, "Table")}${escapeHtml(node.caption || "Inline table")}</figcaption>${manuscriptTablePreviewMarkup(payload)}</figure>${manuscriptBlockAffordanceMarkup(node)}</section>`;
     }
     if (node.kind === "list") {
       const tag = node.ordered ? "ol" : "ul";
-      return `<section class="manuscriptBlock manuscriptListBlock" ${identity}><${tag}>${node.items.map((item) => `<li>${escapeHtml(item.nodes.map(manuscriptNodeSelectionText).join(" "))}</li>`).join("")}</${tag}></section>`;
+      return `<section class="manuscriptBlock manuscriptListBlock" ${identity}><${tag}>${node.items.map((item) => `<li>${escapeHtml(item.nodes.map(manuscriptNodeSelectionText).join(" "))}</li>`).join("")}</${tag}>${manuscriptBlockAffordanceMarkup(node)}</section>`;
     }
-    if (node.kind === "blockquote") return `<section class="manuscriptBlock manuscriptQuoteBlock" ${identity}><blockquote>${escapeHtml(manuscriptNodeSelectionText(node))}</blockquote></section>`;
-    if (node.kind === "code") return `<section class="manuscriptBlock manuscriptCodeBlock" ${identity}><pre><code>${escapeHtml(node.text)}</code></pre></section>`;
+    if (node.kind === "blockquote") return `<section class="manuscriptBlock manuscriptQuoteBlock" ${identity}><blockquote>${escapeHtml(manuscriptNodeSelectionText(node))}</blockquote>${manuscriptBlockAffordanceMarkup(node)}</section>`;
+    if (node.kind === "code") return `<section class="manuscriptBlock manuscriptCodeBlock" ${identity}><pre><code>${escapeHtml(node.text)}</code></pre>${manuscriptBlockAffordanceMarkup(node)}</section>`;
     if (node.kind === "rule") return `<section class="manuscriptBlock manuscriptRuleBlock" ${identity}><hr></section>`;
     return "";
   }
@@ -2887,7 +2950,12 @@ import { formatScienceCell } from "./format-cell.js";
     if (!document) return `<article class="manuscriptBlockPaper manuscriptDocumentLoading" aria-busy="true">Loading the versioned manuscript…</article>`;
     return `<article class="manuscriptBlockPaper" data-manuscript-document-id="${escapeHtml(document.documentId)}" data-manuscript-document-sha256="${escapeHtml(document.documentSha256)}">
       <header class="manuscriptDocumentTitle"><span>Research article · versioned blocks</span><h1>${escapeHtml(manuscript.title)}</h1><p>Every block has stable identity. Select text to ask Science, or use the margin to insert validated project output.</p></header>
-      <div class="manuscriptBlocks">${manuscriptInsertSlotMarkup(null)}${document.nodes.map((node) => `${manuscriptNodeMarkup(node)}${manuscriptInsertSlotMarkup(node)}`).join("")}</div>
+      <div class="manuscriptBlocks">${manuscriptInsertSlotMarkup(null)}${(() => {
+        // Journals number tables and figures in the order they appear, and the caption carries
+        // that number. Computed here, once per render, because a node cannot know its own ordinal.
+        const ordinals = manuscriptFloatOrdinals(document.nodes);
+        return document.nodes.map((node) => `${manuscriptNodeMarkup(node, ordinals.get(node.id) || null)}${manuscriptInsertSlotMarkup(node)}`).join("");
+      })()}</div>
     </article>`;
   }
 
@@ -3223,6 +3291,85 @@ import { formatScienceCell } from "./format-cell.js";
     } finally {
       state.manuscriptInsertBusy = false;
       if (state.manuscriptInsertion) render();
+    }
+  }
+
+  /**
+   * The block menu. Opened from the hover control, closed by the next click anywhere else.
+   *
+   * Deliberately a plain DOM popover rather than a rendered state branch: the manuscript re-renders
+   * on every editor refresh, and a menu that lives in that state would blink shut under the pointer
+   * whenever a background refresh landed.
+   */
+  function openManuscriptBlockMenu(button) {
+    closeManuscriptBlockMenu();
+    const nodeId = button?.dataset?.nodeId;
+    const block = button?.closest?.("[data-manuscript-node-id]");
+    const canvas = document.querySelector(".manuscriptCanvas");
+    if (!nodeId || !block || !canvas) return;
+    const node = state.manuscriptEditorModel?.document?.nodes?.find((item) => item.id === nodeId);
+    if (!node) return;
+    const provenance = manuscriptBlockProvenanceText(node);
+    const menu = document.createElement("div");
+    menu.className = "manuscriptBlockMenu";
+    menu.dataset.manuscriptBlockMenu = "";
+    menu.setAttribute("role", "menu");
+    menu.innerHTML = `${provenance ? `<p class="manuscriptBlockMenuMeta">${escapeHtml(provenance)}</p>` : ""}
+      ${node.locator ? `<button type="button" role="menuitem" data-action="preview-manuscript-artifact" data-locator="${escapeHtml(node.locator)}">출처 아티팩트 열기</button>` : ""}
+      <button type="button" role="menuitem" class="manuscriptBlockMenuDanger" data-action="delete-manuscript-block" data-node-id="${escapeHtml(nodeId)}">이 블록 삭제</button>`;
+    const blockRect = block.getBoundingClientRect();
+    const canvasRect = canvas.getBoundingClientRect();
+    menu.style.top = `${blockRect.top - canvasRect.top + canvas.scrollTop + 30}px`;
+    menu.style.right = `${Math.max(8, canvasRect.right - blockRect.right + 6)}px`;
+    canvas.append(menu);
+    menu.querySelector("button")?.focus();
+  }
+
+  function closeManuscriptBlockMenu() {
+    document.querySelector("[data-manuscript-block-menu]")?.remove();
+  }
+
+  /**
+   * Deletes one block as an immutable transaction.
+   *
+   * Every expectation the store checks is sent from what is on screen right now -- manuscript
+   * version, content hash, document hash, and the node's own revision and hash. A delete that
+   * guessed any of them could remove a block the person never saw.
+   */
+  async function deleteManuscriptBlock(nodeId) {
+    const editorModel = state.manuscriptEditorModel;
+    const manuscript = editorModel?.manuscript;
+    const document_ = editorModel?.document;
+    const node = document_?.nodes?.find((item) => item.id === nodeId);
+    if (!nodeId || !node || !state.selectedId || !manuscript || !document_ || state.manuscriptTransactionBusy) return;
+    closeManuscriptBlockMenu();
+    state.manuscriptTransactionBusy = true;
+    render();
+    try {
+      const result = await science.manuscripts.applyTransaction({
+        requestId: crypto.randomUUID(),
+        projectId: state.selectedId,
+        manuscriptId: manuscript.id,
+        expectedVersion: manuscript.currentVersion,
+        expectedContentSha256: manuscript.version.contentSha256,
+        expectedDocumentSha256: document_.documentSha256,
+        actor: "user",
+        reason: "Delete one manuscript block from the block menu",
+        operations: [{
+          kind: "delete-node",
+          nodeId,
+          expectedRevision: node.revision,
+          expectedContentSha256: node.contentSha256,
+        }],
+      });
+      state.claimLedger = await science.claimLedgers.getForManuscript(state.selectedId, manuscript.id);
+      await refreshManuscriptEditorWorkspace(`Block deleted as immutable v${result.manuscript.currentVersion}`);
+    } catch (error) {
+      state.manuscriptNotice = error instanceof Error ? error.message : String(error);
+      render();
+    } finally {
+      state.manuscriptTransactionBusy = false;
+      render();
     }
   }
 
@@ -7531,6 +7678,14 @@ import { formatScienceCell } from "./format-cell.js";
     }
     if (target.dataset.action === "back-manuscript-insert") { if (state.manuscriptInsertion) state.manuscriptInsertion = { ...state.manuscriptInsertion, phase: "choose", selectedCandidateId: null, selectedArtifactId: null }; state.manuscriptInsertError = ""; render(); return; }
     if (target.dataset.action === "confirm-manuscript-insert") { void insertValidatedManuscriptArtifact(); return; }
+    // Any click that is not inside the menu closes it -- including the control that opened it, so
+    // a second press is a toggle rather than a second identical menu.
+    if (!target.closest?.("[data-manuscript-block-menu]")) {
+      const alreadyOpen = !!window.document.querySelector("[data-manuscript-block-menu]");
+      closeManuscriptBlockMenu();
+      if (target.dataset.action === "open-manuscript-block-menu") { if (!alreadyOpen) openManuscriptBlockMenu(target); return; }
+    }
+    if (target.dataset.action === "delete-manuscript-block") { void deleteManuscriptBlock(target.dataset.nodeId); return; }
     if (target.dataset.action === "undo-manuscript-transaction") { void undoManuscriptTransaction(target.dataset.transactionId); return; }
     if (target.dataset.action === "pin-manuscript-selection") { void persistManuscriptSelection(target); return; }
     if (target.dataset.action === "clear-manuscript-selection") { state.manuscriptSelectionContext = null; state.manuscriptSelectionError = ""; renderChatDock(); return; }

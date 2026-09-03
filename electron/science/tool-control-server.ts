@@ -5622,6 +5622,7 @@ export async function materializeScienceMcpGrant(context: ScienceContext, baseCo
       "-c", `mcp_servers.${SERVER_KEY}.startup_timeout_sec=120`,
       // Values, not names. `env_vars` is not a key Codex knows, so the server it declared could
       // never start: the child exits 78 without these three, and the turn silently had no tools.
+      "-c", `mcp_servers.${SERVER_KEY}.env.ELECTRON_RUN_AS_NODE=${toml("1")}`,
       "-c", `mcp_servers.${SERVER_KEY}.env.${TOKEN_ENV}=${toml(token)}`,
       "-c", `mcp_servers.${SERVER_KEY}.env.${ENDPOINT_ENV}=${toml(controlEndpoint)}`,
       "-c", `mcp_servers.${SERVER_KEY}.env.${CATALOG_ENV}=${toml(encodedCatalog)}`,
@@ -5631,6 +5632,12 @@ export async function materializeScienceMcpGrant(context: ScienceContext, baseCo
       // The config args above only ADD our server to whatever Codex already had. The isolated home
       // is what makes "only this server" true of the launched process rather than of our file.
       CODEX_HOME: materializeScienceCodexHome(context.invocationRunId, SERVER_KEY, process.execPath, args, {
+        // Without this the command is Electron, and Codex launches it as a GUI application instead
+        // of a Node process: no stdio, no MCP handshake, no tools -- and the window never exits.
+        // Measured: ten orphaned Electron processes, one per turn, while every turn reported that
+        // the Science tools were unavailable. The JSON config for the other runtime always had it;
+        // the Codex declaration never did.
+        ELECTRON_RUN_AS_NODE: "1",
         [TOKEN_ENV]: token, [ENDPOINT_ENV]: controlEndpoint, [CATALOG_ENV]: encodedCatalog,
       }),
     },

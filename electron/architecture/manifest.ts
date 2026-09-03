@@ -45,7 +45,7 @@ export const RESEARCH_DIRECTOR_PLUGIN_VERSION = "1.24.1";
 // skills/direct-study/SKILL.md and skills/write-manuscript/SKILL.md (persona -> contract -> workflows).
 // The Science runtime refuses to dispatch when the installed package differs.
 // Regenerate: node plugins/agentlas-science-research-director/tests/validate-package.mjs --print-hash
-export const RESEARCH_DIRECTOR_SYSTEM_PROMPT_SHA256 = "3ef8641110f676088816437fa26c468ef53d3961af2d504af9cf6fef23c296a3";
+export const RESEARCH_DIRECTOR_SYSTEM_PROMPT_SHA256 = "766fce5bb28f520c8f8068808d587fa3bfd7ea1c1fd1759a9080ee9a357d173e";
 
 // ── Memory contract ────────────────────────────────────────────────────────
 // Mirrors agent_memory_curator_agent/docs/integration-contract.md + memory-taxonomy.md.

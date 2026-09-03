@@ -2548,12 +2548,41 @@ function normalizeTablePreparation(value: unknown): unknown {
   return { ...record, ...(derive ? { derive } : {}) };
 }
 
-function pendingResearcherDecisionFor(store: ReturnType<typeof scienceStore>, projectId: string, phase: string | null) {
-  if (phase !== "hypothesis") return null;
+/**
+ * The decision this phase is waiting on a person for, or null when the director may proceed alone.
+ *
+ * Four decisions in this product are reserved for a human: approving the research contract,
+ * deciding a hypothesis, confirming the journal's identity, and signing the submission
+ * attestation. The contract one is answered upstream by the contract's own state; the other three
+ * belong here. Only `hypothesis` was covered, so a study that got as far as choosing a journal
+ * fell into the same hole the hypothesis gate used to have -- the gate refuses, the refusal names
+ * no remedy, and the director retries it instead of stopping to ask. Measured before: two turns
+ * burned against a locked door. One entry per phase removes that wall for the whole back half of
+ * the lifecycle.
+ */
+export function pendingResearcherDecisionFor(store: ReturnType<typeof scienceStore>, projectId: string, phase: string | null) {
   try {
-    const manifest = store.currentHypothesisManifest(projectId);
-    const unapproved = manifest.hypotheses.filter((item) => item.status !== "approved").length;
-    return unapproved > 0 ? { what: "hypotheses", count: unapproved } : null;
+    if (phase === "hypothesis") {
+      const manifest = store.currentHypothesisManifest(projectId);
+      const unapproved = manifest.hypotheses.filter((item) => item.status !== "approved").length;
+      return unapproved > 0 ? { what: "hypotheses", count: unapproved } : null;
+    }
+    if (phase === "journal_profile") {
+      // A profile becomes verified only once a person has confirmed the journal is the real one.
+      // Profiles the director drafted but nobody vouched for are exactly the waiting state; no
+      // profile at all is the director's own work, not the researcher's, so it is not reported here.
+      const profiles = store.listJournalProfiles(projectId, 100);
+      const unconfirmed = profiles.filter((profile) => !profile.version.identityReceiptId).length;
+      return unconfirmed > 0 ? { what: "journal identity confirmations", count: unconfirmed } : null;
+    }
+    if (phase === "submission_validation") {
+      // The attestation is made in the researcher's name to a publisher, so the export refuses
+      // without one. Zero unconsumed receipts means the signature has not been given yet.
+      return store.countUnconsumedJournalHumanAttestations(projectId) === 0
+        ? { what: "submission attestations", count: 1 }
+        : null;
+    }
+    return null;
   } catch {
     return null;
   }

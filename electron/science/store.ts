@@ -23077,6 +23077,22 @@ export class ScienceStore {
     return receipt;
   }
 
+  /**
+   * How many human attestations this project has that no export has consumed yet.
+   *
+   * The submission gate needs an attestation made in the researcher's name, and only the human
+   * channel may mint one. Without a count there is no way to tell "the researcher has not signed
+   * yet" from "the director has not asked" -- and the director, seeing no signal, retries the gate
+   * instead of stopping. Zero here means the study is waiting on a person.
+   */
+  countUnconsumedJournalHumanAttestations(projectId: string): number {
+    if (!UUID_RE.test(projectId)) return 0;
+    const row = this.db.prepare(`SELECT COUNT(*) AS n FROM journal_human_attestation_receipts r
+      LEFT JOIN journal_human_attestation_consumptions c ON c.receipt_id = r.id
+      WHERE r.project_id = ? AND c.receipt_id IS NULL`).get(projectId) as { n?: number } | undefined;
+    return Number(row?.n ?? 0);
+  }
+
   private journalProfileFromRow(row: Record<string, unknown>): ScienceJournalProfile {
     const profileVersionId = String(row.version_id);
     const sourceRows = this.db.prepare(`SELECT s.inspection_id, i.* FROM journal_profile_sources s

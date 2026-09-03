@@ -5467,7 +5467,7 @@ function writePrivate(target: string, value: unknown): void {
  * Everything else is left behind on purpose; a file this directory does not have is a capability
  * this turn does not get.
  */
-function materializeScienceCodexHome(invocationRunId: string, serverKey: string, command: string, args: string[], envVars: string[]): string {
+function materializeScienceCodexHome(invocationRunId: string, serverKey: string, command: string, args: string[], env: Record<string, string>): string {
   const home = userDataPath("science-codex-home", invocationRunId);
   fs.mkdirSync(home, { recursive: true, mode: 0o700 });
   const config = [
@@ -5475,7 +5475,16 @@ function materializeScienceCodexHome(invocationRunId: string, serverKey: string,
     `[mcp_servers.${serverKey}]`,
     `command = ${toml(command)}`,
     `args = ${tomlArray(args)}`,
-    `env_vars = ${tomlArray(envVars)}`,
+    // The inline server is a single -e program; a slow first launch must not read as "no tools".
+    "startup_timeout_sec = 120",
+    "",
+    // `env` carries VALUES. An earlier version wrote `env_vars` with names, which Codex does not
+    // recognise at all: the child started with none of the three variables it requires, exited 78
+    // immediately, and the turn ran with no Science tools while still claiming to have them. The
+    // model said so out loud -- "the Agentlas Science analysis tools are not accessible" -- which is
+    // the only reason this was ever visible.
+    `[mcp_servers.${serverKey}.env]`,
+    ...Object.entries(env).map(([key, value]) => `${key} = ${toml(value)}`),
     "",
   ].join("\n");
   const temp = `${path.join(home, "config.toml")}.${process.pid}.${randomUUID()}.tmp`;
@@ -5610,13 +5619,20 @@ export async function materializeScienceMcpGrant(context: ScienceContext, baseCo
     codexConfigArgs: [
       "-c", `mcp_servers.${SERVER_KEY}.command=${toml(process.execPath)}`,
       "-c", `mcp_servers.${SERVER_KEY}.args=${tomlArray(args)}`,
-      "-c", `mcp_servers.${SERVER_KEY}.env_vars=${tomlArray([TOKEN_ENV, ENDPOINT_ENV, CATALOG_ENV])}`,
+      "-c", `mcp_servers.${SERVER_KEY}.startup_timeout_sec=120`,
+      // Values, not names. `env_vars` is not a key Codex knows, so the server it declared could
+      // never start: the child exits 78 without these three, and the turn silently had no tools.
+      "-c", `mcp_servers.${SERVER_KEY}.env.${TOKEN_ENV}=${toml(token)}`,
+      "-c", `mcp_servers.${SERVER_KEY}.env.${ENDPOINT_ENV}=${toml(controlEndpoint)}`,
+      "-c", `mcp_servers.${SERVER_KEY}.env.${CATALOG_ENV}=${toml(encodedCatalog)}`,
     ],
     runtimeEnv: {
       [TOKEN_ENV]: token, [ENDPOINT_ENV]: controlEndpoint, [CATALOG_ENV]: encodedCatalog,
       // The config args above only ADD our server to whatever Codex already had. The isolated home
       // is what makes "only this server" true of the launched process rather than of our file.
-      CODEX_HOME: materializeScienceCodexHome(context.invocationRunId, SERVER_KEY, process.execPath, args, [TOKEN_ENV, ENDPOINT_ENV, CATALOG_ENV]),
+      CODEX_HOME: materializeScienceCodexHome(context.invocationRunId, SERVER_KEY, process.execPath, args, {
+        [TOKEN_ENV]: token, [ENDPOINT_ENV]: controlEndpoint, [CATALOG_ENV]: encodedCatalog,
+      }),
     },
     includedServer: { serverId: SERVER_KEY, catalogId: SERVER_KEY, configKey: SERVER_KEY },
   };

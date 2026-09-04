@@ -1125,6 +1125,20 @@ export interface MobileBridgeChatImageDto {
   attachmentId: string;
 }
 
+export interface MobileBridgeChatFileDto {
+  /** Opaque Main-owned chat-file identity. It is not a path or renderer URL. */
+  attachmentId: string;
+  /** Opaque group identity used only to associate files with this user turn. */
+  groupId: string;
+  name: string;
+  mediaType: string;
+  size: number;
+  sha256: string;
+  kind: "file" | "directory";
+  /** Directory entry count only; paths and the manifest never cross the bridge. */
+  entryCount?: number;
+}
+
 export interface MobileBridgeChatMessageDto {
   id: string;
   role: "user" | "assistant" | "system";
@@ -1132,6 +1146,8 @@ export interface MobileBridgeChatMessageDto {
   createdAt: string;
   /** Bounded references; bytes are fetched only for an exact chat/message binding. */
   images?: MobileBridgeChatImageDto[];
+  /** Bounded generic-file metadata; raw paths, URLs, bytes, and manifests stay on Desktop. */
+  files?: MobileBridgeChatFileDto[];
 }
 
 /**

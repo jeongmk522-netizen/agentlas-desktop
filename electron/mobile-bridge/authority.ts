@@ -1168,12 +1168,13 @@ async function bindMobileOneTurn(
   };
 }
 
-/** DESKTOP_MOBILE_BRIDGE: History strips in-memory data URLs; attachments never cross this v1 method. */
+/** DESKTOP_MOBILE_BRIDGE: History strips in-memory data URLs; generic files cross as bounded metadata only. */
 function projectInvocationHistory(
   history: ReturnType<typeof invocationService.history>,
   limit: number,
+  chatId: string,
 ): MobileBridgeJsonValue {
-  return asJsonValue(projectMobileBridgeHistory(history, limit), "invoke.history");
+  return asJsonValue(projectMobileBridgeHistory(history, limit, undefined, chatId), "invoke.history");
 }
 
 /** DESKTOP_MOBILE_BRIDGE: resultFolder is a local absolute path and is never projected. */
@@ -2604,7 +2605,7 @@ export class AgentlasDesktopMobileBridgeAuthority implements MobileBridgeAuthori
         const params = guardedParams(request, ["chatId", "limit"]);
         const chatId = requiredIdentifier(params, "chatId");
         const limit = optionalInteger(params, "limit", 1, 200) ?? 200;
-        return projectInvocationHistory(invocationService.history(chatId), limit);
+        return projectInvocationHistory(invocationService.history(chatId), limit, chatId);
       }
       case "one.invoke.start": {
         assertMobileOneDeviceAuthority(context);

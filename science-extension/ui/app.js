@@ -8188,7 +8188,6 @@ import { formatScienceCell } from "./format-cell.js";
       return;
     }
     if (target.dataset.action === "decide-hypothesis") { void decideHypothesis(target.dataset); return; }
-    if (target.dataset.action === "toggle-approval-scope") { void toggleApprovalScope(target.dataset.scope); return; }
     if (target.dataset.action === "refresh-evidence-graph") { void refreshEvidenceGraph(); return; }
     if (target.dataset.action === "open-evidence-graph-exact") { openEvidenceGraphExactRecord(target.dataset.evidenceGraphNodeId); return; }
     if (target.dataset.action === "anchor-evidence-graph-path") {
@@ -8617,6 +8616,8 @@ import { formatScienceCell } from "./format-cell.js";
   });
 
   root.addEventListener("change", (event) => {
+    const approvalScope = event.target.closest('input[data-action="toggle-approval-scope"]');
+    if (approvalScope) { void toggleApprovalScope(approvalScope.dataset.scope); return; }
     const materialsStructure = event.target.closest("[data-materials-structure-index]");
     if (materialsStructure && state.selectedArtifactId) {
       const index = Number(materialsStructure.value);

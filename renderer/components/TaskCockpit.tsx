@@ -926,20 +926,24 @@ function reconcileTranscriptSnapshot(
   if (current.some((message) => message.busy || message.streaming)) return current;
   const signature = (message: StreamMessage) => `${message.role}\u0000${message.text.trim()}`;
   // History rows intentionally store only the assistant text. Preserve the
-  // rich tool steps that arrived live when a terminal reconciliation races
-  // the history read; otherwise the MCP card flashes and disappears as soon
-  // as the run finishes.
+  // rich tool steps and host notices that arrived live when a terminal
+  // reconciliation races the history read; otherwise the MCP card or a
+  // runtime-fallback disclosure flashes and disappears as soon as the run
+  // finishes.
   const richBySignature = new Map<string, StreamMessage>();
   for (const message of current) {
-    if (message.role !== "agent" || !message.steps?.some((step) => step.tool && step.result)) continue;
+    const hasRichSteps = message.steps?.some((step) => step.tool && step.result) === true;
+    const hasNotices = (message.notices?.length ?? 0) > 0;
+    if (message.role !== "agent" || (!hasRichSteps && !hasNotices)) continue;
     richBySignature.set(signature(message), message);
   }
   const durableWithRichSteps = durable.map((message) => {
     const live = richBySignature.get(signature(message));
-    return live?.steps?.length
+    return live
       ? {
           ...message,
-          steps: live.steps,
+          ...(live.steps?.length ? { steps: live.steps } : {}),
+          ...(live.notices?.length ? { notices: live.notices } : {}),
           ...(live.finishedAt != null ? { finishedAt: live.finishedAt } : {}),
           ...(live.tokens != null ? { tokens: live.tokens } : {}),
         }
@@ -991,15 +995,18 @@ function preserveRichStepsBySignature(
   const richBySignature = new Map<string, StreamMessage>();
   for (const message of current) {
     const steps = Array.isArray(message.steps) ? message.steps : [];
-    if (message.role !== "agent" || !steps.some((step) => step.tool && step.result)) continue;
+    const hasRichSteps = steps.some((step) => (step.tool && step.result) || step.reasoning === true);
+    const hasNotices = (message.notices?.length ?? 0) > 0;
+    if (message.role !== "agent" || (!hasRichSteps && !hasNotices)) continue;
     richBySignature.set(signature(message), message);
   }
   return durable.map((message) => {
     const live = richBySignature.get(signature(message));
-    return live?.steps?.length
+    return live
       ? {
           ...message,
-          steps: live.steps,
+          ...(live.steps?.length ? { steps: live.steps } : {}),
+          ...(live.notices?.length ? { notices: live.notices } : {}),
           ...(live.finishedAt != null ? { finishedAt: live.finishedAt } : {}),
           ...(live.tokens != null ? { tokens: live.tokens } : {}),
         }
@@ -1017,6 +1024,23 @@ function mcpStepsFromLedger(events: RunEventUi[], limit = 32): StreamStep[] {
   const steps: StreamStep[] = [];
   const byToolId = new Map<string, number>();
   for (const event of events) {
+    if (event.kind === "mcp_reasoning" && event.payload?.reasoningPhase === "end") {
+      const text = reasoningSummary(
+        typeof event.payload.reasoningText === "string" ? event.payload.reasoningText : undefined,
+      );
+      if (text) {
+        const createdAt = Date.parse(event.ts);
+        steps.push({
+          id: `ledger-reasoning:${event.id}`,
+          kind: "thinking",
+          text,
+          reasoning: true,
+          activity: "status",
+          ...(Number.isFinite(createdAt) ? { createdAt } : {}),
+        });
+      }
+      continue;
+    }
     if (event.kind !== "mcp_tool-use") continue;
     const payload = event.payload ?? {};
     const toolName = typeof payload.toolName === "string" ? payload.toolName.trim() : "";
@@ -1081,6 +1105,16 @@ function reasoningHeadline(text: string | undefined): string | null {
   const last = lines[lines.length - 1];
   if (!last) return null;
   return last.length > 90 ? `${last.slice(0, 89)}…` : last;
+}
+
+/** Work 활동 타임라인에 남길 공개 reasoning summary. */
+function reasoningSummary(text: string | undefined): string | null {
+  const clean = text
+    ?.replace(/\u0000/g, "")
+    .replace(/\r\n?/g, "\n")
+    .trim();
+  if (!clean) return null;
+  return clean.length > 2_000 ? `${clean.slice(0, 1_999)}…` : clean;
 }
 
 function stepsByMessageFromTimeline(
@@ -2110,9 +2144,25 @@ function ChatPage() {
               return line ? { ...msg, thinking: { ...th, active: true, headline: line } } : msg;
             }
             const dur = durationMs ?? (th.startedAt != null ? Date.now() - th.startedAt : 0);
+            const summary = reasoningSummary(ev.reasoning?.text);
+            const steps = msg.steps ?? [];
+            const nextSteps = summary && !steps.some((step) => step.reasoning === true && step.text === summary)
+              ? [
+                  ...steps,
+                  {
+                    id: uid(),
+                    kind: "thinking" as const,
+                    text: summary,
+                    reasoning: true,
+                    createdAt: Date.now(),
+                    activity: "status" as const,
+                  },
+                ]
+              : steps;
             return {
               ...msg,
               thinking: { active: false, cumMs: th.cumMs + dur, lastMs: dur },
+              steps: nextSteps,
             };
           }),
         );
@@ -2428,12 +2478,18 @@ function ChatPage() {
         });
       } else if (ev.kind === "error") {
         // 어느 경로든 이미 스트리밍된 텍스트는 지우지 않고 완료된 버블로 남긴다.
-        // Steering is not an error path: Main queues it without cancelling this run.
+        // Interrupt steering intentionally cancels only the superseded provider turn.
+        // The queued user instruction remains authoritative and Main immediately owns
+        // the replacement run, so this internal cancellation must not become a red
+        // user-facing failure card.
         const wasUserCancel = cancelRequestedRef.current;
         const terminalStatus = wasUserCancel
           ? (locale === "ko" ? "취소됨" : "Cancelled")
           : (locale === "ko" ? "중단됨" : "Stopped");
         const failureCode = ev.error?.code?.trim() || "runtime_error";
+        const wasSteeringCancel = !wasUserCancel
+          && failureCode.toLowerCase() === "cancelled"
+          && steerQueueRef.current.length > 0;
         const failureMessage = ev.error?.message?.trim()
           || (locale === "ko" ? "실행이 완료되지 않았습니다." : "The run did not complete.");
         const failureId = `run-error:${placeholderId}`;
@@ -2455,7 +2511,7 @@ function ChatPage() {
           });
         setMessages((current) => {
           const settled = keepPlaceholder(current);
-          if (wasUserCancel || settled.some((message) => message.id === failureId)) return settled;
+          if (wasUserCancel || wasSteeringCancel || settled.some((message) => message.id === failureId)) return settled;
           return [
             ...settled,
             {
@@ -4887,7 +4943,18 @@ function ChatPage() {
         />
       )}
       {/* Codex식: 이 대화가 폴더(프로젝트)에서 작업하는지 / 전역 대화인지 선택 */}
-      {!project && <div style={{ padding: "6px 16px 0", display: "flex", alignItems: "center", gap: 8 }}>
+      {!project && <div
+        data-chat-folder-row="true"
+        style={{
+          width: "min(calc(100% - 32px), 740px)",
+          margin: "0 auto",
+          paddingTop: 6,
+          display: "flex",
+          alignItems: "center",
+          gap: 8,
+          boxSizing: "border-box",
+        }}
+      >
         <ProjectFolderBar
           chatId={chatId || null}
           reloadToken={folderReload}
@@ -4902,7 +4969,8 @@ function ChatPage() {
           role="status"
           data-chat-session-notice="true"
           style={{
-            margin: "7px 16px 0", padding: "7px 10px", borderRadius: 8,
+            width: "min(calc(100% - 32px), 740px)", margin: "7px auto 0", padding: "7px 10px", borderRadius: 8,
+            boxSizing: "border-box",
             border: "1px solid color-mix(in srgb, var(--green-deep) 24%, var(--paper-edge))",
             background: "color-mix(in srgb, var(--green-deep) 7%, var(--paper))",
             color: "var(--ink-soft)", fontSize: 11.5, lineHeight: 1.4,

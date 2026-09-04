@@ -4736,7 +4736,25 @@ ${effectiveUserPrompt}`;
           return emitTerminalRecoveryFailure(result, "event-limit");
         }
         recoveryRetryEvents += 1;
-        if (oneControllerFallbackEligible) emitControllerRuntimeFallback(fallback, failed);
+        if (oneControllerFallbackEligible) {
+          emitControllerRuntimeFallback(fallback, failed);
+        } else {
+          const fromLabel = `${active.kind}${active.model ? ` · ${active.model}` : ""}`;
+          const toLabel = `${fallback.kind}${fallback.model ? ` · ${fallback.model}` : ""}`;
+          const koMessage = `선택한 실행 환경 ${fromLabel}을 사용할 수 없어 오케스트레이터 우선순위 모델 ${toLabel}로 이어갑니다. 저장된 선택은 변경하지 않았습니다.`;
+          const enMessage = `The selected runtime ${fromLabel} is unavailable; continuing on orchestrator-priority model ${toLabel}. The saved selection was not changed.`;
+          runnerEvents.onNotice({
+            level: "warning",
+            code: "runtime-fallback-attempt",
+            message: locale === "ko" ? koMessage : enMessage,
+            i18n: { ko: koMessage, en: enMessage },
+            details: JSON.stringify({
+              from: { kind: active.kind, backend: active.backend, model: active.model ?? null },
+              to: { kind: fallback.kind, backend: fallback.backend, model: fallback.model ?? null },
+              reason: failed.kind,
+            }),
+          });
+        }
         sink({
           kind: "tool-use",
           status: locale === "ko"

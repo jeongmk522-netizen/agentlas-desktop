@@ -51,6 +51,8 @@ export interface StreamStep {
   delegateTo?: string[];
   /** 채팅 안에서 카드로 보여줄 활동 상태. */
   activity?: "start" | "handoff" | "tool" | "complete" | "status";
+  /** 런타임이 사용자에게 공개한 reasoning summary 행. 원시 chain-of-thought가 아니다. */
+  reasoning?: boolean;
   /** 이 단계가 화면에 들어온 시각. 긴 실행 중 마지막 활동 표시용. */
   createdAt?: number;
   /** 이 도구 이벤트가 도착했을 때까지 스트리밍된 본문 길이 — 단일 실행에서 텍스트 사이에
@@ -855,12 +857,15 @@ const Bubble = memo(function Bubble({
     );
   }
   // agent — Markdown 렌더링.
-  // 단일 실행은 영상형 인터리브 본문(텍스트 사이 도구 그룹) + 하단 ✳ 상태줄로,
-  // 카드형 작업 패널은 실제 멀티/병렬 실행에서만 쓴다.
+  // 단일 실행은 기본적으로 영상형 인터리브 본문을 쓰되, 런타임이 공개한 reasoning
+  // summary가 있으면 One과 같은 투명 활동 타임라인으로 남긴다.
   const displayText = userFacingAssistantText(message.text, Boolean(message.streaming));
   const displayMessage = displayText === message.text ? message : { ...message, text: displayText };
   const hasProgress = Boolean(message.busy || message.status || (message.steps && message.steps.length > 0));
-  const showParallelWork = hasProgress && isParallelWorkMessage(message);
+  const showWorkActivity = hasProgress && (
+    isParallelWorkMessage(message)
+    || (message.steps ?? []).some((step) => step.reasoning === true)
+  );
   return (
     <div className="agentlas-chat-turn" style={{ display: "flex", gap: 0, alignSelf: "stretch", maxWidth: 740 }}>
       <div className="agentlas-chat-avatar" style={{ position: "relative", flexShrink: 0 }}>
@@ -873,10 +878,10 @@ const Bubble = memo(function Bubble({
         {message.chatFiles && message.chatFiles.length > 0 && onOpenChatFile && (
           <ChatFileCards files={message.chatFiles} locale={locale === "ko" ? "ko" : "en"} onOpen={onOpenChatFile} />
         )}
-        {message.pipeline && message.pipeline.length > 0 && showParallelWork && (
+        {message.pipeline && message.pipeline.length > 0 && showWorkActivity && (
           <PipelineStepper stages={message.pipeline} running={Boolean(message.busy)} />
         )}
-        {showParallelWork && (
+        {showWorkActivity && (
           <WorkingPanel
             steps={message.steps ?? []}
             fallback={message.status}
@@ -887,7 +892,7 @@ const Bubble = memo(function Bubble({
             stopRequested={stopRequested}
           />
         )}
-        {showParallelWork && displayText && message.busy && (
+        {showWorkActivity && displayText && message.busy && (
           <LiveOutputPanel
             text={displayText}
             streaming={message.streaming}
@@ -898,7 +903,7 @@ const Bubble = memo(function Bubble({
             mediaBasePaths={mediaBasePaths}
           />
         )}
-        {showParallelWork && displayText && !message.busy && (
+        {showWorkActivity && displayText && !message.busy && (
           <div
             style={{
               color: "var(--ink)",
@@ -918,7 +923,7 @@ const Bubble = memo(function Bubble({
             {message.streaming && <BlinkingCursor />}
           </div>
         )}
-        {!showParallelWork && (
+        {!showWorkActivity && (
           <SingleRunBody
             message={displayMessage}
             onOpenArtifact={onOpenArtifact}
@@ -945,7 +950,7 @@ const Bubble = memo(function Bubble({
             ))}
           </div>
         )}
-        {!showParallelWork && <RunStatusLine message={message} onOpenWorkflow={onOpenWorkflow} />}
+        {!showWorkActivity && <RunStatusLine message={message} onOpenWorkflow={onOpenWorkflow} />}
         {/* 질문은 이제 바텀 시트(ChatQuestionSheet)에서 답한다 — 스트림에는 답변이 끝난
             질문만 잠긴 기록으로 남긴다. ("—"는 시트에서 스킵된 질문의 잠금 마커라 숨김.) */}
         {message.questions && message.questions.some((q) => q.answer && q.answer.length > 0 && q.answer[0] !== "—") && (
@@ -1558,6 +1563,7 @@ function ToolGroupRow({
       >
         <span style={{ flexShrink: 0, color: "var(--muted-deep)", fontWeight: 550 }}>{view.verb}</span>
         <span
+          className="agentlas-working-tool-verb"
           style={{
             minWidth: 0,
             overflow: "hidden",
@@ -1965,6 +1971,7 @@ const QuestionBlock = memo(function QuestionBlock({
     >
       <div style={{ display: "flex", alignItems: "flex-start", gap: 8, marginBottom: 2 }}>
         <span
+          className="agentlas-working-tool-copy"
           style={{
             flexShrink: 0,
             fontSize: 11,
@@ -2072,6 +2079,7 @@ const QuestionBlock = memo(function QuestionBlock({
       {!answered && (
         <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
           <span
+            className="agentlas-working-tool-result"
             style={{
               fontSize: 10,
               fontWeight: 700,
@@ -2283,25 +2291,25 @@ function WorkingPanel({
   return (
     <div
       data-testid="thinking-text-stream"
+      data-state={done ? "completed" : "busy"}
+      className="agentlas-work-activity"
       style={{
         color: "var(--muted-deep)",
-        padding: "2px 0 6px",
         display: "flex",
         flexDirection: "column",
-        gap: 3,
-        maxWidth: 820,
       }}
     >
       <div
+        className="agentlas-work-activity-header"
         style={{
           display: "flex",
           alignItems: "center",
           gap: 10,
-          minHeight: 28,
           minWidth: 0,
         }}
       >
         <button
+          className="agentlas-work-activity-toggle"
           type="button"
           onClick={() => allRows.length > 0 && setOverride(!expanded)}
           aria-expanded={allRows.length > 0 ? expanded : undefined}
@@ -2309,7 +2317,8 @@ function WorkingPanel({
           style={{
             minWidth: 0,
             flex: 1,
-            display: "flex",
+            display: "grid",
+            gridTemplateColumns: "18px auto minmax(0, 1fr) auto 14px",
             alignItems: "center",
             gap: 8,
             border: "none",
@@ -2326,9 +2335,14 @@ function WorkingPanel({
           <span aria-hidden style={{ width: 18, height: 18, display: "inline-flex", alignItems: "center", justifyContent: "center", flexShrink: 0, color: done ? "var(--muted)" : "var(--accent)" }}>
             {done ? <ThinkingGlyph /> : <GlyphSpinner active />}
           </span>
-          <span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{headerLabel}</span>
+          <strong className="agentlas-work-activity-title">{locale === "ko" ? "활동" : "Activity"}</strong>
+          <span className="agentlas-work-activity-meta">{headerLabel}</span>
+          <span className="agentlas-work-activity-count" aria-label={locale === "ko" ? `${allRows.length}개 단계` : `${allRows.length} steps`}>
+            {allRows.length || ""}
+          </span>
           {allRows.length > 0 && (
             <span
+              className="agentlas-work-activity-chevron"
               aria-hidden
               style={{
                 display: "inline-flex",
@@ -2405,20 +2419,19 @@ function WorkingPanel({
 
       {expanded && allRows.length > 0 && (
         <div
+          className="agentlas-work-activity-rows"
           style={{
             display: "flex",
             flexDirection: "column",
-            padding: "3px 0 2px 25px",
             minWidth: 0,
-            maxHeight: "min(52vh, 560px)",
             overflowY: "auto",
           }}
         >
           {allRows.map((s, idx) => (
             <div
               key={s.id}
-              // ★간격은 이웃 쌍이 정한다: 도구가 연달아 나오면 붙여서 한 블록으로 읽힌다.
-              style={{ marginTop: activityRowGap(allRows[idx - 1], s) }}
+              className="agentlas-work-activity-row"
+              data-kind={s.tool ? "tool" : "reasoning"}
             >
               <ActivityRow
                 step={s}
@@ -2434,16 +2447,6 @@ function WorkingPanel({
       )}
     </div>
   );
-}
-
-/** 활동 행 사이 간격 — 도구 연속은 0, 종류가 바뀌는 경계에서만 벌어진다. */
-function activityRowGap(above: StreamStep | undefined, below: StreamStep): number {
-  if (!above) return 0;
-  const aboveIsTool = Boolean(above.tool);
-  const belowIsTool = Boolean(below.tool);
-  if (aboveIsTool && belowIsTool) return 0;
-  if (!aboveIsTool && !belowIsTool) return 4;
-  return 6;
 }
 
 function ActivityRow({
@@ -2602,7 +2605,7 @@ function ThinkingRow({ step, current }: { step: StreamStep; current?: boolean })
         display: "flex",
         alignItems: "center",
         gap: 7,
-        minHeight: 26,
+        minHeight: 38,
         minWidth: 0,
         fontSize: 12.5,
         color: "var(--ink-soft)",
@@ -2651,9 +2654,10 @@ function ToolRow({ step, current }: { step: StreamStep; current?: boolean }) {
   const hasDisclosure = false;
   return (
     <div
+      className="agentlas-working-tool-row"
       style={{
         minWidth: 0,
-        minHeight: 26,
+        minHeight: 38,
         padding: "2px 0",
         display: "flex",
         flexDirection: "column",

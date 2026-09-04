@@ -76,7 +76,9 @@ export function SideNav({
   const { t, locale } = useT();
   const pathname = usePathname() ?? "/";
   const [collapsedPref, setCollapsed] = useState(false);
-  const collapsed = forceCollapsed || collapsedPref;
+  const [compactViewport, setCompactViewport] = useState(false);
+  const [compactOpen, setCompactOpen] = useState(false);
+  const collapsed = forceCollapsed || (compactViewport ? !compactOpen : collapsedPref);
   const [openGroups, setOpenGroups] = useState<Record<string, boolean>>({});
   const [query, setQuery] = useState("");
   const [searchFocused, setSearchFocused] = useState(false);
@@ -101,6 +103,21 @@ export function SideNav({
       /* ignore */
     }
   }, []);
+
+  useEffect(() => {
+    const query = window.matchMedia("(max-width: 820px)");
+    const sync = () => {
+      setCompactViewport(query.matches);
+      if (!query.matches) setCompactOpen(false);
+    };
+    sync();
+    query.addEventListener?.("change", sync);
+    return () => query.removeEventListener?.("change", sync);
+  }, []);
+
+  useEffect(() => {
+    setCompactOpen(false);
+  }, [pathname]);
 
   // 글로벌 Hub 검색은 Enter 제출 전용이 아니다. 입력 중 실제 Hub 결과를 짧게
   // debounce해 보여주고, 늦은 이전 응답은 generation으로 폐기한다.
@@ -138,6 +155,10 @@ export function SideNav({
 
   function toggleCollapsed() {
     if (forceCollapsed) return;
+    if (compactViewport) {
+      setCompactOpen((open) => !open);
+      return;
+    }
     setCollapsed((c) => {
       const next = !c;
       try {
@@ -251,7 +272,13 @@ export function SideNav({
   const searchSuggestionsOpen = searchFocused && Boolean(currentSearchQuery);
 
   return (
-    <aside className="sidenav glass-thin" data-collapsed={collapsed ? "true" : "false"} data-merged={forceCollapsed ? "true" : "false"}>
+    <aside
+      className="sidenav glass-thin"
+      data-collapsed={collapsed ? "true" : "false"}
+      data-compact={compactViewport ? "true" : "false"}
+      data-compact-open={compactViewport && compactOpen ? "true" : "false"}
+      data-merged={forceCollapsed ? "true" : "false"}
+    >
       {/* 맥 신호등 회피 + 창 드래그 */}
       <div className="sidenav-drag titlebar-drag" />
 

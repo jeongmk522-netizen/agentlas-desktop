@@ -63,6 +63,14 @@ function runtimeDetectCacheMs(): number {
   return Number(process.env.AGENTLAS_RUNTIME_DETECT_CACHE_MS ?? 10_000);
 }
 
+function runtimeProbeDisabled(kind: RuntimeKind): boolean {
+  const disabled = (process.env.AGENTLAS_DISABLED_RUNTIME_KINDS ?? "")
+    .split(",")
+    .map((value) => value.trim().toLowerCase())
+    .filter(Boolean);
+  return disabled.includes(kind);
+}
+
 function cloneRuntimeStatuses(list: RuntimeStatus[]): RuntimeStatus[] {
   return list.map((runtime) => ({
     ...runtime,
@@ -364,7 +372,7 @@ async function detectRuntimesUncached(): Promise<RuntimeStatus[]> {
     readCodexModelDiscovery(),
     probeAntigravity(),
     probeKimi(),
-    probeGrok(),
+    runtimeProbeDisabled("grok") ? Promise.resolve(null) : probeGrok(),
     probeCursor(),
     probeOllama(),
     probeLMStudio(),

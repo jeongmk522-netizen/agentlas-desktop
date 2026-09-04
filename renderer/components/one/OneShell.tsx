@@ -686,6 +686,41 @@ function toUiMessages(history: ChatHistoryEntry[]): UiMessage[] {
   return visible;
 }
 
+/**
+ * Durable history rows only carry attachment group ids. Rejoin any files that
+ * are already in the renderer cache before deciding whether Main needs to be
+ * queried. This matters at run settlement: the optimistic row is replaced by
+ * its durable twin while the cache is still warm.
+ */
+function hydrateCachedChatFiles(messages: UiMessage[], groups: ReadonlyMap<string, ChatFileItem[]>): UiMessage[] {
+  let changed = false;
+  const hydrated = messages.map((message) => {
+    const chatFiles = (message.chatFileGroupIds ?? []).flatMap((groupId) => groups.get(groupId) ?? []);
+    if (chatFiles.length === 0) return message;
+    const currentIds = message.chatFiles?.map((file) => file.id) ?? [];
+    if (currentIds.length === chatFiles.length && currentIds.every((id, index) => id === chatFiles[index]?.id)) {
+      return message;
+    }
+    changed = true;
+    return { ...message, chatFiles };
+  });
+  return changed ? hydrated : messages;
+}
+
+function chatFileGroupsIncludingMessages(
+  groups: ReadonlyMap<string, ChatFileItem[]>,
+  messages: UiMessage[],
+): Map<string, ChatFileItem[]> {
+  const merged = new Map(groups);
+  for (const message of messages) {
+    for (const file of message.chatFiles ?? []) {
+      const current = merged.get(file.groupId) ?? [];
+      if (!current.some((item) => item.id === file.id)) merged.set(file.groupId, [...current, file]);
+    }
+  }
+  return merged;
+}
+
 function isResultContinuationMessage(message: UiMessage): boolean {
   return message.role === "system" && /^(?:완료한|검토 중인) 이전 일에서 이어갑니다|^Continuing from the (?:completed|result-ready) work/.test(message.text);
 }
@@ -2319,7 +2354,13 @@ export function OneShell() {
       const history = await api.invoke.history(chatId).catch(() => null);
       if (!supersededByNewerRun() && history && shownThreadChatIdRef.current === chatId) {
         const next = toUiMessages(history);
-        setMessages((current) => (next.length === 0 && current.length > 0 ? current : next));
+        setMessages((current) => {
+          if (next.length === 0 && current.length > 0) return current;
+          return hydrateCachedChatFiles(
+            next,
+            chatFileGroupsIncludingMessages(oneChatFileGroupsRef.current, current),
+          );
+        });
       }
     }
     if (supersededByNewerRun()) return;
@@ -2654,17 +2695,21 @@ export function OneShell() {
           // 다른 대화에서 왔으면 비어 있더라도 교체한다 — 남의 화면을 남겨 두는 것이
           // 바로 "합쳐져 보이는" 증상이다.
           if (!screenAlreadyOnThisThread) return next;
+          const hydratedNext = hydrateCachedChatFiles(
+            next,
+            chatFileGroupsIncludingMessages(oneChatFileGroupsRef.current, current),
+          );
           // 같은 대화인데 서버 스냅샷이 아직 비었다면(첫 실행이 방금 시작됐다면)
           // 사람이 막 친 말과 라이브 응답을 빈 스냅샷으로 지우지 않는다.
-          if (next.length === 0 && current.length > 0) return current;
+          if (hydratedNext.length === 0 && current.length > 0) return current;
           // 큐에 넣은 다음 지시(one-steer:)는 Main이 그 실행을 시작할 때 비로소 원장에
           // 남는다. 그 사이의 히스토리 재적재가 낙관 행을 지우면 사람이 친 말이 화면에서
           // 사라졌다가 실행 끝에 다시 나타난다 — 원장에 같은 말이 오기 전까지 유지한다.
           const pendingSteers = current.filter((message) => (
             message.id.startsWith("one-steer:")
-            && !next.some((durable) => durable.role === "user" && durable.text === message.text)
+            && !hydratedNext.some((durable) => durable.role === "user" && durable.text === message.text)
           ));
-          return pendingSteers.length > 0 ? [...next, ...pendingSteers] : next;
+          return pendingSteers.length > 0 ? [...hydratedNext, ...pendingSteers] : hydratedNext;
         });
       }
       shownThreadChatIdRef.current = chatId;
@@ -2748,6 +2793,10 @@ export function OneShell() {
     if (!activeThreadChatId) return;
     const bridge = chatFilesBridge();
     if (!bridge) return;
+    // Settlement replaces the optimistic row with a marker-only durable row.
+    // Reuse the already loaded group immediately instead of waiting for a
+    // reload (or issuing another IPC request) to make its card visible again.
+    setMessages((current) => hydrateCachedChatFiles(current, oneChatFileGroupsRef.current));
     const groupIds = [...new Set(messages.flatMap((message) => message.chatFileGroupIds ?? []))]
       .filter((groupId) => !oneChatFileGroupsRef.current.has(groupId));
     if (groupIds.length === 0) return;
@@ -2758,10 +2807,7 @@ export function OneShell() {
     })).then((groups) => {
       if (cancelled) return;
       for (const [groupId, files] of groups) oneChatFileGroupsRef.current.set(groupId, files);
-      setMessages((current) => current.map((message) => {
-        const chatFiles = (message.chatFileGroupIds ?? []).flatMap((groupId) => oneChatFileGroupsRef.current.get(groupId) ?? []);
-        return chatFiles.length > 0 ? { ...message, chatFiles } : message;
-      }));
+      setMessages((current) => hydrateCachedChatFiles(current, oneChatFileGroupsRef.current));
     }).catch((cause) => {
       if (!cancelled) setAttachmentError(cause instanceof Error ? cause.message : String(cause));
     });
@@ -5702,6 +5748,13 @@ export function OneShell() {
    * 고를 수 있게 만들어 놓고 화면이 옛 얼굴을 계속 그리면 그 기능은 없는 것과 같다.
    */
   const oneAvatarTone = oneProfile?.avatarIcon?.trim() || "character:orange-dino";
+  // A direct room belongs to its seated agent; the general room and a taskforce
+  // synthesis belong to One. Never borrow either identity for user messages.
+  const assistantSpeaker = activeTaskforce
+    ? { label: "One", tone: oneAvatarTone, status: "quiet" as const }
+    : activeOneMember
+      ? { label: activeOneMember.displayName, tone: activeOneMember.icon, status: activeOneMember.statusKind }
+      : { label: "One", tone: oneAvatarTone, status: "quiet" as const };
   const removeAttachmentDraft = useCallback((id: string) => {
     const current = attachmentDraftsRef.current;
     const removed = current.find((item) => item.id === id);
@@ -6475,7 +6528,7 @@ export function OneShell() {
                       {activeTaskforce && <OneTaskforceConversation state={block.state} org={oneOrgState} locale={appLocale} />}
                     </Fragment>
                   ))}
-                  {visibleMessages.map((message) => {
+                  {visibleMessages.map((message, messageIndex) => {
                     // Narrative output remains the primary final response.
                     // Only a genuinely visual/interactive surface replaces its
                     // duplicate Markdown payload.
@@ -6496,6 +6549,8 @@ export function OneShell() {
                     if (!visibleText && !hasAttachments && !liveBefore && blocksAfter.length === 0) return null;
                     const systemLabel = message.role === "system" ? oneSystemPromptLabel(message) : null;
                     const graphRequest = message.role === "user" ? oneGraphRequest(message.text) : null;
+                    const assistantGroupStart = message.role === "assistant"
+                      && visibleMessages[messageIndex - 1]?.role !== "assistant";
                     return (
                       <Fragment key={message.id}>
                         {(departurePlan.beforeMessage.get(message.id) ?? []).map((notice) => (
@@ -6522,12 +6577,28 @@ export function OneShell() {
                             data-role={message.role}
                             data-kind={isResultContinuationMessage(message) ? "continuity" : undefined}
                             data-taskforce={activeTaskforce ? "true" : undefined}
+                            data-one-message-speaker={message.role === "assistant" ? assistantSpeaker.label : undefined}
+                            data-one-avatar-group-start={assistantGroupStart ? "true" : undefined}
                           >
+                            {message.role === "assistant" && (
+                              <span
+                                className={styles.messageAvatarSlot}
+                                data-one-message-avatar={assistantGroupStart ? "true" : "spacer"}
+                                aria-hidden={!assistantGroupStart || undefined}
+                              >
+                                {assistantGroupStart && <OneAgentPortrait
+                                  status={busy && message.streaming ? "working" : assistantSpeaker.status}
+                                  label={assistantSpeaker.label}
+                                  tone={assistantSpeaker.tone}
+                                  size="small"
+                                />}
+                              </span>
+                            )}
+                            <div className={styles.messageContent}>
                             {activeTaskforce && message.role !== "system" && (
                               <div className={styles.taskforceMessageMeta}>
-                                {message.role === "assistant" && <OneAgentPortrait status={busy && message.streaming ? "working" : "quiet"} label="One" tone={oneAvatarTone} size="medium" />}
                                 <span>
-                                  <strong>{message.role === "user" ? (appLocale === "ko" ? "나" : "You") : "One"}</strong>
+                                  <strong>{message.role === "user" ? (appLocale === "ko" ? "나" : "You") : assistantSpeaker.label}</strong>
                                   {message.createdAt && <time dateTime={message.createdAt}>{new Date(message.createdAt).toLocaleTimeString(appLocale === "ko" ? "ko-KR" : "en-US", { hour: "2-digit", minute: "2-digit" })}</time>}
                                 </span>
                               </div>
@@ -6569,6 +6640,7 @@ export function OneShell() {
                                 })())}
                             </div>
                             )}
+                            </div>
                           </article>
                           ))}
                         {graphRequest && activeThreadChatId && (

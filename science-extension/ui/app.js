@@ -1655,14 +1655,18 @@ import { formatScienceCell } from "./format-cell.js";
         <span class="approvalScopeState">${escapeHtml(standing ? scopeGranted[scope] : scopeAsked[scope])}</span>
       </li>`;
     }).join("");
-    return `<section class="approvalPolicyPanel">
+    return `<section class="approvalPolicyPanel" aria-busy="${approvalPolicyWrites.has(state.selectedId)}">
       <h2>승인 방식</h2>
       <p class="approvalPolicyNote">체크한 항목은 연구가 멈추지 않고 진행하며, 누가 언제 허용했는지는 그대로 기록됩니다. 해제하면 그 지점에서 묻습니다.</p>
       ${state.approvalPolicyError ? `<div class="errorCopy" role="alert">${escapeHtml(state.approvalPolicyError)}</div>` : ""}
       <ul class="approvalScopes">${rows}</ul>
+      <p data-approval-save-status role="status">${approvalPolicyWrites.has(state.selectedId) ? uiCopy("승인 설정 저장 중…", "Saving approval settings…") : ""}</p>
       <p class="approvalPolicyProvenance">현재 정책 r${escapeHtml(String(policy.revision))} · ${escapeHtml(policy.grantedBy)}</p>
     </section>`;
   }
+
+  const approvalPolicyWrites = new Map();
+  const approvalPolicyWriteErrors = new Map();
 
   async function loadApprovalPolicy(projectId) {
     if (!projectId) return;
@@ -1670,7 +1674,7 @@ import { formatScienceCell } from "./format-cell.js";
       const policy = await science.approvalPolicy.get(projectId);
       if (projectId !== state.selectedId) return;
       state.approvalPolicy = policy;
-      state.approvalPolicyError = "";
+      state.approvalPolicyError = approvalPolicyWriteErrors.get(projectId) || "";
     } catch (error) {
       if (projectId !== state.selectedId) return;
       state.approvalPolicy = null;
@@ -1679,13 +1683,17 @@ import { formatScienceCell } from "./format-cell.js";
     render();
   }
 
-  async function toggleApprovalScope(scope) {
+  async function toggleApprovalScope(scope, enabled) {
     const projectId = state.selectedId;
-    const policy = state.approvalPolicy;
-    if (!projectId || !policy || !scope) return;
-    const standing = policy.mode === "autonomous" && policy.scopes.includes(scope);
-    const next = standing ? policy.scopes.filter((item) => item !== scope) : [...new Set([...policy.scopes, scope])];
-    try {
+    if (!projectId || !scope || typeof enabled !== "boolean") return;
+    const previous = approvalPolicyWrites.get(projectId);
+    if (!previous) approvalPolicyWriteErrors.delete(projectId);
+    // Capture the requested checked state, not a toggle against a stale snapshot.
+    // Serialize within this project and merge each intent with the latest receipt.
+    const write = (previous || Promise.resolve()).then(async () => {
+      const policy = await science.approvalPolicy.get(projectId);
+      const scopes = policy.mode === "autonomous" ? policy.scopes : [];
+      const next = enabled ? [...new Set([...scopes, scope])] : scopes.filter((item) => item !== scope);
       // Turning everything off is `checkpoint`: a mode, not an empty list, so the intent survives
       // a later scope being added to the product.
       await science.approvalPolicy.set({
@@ -1695,11 +1703,21 @@ import { formatScienceCell } from "./format-cell.js";
         scopes: next,
         grantedBy: "researcher",
       });
-      state.approvalPolicyError = "";
-    } catch (error) {
-      state.approvalPolicyError = `승인 방식을 저장하지 못했습니다. (${String(error?.message ?? error)})`;
-    }
-    await loadApprovalPolicy(projectId);
+      const saved = await science.approvalPolicy.get(projectId);
+      if (projectId === state.selectedId) state.approvalPolicy = saved;
+    }).catch((error) => {
+      approvalPolicyWriteErrors.set(projectId, `승인 방식을 저장하지 못했습니다. (${String(error?.message ?? error)})`);
+    });
+    approvalPolicyWrites.set(projectId, write);
+    root.querySelector(".approvalPolicyPanel")?.setAttribute("aria-busy", "true");
+    const status = root.querySelector("[data-approval-save-status]");
+    if (status) status.textContent = uiCopy("승인 설정 저장 중…", "Saving approval settings…");
+    await write;
+    if (approvalPolicyWrites.get(projectId) !== write) return;
+    approvalPolicyWrites.delete(projectId);
+    if (projectId !== state.selectedId) return;
+    state.approvalPolicyError = approvalPolicyWriteErrors.get(projectId) || "";
+    render();
   }
 
   async function loadLogbook(projectId) {
@@ -8631,7 +8649,7 @@ import { formatScienceCell } from "./format-cell.js";
 
   root.addEventListener("change", (event) => {
     const approvalScope = event.target.closest('input[data-action="toggle-approval-scope"]');
-    if (approvalScope) { void toggleApprovalScope(approvalScope.dataset.scope); return; }
+    if (approvalScope) { void toggleApprovalScope(approvalScope.dataset.scope, approvalScope.checked); return; }
     const materialsStructure = event.target.closest("[data-materials-structure-index]");
     if (materialsStructure && state.selectedArtifactId) {
       const index = Number(materialsStructure.value);

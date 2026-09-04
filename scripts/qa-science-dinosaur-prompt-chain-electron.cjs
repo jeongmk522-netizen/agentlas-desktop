@@ -41,6 +41,184 @@ assert.ok(Number.isSafeInteger(turnBudget) && turnBudget >= 1 && turnBudget <= 2
 assert.ok(Number.isSafeInteger(turnTimeoutMs) && turnTimeoutMs >= 1_000, "invalid turn timeout");
 assert.ok(Number.isSafeInteger(totalTimeoutMs) && totalTimeoutMs > teardownReserveMs, "invalid total timeout");
 
+const MAX_QUIT_CHRONOLOGY_EVENTS = 64;
+const MAX_QUIT_CHILD_EXITS = 32;
+const quitChronologyEvents = new Set([
+  "qa-harness-close-requested",
+  "qa-turn-deadline",
+  "qa-work-deadline",
+  "qa-hard-deadline",
+  "electron-app-before-quit",
+  "electron-app-will-quit",
+  "electron-process-exit",
+  "electron-main-window-closed",
+  "science-webcontents-destroyed",
+  "science-render-process-gone",
+  "runtime-child-exit",
+  "runtime-child-error",
+  "electron-child-process-gone",
+  "playwright-page-close",
+  "playwright-context-close",
+  "playwright-electron-close",
+]);
+
+function boundedFirstAndLast(items, limit) {
+  if (items.length <= limit) return items;
+  const firstCount = Math.ceil(limit / 2);
+  return [...items.slice(0, firstCount), ...items.slice(-(limit - firstCount))];
+}
+
+function eventSummary(timeline, event) {
+  const matches = timeline.filter((entry) => entry?.event === event && typeof entry.at === "string");
+  return {
+    count: matches.length,
+    firstAt: matches[0]?.at || "unknown",
+    lastAt: matches.at(-1)?.at || "unknown",
+  };
+}
+
+function knownOrUnknown(value) {
+  return value === undefined ? "unknown" : value === null ? "none" : value;
+}
+
+function eventExitCode(entry) {
+  if (Object.prototype.hasOwnProperty.call(entry, "code")) return knownOrUnknown(entry.code);
+  if (Object.prototype.hasOwnProperty.call(entry, "exitCode")) return knownOrUnknown(entry.exitCode);
+  return "unknown";
+}
+
+function eventPid(entry) {
+  if (Object.prototype.hasOwnProperty.call(entry, "pid")) return knownOrUnknown(entry.pid);
+  if (Object.prototype.hasOwnProperty.call(entry, "electronPid")) return knownOrUnknown(entry.electronPid);
+  return "unknown";
+}
+
+function buildQuitCauseChronology(report, timeline) {
+  const relevant = timeline.filter((entry) => quitChronologyEvents.has(entry?.event));
+  const childExitEvents = relevant.filter((entry) => entry.event === "runtime-child-exit" || entry.event === "electron-child-process-gone");
+  const electronExit = report.electronExit;
+  const closeRequest = [...relevant].reverse().find((entry) => entry.event === "qa-harness-close-requested") || null;
+  const chronology = boundedFirstAndLast(relevant, MAX_QUIT_CHRONOLOGY_EVENTS).map((entry) => ({
+    at: typeof entry.at === "string" ? entry.at : "unknown",
+    event: entry.event,
+    pid: eventPid(entry),
+    code: eventExitCode(entry),
+    signal: knownOrUnknown(entry.signal),
+    reason: knownOrUnknown(entry.reason),
+  }));
+  const childExits = boundedFirstAndLast(childExitEvents, MAX_QUIT_CHILD_EXITS).map((entry) => ({
+    at: typeof entry.at === "string" ? entry.at : "unknown",
+    event: entry.event,
+    pid: eventPid(entry),
+    type: knownOrUnknown(entry.type),
+    name: knownOrUnknown(entry.name),
+    code: eventExitCode(entry),
+    signal: knownOrUnknown(entry.signal),
+    reason: knownOrUnknown(entry.reason),
+  }));
+
+  return {
+    schema: "agentlas.science.quit-cause-chronology/v1",
+    cause: "unknown",
+    harness: {
+      closeRequestedAt: report.closeRequestedAt || "unknown",
+      closeRequestReason: closeRequest?.reason || "unknown",
+      deadlines: {
+        turnTimeoutMs: report.timeout.turnTimeoutMs,
+        totalTimeoutMs: report.timeout.totalTimeoutMs,
+        teardownReserveMs: report.timeout.teardownReserveMs,
+        turnDeadline: eventSummary(relevant, "qa-turn-deadline"),
+        workDeadline: {
+          reached: report.timeout.workDeadlineReached,
+          ...eventSummary(relevant, "qa-work-deadline"),
+        },
+        hardDeadline: {
+          reached: report.timeout.hardDeadlineReached,
+          ...eventSummary(relevant, "qa-hard-deadline"),
+        },
+      },
+    },
+    electron: {
+      beforeQuit: eventSummary(relevant, "electron-app-before-quit"),
+      willQuit: eventSummary(relevant, "electron-app-will-quit"),
+      mainWindowClosed: eventSummary(relevant, "electron-main-window-closed"),
+      applicationClosed: eventSummary(relevant, "playwright-electron-close"),
+      processExit: electronExit ? {
+        at: electronExit.at || "unknown",
+        code: knownOrUnknown(electronExit.code),
+        signal: knownOrUnknown(electronExit.signal),
+      } : { at: "unknown", code: "unknown", signal: "unknown" },
+    },
+    osSignalObservation: {
+      availability: "electron-process-exit-event-only",
+      electronProcessExitObserved: Boolean(electronExit),
+      signalObserved: electronExit ? Boolean(electronExit.signal) : "unknown",
+      signal: electronExit ? knownOrUnknown(electronExit.signal) : "unknown",
+      nativeActionObservation: "unavailable",
+      nativeActionOrigin: "unknown",
+    },
+    childExits,
+    childExitsTruncated: childExitEvents.length > MAX_QUIT_CHILD_EXITS,
+    chronology,
+    chronologyTruncated: relevant.length > MAX_QUIT_CHRONOLOGY_EVENTS,
+  };
+}
+
+function runQuitChronologyContract() {
+  const timeline = [
+    { at: "2026-09-05T00:00:01.000Z", event: "qa-turn-deadline", reason: "turn-timeout" },
+    { at: "2026-09-05T00:00:02.000Z", event: "electron-app-before-quit" },
+    { at: "2026-09-05T00:00:03.000Z", event: "electron-app-will-quit" },
+    ...Array.from({ length: 70 }, (_, index) => ({
+      at: new Date(Date.parse("2026-09-05T00:00:10.000Z") + index * 1_000).toISOString(),
+      event: "runtime-child-exit",
+      pid: 1_000 + index,
+      code: index % 2 === 0 ? 0 : null,
+      signal: index % 2 === 0 ? null : "SIGTERM",
+    })),
+    { at: "2026-09-05T00:01:30.000Z", event: "electron-child-process-gone", type: "Utility", reason: "crashed", exitCode: 9 },
+    { at: "2026-09-05T00:02:00.000Z", event: "qa-harness-close-requested", reason: "finally" },
+    { at: "2026-09-05T00:02:01.000Z", event: "playwright-electron-close" },
+    { at: "2026-09-05T00:02:02.000Z", event: "electron-process-exit", pid: 999, code: 0, signal: null },
+  ];
+  const chronology = buildQuitCauseChronology({
+    closeRequestedAt: "2026-09-05T00:02:00.000Z",
+    electronExit: { at: "2026-09-05T00:02:02.000Z", code: 0, signal: null },
+    timeout: { turnTimeoutMs: 900_000, totalTimeoutMs: 1_800_000, teardownReserveMs: 60_000, workDeadlineReached: false, hardDeadlineReached: false },
+  }, timeline);
+  assert.equal(chronology.cause, "unknown");
+  assert.equal(chronology.harness.closeRequestReason, "finally");
+  assert.equal(chronology.harness.deadlines.turnDeadline.count, 1);
+  assert.equal(chronology.electron.beforeQuit.firstAt, "2026-09-05T00:00:02.000Z");
+  assert.equal(chronology.electron.applicationClosed.firstAt, "2026-09-05T00:02:01.000Z");
+  assert.equal(chronology.electron.processExit.signal, "none");
+  assert.equal(chronology.osSignalObservation.signalObserved, false);
+  assert.equal(chronology.osSignalObservation.nativeActionOrigin, "unknown");
+  assert.equal(chronology.childExits.length, MAX_QUIT_CHILD_EXITS);
+  assert.equal(chronology.childExitsTruncated, true);
+  assert.equal(chronology.childExits.some((entry) => entry.event === "electron-child-process-gone" && entry.code === 9), true);
+  assert.equal(chronology.chronology.length, MAX_QUIT_CHRONOLOGY_EVENTS);
+  assert.equal(chronology.chronologyTruncated, true);
+  assert.equal(chronology.chronology[0].event, "qa-turn-deadline");
+  assert.equal(chronology.chronology.at(-1).event, "electron-process-exit");
+
+  const empty = buildQuitCauseChronology({
+    closeRequestedAt: null,
+    electronExit: null,
+    timeout: { turnTimeoutMs: 1_000, totalTimeoutMs: 2_000, teardownReserveMs: 1_000, workDeadlineReached: false, hardDeadlineReached: false },
+  }, []);
+  assert.equal(empty.harness.closeRequestedAt, "unknown");
+  assert.equal(empty.electron.beforeQuit.firstAt, "unknown");
+  assert.equal(empty.electron.processExit.signal, "unknown");
+  assert.equal(empty.osSignalObservation.signalObserved, "unknown");
+  console.log(JSON.stringify({ ok: true, contract: "quit-cause-chronology", maxEvents: MAX_QUIT_CHRONOLOGY_EVENTS, maxChildExits: MAX_QUIT_CHILD_EXITS }));
+}
+
+if (process.argv.includes("--self-test-quit-chronology")) {
+  runQuitChronologyContract();
+  process.exit(0);
+}
+
 const qaRoot = fs.mkdtempSync(path.join(os.tmpdir(), "agentlas-science-dinosaur-prompt-chain-"));
 const userData = path.join(qaRoot, "user-data");
 const extensionRoot = path.join(qaRoot, "extensions");
@@ -789,8 +967,9 @@ async function main() {
     assertions: {},
     electronExit: null,
     closeRequestedAt: null,
-    timeout: { totalTimeoutMs, teardownReserveMs, workDeadlineReached: false, hardDeadlineReached: false },
+    timeout: { turnTimeoutMs, totalTimeoutMs, teardownReserveMs, workDeadlineReached: false, hardDeadlineReached: false },
     timeline: [],
+    quitCauseChronology: null,
   };
   const reportPath = path.join(outputDir, "report.json");
   const persistReport = () => {
@@ -799,8 +978,14 @@ async function main() {
     // removed. Preserve the last non-empty diagnostic record rather than
     // replacing it with an empty read from a file that no longer exists.
     if (timeline.length > 0 || report.timeline.length === 0) report.timeline = timeline;
+    report.quitCauseChronology = buildQuitCauseChronology(report, report.timeline);
     report.reportPath = reportPath;
     fs.writeFileSync(reportPath, `${JSON.stringify(report, null, 2)}\n`, { encoding: "utf8", mode: 0o600 });
+  };
+  const markHarnessCloseRequested = (reason) => {
+    if (report.closeRequestedAt) return;
+    report.closeRequestedAt = new Date().toISOString();
+    appendDiagnosticEvent("qa-harness-close-requested", { reason, pid: desktop?.process()?.pid || null });
   };
   const startedAt = Date.now();
   const hardDeadlineTimer = setTimeout(() => {
@@ -811,7 +996,7 @@ async function main() {
       stack: null,
     };
     report.elapsedMs = Date.now() - startedAt;
-    report.closeRequestedAt ||= new Date().toISOString();
+    markHarnessCloseRequested("hard-deadline");
     appendDiagnosticEvent("qa-hard-deadline", { electronPid, elapsedMs: report.elapsedMs });
     persistReport();
     trace("process:hard-deadline", { electronPid, elapsedMs: report.elapsedMs });
@@ -838,6 +1023,7 @@ async function main() {
         signal,
         closeRequested: Boolean(report.closeRequestedAt),
       };
+      appendDiagnosticEvent("electron-process-exit", { pid: desktop?.process()?.pid || null, code, signal });
       trace("electron:exit", report.electronExit);
       persistReport();
     });
@@ -1073,6 +1259,7 @@ async function main() {
       }
       if (Date.now() >= totalDeadline) {
         report.timeout.workDeadlineReached = true;
+        appendDiagnosticEvent("qa-work-deadline", { elapsedMs: Date.now() - startedAt });
         current = await storeSnapshot(desktop, created.projectEntry).catch(() => current);
         const contract = contractApproval || contractReceiptFromSnapshot(current.contract);
         if (contract?.approved) approvedContractReceipt = contract;
@@ -1082,6 +1269,19 @@ async function main() {
         trace("turn:work-deadline", { ordinal: index + 1, status: current.turn?.status || null, runs: current.runs.length, executions: current.executions.length });
         persistReport();
         break;
+      }
+      const turnDeadlineReached = Date.now() >= deadline;
+      const turnReachedTerminalState = Boolean(current.turn
+        && ["completed", "failed", "cancelled", "interrupted"].includes(current.turn.status));
+      const turnTimedOut = turnDeadlineReached && !turnReachedTerminalState;
+      if (turnTimedOut) {
+        appendDiagnosticEvent("qa-turn-deadline", {
+          reason: "turn-timeout",
+          ordinal: index + 1,
+          turnId: current.turn?.id || null,
+          status: current.turn?.status || null,
+          elapsedMs: Date.now() - startedAt,
+        });
       }
       const screenshot = await captureScience(desktop, `turn-${String(index + 1).padStart(2, "0")}.png`);
       await recorder.capture(`turn-${index + 1}:terminal`);
@@ -1094,7 +1294,7 @@ async function main() {
         }
       }
       const decisions = await listPendingDecisions(desktop, created.projectEntry).catch((error) => [{ error: String(error) }]);
-      const turn = { ordinal: index + 1, screenshot, snapshot: current, contract, decisions };
+      const turn = { ordinal: index + 1, screenshot, snapshot: current, contract, decisions, timedOut: turnTimedOut };
       report.turns.push(turn);
       report.activeTurn = null;
       trace("turn:recorded", { ordinal: index + 1, status: current.turn?.status || null, runs: current.runs.length, executions: current.executions.length, manuscripts: current.manuscripts.length });
@@ -1223,7 +1423,7 @@ async function main() {
     persistReport();
     throw error;
   } finally {
-    report.closeRequestedAt = new Date().toISOString();
+    markHarnessCloseRequested("finally");
     persistReport();
     await closeDesktop(desktop);
     report.elapsedMs = Date.now() - startedAt;

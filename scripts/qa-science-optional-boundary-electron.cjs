@@ -3,11 +3,14 @@
 
 const path = require("node:path");
 const assert = require("node:assert/strict");
+const { execFileSync } = require("node:child_process");
 const fs = require("node:fs");
+const http = require("node:http");
 const os = require("node:os");
 const { _electron: electron } = require("playwright");
 
 const root = path.resolve(__dirname, "..");
+const rendererDist = path.join(root, "dist", "renderer");
 const mainBundlePath = path.join(root, "dist", "electron", "main.js");
 const mainHandlerSource = 'electron_1.ipcMain.handle("productExtensions:scienceSuiteStatus", () => (0, science_1.scienceSuiteStatus)());';
 const instrumentedMainHandlerSource = `electron_1.app.__agentlasScienceOptionalTrace = { calls: [] };
@@ -58,9 +61,72 @@ electron_1.ipcMain.handle("productExtensions:scienceSuiteStatus", async () => {
         if (typeof originalFetch === "function") globalThis.fetch = originalFetch;
     }
 });`;
-const targetUrl = process.env.AGENTLAS_SCIENCE_OPTIONAL_QA_URL || "http://127.0.0.1:3100";
+let targetUrl = process.env.AGENTLAS_SCIENCE_OPTIONAL_QA_URL || "";
 const expectBroken = process.argv.includes("--expect-broken");
+const skipBuild = process.argv.includes("--skip-build");
 const outputDir = path.join(os.tmpdir(), "agentlas-science-optional-boundary-electron");
+
+function buildCurrentSources() {
+  if (skipBuild) return;
+  const npm = process.platform === "win32" ? "npm.cmd" : "npm";
+  execFileSync(npm, ["run", "build:electron"], { cwd: root, env: process.env, stdio: "inherit" });
+  execFileSync(npm, ["run", "build:renderer"], { cwd: root, env: process.env, stdio: "inherit" });
+}
+
+function rendererAsset(rawUrl) {
+  const pathname = decodeURIComponent(new URL(rawUrl || "/", "http://127.0.0.1").pathname);
+  const nestedNext = pathname.match(/^\/.+\/(_next\/.+)$/);
+  const relative = (nestedNext ? nestedNext[1] : pathname.replace(/^\/+/, "")) || "index.html";
+  if (relative.split("/").some((segment) => segment === "..")) return path.join(rendererDist, "404.html");
+  const direct = path.join(rendererDist, relative);
+  if (fs.existsSync(direct) && fs.statSync(direct).isFile()) return direct;
+  if (!path.extname(relative)) {
+    const html = path.join(rendererDist, `${relative}.html`);
+    if (fs.existsSync(html) && fs.statSync(html).isFile()) return html;
+  }
+  return path.join(rendererDist, "404.html");
+}
+
+function startRendererServer() {
+  assert.ok(fs.existsSync(path.join(rendererDist, "dashboard.html")), "renderer build is missing dashboard.html");
+  assert.ok(fs.existsSync(path.join(rendererDist, "one.html")), "renderer build is missing one.html");
+  return new Promise((resolve, reject) => {
+    const server = http.createServer((request, response) => {
+      const file = rendererAsset(request.url);
+      const mime = {
+        ".css": "text/css; charset=utf-8",
+        ".html": "text/html; charset=utf-8",
+        ".ico": "image/x-icon",
+        ".jpeg": "image/jpeg",
+        ".jpg": "image/jpeg",
+        ".js": "text/javascript; charset=utf-8",
+        ".json": "application/json; charset=utf-8",
+        ".mjs": "text/javascript; charset=utf-8",
+        ".png": "image/png",
+        ".svg": "image/svg+xml",
+        ".txt": "text/plain; charset=utf-8",
+        ".webp": "image/webp",
+        ".woff2": "font/woff2",
+      };
+      response.writeHead(path.basename(file) === "404.html" ? 404 : 200, {
+        "cache-control": "no-store",
+        "content-type": mime[path.extname(file)] || "application/octet-stream",
+      });
+      fs.createReadStream(file).pipe(response);
+    });
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", () => {
+      server.removeListener("error", reject);
+      resolve({ server, baseUrl: `http://127.0.0.1:${server.address().port}` });
+    });
+  });
+}
+
+async function closeRendererServer(server) {
+  if (!server) return;
+  server.closeAllConnections?.();
+  await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+}
 
 function instrumentMainBundle() {
   const original = fs.readFileSync(mainBundlePath, "utf8");
@@ -70,6 +136,7 @@ function instrumentMainBundle() {
 }
 
   async function findRenderer(desktop, pathname, timeoutMs = 60_000) {
+    assert.ok(targetUrl, "renderer server URL must be initialized before Electron launch");
     const deadline = Date.now() + timeoutMs;
     let seen = [];
     while (Date.now() < deadline) {
@@ -168,7 +235,7 @@ function instrumentMainBundle() {
         canScrollX: document.documentElement.scrollWidth > document.documentElement.clientWidth,
         updateCards: document.querySelectorAll(".sidenav-update-card").length,
         alerts: [...document.querySelectorAll('[role="alert"]')].map((node) => (node.textContent || "").trim()),
-        bodyText: document.body.innerText.slice(0, 4_000),
+        workVisible: document.body.innerText.includes("Agentlas Work"),
         scienceLabels,
       };
     });
@@ -248,7 +315,7 @@ function instrumentMainBundle() {
       const page = await prepareDashboard(run);
       const failedTrace = await waitForTrace(run.desktop, expectBroken ? 2 : 1);
       const state = await inspect(page);
-      assert.match(state.bodyText, /Agentlas Work/);
+      assert.equal(state.workVisible, true, "failed status IPC must leave Agentlas Work visible");
       assert.equal(state.scienceLabels.length, 0, "failed status IPC must not expose Science");
       assert.equal(state.updateCards, 0, "failed Science status must not create an updater card");
       assert.deepEqual(state.alerts, [], "failed Science status must not create a Work alert");
@@ -289,12 +356,31 @@ function instrumentMainBundle() {
       /export const SCIENCE_INSTALL_DISCOVERY_ENABLED = false;/,
       "this QA requires Science install discovery to remain disabled",
     );
+    buildCurrentSources();
     fs.rmSync(outputDir, { recursive: true, force: true });
     fs.mkdirSync(outputDir, { recursive: true });
-    const actual = await runActual();
-    const failure = await runFailure();
-    const installed = await runInstalled();
-    console.log(JSON.stringify({ expectBroken, discoveryEnabled: false, actual, failure, installed, outputDir }, null, 2));
+    let rendererServer = null;
+    try {
+      if (!targetUrl) {
+        rendererServer = await startRendererServer();
+        targetUrl = rendererServer.baseUrl;
+      }
+      const actual = await runActual();
+      const failure = await runFailure();
+      const installed = await runInstalled();
+      console.log(JSON.stringify({
+        expectBroken,
+        discoveryEnabled: false,
+        rendererOrigin: targetUrl,
+        rendererServerOwned: Boolean(rendererServer),
+        actual,
+        failure,
+        installed,
+        outputDir,
+      }, null, 2));
+    } finally {
+      await closeRendererServer(rendererServer?.server);
+    }
   }
 
   main().catch((error) => {

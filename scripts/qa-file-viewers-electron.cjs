@@ -7,7 +7,6 @@ const fs = require("node:fs");
 const http = require("node:http");
 const os = require("node:os");
 const path = require("node:path");
-const { pathToFileURL } = require("node:url");
 const JSZip = require("jszip");
 const { PDFDocument, StandardFonts, rgb } = require("pdf-lib");
 const sharp = require("sharp");
@@ -186,7 +185,13 @@ async function main() {
       outputName: path.basename(fixture.path),
       outputMime: fixture.mime,
     });
-    return `${pathToFileURL(previewHtml).href}?${query.toString()}`;
+    // The exported HTML must be entered through the same custom protocol as
+    // the product. Loading surface-preview.html via file:// changes the
+    // browser pathname to /surface-preview.html, so Next's client router
+    // hydrates the exported page as a missing route and renders 404. The
+    // agentlas resolver maps this route to the same packaged HTML while
+    // preserving /surface-preview for the router.
+    return `agentlas://app/surface-preview?${query.toString()}`;
   };
   const initialUrl = previewUrlFor(fixtures[0]);
   let desktop;

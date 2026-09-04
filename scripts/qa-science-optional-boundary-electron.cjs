@@ -315,15 +315,19 @@ function instrumentMainBundle() {
       const page = await prepareDashboard(run);
       const failedTrace = await waitForTrace(run.desktop, expectBroken ? 2 : 1);
       const state = await inspect(page);
+      const scienceFiles = fs.existsSync(path.join(run.userData, "extensions", "agentlas-science"))
+        ? fs.readdirSync(path.join(run.userData, "extensions", "agentlas-science"))
+        : [];
       assert.equal(state.workVisible, true, "failed status IPC must leave Agentlas Work visible");
       assert.equal(state.scienceLabels.length, 0, "failed status IPC must not expose Science");
+      assert.equal(scienceFiles.includes("science.sqlite"), false, "failed status IPC must not initialize the Science store");
       assert.equal(state.updateCards, 0, "failed Science status must not create an updater card");
       assert.deepEqual(state.alerts, [], "failed Science status must not create a Work alert");
       await openModeMenu(page);
       assert.equal(await page.getByRole("menuitem").filter({ hasText: /^One/ }).count(), 1,
         "failed status IPC must leave One navigation usable");
       if (!expectBroken) assert.equal(failedTrace.calls.length, 1, `status failure must be shared: ${JSON.stringify(failedTrace)}`);
-      return { failedTrace, state };
+      return { failedTrace, scienceFiles, state };
     } finally {
       await run.desktop.close().catch(() => undefined);
       run.restoreMainBundle();
@@ -341,8 +345,15 @@ function instrumentMainBundle() {
       const scienceMenuItem = page.getByRole("menuitem").filter({ hasText: /^Science/ });
       assert.equal(await scienceMenuItem.count(), 1, "installed users must retain the Science product-menu entry");
       assert.match(await scienceMenuItem.innerText(), /Science/);
+      const state = await inspect(page);
+      const scienceFiles = fs.existsSync(path.join(run.userData, "extensions", "agentlas-science"))
+        ? fs.readdirSync(path.join(run.userData, "extensions", "agentlas-science"))
+        : [];
+      assert.equal(state.workVisible, true, "installed status must leave Agentlas Work visible");
+      assert.ok(state.scienceLabels.length >= 2, "installed status must expose SideNav and product-menu Science entries");
+      assert.equal(scienceFiles.includes("science.sqlite"), false, "installed status presentation must not initialize the Science store");
       if (!expectBroken) assert.equal(installedTrace.calls.length, 1, `installed status must be shared: ${JSON.stringify(installedTrace)}`);
-      return { installedTrace };
+      return { installedStatusSimulated: true, installedTrace, scienceFiles, state };
     } finally {
       await run.desktop.close().catch(() => undefined);
       run.restoreMainBundle();

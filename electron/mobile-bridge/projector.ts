@@ -1405,6 +1405,9 @@ export function projectMobileBridgeAutomation(
           })),
         }
       : null,
+    runtimeSelection: automation.runtimeSelection
+      ? projectMobileBridgeRuntimeSelection(automation.runtimeSelection)
+      : null,
     // DESKTOP_MOBILE_BRIDGE: promptTemplate, node config, webhook token, fs path,
     // and poll-source configuration remain on the Desktop.
   };

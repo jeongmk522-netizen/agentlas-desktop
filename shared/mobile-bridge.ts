@@ -1603,6 +1603,8 @@ export interface MobileBridgeAutomationDto {
     nodes: Array<{ id: string; type: string; label: string; x: number; y: number }>;
     edges: Array<{ id: string; source: string; target: string; label: string | null }>;
   } | null;
+  /** Exact Desktop-owned model pin; null follows the automation role default. */
+  runtimeSelection: MobileBridgeRuntimeSelectionDto | null;
 }
 
 export interface MobileBridgeUsageWindowDto {
@@ -2635,9 +2637,15 @@ function validateParams(method: MobileBridgeMethod, params: Record<string, unkno
       return hasOnlyKeys(params, ["id"]) ? requiredString(params, "id") : `${method} accepts only id`;
     case "automations.setRuntime":
       // runtimeSelection은 null(기본 복귀) 또는 {kind,...} 객체. 세부 형태는
-      // 메인의 updateAutomation이 검증하므로 여기서는 키 경계만 지킨다.
+      // 메인의 런타임 카탈로그 확인과 함께 검증해, 잘못된 핀이 저장소에 닿지
+      // 않게 한다.
       return hasOnlyKeys(params, ["id", "runtimeSelection"])
-        ? requiredString(params, "id")
+        ? firstError(
+            requiredString(params, "id"),
+            params.runtimeSelection === null
+              ? null
+              : validateRuntimeSelectionValue(params.runtimeSelection, "orchestrator"),
+          )
         : "automations.setRuntime accepts only id and runtimeSelection";
     case "automations.toggle":
       return hasOnlyKeys(params, ["id", "enabled"])

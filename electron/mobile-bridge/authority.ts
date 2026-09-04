@@ -2834,20 +2834,40 @@ export class AgentlasDesktopMobileBridgeAuthority implements MobileBridgeAuthori
         return asJsonValue(projectMobileBridgeAutomation(automation), request.method);
       }
       case "automations.setRuntime": {
-        // ★모바일에서 자동화 런타임을 바꾸는 액션은 지금까지 없었다 — 원격 UI가
-        // 무엇을 바꾸든 automations.runtime_selection_json 에 닿지 않았고, 오너가
-        // 원격으로 소넷 전환 후 실행했는데 antigravity 로 돈 실측이 그 증거다.
+        // ★모바일에서 자동화 런타임을 바꾸는 액션은 지금까지 없었다 — 채팅
+        // 런타임을 바꿔도 다음 무인 실행은 자동화의 별도 칸을 읽는다.
         // 채팅 런타임(setChatRuntimeSelection)과 자동화 런타임은 다른 칸이다.
         const params = guardedParams(request, ["id", "runtimeSelection"]);
         const id = requiredIdentifier(params, "id");
         if (!getAutomation(id)) throw new Error(`Automation not found: ${id}`);
-        const selection = params.runtimeSelection;
-        if (selection !== null && (typeof selection !== "object" || Array.isArray(selection) || typeof (selection as { kind?: unknown }).kind !== "string")) {
-          throw new Error("runtimeSelection must be null or an object with a string `kind`");
-        }
+        const rawSelection = params.runtimeSelection;
+        // Resolve against the live Desktop catalog before persisting. This
+        // keeps a phone pin exact and prevents a stale/unknown model from
+        // becoming a durable automation contract. An explicit null clears the
+        // pin and returns to the orchestrator role default.
+        const selection = rawSelection === null
+          ? null
+          : await resolveMobileRoleSelection(
+              mobileRuntimeSelectionFromValue(rawSelection, "orchestrator"),
+            );
+        // Automation rows use the historical execution contract (kind,
+        // backend/source/model/longContext/effort). Role and inheritance are
+        // conversation/worker-pool metadata, and are intentionally not stored
+        // in this automation column; the mobile projection supplies the
+        // orchestrator defaults when it reads the row back.
+        const automationSelection = selection === null
+          ? null
+          : {
+              kind: selection.kind,
+              ...(selection.backend !== undefined ? { backend: selection.backend } : {}),
+              ...(selection.source !== undefined ? { source: selection.source } : {}),
+              ...(selection.model !== undefined ? { model: selection.model } : {}),
+              longContext: selection.longContext === true,
+              ...(selection.effort !== undefined ? { effort: selection.effort } : {}),
+            };
         const { updateAutomation } = await import("../store/automations");
         const automation = updateAutomation(id, {
-          runtimeSelection: (selection ?? undefined) as import("../../shared/types").RuntimeSelection | undefined,
+          runtimeSelection: automationSelection,
         });
         this.scheduleSnapshotUpdated(id);
         return asJsonValue(projectMobileBridgeAutomation(automation), request.method);

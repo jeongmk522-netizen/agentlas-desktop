@@ -273,20 +273,22 @@ check("rows without timestamps fall back to the last prompt row; the live run is
 const shell = read("renderer/components/one/OneShell.tsx");
 const turnWorkView = read("renderer/components/one/OneTurnWork.tsx");
 check("OneShell draws one block per turn and never hides the Markdown answer", () => {
-  assert.match(shell, /\{blocksAfter\.map\(\(block\) => \([\s\S]{0,180}!activeTaskforce && <OneTurnWork/, "settled direct turns must render their own work block");
+  assert.match(shell, /\{blocksAfter\.map\(\(block\) => \([\s\S]{0,240}<OneTurnWork/, "every settled turn must render its own work block");
   assert.match(shell, /\{blocksAfter\.map\(\(block\) => \([\s\S]{0,1200}activeTaskforce && <OneTaskforceConversation/, "settled Taskforce turns must render teammate messages instead of machine receipts");
-  assert.match(shell, /\{liveBefore && !preflightPrompt && <>[\s\S]{0,100}\{liveWorkBlock\}/, "the live block sits before the streaming answer");
+  assert.match(shell, /\{liveBefore && !preflightPrompt && <>[\s\S]{0,260}\{liveWorkBlock\}/, "the live block sits before the streaming answer");
   assert.match(shell, /api\.runLedger\.chatTimeline\(chatId/, "past turns are projected from the ledger");
   assert.match(shell, /const visibleText = visibleOneMessageText\(message\);/, "the answer renders as written");
   assert.doesNotMatch(shell, /dedicatedResultMessageId|narrativeResultMessage/, "no result card may replace the answer");
   assert.match(shell, /className=\{styles\.systemTurn\}/, "One's own system prompts are quiet lines, not alert bars");
   assert.match(shell, /message\.id\.startsWith\("one-steer:"\)/, "optimistic next-instruction rows are reconciled with their durable twin");
 });
-check("the block collapses to Codex's Worked-for line and shimmers while live", () => {
+check("the block starts collapsed, remains user-expandable, and shimmers while live", () => {
   assert.match(turnWorkView, /동안 작업` : `Worked for/);
   assert.match(turnWorkView, /styles\.shimmer/);
   assert.match(read("renderer/components/one/OneTurnWork.module.css"), /@keyframes oneWorkShimmer[\s\S]*background-position: 100% 0;[\s\S]*background-position: -20% 0;/, "the light sweeps left→right");
-  assert.match(turnWorkView, /setExpanded\(active\)/, "a settled block collapses; a running one opens");
+  assert.match(turnWorkView, /const \[expanded, setExpanded\] = useState\(false\)/, "work detail starts collapsed");
+  assert.match(turnWorkView, /onClick=\{\(\) => setExpanded\(\(current\) => !current\)\}/, "the person can explicitly expand or collapse it");
+  assert.match(turnWorkView, /setExpanded\(false\);[\s\S]{0,40}\}, \[active\]\)/, "start and settlement boundaries reset stale disclosure state");
 });
 check("reasoning text is a typed protocol row: runtimes emit it, Main persists the span, mobile gets a bounded copy", () => {
   assert.match(read("shared/types.ts"), /reasoning\?: \{ phase: "start" \| "delta" \| "end"; durationMs\?: number; text\?: string \}/);

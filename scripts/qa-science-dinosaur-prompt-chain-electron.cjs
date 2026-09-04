@@ -709,7 +709,7 @@ async function main() {
     assertions: {},
     electronExit: null,
     closeRequestedAt: null,
-    timeout: { totalTimeoutMs, teardownReserveMs, workDeadlineReached: false },
+    timeout: { totalTimeoutMs, teardownReserveMs, workDeadlineReached: false, hardDeadlineReached: false },
     timeline: [],
   };
   const reportPath = path.join(outputDir, "report.json");
@@ -723,6 +723,22 @@ async function main() {
     fs.writeFileSync(reportPath, `${JSON.stringify(report, null, 2)}\n`, { encoding: "utf8", mode: 0o600 });
   };
   const startedAt = Date.now();
+  const hardDeadlineTimer = setTimeout(() => {
+    const electronPid = desktop?.process()?.pid || null;
+    report.timeout.hardDeadlineReached = true;
+    report.failure ||= {
+      message: "science-dinosaur-total-deadline-exceeded",
+      stack: null,
+    };
+    report.elapsedMs = Date.now() - startedAt;
+    report.closeRequestedAt ||= new Date().toISOString();
+    appendDiagnosticEvent("qa-hard-deadline", { electronPid, elapsedMs: report.elapsedMs });
+    persistReport();
+    trace("process:hard-deadline", { electronPid, elapsedMs: report.elapsedMs });
+    try { desktop?.process()?.kill("SIGKILL"); } catch { /* already gone */ }
+    process.exit(124);
+  }, totalTimeoutMs);
+  hardDeadlineTimer.unref?.();
   // Leave a bounded window for the report/video finalization and Electron
   // shutdown. Otherwise an outer 600-second runner can kill the process while
   // this harness is still attempting post-deadline UI capture.
@@ -1134,10 +1150,14 @@ async function main() {
     if (process.env.AGENTLAS_DINOSAUR_KEEP_QA_ROOT !== "1") {
       fs.rmSync(qaRoot, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
     }
+    clearTimeout(hardDeadlineTimer);
   }
 }
 
-main().catch((error) => {
-  console.error(error instanceof Error ? error.stack : String(error));
-  process.exitCode = 1;
-});
+main().then(
+  () => process.exit(process.exitCode ?? 0),
+  (error) => {
+    console.error(error instanceof Error ? error.stack : String(error));
+    process.exit(1);
+  },
+);

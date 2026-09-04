@@ -78,6 +78,7 @@ import { scienceLabDecisionProjectionsForProject } from "./lab-decision-projecti
 import { loadSciencePluginRuntime, readSciencePluginFile } from "./plugin-runtime";
 import { inspectScienceManuscriptDepth } from "./manuscript/depth-preflight";
 import { assertScienceAgentManuscriptDraft } from "./manuscript/agent-draft-gate";
+import { ScienceExtantReferenceAssemblyHttpError } from "./extant-reference-assemblies";
 
 const MAX_REQUEST_BYTES = 8 * 1024 * 1024;
 const MAX_AI_VISUAL_BYTES = 8 * 1024 * 1024;
@@ -105,6 +106,50 @@ const MANUSCRIPT_UUID_SCHEMA = {
 } as const;
 
 const MANUSCRIPT_SHA256_SCHEMA = { type: "string", pattern: "^[a-f0-9]{64}$" } as const;
+const SCIENCE_RESEARCH_MAIN_PHASE_SCHEMA = {
+  type: "string",
+  enum: ["intake", "literature", "hypothesis", "analysis_plan_draft", "analysis_plan_frozen", "execution", "evidence_reconciliation", "conclusions", "manuscript", "journal_profile", "submission_validation", "ready_to_submit"],
+} as const;
+const exactLifecyclePreconditionSchema = (properties: Record<string, unknown>) => ({
+  type: "object",
+  properties,
+  required: Object.keys(properties),
+  additionalProperties: false,
+});
+const phaseGatePreconditionSchema = (fromPhase: string, toPhase: string, gateCode: string, extra: Record<string, unknown> = {}) => exactLifecyclePreconditionSchema({
+  kind: { const: "phase_gate" },
+  fromPhase: { const: fromPhase },
+  toPhase: { const: toPhase },
+  gateCode: { const: gateCode },
+  evidenceSha256: MANUSCRIPT_SHA256_SCHEMA,
+  ...extra,
+});
+export const SCIENCE_RESEARCH_LIFECYCLE_PRECONDITIONS_SCHEMA = {
+  oneOf: [
+    exactLifecyclePreconditionSchema({ kind: { const: "state_update" }, reason: { type: "string", enum: ["progress", "decision_opened", "decision_resolved", "blocker_changed"] }, evidenceSha256: MANUSCRIPT_SHA256_SCHEMA }),
+    phaseGatePreconditionSchema("intake", "literature", "intake.complete"),
+    phaseGatePreconditionSchema("literature", "hypothesis", "literature.complete"),
+    phaseGatePreconditionSchema("hypothesis", "analysis_plan_draft", "hypothesis.complete"),
+    phaseGatePreconditionSchema("analysis_plan_draft", "analysis_plan_frozen", "analysis_plan.frozen"),
+    phaseGatePreconditionSchema("analysis_plan_frozen", "execution", "analysis_plan.execution_authorized"),
+    phaseGatePreconditionSchema("execution", "evidence_reconciliation", "execution.receipts_verified"),
+    phaseGatePreconditionSchema("evidence_reconciliation", "conclusions", "evidence.reconciled", {
+      claimLedgerId: MANUSCRIPT_UUID_SCHEMA,
+      claimLedgerRevision: { type: "integer", minimum: 1 },
+      claimLedgerManifestSha256: MANUSCRIPT_SHA256_SCHEMA,
+      claimGateReportSha256: MANUSCRIPT_SHA256_SCHEMA,
+      claimPolicyContentSha256: MANUSCRIPT_SHA256_SCHEMA,
+    }),
+    phaseGatePreconditionSchema("conclusions", "manuscript", "conclusions.bounded"),
+    phaseGatePreconditionSchema("manuscript", "journal_profile", "manuscript.version_bound"),
+    phaseGatePreconditionSchema("journal_profile", "submission_validation", "journal_profile.verified"),
+    phaseGatePreconditionSchema("submission_validation", "ready_to_submit", "submission.package_verified"),
+    exactLifecyclePreconditionSchema({ kind: { const: "block" }, fromPhase: SCIENCE_RESEARCH_MAIN_PHASE_SCHEMA, evidenceSha256: MANUSCRIPT_SHA256_SCHEMA }),
+    exactLifecyclePreconditionSchema({ kind: { const: "resume" }, resumePhase: SCIENCE_RESEARCH_MAIN_PHASE_SCHEMA, resolutionSha256: MANUSCRIPT_SHA256_SCHEMA }),
+    exactLifecyclePreconditionSchema({ kind: { const: "stop" }, fromPhase: { type: "string", enum: [...SCIENCE_RESEARCH_MAIN_PHASE_SCHEMA.enum, "blocked"] }, evidenceSha256: MANUSCRIPT_SHA256_SCHEMA }),
+    exactLifecyclePreconditionSchema({ kind: { const: "fail" }, fromPhase: { type: "string", enum: [...SCIENCE_RESEARCH_MAIN_PHASE_SCHEMA.enum, "blocked"] }, evidenceSha256: MANUSCRIPT_SHA256_SCHEMA }),
+  ],
+} as const;
 const SCIENCE_DOMAIN_SCHEMA = {
   type: "string",
   enum: ["general", "life-science", "chemistry", "physics", "materials-science", "genomics", "astronomy", "earth-ecology", "statistics", "economics", "finance"],
@@ -1035,7 +1080,7 @@ const PLATFORM_TOOLS: McpTool[] = [
         expected_state_sha256: { type: "string", pattern: "^[a-f0-9]{64}$" },
         phase: { type: "string", enum: ["intake", "literature", "hypothesis", "analysis_plan_draft", "analysis_plan_frozen", "execution", "evidence_reconciliation", "conclusions", "manuscript", "journal_profile", "submission_validation", "ready_to_submit", "blocked", "stopped", "failed"] },
         question: { type: "string", minLength: 1, maxLength: 20000 },
-        preconditions: { type: "object" },
+        preconditions: SCIENCE_RESEARCH_LIFECYCLE_PRECONDITIONS_SCHEMA,
         open_blocking_decisions: { type: "array", maxItems: 100, items: { type: "object" } },
         blockers: { type: "array", maxItems: 100, items: { type: "string", minLength: 1, maxLength: 8000 } },
         frozen_analysis_plan: { type: ["object", "null"] },
@@ -2736,6 +2781,9 @@ class ToolInputSchemaError extends Error {
 
 function scienceToolErrorPayload(route: string, error: unknown): Record<string, unknown> {
   const code = error instanceof Error ? error.message.slice(0, 240) : "science-tool-control-failed";
+  if (route === "/v1/platform/genomics/extant-reference-assemblies" && error instanceof ScienceExtantReferenceAssemblyHttpError) {
+    return { ok: false, code, failureReceipt: error.failureReceipt };
+  }
   if (route === "/v1/platform/analysis-plans/propose") {
     if (code === "science-analysis-dependence-invalid"
       || (error instanceof ToolInputSchemaError && error.path === "$.document.design.dependence")) {

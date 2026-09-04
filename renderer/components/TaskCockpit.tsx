@@ -2540,6 +2540,49 @@ function ChatPage() {
     };
   }, [chatId]);
 
+  // CLI auto-update가 현재 열려 있는 Work 대화에도 즉시 반영되게 한다. 대시보드는
+  // runtime store 방송을 듣지만, 이 화면이 초기 detect 결과만 붙들면 모델/바이너리가
+  // 바뀐 뒤 사용자가 모델을 한 번 더 눌러야 새 런타임이 보이는 것처럼 남는다.
+  useEffect(() => {
+    const api = ipc();
+    const events = ipcEvents();
+    if (!api || !events?.onStoreChanged || !chatId) return;
+    let generation = 0;
+    const refresh = () => {
+      const requestGeneration = ++generation;
+      void api.runtime.detect().then((list) => {
+        if (requestGeneration !== generation) return;
+        const selection = chat?.runtimeSelection ?? null;
+        const matched = selection
+          ? list.find(
+              (runtime) =>
+                runtime.kind === selection.kind &&
+                (!selection.backend || runtime.backend === selection.backend) &&
+                (!selection.source || runtime.source === selection.source),
+            )
+          : list.find((runtime) => runtime.active);
+        // A dead pin is handled by the metadata hydration path on re-entry. Do not
+        // blank an already usable header when a transient probe returns no match.
+        if (selection && !matched) return;
+        setActiveRuntime(
+          matched
+            ? {
+                ...matched,
+                active: true,
+                model: selection?.model ?? matched.model,
+                effort: selection?.effort ?? matched.effort,
+                longContextEnabled:
+                  selection?.longContext ?? matched.longContextEnabled,
+              }
+            : null,
+        );
+      }).catch(() => undefined);
+    };
+    return events.onStoreChanged((change) => {
+      if (change.entity === "runtime") refresh();
+    });
+  }, [chat?.runtimeSelection, chatId]);
+
   // The transcript is durable, so the Agent work panel must be durable too.
   // Rebuild terminal run activity from Main's redacted run ledger after a
   // reload instead of showing "Idle / 0 steps" beside a completed team reply.

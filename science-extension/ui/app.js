@@ -14,7 +14,7 @@ import { formatScienceCell } from "./format-cell.js";
   const state = {
     locale: "en",
     projects: [], selectedId: null, lifecycle: null, conversations: [], selectedConversationId: null, messages: [], sources: [], sourceFigures: [], runs: [], artifacts: [], labs: [], workspaceLabBindings: [], labCatalog: [], labDecisionProjections: [], rendererPacks: [], manuscripts: [], claimLedger: null, journalProfiles: [], submissionExports: [], analysisSpecs: [], decisions: [],
-    artifactContextsByMessage: new Map(), labContextsById: new Map(), artifactHistoryById: new Map(), selectedLabId: null, selectedArtifactOriginVersion: null, inspectedArtifactVersion: null, inspectedArtifactContext: null, artifactComparison: null, draftHistoryGuard: null, labsExpanded: true, expandedLabGroups: new Set(["chemistry"]), expandedLabDecisions: new Set(), projectMenuOpen: false, projectLibrarySummaries: new Map(), projectLibrarySummaryState: "loading", newProjectStep: "field", selectedResearchTemplateId: null, newProjectDraft: { title: "", question: "" }, historyOpen: false, railCollapsed: readRailCollapsed(),
+    artifactContextsByMessage: new Map(), labContextsById: new Map(), artifactHistoryById: new Map(), selectedLabId: null, selectedArtifactOriginVersion: null, inspectedArtifactVersion: null, inspectedArtifactContext: null, artifactComparison: null, draftHistoryGuard: null, labsExpanded: true, expandedLabGroups: new Set(["chemistry"]), expandedLabDecisions: new Set(), projectMenuOpen: false, projectFolderOpen: false, projectLibrarySummaries: new Map(), projectLibrarySummaryState: "loading", newProjectStep: "field", selectedResearchTemplateId: null, newProjectDraft: { title: "", question: "" }, historyOpen: false, railCollapsed: readRailCollapsed(),
     blocksByMessage: new Map(), citationsByMessage: new Map(), evidenceById: new Map(), selectedSourceId: null, selectedArtifactId: null,
     evidenceGraph: null, evidenceGraphReviews: [], evidenceGraphLoading: false, evidenceGraphError: "", selectedEvidenceGraphNodeId: null, selectedEvidenceGraphCandidateId: null, evidenceGraphReviewSheet: false, evidenceGraphReviewDecision: "accepted", evidenceGraphReviewBusy: false, evidenceGraphReviewError: "", evidenceGraphPathAnchorId: null, evidenceGraphPath: null,
     mode: "session", drawer: null, modal: false, manuscriptModal: false, saving: false, loadingProject: false, projectError: "", activeVegaView: null, activeCytoscape: null, activeNumericSurface: null, activeJBrowseTarget: null, scrollByMode: { session: 0, lab: 0, manuscript: 0 }, returnMessageId: null,
@@ -179,6 +179,14 @@ import { formatScienceCell } from "./format-cell.js";
   const formatDate = (value) => {
     const date = new Date(value);
     return Number.isNaN(date.getTime()) ? "" : new Intl.DateTimeFormat(state.locale === "ko" ? "ko-KR" : "en-US", { year: "numeric", month: "short", day: "numeric" }).format(date);
+  };
+  const formatByteSize = (value) => {
+    if (value === null || value === undefined || value === "") return "—";
+    const bytes = Number(value);
+    if (!Number.isFinite(bytes) || bytes < 0) return "—";
+    if (bytes < 1_000) return `${Math.round(bytes)} B`;
+    if (bytes < 1_000_000) return `${(bytes / 1_000).toFixed(bytes < 10_000 ? 1 : 0)} KB`;
+    return `${(bytes / 1_000_000).toFixed(bytes < 10_000_000 ? 1 : 0)} MB`;
   };
   const sourceById = (id) => state.sources.find((source) => source.id === id) || null;
   const citationById = (id) => [...state.citationsByMessage.values()].flat().find((citation) => citation.id === id) || null;
@@ -753,7 +761,7 @@ import { formatScienceCell } from "./format-cell.js";
       const manuscript = manuscriptById(tab.manuscriptId);
       if (manuscript) { tab.title = manuscript.title; tab.exactVersion = manuscript.currentVersion; tab.exactContentSha256 = manuscript.version?.contentSha256 || null; }
     }
-    if (await maybeOpenDraftJobManuscript(projectId, { terminal: ["completed", "failed", "cancelled", "interrupted"].includes(state.activeTurn?.status) })) return;
+    if (!state.projectFolderOpen && await maybeOpenDraftJobManuscript(projectId, { terminal: ["completed", "failed", "cancelled", "interrupted"].includes(state.activeTurn?.status) })) return;
     if (state.researchContractSheet) { render(); return; }
     renderWorkspaceTabs();
     renderChatDock();
@@ -793,6 +801,7 @@ import { formatScienceCell } from "./format-cell.js";
       selectedJournalProfileId: state.selectedJournalProfileId,
     } : null;
     state.selectedId = projectId;
+    state.projectFolderOpen = Boolean(options.openFolder);
     if (window.matchMedia("(max-width: 680px)").matches) state.railCollapsed = true;
     if (switchingProject && state.manuscriptDraftJob?.projectId !== projectId) state.manuscriptDraftJob = null;
     state.lifecycle = null;
@@ -965,6 +974,11 @@ import { formatScienceCell } from "./format-cell.js";
       state.blocksByMessage = messageEvidence.blocks;
       state.citationsByMessage = messageEvidence.citations;
       state.evidenceById = messageEvidence.spans;
+      if (state.projectFolderOpen && safeManuscripts.length) {
+        const exportRows = await Promise.all(safeManuscripts.map((manuscript) => science.submissions.list(projectId, manuscript.id)));
+        if (epoch !== selectionEpoch) return;
+        state.submissionExports = exportRows.flatMap((rows) => Array.isArray(rows) ? rows : []);
+      }
       state.loadingProject = false;
       if (preservedWorkspace) {
         state.currentDestination = projectDestinationIds.has(preservedWorkspace.currentDestination) ? preservedWorkspace.currentDestination : workspaceState?.navigation?.destination || "overview";
@@ -1047,7 +1061,7 @@ import { formatScienceCell } from "./format-cell.js";
       state.acquisitionRuns = [];
       state.acquisitionUnresolvedIds = [];
       state.acquisitionError = "";
-      if (await maybeOpenDraftJobManuscript(projectId, { terminal: ["completed", "failed", "cancelled", "interrupted"].includes(state.activeTurn?.status) })) return;
+      if (!state.projectFolderOpen && await maybeOpenDraftJobManuscript(projectId, { terminal: ["completed", "failed", "cancelled", "interrupted"].includes(state.activeTurn?.status) })) return;
       render();
       // Read the hypotheses on opening the project, not only on arriving at their screen: the rail
       // badge tells the researcher that something is waiting on them, and a badge that only appears
@@ -5842,9 +5856,107 @@ import { formatScienceCell } from "./format-cell.js";
     return `<section class="projectLibrary"><header class="projectLibraryTopbar"><button class="projectLibraryExit" data-action="back-to-work" aria-label="${uiCopy("Agentlas Work로 돌아가기", "Back to Agentlas Work")}">${heroIcon("chevron-right", "uiIcon isReverse")}<span>Agentlas Work</span></button><span class="projectLibraryBrand"><img src="./assets/agentlas-mark.png" alt=""><strong>Agentlas <em>Science*</em></strong></span><span class="projectLibraryCount">${escapeHtml(projectCount)}</span></header><main class="projectLibraryMain"><div class="projectLibraryHeading"><div><span>Research library</span><h1>${uiCopy("연구 보관함", "Research library")}</h1><p>${uiCopy("프로젝트 폴더를 열어 연구를 이어가거나, 새 연구를 시작하세요.", "Open a project folder to continue, or start a new study.")}</p></div><button class="primaryButton" data-action="new">${heroIcon("plus")}${uiCopy("새 연구", "New research")}</button></div><section class="libraryProjects"><header><h2>${uiCopy("프로젝트 폴더", "Project folders")}</h2><span>${escapeHtml(projectCount)}</span></header><div class="libraryProjectGrid">${cards || `<div class="libraryEmpty"><strong>${uiCopy("아직 연구 프로젝트가 없습니다.", "No research projects yet.")}</strong><span>${uiCopy("15개 연구 분야 중 하나를 골라 첫 프로젝트를 만들어 보세요.", "Choose one of 15 research fields to create your first project.")}</span><button class="secondaryButton" data-action="new">${uiCopy("새 연구 시작", "Start new research")}</button></div>`}</div></section></main>${modal()}</section>`;
   }
 
+  function projectFolderRows() {
+    const rows = [];
+    for (const source of state.sources) {
+      rows.push({
+        key: `source:${source.id}`,
+        kind: source.kind === "dataset" ? uiCopy("데이터", "Data") : uiCopy("출처", "Source"),
+        icon: source.kind === "dataset" ? "table" : "book",
+        title: source.title || source.url || source.id,
+        detail: `${source.kind || "source"} · v${source.currentVersion || source.version?.version || 1}`,
+        byteSize: source.byteSize ?? source.version?.byteSize ?? null,
+        stamp: source.updatedAt || source.createdAt,
+        action: `data-action="open-project-folder-source" data-source-id="${escapeHtml(source.id)}"`,
+      });
+    }
+    for (const figure of state.sourceFigures) {
+      rows.push({
+        key: `source-figure:${figure.id}`,
+        kind: uiCopy("그림", "Figure"),
+        icon: "photo",
+        title: figure.figureLabel || figure.caption || figure.locator || figure.id,
+        detail: `${figure.mimeType || "image"} · ${figure.width || 0}×${figure.height || 0}`,
+        byteSize: figure.byteSize,
+        stamp: figure.createdAt,
+        action: `data-action="open-project-folder-source" data-source-id="${escapeHtml(figure.sourceId)}"`,
+      });
+    }
+    for (const run of state.runs.filter((item) => item?.status === "succeeded")) {
+      rows.push({
+        key: `run:${run.id}`,
+        kind: uiCopy("분석", "Analysis"),
+        icon: "chart",
+        title: run.title || run.toolId || run.kind || uiCopy("성공한 분석 실행", "Successful analysis run"),
+        detail: `${run.status} · ${String(run.id || "").slice(0, 8)}…`,
+        byteSize: Array.isArray(run.outputs) && run.outputs.length && run.outputs.every((item) => Number.isFinite(Number(item?.byteSize)))
+          ? run.outputs.reduce((total, item) => total + Number(item.byteSize), 0) : null,
+        stamp: run.completedAt || run.updatedAt || run.createdAt,
+        action: `data-action="open-project-folder-destination" data-destination="analysis-runs"`,
+      });
+    }
+    for (const artifact of state.artifacts.filter((item) => item?.status === "ready")) {
+      const labId = labForArtifact(artifact.id);
+      rows.push({
+        key: `artifact:${artifact.id}`,
+        kind: artifact.kind === "table" ? uiCopy("표", "Table") : artifact.kind === "figure" ? uiCopy("그림", "Figure") : uiCopy("결과", "Result"),
+        icon: artifact.kind === "table" ? "table" : artifact.kind === "figure" ? "photo" : "chart",
+        title: artifact.title || artifact.id,
+        detail: `${labId ? labLabel(labId) : artifact.kind || "artifact"} · v${artifact.currentVersion || artifact.version?.version || 1}`,
+        byteSize: artifact.byteSize ?? artifact.version?.byteSize ?? null,
+        stamp: artifact.updatedAt || artifact.createdAt,
+        action: labId
+          ? `data-action="open-project-folder-artifact" data-lab-id="${escapeHtml(labId)}" data-artifact-id="${escapeHtml(artifact.id)}"`
+          : `data-action="open-project-folder-destination" data-destination="results"`,
+      });
+    }
+    for (const manuscript of state.manuscripts) {
+      rows.push({
+        key: `manuscript:${manuscript.id}`,
+        kind: uiCopy("원고", "Manuscript"),
+        icon: "book",
+        title: manuscript.title || manuscript.id,
+        detail: `v${manuscript.currentVersion || manuscript.version?.version || 1}`,
+        byteSize: manuscript.version?.markdown ? new TextEncoder().encode(manuscript.version.markdown).byteLength : null,
+        stamp: manuscript.updatedAt || manuscript.createdAt,
+        action: `data-action="open-project-folder-manuscript" data-manuscript-id="${escapeHtml(manuscript.id)}"`,
+      });
+    }
+    for (const submission of state.submissionExports.filter((item) => item?.status === "ready")) {
+      rows.push({
+        key: `submission:${submission.id}`,
+        kind: "PDF",
+        icon: "arrow-down-tray",
+        title: submission.fileName || uiCopy("검증된 제출 패키지", "Verified submission package"),
+        detail: `${submission.manuscriptTitle || uiCopy("원고", "Manuscript")} · ${String(submission.packageSha256 || "").slice(0, 12)}…`,
+        byteSize: submission.packageByteSize,
+        stamp: submission.createdAt,
+        action: `data-action="open-project-folder-export" data-manuscript-id="${escapeHtml(submission.manuscriptId || "")}" data-export-id="${escapeHtml(submission.id)}"`,
+      });
+    }
+    return rows.sort((left, right) => String(right.stamp || "").localeCompare(String(left.stamp || "")) || left.key.localeCompare(right.key));
+  }
+
+  function projectFolder(project) {
+    const template = researchTemplateById(project.researchTemplateId || project.initialLabId);
+    const summary = state.projectLibrarySummaries.get(project.id) || { fileCount: 0, dataCount: 0, analysisCount: 0, manuscriptCount: 0, pdfCount: 0 };
+    const folderState = summary.pdfCount > 0 ? "complete" : Object.values(summary).some((count) => Number(count) > 0) ? "data" : "empty";
+    const rows = state.loadingProject ? [] : projectFolderRows();
+    const metrics = [[uiCopy("파일", "Files"), summary.fileCount], [uiCopy("데이터", "Data"), summary.dataCount], [uiCopy("분석", "Analyses"), summary.analysisCount], [uiCopy("원고", "Manuscripts"), summary.manuscriptCount], ["PDF", summary.pdfCount]]
+      .map(([label, count]) => `<span><strong>${escapeHtml(count)}</strong><em>${escapeHtml(label)}</em></span>`).join("");
+    const fileRows = rows.map((row) => `<button class="projectFolderRow" ${row.action} data-folder-item-key="${escapeHtml(row.key)}"><span class="projectFolderRowIcon">${heroIcon(row.icon)}</span><span class="projectFolderRowCopy"><strong title="${escapeHtml(row.title)}">${escapeHtml(row.title)}</strong><em>${escapeHtml(row.detail)}</em></span><span class="projectFolderRowKind">${escapeHtml(row.kind)}</span><span class="projectFolderRowSize">${escapeHtml(formatByteSize(row.byteSize))}</span><time>${escapeHtml(formatDate(row.stamp))}</time><span class="projectFolderRowArrow">${heroIcon("chevron-right")}</span></button>`).join("");
+    const body = state.loadingProject
+      ? `<div class="projectFolderEmpty" aria-live="polite"><strong>${uiCopy("프로젝트 내용을 불러오는 중…", "Loading project contents…")}</strong></div>`
+      : state.projectError
+        ? `<div class="projectFolderEmpty" role="alert"><strong>${escapeHtml(state.projectError)}</strong></div>`
+        : fileRows || `<div class="projectFolderEmpty"><strong>${uiCopy("아직 저장된 연구 내용이 없습니다.", "No research contents have been saved yet.")}</strong><span>${uiCopy("워크스페이스에서 출처를 추가하거나 Lab을 실행하면 이 폴더에 실제 기록이 나타납니다.", "Add a source or run a Lab in the workspace and its actual record will appear here.")}</span></div>`;
+    return `<section class="projectLibrary projectFolderView" data-project-folder-state="${escapeHtml(folderState)}"><header class="projectLibraryTopbar"><button class="projectLibraryExit" data-action="back-to-projects" aria-label="${uiCopy("연구 보관함으로 돌아가기", "Back to research library")}">${heroIcon("chevron-right", "uiIcon isReverse")}<span>${uiCopy("연구 보관함", "Research library")}</span></button><span class="projectLibraryBrand"><img src="./assets/agentlas-mark.png" alt=""><strong>Agentlas <em>Science*</em></strong></span><span class="projectLibraryCount">${escapeHtml(uiCopy("프로젝트 폴더", "Project folder"))}</span></header><main class="projectLibraryMain projectFolderMain"><section class="projectFolderHero"><span class="projectFolderHeroAsset"><img src="./assets/research-templates/folder-${escapeHtml(folderState)}.png" alt=""></span><div class="projectFolderHeroCopy"><span>${escapeHtml(template ? researchTemplateLabel(template) : domainLabel(project.domain))}</span><h1>${escapeHtml(project.title)}</h1><p>${escapeHtml(project.question)}</p><div class="libraryProjectMetrics projectFolderMetrics">${metrics}</div></div><button class="primaryButton" data-action="open-project-workspace">${uiCopy("워크스페이스 열기", "Open workspace")}${heroIcon("chevron-right")}</button></section><section class="projectFolderContents"><header><div><span>Project contents</span><h2>${uiCopy("저장된 연구 내용", "Saved research contents")}</h2></div><strong>${escapeHtml(uiCopy(`${rows.length}개 항목`, `${rows.length} ${rows.length === 1 ? "item" : "items"}`))}</strong></header><div class="projectFolderTable"><div class="projectFolderTableHead" aria-hidden="true"><span></span><span>${uiCopy("이름", "Name")}</span><span>${uiCopy("종류", "Type")}</span><span>${uiCopy("크기", "Size")}</span><span>${uiCopy("수정일", "Modified")}</span><span></span></div>${body}</div></section></main>${modal()}</section>`;
+  }
+
   function workspace() {
     const project = selectedProject();
     if (!project) return projectLibrary();
+    if (state.projectFolderOpen) return projectFolder(project);
     const main = state.mode === "session" ? researchView(project) : state.mode === "manuscript" ? manuscriptWorkbench() : artifactWorkbench();
     return `<section class="workspace ${state.drawer ? "drawerOpen" : ""}" data-workspace-mode="${escapeHtml(state.mode)}" data-project-destination="${escapeHtml(state.currentDestination)}" data-rail-collapsed="${state.railCollapsed}">${projectRail(project)}<button class="railScrim" data-action="collapse-rail" aria-label="사이드바 닫기"></button><main class="mainPane"><header class="topbar"><div class="topLocation workspaceLocation"><button class="workspaceSidebarReveal" data-action="expand-rail" aria-label="사이드바 열기" title="사이드바 열기">${heroIcon("chevron-right")}</button><div class="workspaceTabGroup" role="tablist" aria-label="연구, 열린 Lab 아티팩트와 원고">${researchWorkspaceTabButton()}<div class="workspaceTabsShell" data-workspace-tabs-shell><button class="workspaceTabOverflow workspaceTabOverflowPrevious" type="button" data-action="scroll-workspace-tabs" data-direction="previous" aria-label="이전 열린 탭 보기" hidden>${heroIcon("chevron-right", "uiIcon isReverse")}</button><nav class="workspaceTabs" data-workspace-tabs role="presentation">${workspaceTabButtons()}</nav><button class="workspaceTabOverflow workspaceTabOverflowNext" type="button" data-action="scroll-workspace-tabs" data-direction="next" aria-label="다음 열린 탭 보기" hidden>${heroIcon("chevron-right")}</button></div></div><button class="workspaceTabAdd" data-action="new" aria-label="새 연구 시작" title="새 연구">${heroIcon("plus")}</button></div><div class="topActions">${state.workspaceSyncError ? `<span class="workspaceSyncWarning" role="status" title="${escapeHtml(state.workspaceSyncError)}">저장 실패</span>` : ""}<span class="statusPill" title="${escapeHtml(`${lifecycleLabel()} · ${state.lifecycle?.stateSha256 || ""}`)}">${escapeHtml(lifecycleCompactLabel())}</span><button data-action="toggle-drawer">${state.mode === "session" ? "근거" : "세부"}</button></div></header><div class="workspaceBody"><div class="contentPane workspaceCenter"><div class="workspaceSurface" id="science-workspace-panel" role="tabpanel" aria-labelledby="${escapeHtml(workspaceTabDomId(state.activeWorkspaceTabId))}" data-workspace-surface>${main}</div></div>${chatDock()}</div></main>${contextDrawer()}${modal()}${manuscriptModal()}${journalTargetSheet()}${submissionExportSheet()}${evidenceGraphInferenceReviewSheet()}${episodeResultReviewSheet()}${researchContractApprovalSheet()}${researchDecisionSheet()}</section>`;
   }
@@ -8126,6 +8238,7 @@ import { formatScienceCell } from "./format-cell.js";
       const action = () => {
         rememberScroll();
         state.selectedId = null;
+        state.projectFolderOpen = false;
         state.selectedConversationId = null;
         state.drawer = null;
         state.projectMenuOpen = false;
@@ -8138,6 +8251,54 @@ import { formatScienceCell } from "./format-cell.js";
         });
       };
       if (!guardArtifactDraftNavigation(action)) action();
+      return;
+    }
+    if (target.dataset.action === "open-project-workspace") {
+      state.projectFolderOpen = false;
+      render();
+      return;
+    }
+    if (target.dataset.action === "open-project-folder-source") {
+      state.projectFolderOpen = false;
+      state.mode = "session";
+      state.activeWorkspaceTabId = RESEARCH_TAB_ID;
+      state.currentDestination = "literature";
+      state.selectedSourceId = target.dataset.sourceId || null;
+      state.drawer = state.selectedSourceId ? { kind: "source", id: state.selectedSourceId } : null;
+      render();
+      if (state.selectedId) void loadLiterature(state.selectedId);
+      return;
+    }
+    if (target.dataset.action === "open-project-folder-destination") {
+      state.projectFolderOpen = false;
+      navigateProjectDestination(target.dataset.destination || "overview");
+      return;
+    }
+    if (target.dataset.action === "open-project-folder-artifact") {
+      state.projectFolderOpen = false;
+      const action = () => {
+        void openLab(target.dataset.labId, target.dataset.artifactId, null, null).then(() => {
+          if (state.selectedArtifactId !== target.dataset.artifactId) return;
+          state.drawer = { kind: "artifact", id: target.dataset.artifactId };
+          render();
+        }).catch((error) => {
+          state.projectError = error?.message || String(error);
+          render();
+        });
+      };
+      if (!guardArtifactDraftNavigation(action)) action();
+      return;
+    }
+    if (target.dataset.action === "open-project-folder-manuscript") {
+      state.projectFolderOpen = false;
+      const action = () => void openManuscript(target.dataset.manuscriptId);
+      if (!guardArtifactDraftNavigation(action)) action();
+      return;
+    }
+    if (target.dataset.action === "open-project-folder-export") {
+      state.projectFolderOpen = false;
+      state.selectedManuscriptId = target.dataset.manuscriptId || state.selectedManuscriptId;
+      navigateProjectDestination("submission-archive");
       return;
     }
     if (target.dataset.researchTemplate) {
@@ -8429,7 +8590,7 @@ import { formatScienceCell } from "./format-cell.js";
     if (target.dataset.action === "discard-manuscript-navigation") { const next = state.pendingDraftNavigation; state.pendingDraftNavigation = null; state.manuscriptDraft = null; state.manuscriptSaveError = ""; setActiveWorkspaceTabDirty(false); document.querySelector("[data-draft-history-guard]")?.remove(); if (typeof next === "function") next(); return; }
     if (target.dataset.action === "discard-workspace-navigation") { const next = state.pendingDraftNavigation; state.pendingDraftNavigation = null; setActiveWorkspaceTabDirty(false); document.querySelector("[data-draft-history-guard]")?.remove(); if (typeof next === "function") next(); return; }
     if (target.dataset.action === "reset-vega-draft") { state.vegaDraft = null; state.vegaSaveError = ""; setActiveWorkspaceTabDirty(false); render(); return; }
-    if (target.dataset.projectId) { const action = () => void selectProject(target.dataset.projectId); if (!guardArtifactDraftNavigation(action)) action(); return; }
+    if (target.dataset.projectId) { const action = () => void selectProject(target.dataset.projectId, { openFolder: true }); if (!guardArtifactDraftNavigation(action)) action(); return; }
     if (target.dataset.manuscriptId) { const action = () => void openManuscript(target.dataset.manuscriptId); if (!guardArtifactDraftNavigation(action)) action(); return; }
     if (target.dataset.labId) { const action = () => void openLab(target.dataset.labId, null, null, null); if (!guardArtifactDraftNavigation(action)) action(); return; }
     if (target.dataset.manuscriptArtifactId) {
@@ -9326,7 +9487,8 @@ import { formatScienceCell } from "./format-cell.js";
           const projectId = state.selectedId;
           recordRunFailure(turn.status === "completed" ? "" : (turn.errorCode || `연구 실행이 ${turn.status} 상태로 종료되었습니다.`));
           if (projectId) {
-            if (state.mode === "lab") void refreshConversationOnly(projectId).catch((error) => {
+            if (state.projectFolderOpen) void selectProject(projectId, { openFolder: true, preserveWorkspace: true });
+            else if (state.mode === "lab") void refreshConversationOnly(projectId).catch((error) => {
               recordRunFailure(error);
             });
             else void selectProject(projectId, { preserveWorkspace: true });

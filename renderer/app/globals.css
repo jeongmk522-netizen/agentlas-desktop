@@ -7253,6 +7253,14 @@ button[data-toggle-state="on"] {
   box-shadow: none;
 }
 
+.task-cockpit-header-action:disabled {
+  border-color: transparent;
+  background: transparent;
+  color: var(--muted);
+  cursor: default;
+  opacity: 0.42;
+}
+
 .task-cockpit-header-danger {
   margin-left: 3px;
   border-left-color: transparent;

@@ -1698,6 +1698,13 @@ function ChatPage() {
     }
     return { files: out, outputs: outputOut };
   }, [messages, mediaBasePaths]);
+  const hasViewablePanelContent = Boolean(
+    artifact
+    || surface
+    || mediaPreview
+    || agentScreen
+    || linkedOutputFiles.length > 0
+  );
 
   // 사용자가 직접 패널을 접고/펴면 선호값을 영속화 (자동 노출과 구분).
   const setWorkspaceOpenPersisted = useCallback((open: boolean) => {
@@ -2908,13 +2915,13 @@ function ChatPage() {
       void api.workspace.get(chatId).then((savedFolder) => {
         if (cancelled) return;
         const rightPanelPreference = readRightPanelPreference();
-        if (rightPanelPreference?.open) {
+        if (rightPanelPreference?.open && rightPanelPreference.tab !== "panel") {
           setRightPanelTab(rightPanelPreference.tab);
           setRightPanelOpen(true);
         } else if (!rightPanelPreference && savedFolder) {
           setRightPanelTab("file");
           setRightPanelOpen(true);
-        } else {
+        } else if (rightPanelPreference?.tab !== "panel") {
           setRightPanelOpen(false);
         }
         // ContinuityReceipt — 복원된 작업 폴더가 있을 때만 배너를 띄운다(없으면 null → 렌더 안 함).
@@ -4710,10 +4717,15 @@ function ChatPage() {
           onClick={() => (rightPanelOpen && rightPanelTab === "panel" ? closeRightPanel() : openPanelTab("panel"))}
           className="task-cockpit-header-action"
           data-right-panel-trigger="panel"
-          aria-label={locale === "ko" ? "뷰어 패널" : "Viewer panel"}
-          title={locale === "ko" ? "뷰어 패널" : "Viewer panel"}
+          aria-label={hasViewablePanelContent
+            ? (locale === "ko" ? "뷰어 패널" : "Viewer panel")
+            : (locale === "ko" ? "아직 열 결과가 없습니다" : "No result to view yet")}
+          title={hasViewablePanelContent
+            ? (locale === "ko" ? "뷰어 패널" : "Viewer panel")
+            : (locale === "ko" ? "아직 열 결과가 없습니다" : "No result to view yet")}
           data-active={rightPanelOpen && rightPanelTab === "panel" ? "true" : "false"}
-          data-has-content={artifact || surface || mediaPreview || linkedOutputFiles.length > 0 ? "true" : "false"}
+          data-has-content={hasViewablePanelContent ? "true" : "false"}
+          disabled={!hasViewablePanelContent}
         >
           <IconPanelRight size={16} />
         </button>

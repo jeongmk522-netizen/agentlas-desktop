@@ -13986,6 +13986,14 @@ export class ScienceStore {
         if (prior.inputSha256 !== inputSha256) throw new Error("science-staged-evidence-request-conflict");
         return { stagedEvidence: prior, replayed: true };
       }
+      const coordinateRow = this.db.prepare(`SELECT * FROM staged_message_evidence
+        WHERE turn_id = ? AND block_ordinal = ? AND citation_ordinal = ?`)
+        .get(input.turnId, blockOrdinal, citationOrdinal) as Record<string, unknown> | undefined;
+      if (coordinateRow) {
+        const prior = stagedMessageEvidenceFromRow(coordinateRow);
+        if (prior.inputSha256 !== inputSha256) throw new Error("science-staged-evidence-coordinate-conflict");
+        return { stagedEvidence: prior, replayed: true };
+      }
       const turn = this.getTurnForProject(input.projectId, input.turnId);
       if (!turn || turn.conversationId !== input.conversationId || turn.invocationRunId !== input.invocationRunId) {
         throw new Error("science-staged-evidence-turn-scope-mismatch");

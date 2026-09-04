@@ -55,6 +55,12 @@
   --science-chat-width: 388px;
   --science-chat-width-compact: 360px;
   --science-workspace-gutter: 12px;
+  --science-question-chat-width: var(--science-chat-width);
+  --science-question-rail-width: var(--rail-expanded);
+  --science-question-gap: 1cm;
+  --science-question-max-width: 520px;
+  --science-question-compact-width: 360px;
+  --science-question-width: min(var(--science-question-max-width), calc(100vw - var(--science-question-chat-width) - var(--science-question-rail-width) - var(--science-question-gap) - var(--science-workspace-gutter)));
   --danger: #b42318;
   /* Brand coral, measured from the approved wordmark: the one accent this product owns. */
   --brand-coral: #fd7258;
@@ -1105,9 +1111,9 @@ button.manuscriptBinding:hover { border-color: var(--line-strong); background: v
 }
 .chatQuestionSheet {
   position: fixed;
-  right: calc(var(--science-chat-width) - 12px + 1cm);
+  right: calc(var(--science-question-chat-width) - var(--science-workspace-gutter) + var(--science-question-gap));
   bottom: 124px;
-  width: min(360px, calc(100vw - 44px));
+  width: var(--science-question-width);
   max-height: min(640px, calc(100vh - 170px));
   display: flex;
   padding: 0;
@@ -1116,9 +1122,10 @@ button.manuscriptBinding:hover { border-color: var(--line-strong); background: v
   pointer-events: auto;
   animation: scienceChatQuestionEnter 180ms cubic-bezier(.32, .72, 0, 1) both;
 }
-.chatQuestionSheet > header { min-height: 62px; flex: 0 0 62px; gap: 12px; padding: 13px 16px 11px; }
-.chatQuestionSheet > header span { font-size: 11px; }
-.chatQuestionSheet > header h2 { margin-top: 4px; font-size: 15px; }
+.chatQuestionSheet > header { min-height: 62px; flex: 0 0 auto; gap: 12px; padding: 13px 16px 11px; }
+.chatQuestionSheet > header > div { min-width: 0; flex: 1 1 auto; }
+.chatQuestionSheet > header span { font-size: 11px; overflow-wrap: anywhere; word-break: break-word; }
+.chatQuestionSheet > header h2 { min-width: 0; margin-top: 4px; font-size: 15px; overflow-wrap: anywhere; word-break: break-word; }
 .chatQuestionSheet > header button { width: 28px; height: 28px; font-size: 18px; }
 .chatQuestionSheet .decisionSheetBody { padding: 15px 16px 17px; }
 .chatQuestionSheet .decisionQuestion > p { font-size: 13px; line-height: 1.45; }
@@ -1129,7 +1136,8 @@ button.manuscriptBinding:hover { border-color: var(--line-strong); background: v
 .chatQuestionSheet .decisionOptions { grid-template-columns: 1fr; gap: 8px; margin-top: 16px; }
 .chatQuestionSheet .decisionOptions legend { margin-bottom: 0; font-size: 12px; }
 .chatQuestionSheet .decisionOptionCard { gap: 8px; border-radius: 10px; padding: 10px; }
-.chatQuestionSheet .decisionOptionTitle strong { font-size: 11px; }
+.chatQuestionSheet .decisionOptionTitle { align-items: flex-start; flex-wrap: wrap; }
+.chatQuestionSheet .decisionOptionTitle strong { flex: 1 1 220px; font-size: 11px; }
 .chatQuestionSheet .decisionOptionTitle em { padding: 3px 6px; font-size: 11px; }
 .chatQuestionSheet .decisionOptionDescription { margin-top: 5px; font-size: 11px; line-height: 1.4; }
 .chatQuestionSheet .decisionOptionEvidence { display: none; }
@@ -1140,6 +1148,12 @@ button.manuscriptBinding:hover { border-color: var(--line-strong); background: v
 .chatQuestionSheet .decisionRecommendation { margin-top: 10px; border-radius: 9px; padding: 9px 10px; }
 .chatQuestionSheet .decisionRecommendation strong { font-size: 11px; }
 .chatQuestionSheet .decisionRecommendation span { font-size: 11px; }
+.chatQuestionSheet .decisionQuestion > p,
+.chatQuestionSheet .decisionWhy span,
+.chatQuestionSheet .decisionOptionTitle strong,
+.chatQuestionSheet .decisionOptionDescription,
+.chatQuestionSheet .decisionOptionImpact,
+.chatQuestionSheet .decisionRecommendation span { min-width: 0; overflow-wrap: anywhere; word-break: break-word; }
 .chatQuestionSheet > footer { min-height: 58px; flex: 0 0 58px; padding: 9px 16px; }
 .chatQuestionSheet > footer > span { display: none; }
 .chatQuestionSheet > footer button { min-height: 34px; border-radius: 9px; padding: 0 12px; font-size: 12px; }
@@ -1148,28 +1162,30 @@ button.manuscriptBinding:hover { border-color: var(--line-strong); background: v
    above the extension. A host-layer card cannot overlay WebContentsView without
    shortening the workspace, which is what moved the entire left rail upward. */
 .runtimeQuestionLayer { position: fixed; z-index: 90; inset: 0; pointer-events: none; }
-.runtimeQuestionPopover { position: absolute; right: 18px; bottom: 196px; width: min(360px, calc(100vw - 36px)); max-height: min(360px, calc(100vh - 232px)); overflow: auto; pointer-events: auto; border: 1px solid var(--science-border-default); border-radius: var(--science-radius-card); background: var(--science-surface-0); padding: 16px; box-shadow: var(--science-shadow-standard); animation: scienceChatQuestionEnter var(--motion-state) both; }
-.runtimeQuestionPopover > header { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.runtimeQuestionPopover { position: absolute; right: calc(var(--science-question-chat-width) - var(--science-workspace-gutter) + var(--science-question-gap)); bottom: 196px; width: var(--science-question-width); max-height: min(var(--science-question-max-width), calc(100vh - 232px)); overflow-x: hidden; overflow-y: auto; overscroll-behavior: contain; pointer-events: auto; border: 1px solid var(--science-border-default); border-radius: var(--science-radius-card); background: var(--science-surface-0); padding: var(--science-space-from-56); box-shadow: var(--science-shadow-standard); animation: scienceChatQuestionEnter var(--motion-state) both; }
+.runtimeQuestionPopover > header { min-width: 0; display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 .runtimeQuestionPopover > header span { min-width: 0; overflow: hidden; color: var(--grey-600); font-size: 12px; font-weight: 700; letter-spacing: .045em; text-overflow: ellipsis; text-transform: uppercase; white-space: nowrap; }
 .runtimeQuestionPopover > header button { width: var(--science-icon-button-size); height: var(--science-icon-button-size); display: grid; flex: 0 0 var(--science-icon-button-size); place-items: center; border: 0; border-radius: var(--science-radius-control); background: transparent; color: var(--grey-600); font-size: 20px; line-height: 1; }
 .runtimeQuestionPopover > header button:hover { background: var(--science-surface-1); color: var(--science-ink); }
-.runtimeQuestionPopover > p { display: -webkit-box; overflow: hidden; margin: 8px 0 16px; color: var(--science-ink); font-size: 14px; font-weight: 620; line-height: 1.5; -webkit-box-orient: vertical; -webkit-line-clamp: 4; }
+.runtimeQuestionPopover > p { min-width: 0; margin: 12px 0 22px; color: var(--science-ink); font-size: 14px; font-weight: 650; line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word; }
 .runtimeQuestionOptions { display: grid; gap: 6px; }
 .runtimeQuestionPopover[data-compact="true"] .runtimeQuestionOptions { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-.runtimeQuestionOptions > button { min-width: 0; min-height: var(--science-button-s-height); display: grid; grid-template-columns: 22px minmax(0, 1fr); align-items: center; gap: 6px; border: 0; border-radius: var(--science-radius-button-s); background: var(--science-surface-1); padding: 0 12px; color: var(--science-ink); text-align: left; }
+.runtimeQuestionOptions > button { min-width: 0; min-height: var(--science-button-m-height); display: grid; grid-template-columns: 26px minmax(0, 1fr); align-items: start; column-gap: 11px; row-gap: 4px; border: 0; border-radius: var(--science-radius-button-m); background: var(--science-surface-1); padding: 10px 16px; color: var(--science-ink); text-align: left; }
 .runtimeQuestionOptions > button:hover, .runtimeQuestionOptions > button:focus-visible { background: var(--science-surface-2); outline: 0; box-shadow: 0 0 0 2px rgba(54, 53, 53, .14); }
 .runtimeQuestionOptions > button:disabled, .runtimeQuestionPopover > header button:disabled, .runtimeQuestionFreeText button:disabled { opacity: .5; cursor: default; }
-.runtimeQuestionOptions > button > span { width: 22px; height: 22px; display: grid; place-items: center; border-radius: 50%; background: var(--science-surface-0); color: var(--grey-600); font-size: 12px; font-weight: 700; }
-.runtimeQuestionOptions > button > strong { min-width: 0; overflow: hidden; font-size: 14px; font-weight: 660; text-overflow: ellipsis; white-space: nowrap; }
-.runtimeQuestionOptions > button > em { grid-column: 2; padding-bottom: 8px; color: var(--grey-600); font-size: 12px; font-style: normal; line-height: 1.4; }
-.runtimeQuestionFreeText { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 7px; margin-top: 7px; }
+.runtimeQuestionOptions > button > span { width: 26px; height: 26px; display: grid; grid-row: 1 / span 2; place-items: center; border-radius: 50%; background: var(--science-surface-0); color: var(--grey-600); font-size: 12px; font-weight: 700; }
+.runtimeQuestionOptions > button > strong { min-width: 0; font-size: 15px; font-weight: 650; letter-spacing: 0; line-height: 20px; overflow-wrap: anywhere; word-break: break-word; }
+.runtimeQuestionOptions > button > em { min-width: 0; grid-column: 2; color: var(--grey-600); font-size: 12px; font-style: normal; line-height: 1.4; overflow-wrap: anywhere; word-break: break-word; }
+.runtimeQuestionFreeText { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px; margin-top: 10px; }
 .runtimeQuestionFreeText input { min-width: 0; height: var(--science-button-m-height); border: 1px solid var(--science-border-default); border-radius: var(--science-radius-control); background: var(--science-surface-0); padding: 0 12px; color: var(--science-ink); font: inherit; font-size: 14px; outline: 0; }
 .runtimeQuestionFreeText input:focus { border-color: var(--science-ink); box-shadow: 0 0 0 2px rgba(54, 53, 53, .12); }
 .runtimeQuestionFreeText button { min-height: var(--science-button-m-height); border: 0; border-radius: var(--science-radius-button-m); background: var(--science-ink); padding: 0 16px; color: var(--science-surface-0); font-size: 16px; font-weight: 650; }
 .runtimeQuestionError { margin-top: 8px; color: var(--alarm); font-size: 12px; line-height: 1.45; }
 
 @media (max-width: 760px) {
-  .runtimeQuestionPopover { right: 12px; bottom: 12px; width: min(340px, calc(100vw - 24px)); max-height: calc(100vh - 24px); }
+  :root { --science-question-width: min(var(--science-question-compact-width), calc(100vw - 24px)); }
+  .chatQuestionSheet, .runtimeQuestionPopover { right: 12px; }
+  .runtimeQuestionPopover { bottom: 12px; max-height: calc(100vh - 24px); }
 }
 
 /* Journal checklist: one quiet list grammar, no nested mini-cards. */
@@ -1910,7 +1926,7 @@ button.manuscriptBinding:hover { border-color: var(--line-strong); background: v
   .workspaceResearchTab { width: 112px; flex-basis: 112px; }
   .workspaceTabAdd { width: 30px; height: 30px !important; flex-basis: 30px; }
   .chatDock, .workspace[data-workspace-mode="session"] .chatDock, .workspace[data-workspace-mode="manuscript"] .chatDock { min-width: var(--science-chat-width-compact); flex-basis: var(--science-chat-width-compact); padding: 10px 10px 10px 12px; }
-  .chatQuestionSheet { right: calc(var(--science-chat-width-compact) - 12px + 1cm); }
+  :root { --science-question-chat-width: var(--science-chat-width-compact); }
   .researchView { padding-top: 40px; }
   .labWorkGrid { width: calc(100% - 24px); grid-template-columns: minmax(0, 1fr); gap: 12px; }
   .artifactWorkspace.historyOpen .labWorkGrid { grid-template-columns: minmax(0, 1fr) 220px; }
@@ -1945,7 +1961,6 @@ button.manuscriptBinding:hover { border-color: var(--line-strong); background: v
 }
 
 @media (max-width: 680px) {
-  .chatQuestionSheet { right: 12px; }
   .topbar { padding: 0 12px; }
   .topbar nav { gap: 15px; }
   .statusPill { display: none; }
@@ -4045,7 +4060,7 @@ dl dd:empty::after {
   .workspace .projectWorkflowNav button { width: 40px; min-height: 40px; margin: 1px auto; padding: 0; justify-content: center; gap: 0; }
   .workspace .projectWorkflowNav button > .uiIcon { display: block; width: 18px; height: 18px; flex-basis: 18px; }
   .workspace .researcherCard { justify-content: center; padding-right: 0; padding-left: 0; }
-  :root { --science-chat-width: 288px; --science-chat-width-compact: 280px; }
+  :root { --science-chat-width: 288px; --science-chat-width-compact: 280px; --science-question-rail-width: var(--rail-compact); }
 }
 
 /* Science-only owner token contract. Kept last so older component rules resolve to one
@@ -4319,7 +4334,10 @@ button:has(> span:only-child > .uiIcon:only-child) {
 .answerColumn > h1 { overflow-wrap: anywhere; word-break: break-word; }
 .analysisPlanView h1 { max-width: 100%; overflow-wrap: anywhere; word-break: break-word; }
 .bottomSheet { max-height: calc(100vh - var(--science-space-from-44)); }
-.researchDecisionSheet { width: min(360px, calc(100vw - var(--science-space-from-44))); }
+.researchDecisionSheet {
+  width: var(--science-question-width);
+  max-height: min(640px, calc(100vh - 170px));
+}
 .manuscriptWorkGrid[data-inspector-open="true"] .manuscriptInspector {
   width: min(286px, calc(100% - var(--science-space-from-44)));
 }
@@ -4462,4 +4480,11 @@ button:has(> span:only-child > .uiIcon:only-child) {
   .scienceDialog > footer > span,
   .bottomSheet > footer > span,
   .contractFooterContext { display: none; }
+}
+
+@media (max-width: 760px) {
+  .researchDecisionSheet {
+    bottom: 12px;
+    max-height: calc(100vh - 24px);
+  }
 }

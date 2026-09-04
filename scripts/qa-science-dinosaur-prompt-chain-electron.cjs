@@ -645,6 +645,7 @@ async function main() {
     approvals: [],
     decisions: [],
     runtimeQuestions: [],
+    continuations: [],
     pdf: null,
     video: null,
     artifactVerification: null,
@@ -779,7 +780,17 @@ async function main() {
           report.decisions.push(receipt);
           trace("research-decision:ui-answer", receipt);
         }
-        if (current.turn && ["completed", "failed", "cancelled", "interrupted"].includes(current.turn.status)) break;
+        if (current.turn && ["completed", "failed", "cancelled", "interrupted"].includes(current.turn.status)) {
+          report.continuations.push({
+            kind: "terminal-observed",
+            at: new Date().toISOString(),
+            ordinal: index + 1,
+            turnId: current.turn.id,
+            status: current.turn.status,
+          });
+          persistReport();
+          break;
+        }
         await sleep(750);
       }
       const screenshot = await captureScience(desktop, `turn-${String(index + 1).padStart(2, "0")}.png`);
@@ -799,10 +810,38 @@ async function main() {
       if (!current.turn || current.turn.status !== "completed") break;
       if (index + 1 >= turnBudget) break;
       const previousTurnId = current.turn.id;
-      await sendNudge(desktop, nudge);
+      const continuation = {
+        kind: "follow-up",
+        ordinal: index + 2,
+        previousTurnId,
+        nudgeRequestedAt: new Date().toISOString(),
+        nudgeReceipt: null,
+        nextTurnWaitStartedAt: null,
+        nextTurn: null,
+        error: null,
+      };
+      report.continuations.push(continuation);
+      persistReport();
+      try {
+        continuation.nudgeReceipt = { at: new Date().toISOString(), ...await sendNudge(desktop, nudge) };
+      } catch (error) {
+        continuation.error = { stage: "send-nudge", message: error instanceof Error ? error.message : String(error) };
+        persistReport();
+        throw error;
+      }
       await recorder.capture(`turn-${index + 2}:nudge-sent`);
       trace("turn:nudge-sent", { nextOrdinal: index + 2 });
-      snapshot = await waitForNextTurn(desktop, created.projectEntry, previousTurnId, Math.min(60_000, Math.max(1, totalDeadline - Date.now())));
+      continuation.nextTurnWaitStartedAt = new Date().toISOString();
+      persistReport();
+      try {
+        snapshot = await waitForNextTurn(desktop, created.projectEntry, previousTurnId, Math.min(60_000, Math.max(1, totalDeadline - Date.now())));
+        continuation.nextTurn = { at: new Date().toISOString(), turnId: snapshot.turn.id, status: snapshot.turn.status };
+        persistReport();
+      } catch (error) {
+        continuation.error = { stage: "wait-next-turn", message: error instanceof Error ? error.message : String(error) };
+        persistReport();
+        throw error;
+      }
       trace("turn:created", { ordinal: index + 2, previousTurnId, turnId: snapshot.turn.id, status: snapshot.turn.status });
     }
 

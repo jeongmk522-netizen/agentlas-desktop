@@ -75,7 +75,11 @@ export interface ScienceAstronomyLightCurveColumnMapping {
   timeColumn: string;
   valueColumn: string;
   standardErrorColumn: string;
-  useColumn: string;
+  /**
+   * Optional inclusion mask. Published photometry does not carry one, so requiring it refused every
+   * real light curve; null means every measurement is used, and the receipt records that.
+   */
+  useColumn: string | null;
 }
 
 export interface ScienceAstronomyLightCurveMeasurement {
@@ -177,8 +181,12 @@ function exactArtifactBinding(value: unknown): ScienceAstronomyLightCurveArtifac
 function exactColumnMapping(value: unknown): ScienceAstronomyLightCurveColumnMapping | null {
   const item = record(value);
   const keys = ["observationIdColumn", "timeColumn", "valueColumn", "standardErrorColumn", "useColumn"] as const;
-  if (!item || !exactKeys(item, keys) || keys.some((key) => !exactText(item[key], 240) || item[key] !== String(item[key]).trim())) return null;
-  const values = keys.map((key) => String(item[key]));
+  const required = keys.filter((key) => key !== "useColumn");
+  if (!item || !exactKeys(item, keys)
+    || required.some((key) => !exactText(item[key], 240) || item[key] !== String(item[key]).trim())) return null;
+  // The mask is the one column that may be absent; when present it is held to the same rule.
+  if (item.useColumn !== null && (!exactText(item.useColumn, 240) || item.useColumn !== String(item.useColumn).trim())) return null;
+  const values = keys.map((key) => item[key]).filter((entry): entry is string => typeof entry === "string").map(String);
   if (new Set(values.map((entry) => entry.toLocaleLowerCase("en-US"))).size !== values.length) return null;
   return item as unknown as ScienceAstronomyLightCurveColumnMapping;
 }

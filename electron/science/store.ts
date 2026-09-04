@@ -11797,7 +11797,9 @@ export class ScienceStore {
           time: typeof row[columns.timeColumn] === "number" ? row[columns.timeColumn] as number : null,
           value: typeof row[columns.valueColumn] === "number" ? row[columns.valueColumn] as number : null,
           standardError: typeof row[columns.standardErrorColumn] === "number" ? row[columns.standardErrorColumn] as number : null,
-          use: row[columns.useColumn] === true,
+          // Reconstruction has to agree with the gateway: no declared mask means every row is in,
+          // or this integrity check would reject exactly the tables the tool now accepts.
+          use: columns.useColumn === null ? true : row[columns.useColumn] === true,
         }));
         if (scienceAstronomySha256Json(reconstructedMeasurements) !== scienceAstronomySha256Json(descriptor.measurements)) {
           throw new Error("science-astronomy-light-curve-source-table-invalid");

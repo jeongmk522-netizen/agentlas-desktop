@@ -3091,7 +3091,9 @@ async function dispatchDescriptorTool(
         timeColumn: columns.time_column as string,
         valueColumn: columns.value_column as string,
         standardErrorColumn: columns.standard_error_column as string,
-        useColumn: columns.use_column as string,
+        // Optional: photometry rarely carries an inclusion mask, and demanding one refused every
+        // real light curve. Absent here means "use every measurement", recorded as such downstream.
+        useColumn: (columns.use_column as string | undefined) ?? null,
       },
       analysis: {
         targetId: body.target_id as string,

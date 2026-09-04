@@ -1758,8 +1758,7 @@
                 "observation_id_column",
                 "time_column",
                 "value_column",
-                "standard_error_column",
-                "use_column"
+                "standard_error_column"
               ],
               "additionalProperties": false
             },

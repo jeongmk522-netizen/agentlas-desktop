@@ -1566,6 +1566,17 @@ function ChatPage() {
   const [rightPanelOpen, setRightPanelOpen] = useState(false);
   const [rightPanelTab, setRightPanelTab] = useState<ChatRightPanelTab>("agent");
   const [rightPanelWidth, setRightPanelWidth] = useState(() => readRightPanelWidth());
+  const rightPanelPreferredWidthRef = useRef(rightPanelWidth);
+  const requestReadableRightPanelWidth = useCallback((requested = preferredRichResultWidth()) => {
+    setRightPanelWidth((current) => Math.max(current, clampRightPanelWidth(requested)));
+  }, []);
+  const restorePreferredRightPanelWidth = useCallback(() => {
+    setRightPanelWidth(clampRightPanelWidth(rightPanelPreferredWidthRef.current));
+  }, []);
+  const clearRightPanelFilePreview = useCallback(() => {
+    setMediaPreview(null);
+    restorePreferredRightPanelWidth();
+  }, [restorePreferredRightPanelWidth]);
   /*
    * ★창이 좁아지면 레일도 같이 줄어든다(2026-09-04 실측).
    *
@@ -1741,13 +1752,14 @@ function ChatPage() {
        * 빈 레일이 대화보다 넓은 화면은 그렇게 만들어졌다. 수리 뒤 새 대화는 레일 392 ·
        * 작성창 542 로 돌아온다(실측). 손으로 끌어 정한 폭은 그대로 저장된다 — 그건 선택이다.
        */
-      setRightPanelWidth((current) => Math.max(current, preferredRichResultWidth()));
+      requestReadableRightPanelWidth();
     }
-  }, []);
+  }, [requestReadableRightPanelWidth]);
   const closeRightPanel = useCallback(() => {
     setRightPanelOpen(false);
+    restorePreferredRightPanelWidth();
     writeRightPanelPreference(false, rightPanelTab);
-  }, [rightPanelTab]);
+  }, [restorePreferredRightPanelWidth, rightPanelTab]);
   const openWorkspaceFilePreview = useCallback(async (preview: WorkspaceFilePreview) => {
     const requestChatId = chatId;
     let next = preview;
@@ -1861,6 +1873,7 @@ function ChatPage() {
   }, []);
   const resizeRightPanel = useCallback((width: number) => {
     const next = clampRightPanelWidth(width);
+    rightPanelPreferredWidthRef.current = next;
     setRightPanelWidth(next);
     writeRightPanelWidth(next);
   }, []);
@@ -2640,6 +2653,7 @@ function ChatPage() {
     setArtifact(null);
     setSurface(null);
     setMediaPreview(null);
+    restorePreferredRightPanelWidth();
     setRightPanelOpen(false);
     setRightPanelTab("agent");
     setLiveAgents(restored?.liveAgents ?? {});
@@ -2659,7 +2673,7 @@ function ChatPage() {
       // 내용을 한 번 더 쓰는 것뿐이라 무해(멱등)하다.
       saveChatViewSnapshot(chatId, viewSnapshotRef.current);
     };
-  }, [chatId]);
+  }, [chatId, restorePreferredRightPanelWidth]);
 
   // CLI auto-update가 현재 열려 있는 Work 대화에도 즉시 반영되게 한다. 대시보드는
   // runtime store 방송을 듣지만, 이 화면이 초기 detect 결과만 붙들면 모델/바이너리가
@@ -5055,6 +5069,8 @@ function ChatPage() {
           hasPipeline={hasPipeline}
           width={rightPanelWidth}
           onResizeWidth={resizeRightPanel}
+          onRequestReadableWidth={requestReadableRightPanelWidth}
+          onFileTabsEmpty={clearRightPanelFilePreview}
           height={rightPanelHeight}
           onResizeHeight={resizeRightPanelHeight}
         />

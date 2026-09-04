@@ -254,6 +254,8 @@ const ONE_CONTEXT_RAIL_WIDTH_DEFAULT = 324;
  */
 const ONE_CONTEXT_RAIL_WIDTH_MIN = 200;
 const ONE_CONTEXT_RAIL_WIDTH_MAX = 1280;
+/** A file viewer needs enough room for document chrome and readable body text. */
+const ONE_CONTEXT_RAIL_FILE_READABLE_WIDTH = 560;
 /* 오너 지시 2026-08-24: "켜져도 지금의 반만". 0.432 -> 0.216. */
 const ONE_CONTEXT_RAIL_RESULT_RATIO = 0.216;
 
@@ -367,6 +369,10 @@ function preferredContextResultWidth(): number {
     ? Math.round(window.innerWidth * 0.43)
     : Math.round(window.innerWidth * ONE_CONTEXT_RAIL_RESULT_RATIO);
   return clampContextRailWidth(requested);
+}
+
+function readableContextFileWidth(): number {
+  return clampContextRailWidth(ONE_CONTEXT_RAIL_FILE_READABLE_WIDTH);
 }
 
 function readStoredContextRailWidth(): number {
@@ -1371,9 +1377,11 @@ export function OneShell() {
     try { window.localStorage.setItem(ONE_HOME_HISTORY_OPEN_STORAGE_KEY, String(next)); } catch { /* persistence is best effort */ }
   }, []);
   const [contextRailWidth, setContextRailWidthState] = useState<number>(readStoredContextRailWidth);
+  const contextRailPreferredWidthRef = useRef(contextRailWidth);
   const setContextRailWidth = useCallback((next: number | ((current: number) => number)) => {
     setContextRailWidthState((current) => {
       const clamped = clampContextRailWidth(typeof next === "function" ? next(current) : next);
+      contextRailPreferredWidthRef.current = clamped;
       try {
         window.localStorage.setItem(ONE_CONTEXT_RAIL_WIDTH_STORAGE_KEY, String(clamped));
       } catch {
@@ -1381,6 +1389,12 @@ export function OneShell() {
       }
       return clamped;
     });
+  }, []);
+  const requestReadableContextRailWidth = useCallback((requested = readableContextFileWidth()) => {
+    setContextRailWidthState((current) => Math.max(current, clampContextRailWidth(requested)));
+  }, []);
+  const restorePreferredContextRailWidth = useCallback(() => {
+    setContextRailWidthState(clampContextRailWidth(contextRailPreferredWidthRef.current));
   }, []);
   const [taskMenuOpen, setTaskMenuOpen] = useState(false);
   const [sessionSheetOpen, setSessionSheetOpen] = useState(false);
@@ -1474,6 +1488,9 @@ export function OneShell() {
       return value;
     });
   }, []);
+  useEffect(() => {
+    if (!contextRailOpen) restorePreferredContextRailWidth();
+  }, [contextRailOpen, restorePreferredContextRailWidth]);
   useEffect(() => {
     if (!taskMenuOpen) return;
     const closeFromPointer = (event: PointerEvent) => {
@@ -3170,6 +3187,7 @@ export function OneShell() {
   }, [activeThreadChatId]);
 
   const openOneLinkedFile = useCallback((file: LinkedFileArtifact) => {
+    requestReadableContextRailWidth();
     const normalized = (file.path || file.paths?.[0] || file.href || file.name).replace(/\\/g, "/").toLowerCase();
     const matched = runtimeArtifacts.find((artifact) => {
       const label = artifact.label.replace(/\\/g, "/").toLowerCase();
@@ -3186,9 +3204,10 @@ export function OneShell() {
     if (typeof window !== "undefined") {
       window.dispatchEvent(new CustomEvent("agentlas:in-app-linked-file", { detail: file }));
     }
-  }, [runtimeArtifacts]);
+  }, [requestReadableContextRailWidth, runtimeArtifacts]);
   const openOneChatFile = useCallback(async (file: ChatFileItem) => {
     setContextRailOpen(true);
+    requestReadableContextRailWidth();
     const needsText = file.kind === "file"
       && ["markdown", "json", "text", "browser"].includes(file.viewer.viewerKind)
       && Boolean(file.fileUrl)
@@ -3207,7 +3226,7 @@ export function OneShell() {
     } catch {
       requestChatFileOpen({ ...file, viewer: { ...file.viewer, available: false } });
     }
-  }, []);
+  }, [requestReadableContextRailWidth, setContextRailOpen]);
   const oneOutputKind: OutputPresentationKind = useMemo(() => {
     if (oneLiveAppPreview) return "web";
     const surfaceKind = outputPresentationKindForManifest(surface);
@@ -5544,8 +5563,8 @@ export function OneShell() {
   const introEligible = false;
   const presentRichOutputRail = useCallback(() => {
     setContextRailOpen(true);
-    setContextRailWidth((current) => Math.max(current, preferredContextResultWidth()));
-  }, [setContextRailOpen, setContextRailWidth]);
+    requestReadableContextRailWidth(preferredContextResultWidth());
+  }, [requestReadableContextRailWidth, setContextRailOpen]);
   const focusOneOutput = useCallback(() => {
     presentRichOutputRail();
     window.requestAnimationFrame(() => {
@@ -7643,6 +7662,8 @@ export function OneShell() {
           onClose={() => setContextRailOpen(false)}
           width={contextRailWidth}
           onResize={setContextRailWidth}
+          onRequestReadableWidth={requestReadableContextRailWidth}
+          onRestorePreferredWidth={restorePreferredContextRailWidth}
           minWidth={ONE_CONTEXT_RAIL_WIDTH_MIN}
           maxWidth={contextRailViewportMax()}
           defaultWidth={ONE_CONTEXT_RAIL_WIDTH_DEFAULT}

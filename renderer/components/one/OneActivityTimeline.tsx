@@ -1312,6 +1312,8 @@ export function OneActivityArtifactRail({
   onClose,
   width,
   onResize,
+  onRequestReadableWidth,
+  onRestorePreferredWidth,
   minWidth = 200,
   maxWidth = 720,
   defaultWidth = 324,
@@ -1338,6 +1340,10 @@ export function OneActivityArtifactRail({
   width?: number;
   /** Drag/keyboard resize — the shell clamps and persists. Absent = fixed width. */
   onResize?: (width: number) => void;
+  /** Temporary readability correction; unlike a drag resize this is not persisted. */
+  onRequestReadableWidth?: (width: number) => void;
+  /** Restore the person's saved width after a temporary file view is closed. */
+  onRestorePreferredWidth?: () => void;
   minWidth?: number;
   maxWidth?: number;
   defaultWidth?: number;
@@ -1379,8 +1385,8 @@ export function OneActivityArtifactRail({
     setRailView(view);
     if (view !== "browser" && view !== "app") return;
     const readable = Math.min(maxWidth, 560);
-    onResize?.(Math.max(width ?? defaultWidth, readable));
-  }, [defaultWidth, maxWidth, onResize, width]);
+    (onRequestReadableWidth ?? onResize)?.(Math.max(width ?? defaultWidth, readable));
+  }, [defaultWidth, maxWidth, onRequestReadableWidth, onResize, width]);
   const openRailTab = useCallback((view: OutputRailView) => {
     setOpenTabs((tabs) => (tabs.includes(view) ? tabs : [...tabs, view]));
     selectRailView(view);
@@ -1557,21 +1563,24 @@ export function OneActivityArtifactRail({
     const handleOpen = (event: Event) => {
       const detail = (event as CustomEvent<unknown>).detail;
       if (!isOneArtifactOpenRequest(detail)) return;
+      (onRequestReadableWidth ?? onResize)?.(Math.min(maxWidth, 560));
       setOpenedArtifact(detail);
       setActiveChatFileTabId(null);
       setRailView("result");
     };
     window.addEventListener(ONE_ARTIFACT_OPEN_EVENT, handleOpen);
     return () => window.removeEventListener(ONE_ARTIFACT_OPEN_EVENT, handleOpen);
-  }, []);
+  }, [maxWidth, onRequestReadableWidth, onResize]);
   useEffect(() => {
     setChatFileTabs([]);
     setActiveChatFileTabId(null);
-  }, [browserScopeKey]);
+    onRestorePreferredWidth?.();
+  }, [browserScopeKey, onRestorePreferredWidth]);
   useEffect(() => {
     const handleChatFile = (event: Event) => {
       const detail = (event as CustomEvent<unknown>).detail;
       if (!isChatFileItem(detail) || (browserScopeKey && detail.chatId !== browserScopeKey)) return;
+      (onRequestReadableWidth ?? onResize)?.(Math.min(maxWidth, 560));
       setChatFileTabs((current) => current.some((file) => file.tabId === detail.tabId)
         ? current.map((file) => file.tabId === detail.tabId ? detail : file)
         : [...current, detail]);
@@ -1582,19 +1591,21 @@ export function OneActivityArtifactRail({
     };
     window.addEventListener(CHAT_FILE_OPEN_EVENT, handleChatFile);
     return () => window.removeEventListener(CHAT_FILE_OPEN_EVENT, handleChatFile);
-  }, [browserScopeKey]);
+  }, [browserScopeKey, maxWidth, onRequestReadableWidth, onResize]);
   const selectChatFileTab = useCallback((id: string) => {
     if (!chatFileTabs.some((file) => file.tabId === id)) return;
+    (onRequestReadableWidth ?? onResize)?.(Math.min(maxWidth, 560));
     setActiveChatFileTabId(id);
     setOpenedArtifact(null);
     setRailView("result");
-  }, [chatFileTabs]);
+  }, [chatFileTabs, maxWidth, onRequestReadableWidth, onResize]);
   const closeChatFileTab = useCallback((id: string) => {
     const tabs = chatFileTabs.map((file) => ({ id: file.tabId, name: file.name, provenance: file.provenance }));
     const nextId = nextFileTabSelection(tabs, id, activeChatFileTabId);
     setChatFileTabs((current) => current.filter((file) => file.tabId !== id));
     setActiveChatFileTabId(nextId);
-  }, [activeChatFileTabId, chatFileTabs]);
+    if (!nextId) onRestorePreferredWidth?.();
+  }, [activeChatFileTabId, chatFileTabs, onRestorePreferredWidth]);
   useEffect(() => {
     const handleInAppLink = (event: Event) => {
       const detail = (event as CustomEvent<unknown>).detail;
@@ -1937,7 +1948,7 @@ export function OneActivityArtifactRail({
           />}
           {activeChatFile && <ChatFileOpenViewer file={activeChatFile} locale={locale} />}
           {!activeChatFile && openedArtifact && <>
-            <button type="button" className={styles.artifactBackButton} onClick={() => setOpenedArtifact(null)}>
+            <button type="button" className={styles.artifactBackButton} onClick={() => { setOpenedArtifact(null); onRestorePreferredWidth?.(); }}>
               <IconArrowLeft size={13} /> {locale === "ko" ? "결과로 돌아가기" : "Back to result"}
             </button>
             <ArtifactOpenViewer target={openedArtifact} locale={locale} wide={isWideOutputKind(activeOutputKind) || (width ?? defaultWidth) >= 560} />

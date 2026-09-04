@@ -42,6 +42,17 @@ if (process.env.AGENTLAS_CHAT_FILE_QA_SEED === "1") {
     };
     const work = make("work", "Work file experience QA", input.workPaths);
     const one = make("one", "One file experience QA", input.onePaths);
+    const simple = chats.createChat({ title: "One short answer QA", originSurface: "one", taskMode: "conversation" });
+    chats.appendChatMessage(simple.id, "user", "Reply with one short line.");
+    chats.appendChatMessage(simple.id, "assistant", "SHORT_INLINE_OK");
+    chats.appendChatMessage(simple.id, "assistant", "SHORT_INLINE_FOLLOWUP");
+    const taskforce = require(path.join(root, "dist/electron/one/taskforces.js")).createOneTaskforce({
+      title: "One avatar Taskforce QA",
+      description: "Renderer-only avatar grouping fixture",
+      memberAgentIds: [],
+    });
+    chats.appendChatMessage(taskforce.chatId, "user", "Summarize in one line.");
+    chats.appendChatMessage(taskforce.chatId, "assistant", "TASKFORCE_AVATAR_OK");
     const oneAttachments = require(path.join(root, "dist/electron/one/attachments.js"));
     fs.mkdirSync(path.resolve(input.runFolder), { recursive: true });
     const runFolder = fs.realpathSync.native(path.resolve(input.runFolder));
@@ -104,7 +115,7 @@ if (process.env.AGENTLAS_CHAT_FILE_QA_SEED === "1") {
       missingCode = error?.code || null;
     }
     chats.appendChatMessage(work.chat.id, "assistant", `[Missing file](${input.missingPath})`);
-    process.stdout.write(`${JSON.stringify({ work, one, folderClaim, collisionCode, unsupportedCode, tooLargeCode, pathTooLongCode, permissionCode, missingCode })}\n`);
+    process.stdout.write(`${JSON.stringify({ work, one, simple, taskforce, folderClaim, collisionCode, unsupportedCode, tooLargeCode, pathTooLongCode, permissionCode, missingCode })}\n`);
     app.quit();
   }).catch((error) => {
     process.stderr.write(`${error?.stack || error}\n`);
@@ -148,7 +159,7 @@ if (process.env.AGENTLAS_CHAT_FILE_QA_SEED === "1") {
     env: {
       ...process.env,
       AGENTLAS_CHAT_FILE_QA_SEED: "1",
-      AGENTLAS_CHAT_FILE_QA_INPUT: JSON.stringify({ userData, runFolder: path.join(fixtures, "one-run"), workPaths: [textPath, xlsxPath], onePaths: [xlsxPath, folderPath], unsupportedPath, largePath, missingPath, longFolderPath }),
+      AGENTLAS_CHAT_FILE_QA_INPUT: JSON.stringify({ userData, runFolder: path.join(fixtures, "one-run"), workPaths: [textPath, xlsxPath], onePaths: [textPath, folderPath], unsupportedPath, largePath, missingPath, longFolderPath }),
       AGENTLAS_STORE_PATH: path.join(userData, "agentlas.sqlite"),
       AGENTLAS_E2E: "1",
       AGENTLAS_E2E_AUTH: "1",
@@ -172,6 +183,23 @@ if (process.env.AGENTLAS_CHAT_FILE_QA_SEED === "1") {
   fs.rmSync(proofDir, { recursive: true, force: true });
   fs.mkdirSync(proofDir, { recursive: true });
   const expectedSha = crypto.createHash("sha256").update(fs.readFileSync(xlsxPath)).digest("hex");
+
+  const ownedElectronPids = () => {
+    const marker = `--user-data-dir=${userData}`;
+    const listed = spawnSync("ps", ["-axo", "pid=,command="], { encoding: "utf8" });
+    if (listed.status !== 0) return [];
+    return listed.stdout.split(/\r?\n/).flatMap((line) => {
+      if (!line.includes(marker)) return [];
+      const match = line.trim().match(/^(\d+)\s/);
+      return match ? [Number(match[1])] : [];
+    });
+  };
+
+  const stopOwnedElectronProcesses = () => {
+    for (const pid of ownedElectronPids()) {
+      try { process.kill(pid, "SIGTERM"); } catch { /* already gone */ }
+    }
+  };
 
   (async () => {
     let desktop;
@@ -216,14 +244,81 @@ if (process.env.AGENTLAS_CHAT_FILE_QA_SEED === "1") {
         measurements.push({ surface, requestedWidth: width, ...value });
       };
 
-      await page.waitForURL((url) => url.pathname === "/one", { timeout: 60_000 });
+      const waitForAppLocation = async (pathname, paramName, paramValue, timeout = 60_000) => {
+        const deadline = Date.now() + timeout;
+        let lastUrl = page.url();
+        while (Date.now() < deadline) {
+          if (page.isClosed()) throw new Error(`Electron application exited while waiting for ${pathname}`);
+          lastUrl = page.url();
+          try {
+            const current = new URL(lastUrl);
+            if (current.pathname === pathname && (!paramName || current.searchParams.get(paramName) === paramValue)) return;
+          } catch { /* keep polling until the app commits a valid URL */ }
+          await page.waitForTimeout(100);
+        }
+        throw new Error(`Timed out waiting for ${pathname}; last URL was ${lastUrl}`);
+      };
+      const navigateApp = async (target, pathname, paramName, paramValue) => {
+        try {
+          await page.goto(target, { waitUntil: "domcontentloaded", timeout: 60_000 });
+        } catch (error) {
+          if (!/net::ERR_UNEXPECTED/.test(String(error?.message || error))) throw error;
+        }
+        await waitForAppLocation(pathname, paramName, paramValue);
+      };
+
+      await waitForAppLocation("/one", "chat", seeded.one.chat.id);
       await page.locator('[data-chat-file-cards="true"] button').first().waitFor({ timeout: 60_000 });
+      await setSize(1240);
+      await page.evaluate(() => {
+        localStorage.setItem("agentlas.one.context-rail-width.v2", "200");
+        localStorage.setItem("agentlas.one.context-rail-open.v2", "false");
+      });
+      await page.reload({ waitUntil: "domcontentloaded" });
+      await page.locator('[data-chat-file-cards="true"] button').first().waitFor({ timeout: 60_000 });
+      const oneEvidenceCard = page.locator('[data-chat-file-cards="true"] button').filter({ hasText: "evidence note.txt" }).first();
+      await oneEvidenceCard.click();
+      const oneRail = page.locator('[data-one-runtime-artifacts="true"]');
+      await oneRail.waitFor({ state: "visible", timeout: 10_000 });
+      await page.waitForFunction(() => {
+        const rail = document.querySelector('[data-one-runtime-artifacts="true"]');
+        return rail instanceof HTMLElement && rail.getBoundingClientRect().width >= 540;
+      });
+      await page.waitForTimeout(800);
+      const oneReadable200 = await oneRail.boundingBox();
+      assert.ok(oneReadable200 && oneReadable200.width >= 540, `One file view must temporarily widen a saved 200px rail: ${JSON.stringify(oneReadable200)}`);
+      assert.equal(await page.evaluate(() => localStorage.getItem("agentlas.one.context-rail-width.v2")), "200", "One temporary file width must not overwrite a 200px preference");
+      await page.screenshot({ path: path.join(proofDir, "one-file-readable-from-200.png"), fullPage: true });
+      await page.locator('[data-chat-file-tabs="true"] button[aria-label*="닫기"], [data-chat-file-tabs="true"] button[aria-label^="Close"]').first().click();
+      await page.waitForFunction(() => {
+        const rail = document.querySelector('[data-one-runtime-artifacts="true"]');
+        return rail instanceof HTMLElement && rail.getBoundingClientRect().width <= 202;
+      });
+      await page.evaluate(() => localStorage.setItem("agentlas.one.context-rail-width.v2", "324"));
+      await page.reload({ waitUntil: "domcontentloaded" });
+      await page.locator('[data-chat-file-cards="true"] button').first().waitFor({ timeout: 60_000 });
+      await oneEvidenceCard.click();
+      await page.waitForFunction(() => {
+        const rail = document.querySelector('[data-one-runtime-artifacts="true"]');
+        return rail instanceof HTMLElement && rail.getBoundingClientRect().width >= 540;
+      });
+      await page.waitForTimeout(800);
+      const oneReadable324 = await oneRail.boundingBox();
+      assert.ok(oneReadable324 && oneReadable324.width >= 540, `One file view must temporarily widen a saved 324px rail: ${JSON.stringify(oneReadable324)}`);
+      assert.equal(await page.evaluate(() => localStorage.getItem("agentlas.one.context-rail-width.v2")), "324", "One temporary file width must not overwrite a 324px preference");
+      await page.screenshot({ path: path.join(proofDir, "one-file-readable-from-324.png"), fullPage: true });
+      await page.locator('[data-chat-file-tabs="true"] button[aria-label*="닫기"], [data-chat-file-tabs="true"] button[aria-label^="Close"]').first().click();
+
       const oneCards = page.locator('[data-chat-file-cards="true"] button');
       assert.equal(await oneCards.count(), 2, "One must restore two attachment cards");
+      const firstOneFileId = await oneCards.nth(0).getAttribute("data-chat-file-id");
+      assert.ok(firstOneFileId, "One first attachment must expose a stable file id");
       await oneCards.nth(0).click();
       await oneCards.nth(1).click();
+      await page.waitForFunction(() => document.querySelectorAll('[data-chat-file-tabs="true"] [role="tab"]').length === 2);
       assert.equal(await page.locator('[data-chat-file-tabs="true"] [role="tab"]').count(), 2, "One must open two file tabs");
       await oneCards.nth(0).click();
+      await page.waitForFunction((fileId) => document.querySelector('[data-chat-file-viewer="true"]')?.getAttribute("data-chat-file-tab-id")?.endsWith(`:${fileId}`) === true, firstOneFileId);
       assert.equal(await page.locator('[data-chat-file-tabs="true"] [role="tab"]').count(), 2, "same One file must reactivate instead of duplicating");
       const oneTabId = await page.locator('[data-chat-file-viewer="true"]').getAttribute("data-chat-file-tab-id");
       assert.ok(oneTabId && oneTabId.includes(seeded.one.snapshot.groupId), "One tab id must retain the exact group binding");
@@ -237,6 +332,7 @@ if (process.env.AGENTLAS_CHAT_FILE_QA_SEED === "1") {
       await closeButtons.first().click();
       assert.equal(await page.locator('[data-chat-file-tabs="true"] [role="tab"]').count(), 1, "One file tab must close");
       await oneCards.nth(0).click();
+      await page.waitForFunction(() => document.querySelectorAll('[data-chat-file-tabs="true"] [role="tab"]').length === 2);
       assert.equal(await page.locator('[data-chat-file-tabs="true"] [role="tab"]').count(), 2, "closed One file must reopen");
 
       const composer = page.locator('[data-drag-active] textarea').last();
@@ -270,11 +366,51 @@ if (process.env.AGENTLAS_CHAT_FILE_QA_SEED === "1") {
       for (const width of [390, 768, 1024, 1240]) await measure("one", width);
       await page.screenshot({ path: path.join(proofDir, "one.png"), fullPage: true });
 
+      await page.evaluate(() => localStorage.setItem("agentlas.chat.right_panel_width", "320"));
       const workUrl = `agentlas://app/workspace/task?id=${encodeURIComponent(seeded.work.chat.id)}`;
-      await page.goto(workUrl, { waitUntil: "domcontentloaded", timeout: 60_000 });
+      await navigateApp(workUrl, "/workspace/task", "id", seeded.work.chat.id);
       await page.locator('[data-chat-file-cards="true"] button').first().waitFor({ timeout: 60_000 });
       const workCards = page.locator('[data-chat-file-cards="true"] button');
       assert.equal(await workCards.count(), 2, "Work must restore two attachment cards");
+      const workCloseButtons = page.locator('[data-chat-file-tabs="true"] button[aria-label*="닫기"], [data-chat-file-tabs="true"] button[aria-label^="Close"]');
+      while (await workCloseButtons.count()) {
+        const before = await workCloseButtons.count();
+        await workCloseButtons.first().click();
+        await page.waitForFunction((expected) => document.querySelectorAll('[data-chat-file-tabs="true"] button[aria-label*="닫기"], [data-chat-file-tabs="true"] button[aria-label^="Close"]').length < expected, before);
+      }
+      await page.waitForFunction(() => {
+        const rail = document.querySelector(".chat-right-panel");
+        return !(rail instanceof HTMLElement) || rail.getBoundingClientRect().width <= 322;
+      });
+      const workEvidenceCard = workCards.filter({ hasText: "evidence note.txt" }).first();
+      await workEvidenceCard.click();
+      const workRail = page.locator(".chat-right-panel");
+      await workRail.waitFor({ state: "visible", timeout: 10_000 });
+      await page.waitForFunction(() => {
+        const rail = document.querySelector(".chat-right-panel");
+        return rail instanceof HTMLElement && rail.getBoundingClientRect().width >= 440;
+      });
+      const workReadable320 = await workRail.boundingBox();
+      assert.ok(workReadable320 && workReadable320.width >= 440, `Work file view must temporarily widen a saved 320px rail: ${JSON.stringify(workReadable320)}`);
+      assert.equal(await page.evaluate(() => localStorage.getItem("agentlas.chat.right_panel_width")), "320", "Work temporary file width must not overwrite a 320px preference");
+      const workComposerAlignment = await page.evaluate(() => {
+        const folderRow = document.querySelector('[data-chat-folder-row="true"]');
+        const composer = document.querySelector(".chat-input-shell");
+        if (!(folderRow instanceof HTMLElement) || !(composer instanceof HTMLElement)) return null;
+        return { folderLeft: folderRow.getBoundingClientRect().left, composerLeft: composer.getBoundingClientRect().left };
+      });
+      assert.ok(workComposerAlignment, "Work folder row and composer must both be rendered");
+      assert.ok(Math.abs(workComposerAlignment.folderLeft - workComposerAlignment.composerLeft) <= 1, `Work folder row and composer left edges must align: ${JSON.stringify(workComposerAlignment)}`);
+      await page.screenshot({ path: path.join(proofDir, "work-file-readable-from-320.png"), fullPage: true });
+      while (await workCloseButtons.count()) {
+        const before = await workCloseButtons.count();
+        await workCloseButtons.first().click();
+        await page.waitForFunction((expected) => document.querySelectorAll('[data-chat-file-tabs="true"] button[aria-label*="닫기"], [data-chat-file-tabs="true"] button[aria-label^="Close"]').length < expected, before);
+      }
+      await page.waitForFunction(() => {
+        const rail = document.querySelector(".chat-right-panel");
+        return rail instanceof HTMLElement && rail.getBoundingClientRect().width <= 322;
+      });
       const initialWorkTabCount = await page.locator('[data-chat-file-tabs="true"] [role="tab"]').count();
       await workCards.nth(0).click();
       await page.waitForFunction((expected) => document.querySelectorAll('[data-chat-file-tabs="true"] [role="tab"]').length === expected, initialWorkTabCount + 1);
@@ -288,13 +424,33 @@ if (process.env.AGENTLAS_CHAT_FILE_QA_SEED === "1") {
       for (const width of [390, 768, 1024, 1240]) await measure("work", width);
       await page.screenshot({ path: path.join(proofDir, "work.png"), fullPage: true });
 
-      await page.goto(`agentlas://app/one`, { waitUntil: "domcontentloaded" });
-      await page.goto(`agentlas://app/one?chat=${encodeURIComponent(seeded.one.chat.id)}`, { waitUntil: "domcontentloaded" });
+      await navigateApp("agentlas://app/one", "/one");
+      await navigateApp(`agentlas://app/one?chat=${encodeURIComponent(seeded.one.chat.id)}`, "/one", "chat", seeded.one.chat.id);
       await page.locator('[data-chat-file-cards="true"] button').first().waitFor({ timeout: 60_000 });
       await page.locator('[data-chat-file-cards="true"] button').first().click();
+      await page.waitForFunction(() => document.querySelectorAll('[data-chat-file-tabs="true"] [role="tab"]').length === 1);
       assert.equal(await page.locator('[data-chat-file-tabs="true"] [role="tab"]').count(), 1, "One chat re-entry must restore the binding and reopen the selected file");
       const reenteredTabId = await page.locator('[data-chat-file-viewer="true"]').getAttribute("data-chat-file-tab-id");
       assert.equal(reenteredTabId, oneTabId, "One re-entry must preserve the stable tab identity");
+
+      // Opening a file in chat A writes the rail-open convenience bit. A direct
+      // switch to chat B must still close that auto-open file rail, and a short
+      // no-output answer must stay inline instead of inheriting an empty 0/0 rail.
+      await navigateApp(`agentlas://app/one?chat=${encodeURIComponent(seeded.simple.id)}`, "/one", "chat", seeded.simple.id);
+      await page.getByText("SHORT_INLINE_OK", { exact: true }).waitFor({ state: "visible", timeout: 60_000 });
+      await page.getByText("SHORT_INLINE_FOLLOWUP", { exact: true }).waitFor({ state: "visible", timeout: 60_000 });
+      await page.waitForTimeout(500);
+      assert.equal(await page.locator('[data-one-runtime-artifacts="true"]').count(), 0, "a short text-only One answer must not inherit chat A's auto-open file rail");
+      assert.equal(await page.locator('[data-one-message-avatar="true"]').count(), 1, "the first direct assistant message must render one real portrait");
+      assert.equal(await page.locator('[data-one-message-avatar="spacer"]').count(), 1, "a consecutive direct assistant message must retain only the portrait alignment spacer");
+      assert.equal(await page.locator('article[data-role="user"] [data-one-message-avatar]').count(), 0, "user messages must never borrow an agent portrait");
+      await page.screenshot({ path: path.join(proofDir, "one-short-answer-inline.png"), fullPage: true });
+
+      await navigateApp(`agentlas://app/one?chat=${encodeURIComponent(seeded.taskforce.chatId)}`, "/one", "chat", seeded.taskforce.chatId);
+      await page.getByText("TASKFORCE_AVATAR_OK", { exact: true }).waitFor({ state: "visible", timeout: 60_000 });
+      assert.equal(await page.locator('article[data-taskforce="true"][data-role="assistant"] [data-one-message-avatar="true"]').count(), 1, "a Taskforce assistant group must render One's portrait");
+      assert.equal(await page.locator('article[data-taskforce="true"][data-role="user"] [data-one-message-avatar]').count(), 0, "Taskforce user messages must not render an agent portrait");
+      await page.screenshot({ path: path.join(proofDir, "one-taskforce-avatar.png"), fullPage: true });
 
       assert.deepEqual(errors, [], `renderer errors: ${errors.join("\n")}`);
       const proof = {
@@ -304,6 +460,14 @@ if (process.env.AGENTLAS_CHAT_FILE_QA_SEED === "1") {
         stableTabId: oneTabId,
         folderClaim: seeded.folderClaim,
         measurements,
+        readableWidths: {
+          oneFrom200: oneReadable200?.width,
+          oneFrom324: oneReadable324?.width,
+          workFrom320: workReadable320?.width,
+        },
+        workComposerAlignment,
+        shortAnswerStayedInline: true,
+        avatarContract: { directGroupPortraits: 1, directGroupSpacers: 1, taskforcePortraits: 1, userPortraits: 0 },
         collisionCode: seeded.collisionCode,
         errorCodes: {
           collision: seeded.collisionCode,
@@ -318,6 +482,7 @@ if (process.env.AGENTLAS_CHAT_FILE_QA_SEED === "1") {
       process.stdout.write(`${JSON.stringify({ ok: true, stableTabId: oneTabId, measurements: measurements.length, proof: path.join(proofDir, "proof.json") })}\n`);
     } finally {
       await desktop?.close().catch(() => undefined);
+      stopOwnedElectronProcesses();
     }
   })().catch((error) => {
     process.stderr.write(`${error?.stack || error}\n`);

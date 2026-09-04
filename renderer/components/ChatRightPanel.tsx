@@ -81,6 +81,10 @@ interface Props {
   hasPipeline?: boolean;
   width?: number;
   onResizeWidth?: (width: number) => void;
+  /** Temporary auto-width for readable output; the parent must not persist it. */
+  onRequestReadableWidth?: (width: number) => void;
+  /** Called after the final file tab closes so the saved width can be restored. */
+  onFileTabsEmpty?: () => void;
   /** null = 세로 전체(기본). 숫자 = 상단 가장자리를 끌어 줄여 둔 높이. */
   height?: number | null;
   onResizeHeight?: (height: number | null) => void;
@@ -116,6 +120,8 @@ export function ChatRightPanel({
   hasPipeline,
   width,
   onResizeWidth,
+  onRequestReadableWidth,
+  onFileTabsEmpty,
   height,
   onResizeHeight,
 }: Props) {
@@ -222,14 +228,18 @@ export function ChatRightPanel({
     const nextTabs = fileTabs.filter((tab) => tab.id !== id);
     setFileTabs(nextTabs);
     setActiveFileTabId(nextActive);
+    if (nextTabs.length === 0) onFileTabsEmpty?.();
     if (activeFileTabId !== id) return;
     const target = nextTabs.find((tab) => tab.id === nextActive) ?? null;
     setFilePreview(target?.preview ?? null);
-    if (!target) setViewerSource("workbench");
-  }, [activeFileTabId, fileTabs]);
+    if (!target) {
+      setViewerSource("workbench");
+    }
+  }, [activeFileTabId, fileTabs, onFileTabsEmpty]);
 
   useEffect(() => {
-    if (!onResizeWidth || activeTab !== "panel" || !isWideOutputKind(outputKind)) return;
+    const requestWidth = onRequestReadableWidth ?? onResizeWidth;
+    if (!requestWidth || activeTab !== "panel" || !isWideOutputKind(outputKind)) return;
     // The right rail widens once for a new rich result. The width dependency is
     // intentionally omitted so a person can drag the same result narrower
     // without React immediately fighting the explicit resize.
@@ -237,9 +247,9 @@ export function ChatRightPanel({
     const preferred = typeof window === "undefined"
       ? 640
       : preferredOutputRailWidth(window.innerWidth, 320, 1280);
-    if (currentWidth < preferred) onResizeWidth(preferred);
+    if (currentWidth < preferred) requestWidth(preferred);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeTab, onResizeWidth, outputIdentity, outputKind]);
+  }, [activeTab, onRequestReadableWidth, onResizeWidth, outputIdentity, outputKind]);
 
   function beginResize(event: ReactPointerEvent<HTMLDivElement>) {
     if (!onResizeWidth) return;

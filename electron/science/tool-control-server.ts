@@ -79,6 +79,7 @@ import { loadSciencePluginRuntime, readSciencePluginFile } from "./plugin-runtim
 import { inspectScienceManuscriptDepth } from "./manuscript/depth-preflight";
 import { assertScienceAgentManuscriptDraft } from "./manuscript/agent-draft-gate";
 import { ScienceExtantReferenceAssemblyHttpError } from "./extant-reference-assemblies";
+import { ScienceComparativeGenomicsProviderValidationError } from "./comparative-genomics";
 
 const MAX_REQUEST_BYTES = 8 * 1024 * 1024;
 const MAX_AI_VISUAL_BYTES = 8 * 1024 * 1024;
@@ -2782,6 +2783,9 @@ class ToolInputSchemaError extends Error {
 function scienceToolErrorPayload(route: string, error: unknown): Record<string, unknown> {
   const code = error instanceof Error ? error.message.slice(0, 240) : "science-tool-control-failed";
   if (route === "/v1/platform/genomics/extant-reference-assemblies" && error instanceof ScienceExtantReferenceAssemblyHttpError) {
+    return { ok: false, code, failureReceipt: error.failureReceipt };
+  }
+  if (route === "/v1/platform/genomics/comparative-gene-tree" && error instanceof ScienceComparativeGenomicsProviderValidationError) {
     return { ok: false, code, failureReceipt: error.failureReceipt };
   }
   if (route === "/v1/platform/analysis-plans/propose") {

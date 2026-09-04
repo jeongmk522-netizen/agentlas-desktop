@@ -19,14 +19,6 @@ function elementBounds(element: HTMLElement): ProductExtensionViewBounds {
   };
 }
 
-function scienceViewBounds(element: HTMLElement): ProductExtensionViewBounds {
-  const bounds = elementBounds(element);
-  const askCard = document.querySelector<HTMLElement>('[data-ask-card="true"]');
-  if (!askCard) return bounds;
-  const reservedHeight = Math.min(bounds.height - 1, Math.ceil(askCard.getBoundingClientRect().height) + 44);
-  return { ...bounds, height: Math.max(1, bounds.height - reservedHeight) };
-}
-
 export default function ScienceHostPage() {
   const { locale } = useT();
   const ko = locale !== "en";
@@ -50,7 +42,7 @@ export default function ScienceHostPage() {
       setExtension(status);
       if (!status || status.phase !== "installed" || !status.enabled) return;
       openedRef.current = true;
-      const nextView = await api.productExtensions.openScienceView(scienceViewBounds(surface), leaseId).catch((): ProductExtensionViewStatus => ({
+      const nextView = await api.productExtensions.openScienceView(elementBounds(surface), leaseId).catch((): ProductExtensionViewStatus => ({
         id: "agentlas-science",
         leaseId,
         state: "error",
@@ -64,17 +56,10 @@ export default function ScienceHostPage() {
     const resize = new ResizeObserver(() => {
       window.cancelAnimationFrame(frame);
       frame = window.requestAnimationFrame(() => {
-        if (openedRef.current) void api.productExtensions.setScienceViewBounds(scienceViewBounds(surface), leaseId);
+        if (openedRef.current) void api.productExtensions.setScienceViewBounds(elementBounds(surface), leaseId);
       });
     });
     resize.observe(surface);
-    const askCardObserver = new MutationObserver(() => {
-      window.cancelAnimationFrame(frame);
-      frame = window.requestAnimationFrame(() => {
-        if (openedRef.current) void api.productExtensions.setScienceViewBounds(scienceViewBounds(surface), leaseId);
-      });
-    });
-    askCardObserver.observe(document.body, { childList: true, subtree: true });
     const offView = ipcEvents()?.onProductExtensionViewStatus?.((status) => {
       if (status.leaseId === leaseId) setView(status);
     });
@@ -91,7 +76,6 @@ export default function ScienceHostPage() {
       if (mountEpochRef.current === epoch) mountEpochRef.current += 1;
       window.cancelAnimationFrame(frame);
       resize.disconnect();
-      askCardObserver.disconnect();
       offView?.();
       offExtension?.();
       openedRef.current = false;

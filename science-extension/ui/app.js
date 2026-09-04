@@ -5448,6 +5448,7 @@ import { formatScienceCell } from "./format-cell.js";
     const running = state.activeTurn && ["queued", "running", "cancelling"].includes(state.activeTurn.status);
     const needsInitialRun = !running && state.messages.length === 1 && state.messages[0].role === "user" && !state.messages.some((message) => message.role === "assistant");
     const disabled = state.composerSending || !selectedConversation();
+    const sendDisabled = !running && (disabled || (!needsInitialRun && !state.composerDraft.trim()));
     // 같은 실패가 두 번 나오면 안 된다. 본문 .failClosed 가 사람 문장으로 설명하는 경우
   // 하단 상태줄까지 오류 원문을 되풀이하면, 사람은 잘린 개발자 문자열
   // ("Error invoking remote method 'scien…")만 읽게 된다. 설명된 실패는 짧게 가리키고
@@ -5464,7 +5465,7 @@ import { formatScienceCell } from "./format-cell.js";
     return explained ? "실행을 시작하지 못했습니다 · 위 안내를 확인하세요" : t;
   };
   const status = composerStatusText(state.composerError) || (running ? (state.activeTurn.status === "cancelling" ? "연구 실행을 중단하는 중…" : "Agent runtime 연구 중…") : needsInitialRun ? "저장된 첫 질문을 실행할 수 있습니다" : "Agent runtime 준비");
-    return `<footer class="composer${docked ? " dockedComposer" : ""}"><div class="composerBox"><textarea data-composer-input ${disabled || running || needsInitialRun ? "disabled" : ""} rows="2" aria-label="후속 질문" placeholder="후속 질문, 분석 또는 실험 요청">${escapeHtml(state.composerDraft)}</textarea><div class="composerBar"><div class="composerTools"><span class="composerStatus">${escapeHtml(status)}</span><button class="composerAttachButton" disabled title="첨부는 다음 단계에서 연결됩니다" aria-label="첨부 준비 중">${heroIcon("plus")}</button><span class="composerModePill">${heroIcon("sparkles")} Science</span></div><button class="sendButton" data-action="${running ? "cancel-turn" : "send-turn"}" ${disabled || (!needsInitialRun && !state.composerDraft.trim()) ? "disabled" : ""} aria-label="${running ? "중단" : needsInitialRun ? "첫 질문 실행" : "보내기"}">${running ? "■" : "↑"}</button></div></div></footer>`;
+    return `<footer class="composer${docked ? " dockedComposer" : ""}"><div class="composerBox"><textarea data-composer-input ${disabled || running || needsInitialRun ? "disabled" : ""} rows="2" aria-label="후속 질문" placeholder="후속 질문, 분석 또는 실험 요청">${escapeHtml(state.composerDraft)}</textarea><div class="composerBar"><div class="composerTools"><span class="composerStatus">${escapeHtml(status)}</span><button class="composerAttachButton" disabled title="첨부는 다음 단계에서 연결됩니다" aria-label="첨부 준비 중">${heroIcon("plus")}</button><span class="composerModePill">${heroIcon("sparkles")} Science</span></div><button class="sendButton" data-action="${running ? "cancel-turn" : "send-turn"}" ${sendDisabled ? "disabled" : ""} aria-label="${running ? "중단" : needsInitialRun ? "첫 질문 실행" : "보내기"}">${running ? "■" : "↑"}</button></div></div></footer>`;
   }
 
   function chatContextLabel() {

@@ -4013,15 +4013,17 @@ select,
 }
 
 .topbar button.workspaceResearchTab {
-  height: var(--science-button-m-height) !important;
-  min-height: var(--science-button-m-height);
-  border: 1px solid var(--science-border-default) !important;
-  border-radius: var(--science-radius-button-m);
-  padding: 0 20px 0 12px !important;
-  gap: 4px;
-  font-size: 16px;
-  font-weight: 600;
-  line-height: 20px;
+  width: auto;
+  height: 28px !important;
+  min-height: 28px;
+  flex-basis: auto;
+  border: 0 !important;
+  border-radius: 8px;
+  padding: 0 8px !important;
+  gap: 5px;
+  font-size: 12.5px;
+  font-weight: 500;
+  line-height: 1;
 }
 
 .primaryButton:has(.uiIcon),
@@ -4115,7 +4117,59 @@ button:has(> span > .uiIcon:only-child) {
 }
 
 .topbar button.workspaceResearchTab[aria-selected="true"] {
-  border: 2px solid var(--science-ink) !important;
+  border: 0 !important;
+  background: #f1f2f3 !important;
+  color: #1d2023;
+  box-shadow: inset 0 0 0 1px #e4e6e7;
+  font-weight: 650;
+}
+
+/* Workspace tabs are navigation, not primary actions. Match One's compact right-rail
+   grammar: content-width labels, a quiet selected surface, and no pill/black outline. */
+.workspaceTabFrame {
+  min-width: 0;
+  max-width: 220px;
+  height: 28px;
+  flex: 0 0 auto;
+  align-items: center;
+  border: 0;
+  border-radius: 8px;
+  padding-right: 2px;
+}
+
+.workspaceTabFrame:hover { background: #f5f6f6; }
+
+.workspaceTabFrame[data-selected="true"] {
+  border: 0;
+  background: #f1f2f3;
+  color: #1d2023;
+  box-shadow: inset 0 0 0 1px #e4e6e7;
+}
+
+.workspaceTabFrame[data-selected="true"]::after { content: none; }
+
+.topbar button.workspaceTab {
+  width: auto;
+  height: 28px !important;
+  flex: 0 1 auto;
+  gap: 5px;
+  padding: 0 4px 0 8px;
+  font-size: 12.5px;
+  font-weight: 500;
+  line-height: 1;
+}
+
+.workspaceTabFrame[data-selected="true"] .workspaceTab { font-weight: 650; }
+.workspaceTabIcon { width: 14px; height: 14px; flex-basis: 14px; }
+.workspaceTabVersion { padding: 0; background: transparent; font-size: 11px; font-weight: 560; }
+.workspaceTabClose {
+  width: 18px;
+  height: 18px !important;
+  min-width: 18px;
+  min-height: 18px;
+  flex-basis: 18px;
+  margin-right: 0;
+  border-radius: 5px !important;
 }
 
 .decisionOptionCard:has(input:checked) .decisionOptionControl,

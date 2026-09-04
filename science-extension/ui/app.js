@@ -39,12 +39,13 @@ import { formatScienceCell } from "./format-cell.js";
     logbookRevisions: [], logbookLoading: false, logbookError: "",
     submissionArchiveProfiles: [], submissionArchiveExports: [], submissionArchiveLoading: false, submissionArchiveError: "",
     datasetImportBusy: false, datasetImportError: "", tablePageByArtifact: new Map(), statisticsViewByArtifact: new Map(), paleontologyViewByArtifact: new Map(),
+    spatialViewByArtifact: new Map(), materialsStructureIndexByArtifact: new Map(),
     statisticsLaunchSourceArtifactId: null, statisticsLaunchTimeColumn: "", statisticsLaunchEventColumn: "", statisticsLaunchBusy: false, statisticsLaunchError: "", statisticsLaunchOpen: false,
     // The launch screen used to offer one analysis, because one analysis was written into it. These
     // hold the engine's own catalogue and the column mapping the chosen method declares it needs.
     statisticsMethodCatalogue: [], statisticsMethodQuery: "", statisticsLaunchMethod: "kaplan_meier", statisticsLaunchMapping: {},
     figureActionBusy: false, figureActionError: "", figureActionNotice: "",
-    activeRendererIdentity: null, activeRendererInstance: null, activeRendererPhase: null, activeRendererVisible: null, rendererObserver: null, rendererAbort: null, rendererStatusDispose: null, artifactChangeDispose: null, inlineVegaViews: [], inlinePreviewUrls: [], compareVegaViews: [], comparePreviewUrls: [],
+    activeRendererIdentity: null, activeRendererInstance: null, activeRendererPhase: null, activeRendererVisible: null, rendererObserver: null, rendererAbort: null, rendererStatusDispose: null, artifactChangeDispose: null, inlineVegaViews: [], inlinePreviewUrls: [], compareVegaViews: [], comparePreviewUrls: [], activeSpatialScene: null,
   };
   let selectionEpoch = 0;
   let compareEpoch = 0;
@@ -5212,7 +5213,16 @@ import { formatScienceCell } from "./format-cell.js";
     const skyCatalog = artifact.version.payload?.catalog;
     const skyTypes = Array.isArray(skyCatalog?.objectTypeCounts) ? skyCatalog.objectTypeCounts : [];
     const skyTypeOptions = skyTypes.map((entry) => `<option value="${escapeHtml(entry.type)}">${escapeHtml(entry.type)} · ${escapeHtml(entry.count)}</option>`).join("");
-    const skyToolbar = artifact.version.rendererId === "agentlas.d3-sky" ? `<div class="skyCatalogToolbar"><div><button data-sky-action="reset">시야 초기화</button><label><span>천체 유형</span><select data-sky-type-filter><option value="">모든 유형 · ${escapeHtml(Array.isArray(skyCatalog?.objects) ? skyCatalog.objects.length : 0)}</option>${skyTypeOptions}</select></label><span class="skyCoordinateConvention">ICRS · RA는 천구 관례에 따라 반전</span></div><div class="skyObjectDetail" data-sky-object-detail><strong>천체를 선택하세요</strong><span>SIMBAD 식별자·좌표·관측값을 원본 필드 그대로 표시합니다.</span></div></div>` : "";
+    const skyDistanceCount = Array.isArray(skyCatalog?.objects) ? skyCatalog.objects.filter((object) => typeof object.parallaxMas === "number" && Number.isFinite(object.parallaxMas) && object.parallaxMas > 0).length : 0;
+    const skyView = state.spatialViewByArtifact.get(artifact.id) === "astronomy-distance" && skyDistanceCount ? "astronomy-distance" : "astronomy-sky";
+    const skyToolbar = artifact.version.rendererId === "agentlas.d3-sky" ? `<div class="skyCatalogToolbar"><div><span class="scientificViewModes" role="group" aria-label="천체 보기"><button data-spatial-view="astronomy-sky" aria-pressed="${skyView === "astronomy-sky"}">Sky 2D</button><button data-spatial-view="astronomy-distance" aria-pressed="${skyView === "astronomy-distance"}" ${skyDistanceCount ? "" : "disabled"}>Distance 3D · ${escapeHtml(skyDistanceCount)}</button></span>${skyView === "astronomy-distance" ? "" : `<button data-sky-action="reset">시야 초기화</button><label><span>천체 유형</span><select data-sky-type-filter><option value="">모든 유형 · ${escapeHtml(Array.isArray(skyCatalog?.objects) ? skyCatalog.objects.length : 0)}</option>${skyTypeOptions}</select></label>`}<span class="skyCoordinateConvention">${skyView === "astronomy-distance" ? "양의 parallax만 1000/parallax로 변환 · 오차모형 미적용" : "ICRS · RA는 천구 관례에 따라 반전"}</span></div>${skyView === "astronomy-distance" ? "" : `<div class="skyObjectDetail" data-sky-object-detail><strong>천체를 선택하세요</strong><span>SIMBAD 식별자·좌표·관측값을 원본 필드 그대로 표시합니다.</span></div>`}</div>` : "";
+    const earthquakeCatalog = artifact.version.payload?.catalog?.provider === "usgs-fdsn-event" ? artifact.version.payload.catalog : null;
+    const earthquake3dCount = Array.isArray(earthquakeCatalog?.events) ? earthquakeCatalog.events.filter((event) =>
+      typeof event.longitude === "number" && Number.isFinite(event.longitude)
+      && typeof event.latitude === "number" && Number.isFinite(event.latitude)
+      && typeof event.depthKm === "number" && Number.isFinite(event.depthKm)).length : 0;
+    const earthquakeView = state.spatialViewByArtifact.get(artifact.id) === "earthquake-depth" && earthquake3dCount ? "earthquake-depth" : "earthquake-map";
+    const earthquakeToolbar = earthquakeCatalog ? `<div class="scientificViewToolbar earthquakeViewToolbar"><div class="scientificViewModes" role="group" aria-label="지진 보기"><button data-spatial-view="earthquake-map" aria-pressed="${earthquakeView === "earthquake-map"}">Map 2D</button><button data-spatial-view="earthquake-depth" aria-pressed="${earthquakeView === "earthquake-depth"}" ${earthquake3dCount ? "" : "disabled"}>Depth 3D · ${escapeHtml(earthquake3dCount)}</button></div><span>USGS 원본 경도°·위도°·깊이 km · 화면은 축별 정규화</span></div>` : "";
     const genomicsPayload = artifact.version.payload;
     const genomicsToolbar = artifact.version.rendererId === "agentlas.jbrowse" ? `<div class="genomicsToolbar"><div><span>ASSEMBLY</span><strong>${escapeHtml(genomicsPayload?.assembly?.name || "")}</strong></div><div><span>REGION</span><strong>${escapeHtml(genomicsPayload?.region?.refName || "")}:${escapeHtml(genomicsPayload?.region?.start || "")}–${escapeHtml(genomicsPayload?.region?.end || "")}</strong></div><div><span>VARIANTS</span><strong>${escapeHtml(Array.isArray(genomicsPayload?.variants) ? genomicsPayload.variants.length : 0)} · ClinVar</strong></div><p>Pan · zoom · feature click은 JBrowse 2 세션에서 직접 조작됩니다.</p></div>` : "";
     const statisticsFigureToolbar = statisticsFigurePayload ? `<section class="statisticsFigureToolbar" data-statistics-figure-toolbar><div class="statisticsFigureIdentity"><span>PUBLICATION FIGURE · EXACT BINDING</span><strong>${escapeHtml(statisticsFigurePayload.visualization.title)}</strong><code title="${escapeHtml(statisticsFigurePayload.statisticsArtifact.contentSha256)}">analysis v${escapeHtml(statisticsFigurePayload.statisticsArtifact.artifactVersion)} · ${escapeHtml(String(statisticsFigurePayload.statisticsArtifact.contentSha256).slice(0, 12))}…</code></div><dl class="statisticsFigureSpecs"><div><dt>단 폭</dt><dd>1단 89 mm · 2단 183 mm</dd></div><div><dt>글자</dt><dd>최종 크기에서 8–12 pt</dd></div><div><dt>색</dt><dd>sRGB · 흑백 확인됨</dd></div></dl><div class="statisticsFigureExport"><div><button type="button" data-action="open-compare" ${historyEntries.length < 2 ? "disabled" : ""}>버전 비교</button><button type="button" data-action="export-statistics-figure-svg" ${state.figureActionBusy ? "disabled" : ""}>${state.figureActionBusy ? "생성 중…" : "SVG"}</button><button type="button" data-action="export-statistics-figure-png" ${state.figureActionBusy ? "disabled" : ""}>${state.figureActionBusy ? "생성 중…" : "PNG 600dpi"}</button><button type="button" data-action="export-statistics-figure-pdf" ${state.figureActionBusy ? "disabled" : ""}>${state.figureActionBusy ? "생성 중…" : "PDF 600dpi"}</button><button type="button" data-action="export-statistics-figure-tiff" ${state.figureActionBusy ? "disabled" : ""}>${state.figureActionBusy ? "생성 중…" : "TIFF 600dpi"}</button></div><span class="supportBoundary">SVG · PNG/PDF/TIFF 300/600dpi · sRGB ICC. CMYK와 vector PDF는 아직 미지원. 저널별 정확한 한도는 제출 시 검사합니다.</span></div>${state.figureActionError ? `<p role="alert">${escapeHtml(state.figureActionError)}</p>` : state.figureActionNotice ? `<p role="status">${escapeHtml(state.figureActionNotice)}</p>` : ""}</section>` : "";
@@ -5232,10 +5242,16 @@ import { formatScienceCell } from "./format-cell.js";
         : artifact.version.rendererId !== "agentlas.vega" ? "artifactCanvas artifactCanvasExternal" : "artifactCanvas";
     const canvas = inspectingHistory
       ? `<div class="artifactCanvasFrame historicalFrame"><div class="historicalStatus"><span>기록 보기 · v${escapeHtml(state.inspectedArtifactVersion)} · 읽기 전용</span><button data-artifact-history-version="${escapeHtml(artifact.currentVersion)}">현재 v${escapeHtml(artifact.currentVersion)}으로 돌아가기</button></div><div class="artifactCanvas historicalArtifactCanvas"><div class="historicalCaptureNotice"><strong>검증된 캡처</strong><span>이 화면은 기록 보존용이며 조작할 수 없습니다.</span></div><div class="historicalPreviewSurface" data-historical-artifact-host="${escapeHtml(artifact.id)}" data-historical-artifact-version="${escapeHtml(state.inspectedArtifactVersion)}" aria-label="${escapeHtml(artifact.title)} v${escapeHtml(state.inspectedArtifactVersion)} 기록">${historyError ? `<span class="historicalError">${escapeHtml(historyError)}</span>` : inspectedContext ? "" : `<span class="historicalLoading">검증된 과거 버전을 불러오는 중…</span>`}</div></div></div>`
-      : `<div class="artifactCanvasFrame"><div class="rendererStatus"><span>${escapeHtml(artifact.kind)}</span><span>${escapeHtml(artifact.version.rendererId)} · ${escapeHtml(artifact.version.rendererVersion)} <em data-runtime-status></em></span></div>${artifact.version.rendererId === "agentlas.vega" ? statisticsFigureToolbar || (paleontologyPayload ? "" : vegaEditorMarkup(artifact, vegaDraft)) : numericSurfaceToolbar || numericSurfaceRasterToolbar || statisticsRasterToolbar || citationToolbar || skyToolbar || genomicsToolbar}<div class="${canvasClass}" data-artifact-host="${escapeHtml(artifact.id)}" data-artifact-version="${escapeHtml(artifact.version.version)}" data-content-sha256="${escapeHtml(artifact.version.contentSha256)}" aria-label="${escapeHtml(artifact.title)}"></div><div class="renderError" data-render-error role="alert"></div></div>`;
+      : `<div class="artifactCanvasFrame"><div class="rendererStatus"><span>${escapeHtml(artifact.kind)}</span><span>${escapeHtml(artifact.version.rendererId)} · ${escapeHtml(artifact.version.rendererVersion)}${earthquakeView === "earthquake-depth" || skyView === "astronomy-distance" ? " + Three.js 0.173.0" : ""} <em data-runtime-status></em></span></div>${artifact.version.rendererId === "agentlas.vega" ? statisticsFigureToolbar || (paleontologyPayload ? "" : `${earthquakeToolbar}${earthquakeView === "earthquake-depth" ? "" : vegaEditorMarkup(artifact, vegaDraft)}`) : numericSurfaceToolbar || numericSurfaceRasterToolbar || statisticsRasterToolbar || citationToolbar || skyToolbar || genomicsToolbar}<div class="${canvasClass}" data-artifact-host="${escapeHtml(artifact.id)}" data-artifact-version="${escapeHtml(artifact.version.version)}" data-content-sha256="${escapeHtml(artifact.version.contentSha256)}" aria-label="${escapeHtml(artifact.title)}"></div><div class="renderError" data-render-error role="alert"></div></div>`;
     const loopObservation = semanticObservations[0] || null;
     const loopEvidence = loopObservation ? `${loopObservation.label}: ${loopObservation.value}${loopObservation.unit ? ` ${loopObservation.unit}` : ""}` : (activeVersion?.semantic?.summary || "현재 아티팩트의 다음 검증 단계를 연구 채팅에서 함께 결정합니다.");
-    return `<section class="artifactWorkspace ${state.historyOpen ? "historyOpen" : ""} ${state.artifactComparison ? "compareOpen" : ""}"><header class="labWorkspaceHeader visuallyHidden"><span>${escapeHtml(labCapabilityLabel(state.selectedLabId))}</span><strong>아티팩트 보관소 · 작업공간</strong><span class="originVersion">${capability}</span><button data-action="back-session">${state.returnMessageId ? "대화의 아티팩트로" : "세션으로 돌아가기"}</button></header>${tabs ? `<nav class="artifactTabs" data-count="${escapeHtml(labArtifacts.length)}" aria-label="Lab 아티팩트">${tabs}</nav>` : ""}${originStrip}${statisticsLineage}${paleontologyLineage}${labDecisionPanelMarkup()}<div class="labWorkGrid"><div class="figureColumn">
+    const spatialArtifact = (artifact.version.rendererId === "agentlas.table" && artifact.version.payload?.schema === "agentlas.science.materials-catalog-artifact/v1")
+      || (artifact.version.rendererId === "agentlas.vega" && Boolean(earthquakeCatalog))
+      || artifact.version.rendererId === "agentlas.d3-sky";
+    const spatial3dOpen = (artifact.version.rendererId === "agentlas.table" && artifact.version.payload?.schema === "agentlas.science.materials-catalog-artifact/v1" && state.spatialViewByArtifact.get(artifact.id) !== "materials-table")
+      || (artifact.version.rendererId === "agentlas.vega" && earthquakeView === "earthquake-depth")
+      || (artifact.version.rendererId === "agentlas.d3-sky" && skyView === "astronomy-distance");
+    return `<section class="artifactWorkspace ${state.historyOpen ? "historyOpen" : ""} ${state.artifactComparison ? "compareOpen" : ""} ${spatialArtifact ? "spatialArtifact" : ""} ${spatial3dOpen ? "spatial3dOpen" : ""}"><header class="labWorkspaceHeader visuallyHidden"><span>${escapeHtml(labCapabilityLabel(state.selectedLabId))}</span><strong>아티팩트 보관소 · 작업공간</strong><span class="originVersion">${capability}</span><button data-action="back-session">${state.returnMessageId ? "대화의 아티팩트로" : "세션으로 돌아가기"}</button></header>${tabs ? `<nav class="artifactTabs" data-count="${escapeHtml(labArtifacts.length)}" aria-label="Lab 아티팩트">${tabs}</nav>` : ""}${originStrip}${statisticsLineage}${paleontologyLineage}${labDecisionPanelMarkup()}<div class="labWorkGrid"><div class="figureColumn">
       ${canvas}
       <section class="artifactInterpretation"><div><div class="researchKicker">${inspectingHistory ? "과거 버전 의미 기록" : "Semantic layer"}</div><h2>${escapeHtml(activeVersion?.semantic?.title || (inspectingHistory ? `v${state.inspectedArtifactVersion} 기록을 불러오는 중…` : artifact.title))}</h2><p>${escapeHtml(activeVersion?.semantic?.summary || (inspectingHistory ? "현재 버전 정보로 대체하지 않고, 선택한 과거 버전의 검증이 끝날 때까지 기다립니다." : ""))}</p></div>${observations ? `<dl class="observationGrid">${observations}</dl>` : ""}</section>
       <div data-artifact-compare-host>${artifactCompareMarkup(artifact, history)}</div>
@@ -5886,6 +5902,7 @@ import { formatScienceCell } from "./format-cell.js";
     if (state.activeVegaView) { try { state.activeVegaView.finalize(); } catch {} state.activeVegaView = null; }
     if (state.activeCytoscape) { try { state.activeCytoscape.destroy(); } catch {} state.activeCytoscape = null; }
     if (state.activeNumericSurface) { try { state.activeNumericSurface.dispose(); } catch {} state.activeNumericSurface = null; }
+    if (state.activeSpatialScene) { try { state.activeSpatialScene.dispose(); } catch {} state.activeSpatialScene = null; }
     if (state.activeJBrowseTarget) {
       try { window.AgentlasJBrowse?.unmount?.(state.activeJBrowseTarget); } catch {}
       state.activeJBrowseTarget = null;
@@ -6714,6 +6731,205 @@ import { formatScienceCell } from "./format-cell.js";
     return { rowCount: tablePayload.rows.length, columnCount: tablePayload.columns.length, page, pageCount };
   }
 
+  function spatialColor(value) {
+    let hash = 2166136261;
+    for (const character of String(value || "unknown")) hash = Math.imul(hash ^ character.codePointAt(0), 16777619);
+    return new THREE.Color().setHSL(((hash >>> 0) % 360) / 360, .48, .5);
+  }
+
+  const isExactFiniteNumber = (value) => typeof value === "number" && Number.isFinite(value);
+
+  function renderScientificPointScene(host, {
+    points, lines = [], title, subtitle, axisLabel, kind, lineColor = 0x8b8d89, grid = true, normalizePerAxis = false, returnView, returnLabel,
+  }, interactive = true) {
+    if (!Array.isArray(points) || !points.length) throw new Error("표시할 수 있는 검증된 3D 좌표가 없습니다.");
+    const validPoints = points.filter((point) => Array.isArray(point.position) && point.position.length === 3
+      && point.position.every(Number.isFinite) && Number.isFinite(point.radius) && point.radius > 0);
+    const validLines = lines.filter((line) => Array.isArray(line) && line.length === 2
+      && line.every((position) => Array.isArray(position) && position.length === 3 && position.every(Number.isFinite)));
+    if (!validPoints.length) throw new Error("표시할 수 있는 검증된 3D 좌표가 없습니다.");
+
+    const surface = document.createElement("section"); surface.className = "scientific3dSurface"; surface.dataset.scienceCapture = "";
+    const viewport = document.createElement("div"); viewport.className = "scientific3dViewport";
+    const canvas = document.createElement("canvas"); canvas.className = "scientific3dCanvas"; canvas.tabIndex = interactive ? 0 : -1;
+    canvas.setAttribute("role", "img"); canvas.setAttribute("aria-label", `${title}. ${axisLabel}`);
+    const overlay = document.createElement("div"); overlay.className = "scientific3dOverlay";
+    const heading = document.createElement("strong"); heading.textContent = title;
+    const copy = document.createElement("span"); copy.textContent = subtitle;
+    const axes = document.createElement("span"); axes.textContent = axisLabel;
+    overlay.append(heading, copy, axes);
+    const fallback = document.createElement("div"); fallback.className = "scientific3dFallback"; fallback.hidden = true;
+    const fallbackTitle = document.createElement("strong"); fallbackTitle.textContent = "3D 보기를 사용할 수 없습니다";
+    const fallbackCopy = document.createElement("span"); fallbackCopy.textContent = "WebGL/GPU 컨텍스트를 확인하거나 위의 2D 보기로 전환하세요.";
+    fallback.append(fallbackTitle, fallbackCopy);
+    const detail = document.createElement("aside"); detail.className = "scientific3dDetail"; detail.dataset.spatialPointDetail = ""; detail.dataset.selected = "false";
+    const detailTitle = document.createElement("strong"); detailTitle.textContent = "점을 선택하세요";
+    const detailCopy = document.createElement("span"); detailCopy.textContent = "검증된 원본 좌표와 측정값을 표시합니다.";
+    detail.append(detailTitle, detailCopy);
+    const footer = document.createElement("footer"); footer.className = "scientific3dFooter";
+    const help = document.createElement("span"); help.textContent = interactive ? "드래그 · 휠 · 키보드 조작" : "읽기 전용 3D 보기";
+    if (interactive) help.title = "드래그 회전 · Shift+드래그 이동 · 휠 확대 · 방향키 조작";
+    const footerActions = document.createElement("div");
+    if (returnView && returnLabel) {
+      const leave = document.createElement("button"); leave.type = "button"; leave.textContent = returnLabel; leave.dataset.spatialView = returnView; leave.disabled = !interactive; footerActions.append(leave);
+    }
+    const reset = document.createElement("button"); reset.type = "button"; reset.textContent = "3D 시야 초기화"; reset.disabled = !interactive;
+    footerActions.append(reset); footer.append(help, footerActions); viewport.append(canvas, overlay, detail, fallback); surface.append(viewport, footer); host.replaceChildren(surface);
+
+    let renderer;
+    try {
+      renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: false, preserveDrawingBuffer: false, powerPreference: "high-performance" });
+    } catch {
+      canvas.hidden = true; overlay.hidden = true; detail.hidden = true; fallback.hidden = false;
+      help.textContent = "Three.js WebGL 초기화 실패 · 검증된 원본 데이터는 2D 보기에서 계속 사용할 수 있습니다.";
+      reset.disabled = true; surface.dataset.webglState = "unavailable"; host.dataset.spatial3dReady = "false";
+      return { available: false, dispose() {} };
+    }
+    renderer.outputColorSpace = THREE.SRGBColorSpace;
+    renderer.setClearColor(0xf7f8f6, 1);
+    renderer.setPixelRatio(Math.min(2, window.devicePixelRatio || 1));
+    const scene = new THREE.Scene();
+    const camera = new THREE.PerspectiveCamera(36, 1, .01, 100);
+    const target = new THREE.Vector3();
+    const defaultCamera = new THREE.Vector3(3.3, 2.6, 3.5);
+    camera.position.copy(defaultCamera); camera.lookAt(target);
+    scene.add(new THREE.HemisphereLight(0xffffff, 0xd5d8d2, 2.4));
+    const key = new THREE.DirectionalLight(0xffffff, 2); key.position.set(4, 6, 3); scene.add(key);
+    const fill = new THREE.DirectionalLight(0xb9d8ff, .85); fill.position.set(-4, 2, -4); scene.add(fill);
+
+    const vectors = validPoints.map((point) => new THREE.Vector3(...point.position));
+    for (const line of validLines) vectors.push(new THREE.Vector3(...line[0]), new THREE.Vector3(...line[1]));
+    const bounds = new THREE.Box3().setFromPoints(vectors);
+    const center = bounds.getCenter(new THREE.Vector3());
+    const size = bounds.getSize(new THREE.Vector3());
+    const scale = 2.6 / Math.max(size.x, size.y, size.z, 1e-9);
+    const axisScale = new THREE.Vector3(
+      2.6 / Math.max(size.x, 1e-9),
+      2.6 / Math.max(size.y, 1e-9),
+      2.6 / Math.max(size.z, 1e-9),
+    );
+    const normalized = (position) => {
+      const vector = new THREE.Vector3(...position).sub(center);
+      return normalizePerAxis ? vector.multiply(axisScale) : vector.multiplyScalar(scale);
+    };
+    const pointGeometry = new THREE.SphereGeometry(.052, 14, 10);
+    const pointMaterial = new THREE.MeshStandardMaterial({ roughness: .62, metalness: .02, vertexColors: true });
+    const pointMesh = new THREE.InstancedMesh(pointGeometry, pointMaterial, validPoints.length);
+    const transform = new THREE.Matrix4();
+    validPoints.forEach((point, index) => {
+      const position = normalized(point.position);
+      const radius = THREE.MathUtils.clamp(point.radius, .55, 2.8);
+      transform.compose(position, new THREE.Quaternion(), new THREE.Vector3(radius, radius, radius));
+      pointMesh.setMatrixAt(index, transform);
+      pointMesh.setColorAt(index, point.color instanceof THREE.Color ? point.color : new THREE.Color(point.color));
+    });
+    pointMesh.instanceMatrix.needsUpdate = true;
+    if (pointMesh.instanceColor) pointMesh.instanceColor.needsUpdate = true;
+    scene.add(pointMesh);
+
+    let lineGeometry = null; let lineMaterial = null;
+    if (validLines.length) {
+      const positions = new Float32Array(validLines.length * 6);
+      validLines.forEach((line, index) => {
+        positions.set(normalized(line[0]).toArray(), index * 6);
+        positions.set(normalized(line[1]).toArray(), index * 6 + 3);
+      });
+      lineGeometry = new THREE.BufferGeometry(); lineGeometry.setAttribute("position", new THREE.BufferAttribute(positions, 3));
+      lineMaterial = new THREE.LineBasicMaterial({ color: lineColor, transparent: true, opacity: .76 });
+      scene.add(new THREE.LineSegments(lineGeometry, lineMaterial));
+    }
+    let gridHelper = null;
+    if (grid) { gridHelper = new THREE.GridHelper(3, 12, 0xa0a6a0, 0xd9ddd8); gridHelper.position.y = normalized([center.x, bounds.max.y, center.z]).y; scene.add(gridHelper); }
+    const axesHelper = new THREE.AxesHelper(1.35); axesHelper.position.set(-1.35, -1.2, 1.35); scene.add(axesHelper);
+
+    let disposed = false; let queued = false; let pointer = null;
+    const draw = () => { if (!disposed) renderer.render(scene, camera); };
+    const requestDraw = () => { if (disposed || queued) return; queued = true; requestAnimationFrame(() => { queued = false; draw(); }); };
+    const resize = () => {
+      const rect = viewport.getBoundingClientRect();
+      const width = Math.max(320, Math.floor(rect.width)); const height = Math.max(320, Math.floor(rect.height));
+      camera.aspect = width / height; camera.updateProjectionMatrix(); renderer.setSize(width, height, false); requestDraw();
+    };
+    const resetView = () => { camera.position.copy(defaultCamera); target.set(0, 0, 0); camera.up.set(0, 1, 0); camera.lookAt(target); requestDraw(); };
+    const orbit = (dx, dy) => {
+      const offset = camera.position.clone().sub(target); const spherical = new THREE.Spherical().setFromVector3(offset);
+      spherical.theta -= dx * .008; spherical.phi = THREE.MathUtils.clamp(spherical.phi + dy * .008, .12, Math.PI - .12);
+      camera.position.copy(target).add(new THREE.Vector3().setFromSpherical(spherical)); camera.lookAt(target); requestDraw();
+    };
+    const pan = (dx, dy) => {
+      const amount = camera.position.distanceTo(target) * .0016;
+      const right = new THREE.Vector3().setFromMatrixColumn(camera.matrix, 0).multiplyScalar(-dx * amount);
+      const up = new THREE.Vector3().setFromMatrixColumn(camera.matrix, 1).multiplyScalar(dy * amount);
+      camera.position.add(right).add(up); target.add(right).add(up); camera.lookAt(target); requestDraw();
+    };
+    const zoom = (delta) => {
+      const offset = camera.position.clone().sub(target).multiplyScalar(Math.exp(delta * .001));
+      const length = THREE.MathUtils.clamp(offset.length(), .8, 14); offset.setLength(length);
+      camera.position.copy(target).add(offset); camera.lookAt(target); requestDraw();
+    };
+    const selectAt = (event) => {
+      const rect = canvas.getBoundingClientRect();
+      const mouse = new THREE.Vector2(((event.clientX - rect.left) / rect.width) * 2 - 1, -((event.clientY - rect.top) / rect.height) * 2 + 1);
+      const raycaster = new THREE.Raycaster(); raycaster.setFromCamera(mouse, camera);
+      const hit = raycaster.intersectObject(pointMesh, false)[0];
+      if (!hit || !Number.isSafeInteger(hit.instanceId)) return;
+      const point = validPoints[hit.instanceId]; detail.replaceChildren();
+      const selectedTitle = document.createElement("strong"); selectedTitle.textContent = point.label;
+      const selectedCopy = document.createElement("span"); selectedCopy.textContent = point.detail;
+      detail.append(selectedTitle, selectedCopy); detail.dataset.selected = "true";
+    };
+    const controller = new AbortController(); const signal = controller.signal;
+    if (interactive) {
+      canvas.addEventListener("contextmenu", (event) => event.preventDefault(), { signal });
+      canvas.addEventListener("pointerdown", (event) => {
+        pointer = { id: event.pointerId, x: event.clientX, y: event.clientY, moved: false, pan: event.shiftKey || event.button === 2 };
+        try { canvas.setPointerCapture(event.pointerId); } catch {}
+      }, { signal });
+      canvas.addEventListener("pointermove", (event) => {
+        if (!pointer || pointer.id !== event.pointerId) return;
+        const dx = event.clientX - pointer.x; const dy = event.clientY - pointer.y;
+        if (Math.abs(dx) + Math.abs(dy) > 2) pointer.moved = true;
+        pointer.x = event.clientX; pointer.y = event.clientY; if (pointer.pan) pan(dx, dy); else orbit(dx, dy);
+      }, { signal });
+      canvas.addEventListener("pointerup", (event) => { if (pointer?.id !== event.pointerId) return; const moved = pointer.moved; pointer = null; if (!moved) selectAt(event); }, { signal });
+      canvas.addEventListener("pointercancel", () => { pointer = null; }, { signal });
+      canvas.addEventListener("wheel", (event) => { event.preventDefault(); zoom(event.deltaY); }, { passive: false, signal });
+      canvas.addEventListener("keydown", (event) => {
+        if (["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "+", "=", "-", "Home"].includes(event.key)) event.preventDefault();
+        if (event.key === "ArrowLeft") orbit(-12, 0); else if (event.key === "ArrowRight") orbit(12, 0);
+        else if (event.key === "ArrowUp") orbit(0, -12); else if (event.key === "ArrowDown") orbit(0, 12);
+        else if (event.key === "+" || event.key === "=") zoom(-90); else if (event.key === "-") zoom(90); else if (event.key === "Home") resetView();
+      }, { signal });
+      reset.addEventListener("click", resetView, { signal });
+    }
+    canvas.addEventListener("webglcontextlost", (event) => {
+      event.preventDefault(); surface.dataset.webglState = "lost"; canvas.hidden = true; overlay.hidden = true; detail.hidden = true; fallback.hidden = false;
+      help.textContent = "WebGL context가 손실되었습니다. 위의 2D 보기로 전환하세요.";
+    }, { signal });
+    canvas.addEventListener("webglcontextrestored", () => {
+      surface.dataset.webglState = "restored"; canvas.hidden = false; overlay.hidden = false; detail.hidden = false; fallback.hidden = true; resize();
+    }, { signal });
+    const observer = new ResizeObserver(resize); observer.observe(viewport); resize();
+    host.dataset.spatial3dReady = "true"; host.dataset.spatial3dKind = kind; host.dataset.spatial3dPointCount = String(validPoints.length);
+    return {
+      available: true,
+      dispose() {
+        disposed = true; controller.abort(); observer.disconnect();
+        pointGeometry.dispose(); pointMaterial.dispose(); lineGeometry?.dispose(); lineMaterial?.dispose();
+        gridHelper?.geometry?.dispose?.(); gridHelper?.material?.dispose?.(); axesHelper.geometry.dispose(); axesHelper.material.dispose();
+        renderer.renderLists?.dispose?.(); renderer.dispose(); renderer.forceContextLoss?.();
+      },
+    };
+  }
+
+  function materialCellLines(lattice) {
+    if (!Array.isArray(lattice) || lattice.length !== 3 || lattice.some((row) => !Array.isArray(row) || row.length !== 3 || row.some((value) => !isExactFiniteNumber(value)))) return [];
+    const a = [...lattice[0]]; const b = [...lattice[1]]; const c = [...lattice[2]];
+    const add = (left, right) => left.map((value, index) => value + right[index]);
+    const origin = [0, 0, 0]; const ab = add(a, b); const ac = add(a, c); const bc = add(b, c); const abc = add(ab, c);
+    return [[origin, a], [origin, b], [origin, c], [a, ab], [a, ac], [b, ab], [b, bc], [c, ac], [c, bc], [ab, abc], [ac, abc], [bc, abc]];
+  }
+
   function renderMaterialsDataset(version, host, artifactId, interactive = true) {
     const payload = version?.payload;
     const dataset = payload?.normalized;
@@ -6721,6 +6937,53 @@ import { formatScienceCell } from "./format-cell.js";
     if (!payload || payload.schema !== "agentlas.science.materials-catalog-artifact/v1"
       || dataset?.schema !== "agentlas.materials.oqmd-optimade/v1" || tablePayload?.schema !== "agentlas.science-table/v1"
       || !Array.isArray(tablePayload.columns) || !Array.isArray(tablePayload.rows)) throw new Error("검증된 Materials structure payload가 없습니다.");
+    const structures = Array.isArray(dataset.structures) ? dataset.structures : [];
+    const renderable = structures.map((structure, index) => ({ structure, index })).filter(({ structure }) =>
+      Array.isArray(structure?.cartesianSitePositions) && structure.cartesianSitePositions.length > 0
+      && structure.cartesianSitePositions.every((position) => Array.isArray(position) && position.length === 3 && position.every(isExactFiniteNumber))
+      && Array.isArray(structure.speciesAtSites) && structure.speciesAtSites.length === structure.cartesianSitePositions.length);
+    const requestedStructureIndex = Number(state.materialsStructureIndexByArtifact.get(artifactId));
+    const selectedEntry = renderable.find((entry) => entry.index === requestedStructureIndex) || renderable[0] || null;
+    const requestedView = state.spatialViewByArtifact.get(artifactId);
+    const activeView = !interactive || requestedView === "materials-table" || !selectedEntry ? "materials-table" : "materials-3d";
+    const shell = document.createElement("section"); shell.className = "scientificArtifactShell"; shell.dataset.scientificView = activeView;
+    const toolbar = document.createElement("div"); toolbar.className = "scientificViewToolbar";
+    const modes = document.createElement("div"); modes.className = "scientificViewModes"; modes.setAttribute("role", "group"); modes.setAttribute("aria-label", "Materials 보기");
+    const tableMode = document.createElement("button"); tableMode.type = "button"; tableMode.textContent = "구조 목록"; tableMode.dataset.spatialView = "materials-table"; tableMode.setAttribute("aria-pressed", String(activeView === "materials-table")); tableMode.disabled = !interactive;
+    const structureMode = document.createElement("button"); structureMode.type = "button"; structureMode.textContent = "원자·격자 3D"; structureMode.dataset.spatialView = "materials-3d"; structureMode.setAttribute("aria-pressed", String(activeView === "materials-3d")); structureMode.disabled = !interactive || !renderable.length;
+    modes.append(tableMode, structureMode); toolbar.append(modes);
+    if (renderable.length) {
+      const label = document.createElement("label"); const labelText = document.createElement("span"); labelText.textContent = "결정 구조";
+      const select = document.createElement("select"); select.dataset.materialsStructureIndex = ""; select.disabled = !interactive;
+      renderable.forEach(({ structure, index }) => {
+        const option = document.createElement("option"); option.value = String(index); option.selected = index === selectedEntry?.index;
+        option.textContent = `${structure.formulaReduced || structure.formulaDescriptive || structure.id} · ${structure.cartesianSitePositions.length} sites`;
+        select.append(option);
+      });
+      label.append(labelText, select); toolbar.append(label);
+    }
+    const bodyHost = document.createElement("div"); bodyHost.className = "scientificViewBody";
+    shell.append(toolbar, bodyHost); host.replaceChildren(shell);
+    if (activeView === "materials-3d" && selectedEntry) {
+      const structure = selectedEntry.structure;
+      const points = structure.cartesianSitePositions.map((position, index) => {
+        const species = String(structure.speciesAtSites[index] || "unknown");
+        return {
+          position: [...position], color: spatialColor(species), radius: 1,
+          label: `${species} · site ${index + 1}`,
+          detail: `Cartesian ${position.map((value) => value.toPrecision(7)).join(", ")} Å · OQMD ${structure.id}`,
+        };
+      });
+      state.activeSpatialScene = renderScientificPointScene(bodyHost, {
+        points, lines: materialCellLines(structure.latticeVectors), kind: "materials-structure",
+        title: `${structure.formulaReduced || structure.formulaDescriptive || structure.id} crystal structure`,
+        subtitle: `${points.length.toLocaleString()} exact Cartesian sites · OQMD OPTIMADE ${structure.id}`,
+        axisLabel: "X · Y · Z = Cartesian Å · 선 = lattice vectors", grid: false, returnView: "materials-table", returnLabel: "구조 목록",
+      }, interactive);
+      if (interactive) resetArtifactViewScroll();
+      host.dataset.materialsReady = String(state.activeSpatialScene.available); host.dataset.materialsView = "structure-3d"; host.dataset.materialsStructureId = String(structure.id);
+      return { rowCount: tablePayload.rows.length, columnCount: tablePayload.columns.length, page: 0, pageCount: 1, view: "structure-3d" };
+    }
     const pageSize = 100;
     const pageCount = Math.max(1, Math.ceil(tablePayload.rows.length / pageSize));
     const requestedPage = Number(state.tablePageByArtifact.get(artifactId) || 0);
@@ -6762,9 +7025,65 @@ import { formatScienceCell } from "./format-cell.js";
     const previous = document.createElement("button"); previous.type = "button"; previous.textContent = "이전"; previous.dataset.tablePage = String(page - 1); previous.disabled = !interactive || page === 0;
     const current = document.createElement("span"); current.textContent = `${page + 1} / ${pageCount}`;
     const next = document.createElement("button"); next.type = "button"; next.textContent = "다음"; next.dataset.tablePage = String(page + 1); next.disabled = !interactive || page >= pageCount - 1;
-    controls.append(previous, current, next); footer.append(provenance, controls); surface.append(summary, viewport, footer); host.replaceChildren(surface);
-    host.dataset.materialsReady = "true";
+    controls.append(previous, current, next); footer.append(provenance, controls); surface.append(summary, viewport, footer); bodyHost.replaceChildren(surface);
+    host.dataset.materialsReady = "true"; host.dataset.materialsView = "table";
     return { rowCount: tablePayload.rows.length, columnCount: tablePayload.columns.length, page, pageCount };
+  }
+
+  function renderEarthquakeDepth3d(version, host, interactive = true) {
+    const catalog = version?.payload?.catalog;
+    if (catalog?.provider !== "usgs-fdsn-event" || !Array.isArray(catalog.events)) throw new Error("검증된 USGS 지진 좌표가 없습니다.");
+    const events = catalog.events.filter((event) => isExactFiniteNumber(event.longitude) && isExactFiniteNumber(event.latitude) && isExactFiniteNumber(event.depthKm));
+    if (!events.length) throw new Error("3D로 표시할 수 있는 지진 좌표가 없습니다.");
+    const depths = events.map((event) => event.depthKm);
+    const minimumDepth = Math.min(...depths); const maximumDepth = Math.max(...depths); const depthRange = Math.max(1e-9, maximumDepth - minimumDepth);
+    const points = events.map((event) => {
+      const depth = event.depthKm; const magnitude = isExactFiniteNumber(event.magnitude) ? event.magnitude : null;
+      const ratio = (depth - minimumDepth) / depthRange;
+      return {
+        position: [event.longitude, -depth, event.latitude],
+        color: new THREE.Color().setHSL(.5 - ratio * .42, .62, .43),
+        radius: magnitude !== null ? .65 + THREE.MathUtils.clamp((magnitude + 2) / 12, 0, 1) * 1.55 : .65,
+        label: event.place || event.id,
+        detail: `M${magnitude ?? "—"} · depth ${depth.toLocaleString("en-US", { maximumFractionDigits: 3 })} km · ${event.latitude.toFixed(5)}°, ${event.longitude.toFixed(5)}° · ${event.time}`,
+      };
+    });
+    const scene = renderScientificPointScene(host, {
+      points, kind: "earthquake-depth", title: "USGS earthquake depth volume",
+      subtitle: `${points.length.toLocaleString()} exact events · depth ${minimumDepth.toLocaleString()}–${maximumDepth.toLocaleString()} km`,
+      axisLabel: "X = longitude ° · Y = depth km (down) · Z = latitude ° · 화면 축별 정규화", grid: true, normalizePerAxis: true, returnView: "earthquake-map", returnLabel: "Map 2D",
+    }, interactive);
+    if (interactive) resetArtifactViewScroll();
+    host.dataset.earthquakeDepthReady = String(scene.available); host.dataset.earthquakeEventCount = String(points.length);
+    return scene;
+  }
+
+  function renderAstronomyDistance3d(version, host, interactive = true) {
+    const catalog = version?.payload?.catalog;
+    if (catalog?.provider !== "simbad-tap" || !Array.isArray(catalog.objects)) throw new Error("검증된 SIMBAD 천체 좌표가 없습니다.");
+    const objects = catalog.objects.filter((object) => isExactFiniteNumber(object.raDeg) && isExactFiniteNumber(object.decDeg)
+      && isExactFiniteNumber(object.parallaxMas) && object.parallaxMas > 0);
+    if (!objects.length) throw new Error("양의 parallax가 있는 천체가 없어 거리를 임의 생성하지 않았습니다.");
+    const distances = objects.map((object) => 1_000 / object.parallaxMas);
+    const points = objects.map((object, index) => {
+      const ra = object.raDeg * Math.PI / 180; const dec = object.decDeg * Math.PI / 180; const distancePc = distances[index];
+      const horizontal = Math.cos(dec) * distancePc;
+      return {
+        position: [horizontal * Math.cos(ra), horizontal * Math.sin(ra), Math.sin(dec) * distancePc],
+        color: spatialColor(object.objectType), radius: 1,
+        label: object.mainId,
+        detail: `${object.objectType}${object.spectralType ? ` · ${object.spectralType}` : ""} · ${distancePc.toLocaleString("en-US", { maximumFractionDigits: 3 })} pc · parallax ${object.parallaxMas.toLocaleString("en-US", { maximumFractionDigits: 8 })} mas · RA ${object.raDeg.toFixed(6)}° · Dec ${object.decDeg.toFixed(6)}°`,
+      };
+    });
+    const scene = renderScientificPointScene(host, {
+      points, kind: "astronomy-distance", title: "SIMBAD parallax distance view",
+      subtitle: `${points.length.toLocaleString()} / ${catalog.objects.length.toLocaleString()} objects with positive parallax · ${Math.min(...distances).toLocaleString("en-US", { maximumFractionDigits: 2 })}–${Math.max(...distances).toLocaleString("en-US", { maximumFractionDigits: 2 })} pc`,
+      axisLabel: "X · Y · Z = ICRS Cartesian pc · distance = 1000/parallax · 오차모형 미적용", grid: false, returnView: "astronomy-sky", returnLabel: "Sky 2D",
+    }, interactive);
+    if (interactive) resetArtifactViewScroll();
+    host.dataset.astronomyDistanceReady = String(scene.available); host.dataset.astronomyDistanceEligibleCount = String(points.length);
+    host.dataset.astronomyDistanceExcludedCount = String(catalog.objects.length - points.length);
+    return scene;
   }
 
   const NUMERIC_SURFACE_SCHEMA = "agentlas.science.numeric-surface-artifact/v1";
@@ -7494,7 +7813,11 @@ import { formatScienceCell } from "./format-cell.js";
     }
     if (artifact.version?.rendererId === "agentlas.d3-sky") {
       try {
-        renderSkyCatalog(artifact.version, host, true);
+        if (state.spatialViewByArtifact.get(artifact.id) === "astronomy-distance") {
+          state.activeSpatialScene = renderAstronomyDistance3d(artifact.version, host, true);
+        } else {
+          renderSkyCatalog(artifact.version, host, true);
+        }
       } catch (error) {
         host.textContent = error instanceof Error ? error.message : String(error);
         host.dataset.renderFailed = "true";
@@ -7507,6 +7830,20 @@ import { formatScienceCell } from "./format-cell.js";
         if (status && bundle?.visualReviewEligible) status.dataset.visualCapture = "verified";
       } catch (error) {
         host.dataset.captureFailed = "true";
+        if (errorNode) errorNode.textContent = error instanceof Error ? error.message : String(error);
+      }
+      return;
+    }
+    if (artifact.version?.rendererId === "agentlas.vega" && artifact.version.payload?.catalog?.provider === "usgs-fdsn-event"
+      && state.spatialViewByArtifact.get(artifact.id) === "earthquake-depth") {
+      try {
+        state.activeSpatialScene = renderEarthquakeDepth3d(artifact.version, host, true);
+        const bundle = await science.artifacts.capture({ projectId: artifact.projectId, artifactId: artifact.id, artifactVersion: artifact.version.version, contentSha256: artifact.version.contentSha256 });
+        const status = document.querySelector(".rendererStatus");
+        if (status && bundle?.visualReviewEligible) status.dataset.visualCapture = "verified";
+      } catch (error) {
+        host.textContent = error instanceof Error ? error.message : String(error);
+        host.dataset.renderFailed = "true";
         if (errorNode) errorNode.textContent = error instanceof Error ? error.message : String(error);
       }
       return;
@@ -7657,6 +7994,17 @@ import { formatScienceCell } from "./format-cell.js";
     }
   }
 
+  function resetArtifactViewScroll() {
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      let node = root.querySelector("[data-artifact-host]");
+      while (node && node !== document.body) {
+        if (node instanceof HTMLElement && node.scrollTop !== 0) node.scrollTop = 0;
+        node = node.parentElement;
+      }
+      if (document.scrollingElement?.scrollTop) document.scrollingElement.scrollTop = 0;
+    }));
+  }
+
   root.addEventListener("click", (event) => {
     const target = event.target.closest("button");
     if (!target) return;
@@ -7668,6 +8016,14 @@ import { formatScienceCell } from "./format-cell.js";
         state.tablePageByArtifact.set(state.selectedArtifactId, page);
         render();
       }
+      return;
+    }
+    if (target.dataset.spatialView && state.selectedArtifactId) {
+      const view = target.dataset.spatialView;
+      if (!["materials-table", "materials-3d", "earthquake-map", "earthquake-depth", "astronomy-sky", "astronomy-distance"].includes(view)) return;
+      state.spatialViewByArtifact.set(state.selectedArtifactId, view);
+      render();
+      resetArtifactViewScroll();
       return;
     }
     if (target.dataset.citationLayout && state.activeCytoscape) {
@@ -8052,6 +8408,17 @@ import { formatScienceCell } from "./format-cell.js";
   });
 
   root.addEventListener("change", (event) => {
+    const materialsStructure = event.target.closest("[data-materials-structure-index]");
+    if (materialsStructure && state.selectedArtifactId) {
+      const index = Number(materialsStructure.value);
+      if (Number.isSafeInteger(index) && index >= 0) {
+        state.materialsStructureIndexByArtifact.set(state.selectedArtifactId, index);
+        state.spatialViewByArtifact.set(state.selectedArtifactId, "materials-3d");
+        render();
+        resetArtifactViewScroll();
+      }
+      return;
+    }
     const evidenceGraphNodeSelect = event.target.closest("[data-evidence-graph-node-select]");
     if (evidenceGraphNodeSelect) {
       const nodeId = evidenceGraphNodeSelect.value;

@@ -263,6 +263,8 @@ button { cursor: pointer; color: inherit; }
 .workspace[data-rail-collapsed="true"] .researcherCard button { display: none; }
 .workspace[data-rail-collapsed="true"] .newButton { width: 44px; margin: 0 auto 18px; justify-content: center; padding: 0; }
 .workspace[data-rail-collapsed="true"] .newButton strong { display: none; }
+.workspace[data-rail-collapsed="true"] .projectLibraryBack { width: 44px; justify-content: center; margin-right: auto; margin-left: auto; padding: 0; }
+.workspace[data-rail-collapsed="true"] .projectLibraryBack span { display: none; }
 .workspace[data-rail-collapsed="true"] .labSection { border-top: 1px solid var(--line); }
 .workspace[data-rail-collapsed="true"] .labList,
 .workspace[data-rail-collapsed="true"] .labList.isOpen { display: block; padding: 10px 12px; }
@@ -1400,6 +1402,40 @@ button.manuscriptBinding:hover { border-color: var(--line-strong); background: v
 .numericSurfaceColorbar.palette-grayscale i { background: linear-gradient(to top, rgb(38,38,38), rgb(112,112,112), rgb(188,188,188), rgb(246,246,246)); }
 .numericSurface3d > button { align-self: center; min-height: 30px; margin: 7px 12px 7px 0; border: 1px solid var(--line-strong); border-radius: 8px; background: var(--surface); padding: 0 10px; color: var(--ink); font-size: 11px; }
 .numericSurface3d > button:disabled { opacity: .45; }
+.scientificArtifactShell { width: 100%; height: 100%; min-width: 0; min-height: 0; display: grid; grid-template-rows: auto minmax(0, 1fr); overflow: hidden; background: var(--surface); }
+.scientificViewToolbar { min-width: 0; min-height: 48px; display: flex; align-items: center; justify-content: space-between; gap: 10px; border-bottom: 1px solid var(--line); background: var(--surface-subtle); padding: 8px 12px; }
+.scientificViewToolbar > span { min-width: 0; color: var(--muted); font-size: 11px; line-height: 1.4; overflow-wrap: anywhere; }
+.scientificViewModes { min-width: 0; display: inline-flex; align-items: center; flex-wrap: wrap; gap: 4px; }
+.scientificViewModes button { min-height: var(--science-button-s-height); border: 1px solid var(--line-strong); border-radius: var(--science-radius-button-s); background: var(--surface); color: var(--ink); padding: 0 14px; font-size: 14px; font-weight: 680; white-space: nowrap; }
+.scientificViewModes button[aria-pressed="true"] { border-color: var(--ink); background: var(--ink); color: #fff; }
+.scientificViewModes button:disabled { cursor: not-allowed; opacity: .45; }
+.scientificViewToolbar label { min-width: 0; display: inline-flex; align-items: center; gap: 7px; color: var(--muted); font-size: 11px; font-weight: 700; white-space: nowrap; }
+.scientificViewToolbar select { min-width: 0; max-width: min(340px, 44vw); height: var(--science-button-s-height); border: 1px solid var(--line-strong); border-radius: var(--science-radius-control); background: var(--surface); color: var(--ink); padding: 0 12px; font-size: 14px; text-overflow: ellipsis; }
+.scientificViewBody { min-width: 0; min-height: 0; overflow: hidden; }
+.artifactWorkspace.spatial3dOpen .labDecisionPanel { display: none; }
+.artifactCanvas:has(.scientific3dSurface) { display: block; overflow: hidden; padding: 0; }
+.scientific3dSurface { width: 100%; height: 100%; min-width: 0; min-height: 0; display: grid; grid-template-rows: minmax(0, 1fr) auto; overflow: hidden; background: var(--surface); }
+.scientific3dViewport { position: relative; min-width: 0; min-height: 0; overflow: hidden; background: radial-gradient(circle at 48% 43%, #fff 0, #f7f8f6 56%, #eef0ec 100%); }
+.scientific3dCanvas { display: block; width: 100%; height: 100%; cursor: grab; touch-action: none; outline: 0; }
+.scientific3dCanvas:active { cursor: grabbing; }
+.scientific3dCanvas:focus-visible { box-shadow: inset 0 0 0 3px color-mix(in srgb, var(--ink) 22%, transparent); }
+.scientific3dOverlay { position: absolute; z-index: 2; top: 12px; left: 14px; max-width: min(560px, calc(100% - 28px)); display: grid; gap: 4px; border: 1px solid color-mix(in srgb, var(--line) 82%, transparent); border-radius: var(--science-radius-control); background: color-mix(in srgb, var(--surface) 94%, transparent); padding: 7px 9px; box-shadow: 0 2px 8px rgba(32, 32, 28, .04); backdrop-filter: blur(6px); pointer-events: none; }
+.scientific3dOverlay strong { overflow: hidden; color: var(--ink); font-size: 14px; line-height: 1.35; text-overflow: ellipsis; white-space: nowrap; }
+.scientific3dOverlay span { color: var(--muted-deep); font-size: 11px; line-height: 1.4; overflow-wrap: anywhere; }
+.scientific3dDetail { position: absolute; z-index: 2; right: 16px; bottom: 16px; width: min(340px, 38%); min-width: 180px; display: grid; gap: 4px; border: 1px solid rgba(44, 47, 43, .12); border-radius: var(--science-radius-card); background: rgba(255, 255, 255, .9); padding: 12px 14px; box-shadow: var(--science-shadow-standard); backdrop-filter: blur(10px); pointer-events: none; }
+.scientific3dDetail strong { min-width: 0; overflow: hidden; color: var(--ink); font-size: 12px; line-height: 1.35; text-overflow: ellipsis; white-space: nowrap; }
+.scientific3dDetail span { min-width: 0; color: var(--muted-deep); font-size: 10px; line-height: 1.45; overflow-wrap: anywhere; }
+.scientific3dDetail[data-selected="false"] { display: none; }
+.scientific3dDetail[data-selected="true"] { border-color: color-mix(in srgb, var(--ink) 24%, var(--line)); }
+.scientific3dFallback { position: absolute; inset: 0; z-index: 3; place-content: center; justify-items: center; gap: 7px; background: var(--surface-subtle); padding: 24px; text-align: center; }
+.scientific3dFallback:not([hidden]) { display: grid; }
+.scientific3dFallback strong { color: var(--ink); font-size: 14px; }
+.scientific3dFallback span { max-width: 420px; color: var(--muted); font-size: 11px; line-height: 1.5; }
+.scientific3dFooter { min-width: 0; min-height: 46px; display: flex; align-items: center; justify-content: space-between; gap: 10px; border-top: 1px solid var(--line); background: var(--surface-subtle); padding: 7px 12px 7px 16px; }
+.scientific3dFooter span { min-width: 0; color: var(--muted); font-size: 11px; line-height: 1.4; overflow-wrap: anywhere; }
+.scientific3dFooter > div { flex: 0 0 auto; display: flex; align-items: center; gap: 6px; }
+.scientific3dFooter button { flex: 0 0 auto; min-height: var(--science-button-s-height); border: 1px solid var(--line-strong); border-radius: var(--science-radius-button-s); background: var(--surface); color: var(--ink); padding: 0 14px; font-size: 14px; font-weight: 680; }
+.scientific3dFooter button:disabled { cursor: not-allowed; opacity: .45; }
 .dataTableCanvas { min-height: 0; height: auto; display: block; overflow: hidden; padding: 0; background: var(--surface); }
 .dataTableSurface { width: 100%; height: 100%; min-height: 0; display: flex; flex-direction: column; overflow: hidden; background: var(--surface); }
 .dataTableSummary { min-height: 62px; flex: 0 0 auto; display: flex; align-items: center; justify-content: space-between; gap: 16px; border-bottom: 1px solid var(--line); background: var(--surface-subtle); padding: 10px 14px; }
@@ -2042,6 +2078,18 @@ button.manuscriptBinding:hover { border-color: var(--line-strong); background: v
 }
 
 @container science-center (max-width: 559px) {
+  .scientificViewToolbar { align-items: stretch; flex-direction: column; gap: 7px; padding: 8px 10px; }
+  .scientificViewModes { width: 100%; }
+  .scientificViewModes button { flex: 1 1 auto; padding-right: 8px; padding-left: 8px; }
+  .scientificViewToolbar label { width: 100%; justify-content: space-between; }
+  .scientificViewToolbar select { width: 100%; max-width: none; }
+  .scientific3dOverlay { top: 12px; right: 12px; left: 12px; max-width: none; }
+  .scientific3dOverlay strong { font-size: 12px; white-space: normal; }
+  .scientific3dOverlay span { font-size: 10px; }
+  .scientific3dDetail { right: 12px; bottom: 12px; left: 12px; width: auto; min-width: 0; padding: 8px 9px; }
+  .scientific3dFooter { padding: 6px 8px 6px 10px; }
+  .scientific3dFooter span { font-size: 9px; }
+  .scientific3dFooter button { padding-right: 10px; padding-left: 10px; }
   .evidenceGraphMetrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .evidenceGraphWorkspace { grid-template-columns: minmax(0, 1fr); }
   .evidenceGraphCanvasPane { min-height: 480px; }
@@ -4437,6 +4485,13 @@ button:has(> span:only-child > .uiIcon:only-child) {
     column-gap: 0;
     padding-right: 0;
   }
+  .workspaceBody:has(.artifactWorkspace.spatialArtifact) .workspaceCenter { flex-basis: 72%; }
+  .workspaceBody:has(.artifactWorkspace.spatialArtifact) .chatDock,
+  .workspace[data-workspace-mode="session"] .workspaceBody:has(.artifactWorkspace.spatialArtifact) .chatDock,
+  .workspace[data-workspace-mode="manuscript"] .workspaceBody:has(.artifactWorkspace.spatialArtifact) .chatDock { height: 28%; min-height: 110px; flex-basis: 28%; }
+  .artifactWorkspace.spatialArtifact .originStrip,
+  .artifactWorkspace.spatialArtifact .labDecisionPanel { display: none; }
+  .artifactWorkspace.spatialArtifact .labWorkGrid { width: calc(100% - 16px); padding-bottom: 8px; }
   .workspaceCenter { min-height: 0; flex: 1 1 58%; }
   .chatDock,
   .workspace[data-workspace-mode="session"] .chatDock,

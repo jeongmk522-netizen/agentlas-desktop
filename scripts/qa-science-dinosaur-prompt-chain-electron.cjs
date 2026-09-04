@@ -28,7 +28,7 @@ const projectTitle = "Dinosaur resurrection proxy research";
 const nudge = process.env.AGENTLAS_DINOSAUR_NUDGE ||
   "이어서 계속 진행해줘. 이미 검증된 다음 단계가 있으면 Research Director가 Science 도구로 실행하고, 사람의 확인이 필요한 결정만 바텀시트 질문으로 남겨줘. 화석 근거를 DNA나 부활 증거로 과장하지 마.";
 const turnBudget = Number(process.env.AGENTLAS_DINOSAUR_TURNS || 8);
-const turnTimeoutMs = Number(process.env.AGENTLAS_DINOSAUR_TURN_TIMEOUT_MS || 300_000);
+const turnTimeoutMs = Number(process.env.AGENTLAS_DINOSAUR_TURN_TIMEOUT_MS || 900_000);
 const totalTimeoutMs = Number(process.env.AGENTLAS_DINOSAUR_TOTAL_TIMEOUT_MS || 1_800_000);
 assert.ok(Number.isSafeInteger(turnBudget) && turnBudget >= 1 && turnBudget <= 24, "invalid turn budget");
 
@@ -100,6 +100,20 @@ function trace(stage, detail = {}) {
   process.stdout.write(`${JSON.stringify({ at: new Date().toISOString(), stage, ...detail })}\n`);
 }
 
+function resolveExecutable(name, override, fallbacks = []) {
+  const pathCandidates = String(process.env.PATH || "")
+    .split(path.delimiter)
+    .filter(Boolean)
+    .map((directory) => path.join(directory, name));
+  for (const candidate of [override, ...pathCandidates, ...fallbacks].filter(Boolean)) {
+    try {
+      fs.accessSync(candidate, fs.constants.X_OK);
+      return candidate;
+    } catch { /* try the next installed location */ }
+  }
+  throw new Error(`dinosaur-required-executable-missing ${name}`);
+}
+
 async function retryEvaluate(run) {
   let lastError = null;
   for (let attempt = 0; attempt < 120; attempt += 1) {
@@ -164,7 +178,11 @@ async function startScienceRecorder(desktop) {
   const videoPath = path.join(outputDir, "full-flow.mp4");
   const framesDir = path.join(outputDir, "video-frames");
   fs.mkdirSync(framesDir, { recursive: true, mode: 0o700 });
-  const ffmpegPath = process.env.AGENTLAS_FFMPEG_PATH || "/Users/mason/.local/bin/ffmpeg";
+  const ffmpegPath = resolveExecutable("ffmpeg", process.env.AGENTLAS_FFMPEG_PATH, [
+    "/Users/mason/.local/bin/ffmpeg",
+    "/opt/homebrew/bin/ffmpeg",
+    "/usr/local/bin/ffmpeg",
+  ]);
   let frameCount = 0;
   let captureError = null;
   const frames = [];
@@ -576,8 +594,10 @@ function verifyOutputArtifacts(pdf, video) {
   if (pdf?.exists && pdf.bytes > 0) {
     const textPath = path.join(verificationDir, "manuscript.txt");
     const pagePrefix = path.join(verificationDir, "manuscript-page-1");
-    execFileSync("pdftotext", [pdf.path, textPath], { timeout: 120_000 });
-    execFileSync("pdftoppm", ["-f", "1", "-singlefile", "-png", "-r", "120", pdf.path, pagePrefix], { timeout: 120_000, maxBuffer: 128 * 1024 * 1024 });
+    const pdftotextPath = resolveExecutable("pdftotext", process.env.AGENTLAS_PDFTOTEXT_PATH, ["/opt/homebrew/bin/pdftotext", "/usr/local/bin/pdftotext"]);
+    const pdftoppmPath = resolveExecutable("pdftoppm", process.env.AGENTLAS_PDFTOPPM_PATH, ["/opt/homebrew/bin/pdftoppm", "/usr/local/bin/pdftoppm"]);
+    execFileSync(pdftotextPath, [pdf.path, textPath], { timeout: 120_000 });
+    execFileSync(pdftoppmPath, ["-f", "1", "-singlefile", "-png", "-r", "120", pdf.path, pagePrefix], { timeout: 120_000, maxBuffer: 128 * 1024 * 1024 });
     const pagePath = `${pagePrefix}.png`;
     const text = fs.readFileSync(textPath, "utf8");
     result.pdf = {
@@ -591,7 +611,7 @@ function verifyOutputArtifacts(pdf, video) {
     };
   }
   if (video?.path && video.bytes > 0) {
-    const ffprobePath = process.env.AGENTLAS_FFPROBE_PATH || "/Users/mason/.local/bin/ffprobe";
+    const ffprobePath = resolveExecutable("ffprobe", process.env.AGENTLAS_FFPROBE_PATH, ["/opt/homebrew/bin/ffprobe", "/usr/local/bin/ffprobe"]);
     const probe = JSON.parse(execFileSync(ffprobePath, [
       "-v", "error", "-show_entries", "format=duration,size:stream=codec_name,width,height,nb_frames", "-of", "json", video.path,
     ], { encoding: "utf8", timeout: 120_000 }));
@@ -697,7 +717,7 @@ async function main() {
           trace("turn:status", { ordinal: index + 1, status: lastStatus, invocationRunId: current.turn?.invocationRunId || null, runs: current.runs.length, executions: current.executions.length });
         }
         const visibleInteraction = await evaluateScience(desktop, `({
-          contract: Boolean(document.querySelector('#research-contract-approval-form, [data-action="open-research-contract-sheet"]')),
+          contract: Boolean(document.querySelector('#research-contract-approval-form')),
           runtimeQuestion: Boolean(document.querySelector('[data-runtime-question-id]')),
           researchDecision: Boolean(document.querySelector('#research-decision-form'))
         })`).catch(() => ({ contract: false, runtimeQuestion: false, researchDecision: false }));

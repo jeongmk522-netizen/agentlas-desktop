@@ -821,7 +821,7 @@ async function main() {
     trace("science:view-ready");
     const created = await createProject(desktop);
     assert.equal(created.created, true);
-    await desktop.evaluate((_electron, projectId) => { globalThis.__agentlasDinosaurQaProjectId = projectId; }, created.projectEntry);
+    await retryEvaluate(() => desktop.evaluate((_electron, projectId) => { globalThis.__agentlasDinosaurQaProjectId = projectId; }, created.projectEntry));
     const folderReady = await waitForProjectFolderReady(desktop);
     report.folder = { ...created, ...folderReady, screenshot: await captureScience(desktop, "project-folder-created.png") };
     await recorder.capture("project-folder-created");

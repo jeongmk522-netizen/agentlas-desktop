@@ -122,7 +122,7 @@ export class ScienceConversationService {
     private readonly evidenceGraphService: ScienceEvidenceGraphService | null = null,
   ) {
     this.removeEventListener = this.runtime.onEvent((envelope) => this.projectRuntimeEvent(envelope));
-    this.removeSettledListener = this.runtime.onSettled((envelope) => this.settleRuntimeTurn(envelope));
+    this.removeSettledListener = this.runtime.onSettled((envelope) => this.handleRuntimeSettlement(envelope));
   }
 
   close(): void {
@@ -686,6 +686,19 @@ export class ScienceConversationService {
       : envelope.receipt.status === "interrupted" ? "interrupted"
         : "failed";
     this.appendTerminalError(turn, status, envelope.receipt.errorCode ?? status);
+  }
+
+  private handleRuntimeSettlement(envelope: InvocationSettledEnvelope): void {
+    try {
+      this.settleRuntimeTurn(envelope);
+    } catch (error) {
+      const turn = this.store.getTurnByInvocationRunId(envelope.runId);
+      if (!turn || ["completed", "failed", "cancelled", "interrupted"].includes(turn.status)) return;
+      const cause = error instanceof Error && /^science-[a-z0-9-]+$/.test(error.message)
+        ? error.message
+        : "runtime-settlement-projection-failed";
+      this.appendTerminalError(turn, "failed", cause);
+    }
   }
 
   private prepareAndDispatchLoopContinuation(turn: ScienceTurn, receiptStatus: string): void {

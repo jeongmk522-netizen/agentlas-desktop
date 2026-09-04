@@ -10239,7 +10239,16 @@ export class ScienceStore {
       if (current.assistantMessageId) throw new Error("science-turn-assistant-already-committed");
       if (current.status !== "running" && current.status !== "cancelling") throw new Error("science-turn-state-conflict");
       if (sequence !== current.lastSequence + 1) throw new Error("science-turn-event-sequence-conflict");
-      if (current.partialText && !content.startsWith(current.partialText)) throw new Error("science-turn-final-content-mismatch");
+      const coreMessageId = typeof payload.coreMessageId === "string" ? payload.coreMessageId : "";
+      const coreMessageSha256 = typeof payload.coreMessageSha256 === "string" ? payload.coreMessageSha256 : "";
+      const hasCanonicalRuntimeFinal = UUID_RE.test(coreMessageId) && coreMessageSha256 === sha256Text(content);
+      // Streaming text is presentation-only and may contain transport markers
+      // that Main removes before it commits the canonical assistant message.
+      // Keep the legacy prefix guard for direct/local callers, but let an exact
+      // Main durable-message receipt replace the transient partial projection.
+      if (current.partialText && !content.startsWith(current.partialText) && !hasCanonicalRuntimeFinal) {
+        throw new Error("science-turn-final-content-mismatch");
+      }
       const now = new Date().toISOString();
       const message: ScienceMessage = {
         id: randomUUID(),

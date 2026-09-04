@@ -39,8 +39,25 @@ const extensionRoot = path.join(qaRoot, "extensions");
 const directorRoot = path.join(qaRoot, "research-director");
 const runLabel = `${new Date().toISOString().replace(/[:.]/g, "-")}-${path.basename(qaRoot)}`;
 const outputDir = path.join(root, "output", "playwright", "science-dinosaur-prompt-chain", runLabel);
+const diagnosticTimelinePath = path.join(qaRoot, "electron-diagnostic-timeline.jsonl");
 fs.mkdirSync(userData, { recursive: true, mode: 0o700 });
 fs.mkdirSync(outputDir, { recursive: true, mode: 0o700 });
+fs.writeFileSync(diagnosticTimelinePath, "", { encoding: "utf8", mode: 0o600 });
+
+function appendDiagnosticEvent(event, detail = {}) {
+  fs.appendFileSync(diagnosticTimelinePath, `${JSON.stringify({ at: new Date().toISOString(), event, ...detail })}\n`, "utf8");
+}
+
+function readDiagnosticTimeline() {
+  try {
+    return fs.readFileSync(diagnosticTimelinePath, "utf8")
+      .split(/\r?\n/u)
+      .filter(Boolean)
+      .map((line) => JSON.parse(line));
+  } catch {
+    return [];
+  }
+}
 
 function buildScienceExtension() {
   return JSON.parse(execFileSync(process.execPath, [path.join(root, "scripts", "build-science-extension-qa.cjs")], {
@@ -652,9 +669,11 @@ async function main() {
     assertions: {},
     electronExit: null,
     closeRequestedAt: null,
+    timeline: [],
   };
   const reportPath = path.join(outputDir, "report.json");
   const persistReport = () => {
+    report.timeline = readDiagnosticTimeline();
     report.reportPath = reportPath;
     fs.writeFileSync(reportPath, `${JSON.stringify(report, null, 2)}\n`, { encoding: "utf8", mode: 0o600 });
   };
@@ -663,6 +682,11 @@ async function main() {
   try {
     trace("launch:start", { qaRoot, outputDir });
     desktop = await electron.launch({ args: [root, "--lang=ko-KR"], cwd: root, env, timeout: 120_000 });
+    appendDiagnosticEvent("electron-launched", { pid: desktop.process()?.pid || null, turnId: null });
+    desktop.once("close", () => {
+      appendDiagnosticEvent("playwright-electron-close", { turnId: report.continuations.at(-1)?.nextTurn?.turnId || report.turns.at(-1)?.snapshot?.turn?.id || null });
+      persistReport();
+    });
     desktop.process()?.once("exit", (code, signal) => {
       report.electronExit = {
         at: new Date().toISOString(),
@@ -673,6 +697,75 @@ async function main() {
       trace("electron:exit", report.electronExit);
       persistReport();
     });
+    await desktop.evaluate(({ app, BrowserWindow }, target) => {
+      const localRequire = process.getBuiltinModule("node:module").createRequire(`${process.cwd()}/package.json`);
+      const fs = localRequire("node:fs");
+      const nodePath = localRequire("node:path");
+      globalThis.__agentlasDinosaurQaProjectId = null;
+      const currentTurnId = () => {
+        try {
+          const projectId = globalThis.__agentlasDinosaurQaProjectId;
+          if (!projectId) return null;
+          const { scienceStore } = localRequire(nodePath.join(process.cwd(), "dist", "electron", "science", "runtime.js"));
+          const store = scienceStore();
+          const conversation = store.listConversations(projectId)[0] || null;
+          return conversation ? store.listTurns(projectId, conversation.id).at(-1)?.id || null : null;
+        } catch { return null; }
+      };
+      const write = (event, detail = {}) => {
+        try {
+          fs.appendFileSync(target, `${JSON.stringify({ at: new Date().toISOString(), event, turnId: currentTurnId(), ...detail })}\n`, "utf8");
+        } catch { /* the QA root may already be gone during final teardown */ }
+      };
+      const owner = BrowserWindow.getAllWindows()[0] || null;
+      owner?.once("closed", () => write("electron-main-window-closed"));
+      owner?.webContents.on("render-process-gone", (_event, details) => write("electron-main-render-process-gone", {
+        reason: details.reason,
+        exitCode: details.exitCode,
+      }));
+      app.on("before-quit", () => write("electron-app-before-quit"));
+      app.on("will-quit", () => write("electron-app-will-quit"));
+      app.on("child-process-gone", (_event, details) => write("electron-child-process-gone", {
+        type: details.type,
+        reason: details.reason,
+        exitCode: details.exitCode,
+        serviceName: details.serviceName || null,
+        name: details.name || null,
+      }));
+      const attachedRuntimePids = new Set();
+      const attachRuntimeChildren = () => {
+        const handles = typeof process._getActiveHandles === "function" ? process._getActiveHandles() : [];
+        for (const child of handles) {
+          const pid = Number(child?.pid);
+          const executable = typeof child?.spawnfile === "string" ? nodePath.basename(child.spawnfile) : "";
+          if (!Number.isInteger(pid) || pid < 1 || attachedRuntimePids.has(pid) || !/(?:codex|claude|kimi|grok|antigravity)/iu.test(executable)) continue;
+          attachedRuntimePids.add(pid);
+          write("runtime-child-observed", { pid, executable });
+          child.once("exit", (code, signal) => write("runtime-child-exit", { pid, executable, code, signal }));
+          child.once("error", (error) => write("runtime-child-error", { pid, executable, message: error instanceof Error ? error.message : String(error) }));
+        }
+      };
+      const attachScienceChild = () => {
+        const activeOwner = BrowserWindow.getAllWindows()[0] || null;
+        for (const view of activeOwner?.contentView.children || []) {
+          const contents = view?.webContents;
+          if (!contents || contents.__agentlasDinosaurQaDiagnosticsAttached || contents.getTitle() !== "Agentlas Science") continue;
+          contents.__agentlasDinosaurQaDiagnosticsAttached = true;
+          write("science-webcontents-observed", { webContentsId: contents.id });
+          contents.on("render-process-gone", (_event, details) => write("science-render-process-gone", {
+            webContentsId: contents.id,
+            reason: details.reason,
+            exitCode: details.exitCode,
+          }));
+          contents.once("destroyed", () => write("science-webcontents-destroyed", { webContentsId: contents.id }));
+        }
+      };
+      const timer = setInterval(() => { attachRuntimeChildren(); attachScienceChild(); }, 250);
+      timer.unref?.();
+      app.once("will-quit", () => clearInterval(timer));
+      attachRuntimeChildren();
+      attachScienceChild();
+    }, diagnosticTimelinePath);
     // A cold packaged Electron launch can exceed one minute when another
     // renderer is compiling or reclaiming memory. Keep the startup gate
     // bounded, but do not misclassify slow startup as a missing runtime.
@@ -680,6 +773,14 @@ async function main() {
     // its BrowserWindow during a slow cold start. Poll the live window list as
     // a race-free fallback while retaining the same bounded startup budget.
     const page = await waitForElectronWindow(desktop, 180_000);
+    page.once("close", () => {
+      appendDiagnosticEvent("playwright-page-close", { turnId: report.continuations.at(-1)?.nextTurn?.turnId || report.turns.at(-1)?.snapshot?.turn?.id || null });
+      persistReport();
+    });
+    page.context().once("close", () => {
+      appendDiagnosticEvent("playwright-context-close", { turnId: report.continuations.at(-1)?.nextTurn?.turnId || report.turns.at(-1)?.snapshot?.turn?.id || null });
+      persistReport();
+    });
     await page.waitForFunction(() => Boolean(window.agentlas), null, { timeout: 180_000 });
     const runtimes = await retryEvaluate(() => page.evaluate(() => window.agentlas.runtime.detect(true)));
     const requestedRuntime = Array.isArray(runtimes)
@@ -709,6 +810,7 @@ async function main() {
     trace("science:view-ready");
     const created = await createProject(desktop);
     assert.equal(created.created, true);
+    await desktop.evaluate((_electron, projectId) => { globalThis.__agentlasDinosaurQaProjectId = projectId; }, created.projectEntry);
     const folderReady = await waitForProjectFolderReady(desktop);
     report.folder = { ...created, ...folderReady, screenshot: await captureScience(desktop, "project-folder-created.png") };
     await recorder.capture("project-folder-created");

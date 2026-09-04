@@ -695,6 +695,7 @@ async function main() {
     decisions: [],
     runtimeQuestions: [],
     continuations: [],
+    activeTurn: null,
     pdf: null,
     video: null,
     artifactVerification: null,
@@ -892,6 +893,20 @@ async function main() {
         if (Date.now() - lastCaptureAt >= 10_000 || visibleInteraction.contract || visibleInteraction.runtimeQuestion || visibleInteraction.researchDecision) {
           await recorder.capture(`turn-${index + 1}:${current.turn?.status || "none"}${visibleInteraction.runtimeQuestion ? ":runtime-question" : visibleInteraction.contract ? ":contract" : visibleInteraction.researchDecision ? ":decision" : ""}`);
           lastCaptureAt = Date.now();
+          // Persist a bounded heartbeat together with the diagnostic timeline.
+          // Completed turns are appended below, but a long-running runtime
+          // turn must remain distinguishable from a stalled QA parent while it
+          // is still producing events.
+          report.activeTurn = {
+            observedAt: new Date().toISOString(),
+            ordinal: index + 1,
+            turnId: current.turn?.id || null,
+            status: current.turn?.status || null,
+            invocationRunId: current.turn?.invocationRunId || null,
+            runs: current.runs.length,
+            executions: current.executions.length,
+          };
+          persistReport();
         }
         // The store is the canonical persisted contract surface. Immediately
         // accept its approved state even if the renderer is still showing the
@@ -954,6 +969,7 @@ async function main() {
         const contract = contractApproval || contractReceiptFromSnapshot(current.contract);
         if (contract?.approved) approvedContractReceipt = contract;
         report.turns.push({ ordinal: index + 1, screenshot: null, snapshot: current, contract, decisions: [], timedOut: true });
+        report.activeTurn = null;
         snapshot = current;
         trace("turn:work-deadline", { ordinal: index + 1, status: current.turn?.status || null, runs: current.runs.length, executions: current.executions.length });
         persistReport();
@@ -972,6 +988,7 @@ async function main() {
       const decisions = await listPendingDecisions(desktop, created.projectEntry).catch((error) => [{ error: String(error) }]);
       const turn = { ordinal: index + 1, screenshot, snapshot: current, contract, decisions };
       report.turns.push(turn);
+      report.activeTurn = null;
       trace("turn:recorded", { ordinal: index + 1, status: current.turn?.status || null, runs: current.runs.length, executions: current.executions.length, manuscripts: current.manuscripts.length });
       snapshot = current;
       if (!current.turn || current.turn.status !== "completed") break;

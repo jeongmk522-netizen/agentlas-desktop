@@ -226,7 +226,13 @@ async function main() {
       wide: node.getAttribute("data-output-wide"),
       autoWidth: node.getAttribute("data-output-auto-width"),
     }));
-    const expectedAutoWidth = Math.round(viewport.width * 0.432);
+    // Work keeps a readable chat column before allocating the rich-result rail.
+    // Keep this gate aligned with TaskCockpit's preferredRichResultWidth contract
+    // instead of asserting the old ratio-only width.
+    const expectedAutoWidth = Math.min(
+      Math.round(viewport.width * 0.432),
+      viewport.width - 274 - 520,
+    );
     assert.equal(workPresentation.kind, "map", "Work map result must be classified as a map output");
     assert.equal(workPresentation.wide, "true", "Work map result must mark the output as wide");
     assert.equal(workPresentation.autoWidth, "true", "Work map result must trigger automatic panel width");
@@ -241,7 +247,7 @@ async function main() {
     await page.screenshot({ path: path.join(outDir, "work-right-panel-map.png"), animations: "disabled" });
 
     const workWidthBefore = workPanelBox.width;
-    const workResize = page.locator('aside.chat-right-panel [role="separator"]');
+    const workResize = page.getByRole("separator", { name: /우측 패널 너비|Right panel width/ });
     const workResizeBox = await workResize.boundingBox();
     assert.ok(workResizeBox, "Work resize handle must be visible");
     await page.mouse.move(workResizeBox.x + 2, workResizeBox.y + 150);

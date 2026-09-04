@@ -8,89 +8,80 @@
 //   2. assert.match 용 정규식 리터럴이, 그 게이트가 읽는 어떤 소스에도 매치되지 않음 (dead anchor)
 // 판정은 STALE-SUSPECT 보고까지다. 고치는 건 사람이(또는 그 게이트 소유 세션이) 계약 단위로.
 //
-// gate-args: --baseline
-// (run-bound-gates.mjs가 이 파일이 읽는 gate-staleness-baseline.json 변경에 묶어 이 게이트를
-// 재실행할 때, 인자 없이 부르면 "원장에 이미 있는 낡음"까지 전부 새로 실패로 본다. 그러면
-// 원장을 갱신하는 커밋 자체가 항상 막히는 자기모순이 생긴다 — --baseline이 진짜 의도다.)
+// gate-args: --staged
+// 커밋 관문은 HEAD → INDEX의 새 낡음만 막는다. 전체 보고와 명시적 원장 검사는 유지한다.
 import fs from "node:fs";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const gateFiles = fs.readdirSync(path.join(root, "scripts"))
-  .filter((name) => /^(test|verify)-.*\.(cjs|mjs)$/.test(name))
-  .map((name) => path.join(root, "scripts", name));
-
-/*
- * 기준선은 "이번 변경 전"의 낡음이어야 한다. AGENTLAS_GATE_BASE=HEAD 를 주면 소스 파일을
- * 작업 트리가 아니라 그 커밋에서 읽는다 — 미커밋 편집이 만든 낡음이 기준선에 섞여 면제되는
- * 것을 막는다. 게이트 스크립트 자체는 상당수가 로컬 전용(gitignore)이라 항상 디스크에서 읽는다.
- */
 const BASE_REF = process.env.AGENTLAS_GATE_BASE || "";
-let trackedSet = null;
-function isTracked(relative) {
-  if (!trackedSet) {
-    try {
-      trackedSet = new Set(execFileSync("git", ["ls-files"], { cwd: root, encoding: "utf8", maxBuffer: 256 * 1024 * 1024 }).split("\n"));
-    } catch { trackedSet = new Set(); }
-  }
-  return trackedSet.has(relative);
+const mode = process.argv.includes("--update-baseline") ? "update"
+  : process.argv.includes("--staged") || (BASE_REF === "INDEX" && process.argv.includes("--baseline")) ? "staged"
+  : process.argv.includes("--baseline") ? "baseline" : "report";
+const gatePath = (name) => /^scripts\/(test|verify)-[^/]+\.(cjs|mjs)$/.test(name);
+const diskGates = fs.readdirSync(path.join(root, "scripts"))
+  .map((name) => `scripts/${name}`).filter(gatePath);
+const MAX_SOURCE_BYTES = 4 * 1024 * 1024;
+const missingFile = { exists: false, isFile: false, size: 0, text: "" };
+const localFiles = new Map();
+const blobs = new Map();
+const canonical = (relative) => path.relative(root, path.resolve(root, relative)).split(path.sep).join("/");
+function git(args) {
+  // Git failure is not evidence of an untracked file. An unmerged index or
+  // missing object must stop the check instead of falling back to disk.
+  return execFileSync("git", args, {
+    cwd: root, encoding: "utf8", maxBuffer: 64 * 1024 * 1024,
+    stdio: ["ignore", "pipe", "pipe"],
+  });
 }
-function readSource(relative) {
-  if (BASE_REF) {
-    // INDEX = 스테이지된 내용(`git show :path`). 공유 체크아웃에서 남의 미스테이지 편집이
-    // 내 커밋을 막지 않게, 관문은 작업 트리가 아니라 이번 커밋의 내용만 본다.
-    const spec = BASE_REF === "INDEX" ? `:${relative}` : `${BASE_REF}:${relative}`;
+function diskFile(relative) {
+  const name = canonical(relative);
+  if (!localFiles.has(name)) {
+    const absolute = path.resolve(root, name);
     try {
-      return execFileSync("git", ["show", spec], { cwd: root, encoding: "utf8", maxBuffer: 64 * 1024 * 1024, stdio: ["ignore", "pipe", "ignore"] });
-    } catch {
-      // git 이 못 주는 이유는 둘이다. (1) 그 커밋/인덱스에 없던 파일 → 빈 본문이 정확하다.
-      // (2) 애초에 이 저장소가 추적하지 않는 파일(형제 저장소의 모바일 앱, 로컬 전용 파일)
-      //     → 빈 본문으로 세면 살아 있는 앵커가 전부 죽었다고 보고된다(실측: 모바일 계약 5건).
-      if (!isTracked(relative) && fs.existsSync(path.resolve(root, relative))) {
-        return fs.readFileSync(path.resolve(root, relative), "utf8");
-      }
-      return "";
+      const stat = fs.statSync(absolute);
+      localFiles.set(name, {
+        exists: true, isFile: stat.isFile(), size: stat.size,
+        text: stat.isFile() && stat.size <= MAX_SOURCE_BYTES ? fs.readFileSync(absolute, "utf8") : "",
+      });
+    } catch (error) {
+      if (!["ENOENT", "ENOTDIR"].includes(error.code)) throw error;
+      localFiles.set(name, missingFile);
     }
   }
-  return fs.readFileSync(path.resolve(root, relative), "utf8");
+  return localFiles.get(name);
 }
-
-/*
- * 게이트 스크립트 본문. 게이트의 절대다수(440 중 415)는 로컬 전용(gitignore)이라 그 커밋에
- * 존재하지 않는다 — 없으면 디스크로 되돌아간다. 추적되는 게이트는 소스와 같은 기준으로 읽어야
- * "게이트는 새 것, 소스는 옛 것" 같은 섞인 판정을 내지 않는다.
- */
-/*
- * "이 경로가 있는가"도 소스와 같은 기준으로 물어야 한다. 관문이 인덱스를 볼 때 디스크를 보면,
- * 옆 세션이 아직 커밋하지 않은 삭제가 내 커밋의 "새 낡음"으로 잡힌다(실측: 다른 세션이 One
- * 화면 몇 개를 지우는 중이었고, 그 미커밋 삭제가 게이트 4개를 낡음으로 만들었다).
- */
-function sourceExists(relative) {
-  if (BASE_REF) {
-    const spec = BASE_REF === "INDEX" ? `:${relative}` : `${BASE_REF}:${relative}`;
-    try {
-      execFileSync("git", ["cat-file", "-e", spec], { cwd: root, stdio: ["ignore", "ignore", "ignore"] });
-      return true;
-    } catch {
-      // 추적하지 않는 파일(형제 저장소·로컬 전용)은 디스크가 유일한 사실이다.
-      return !isTracked(relative) && fs.existsSync(path.resolve(root, relative));
-    }
+function treeFiles(ref) {
+  // write-tree pins the index without changing its entries, HEAD, or checkout.
+  const tree = ref === "INDEX" ? git(["write-tree"]).trim()
+    : git(["rev-parse", "--verify", `${ref}^{tree}`]).trim();
+  const files = new Map();
+  for (const row of git(["ls-tree", "-r", "-t", "-l", "-z", tree]).split("\0")) {
+    if (!row) continue;
+    const tab = row.indexOf("\t");
+    const [, type, oid, bytes] = row.slice(0, tab).trim().split(/\s+/);
+    files.set(row.slice(tab + 1), { exists: true, isFile: type === "blob", size: Number(bytes), oid });
   }
-  return fs.existsSync(path.resolve(root, relative));
+  return files;
 }
-
-function readGate(relative) {
-  if (BASE_REF) {
-    const spec = BASE_REF === "INDEX" ? `:${relative}` : `${BASE_REF}:${relative}`;
-    try {
-      return execFileSync("git", ["show", spec], { cwd: root, encoding: "utf8", maxBuffer: 64 * 1024 * 1024, stdio: ["ignore", "pipe", "ignore"] });
-    } catch {
-      // 이 커밋에 없는 게이트(로컬 전용). 디스크 본문이 유일한 사실이다.
-    }
-  }
-  return fs.readFileSync(path.join(root, relative), "utf8");
+function snapshotReader(files, trackedUnion) {
+  return (relative) => {
+    const name = canonical(relative);
+    const file = files.get(name);
+    if (!file) return trackedUnion.has(name) ? missingFile : diskFile(name);
+    if (!file.isFile || file.size > MAX_SOURCE_BYTES) return { ...file, text: "" };
+    if (!blobs.has(file.oid)) blobs.set(file.oid, git(["cat-file", "blob", file.oid]));
+    return { ...file, text: blobs.get(file.oid) };
+  };
+}
+function snapshotGates(files, trackedUnion) {
+  // Do not resurrect a deleted tracked gate from disk or miss an INDEX-only gate.
+  return [...new Set([
+    ...[...files].filter(([name, file]) => gatePath(name) && file.isFile).map(([name]) => name),
+    ...diskGates.filter((name) => !trackedUnion.has(name) && diskFile(name).isFile),
+  ])].sort();
 }
 
 const PATH_RE = /(["'])((?:renderer|electron|shared|dist|docs)\/[^"'\n]+?\.(?:tsx?|cjs|mjs|css|json|md))\1/g;
@@ -146,91 +137,125 @@ function subjectIsFileText(subject, names) {
   return names.has(root0);
 }
 
-let deadPaths = 0;
-let deadAnchors = 0;
-const report = [];
-// 기계 지문(기준선 비교용). 표시 문자열이 아니라 이 값으로만 비교한다.
-const entries = [];
+function scan(gateFiles, readFile) {
+  let deadPaths = 0;
+  let deadAnchors = 0;
+  const report = [];
+  // 기계 지문(기준선 비교용). 표시 문자열이 아니라 이 값으로만 비교한다.
+  const entries = [];
 
-for (const gate of gateFiles) {
-  const name = path.relative(root, gate);
-  const text = readGate(name);
-  const missing = new Set();
-  for (const m of text.matchAll(PATH_RE)) {
-    if (sourceExists(m[2])) continue;
-    // "이 파일은 삭제된 채로 있어야 한다"를 지키는 게이트가 있다. 그런 존재 검사에 쓰인 경로는
-    // 죽은 경로가 아니라 그 게이트의 요점이다(실측: test-automation-setup-request).
-    const before = text.slice(Math.max(0, m.index - 140), m.index);
-    // 존재 검사(삭제 유지 계약)와 게이트가 **직접 만드는** 픽스처 경로는 죽은 경로가 아니다.
-    if (/existsSync\s*\(|writeFileSync\s*\(|mkdirSync\s*\(|cpSync\s*\(|\bpath:\s*$/.test(before)) continue;
-    // 같은 계약을 **목록으로** 쓰는 흔한 모양도 있다:
-    //   for (const retired of ["a.tsx", "b.tsx"]) assert.ok(!existsSync(join(root, retired)))
-    // 이때 경로 리터럴 앞에는 existsSync 가 없고 뒤에 온다. 뒤도 보지 않으면 "지워진 채로
-    // 있어야 한다"는 계약을 매번 죽은 경로로 오탐한다(2026-08-23 실측: 9건이 전부 이 모양).
-    const after = text.slice(m.index, Math.min(text.length, m.index + 600));
-    // 목록이 길면 140자 창에는 `of [` 가 안 들어온다(항목 4번째부터 오탐이 되살아난다).
-    // 목록 머리를 찾기 위한 창은 넉넉히 잡는다.
-    const beforeWide = text.slice(Math.max(0, m.index - 900), m.index);
-    const listHead = beforeWide.lastIndexOf("of [");
-    const inAbsenceLoop = listHead >= 0
-      && !beforeWide.slice(listHead).includes("]")
-      && /!\s*(?:fs\.)?existsSync\s*\(/.test(after);
-    if (inAbsenceLoop) continue;
-    missing.add(m[2]);
-  }
-  if (missing.size) {
-    deadPaths += missing.size;
-    for (const miss of missing) entries.push(`STALE-PATH|${name}|${miss}`);
-    report.push(`STALE-PATH   ${name}: ${[...missing].join(", ")}`);
-  }
-  // 이 게이트가 명시적으로 읽는 소스들의 합본에 대해 앵커 정규식을 시험한다.
-  // 소스 집합은 "이 게이트가 인라인으로 읽는 파일"이 아니라 "이 게이트가 언급하는 저장소
-  // 파일 전부"다. 경로를 변수에 담아 읽는 게이트(path.join(root, "…") → readFileSync(변수))가
-  // 흔해서, 인라인 readFileSync 만 보면 앵커가 살아 있는데도 죽었다고 보고한다(오탐).
-  // 상위집합을 쓰면 오탐 대신 미탐 쪽으로 기운다 — 관문으로 쓰려면 그쪽이 안전하다.
-  const sources = [...new Set([
-    ...[...text.matchAll(READ_RE)].map((m) => m[2]),
-    ...[...text.matchAll(CORPUS_PATH_RE)].map((m) => m[2]),
-    // path.join(root, "renderer", "components", "X.tsx") 처럼 조각으로 만든 경로. 한 덩이
-    // 문자열이 없어서 위 두 패턴에 안 잡히고, 그러면 살아 있는 앵커가 죽었다고 보고된다.
-    ...[...text.matchAll(JOIN_RE)].map((m) => m[1]
-      .split(",")
-      .map((piece) => piece.trim().replace(/^["'`]|["'`]$/g, ""))
-      .filter((piece) => piece && piece !== "..")
-      .join("/")),
-  ])].filter((p) => {
-    // 코퍼스는 게이트가 언급하는 **모든** 저장소 텍스트 파일이다. renderer/electron/shared 로
-    // 좁히면 모바일·문서·설정 파일에 건 앵커가 "죽었다"로 잘못 보고된다(실측 오탐 6건).
-    if (!/\.(?:tsx?|jsx?|cjs|mjs|css|json|md|txt|html|sh|py|toml|ya?ml|dart|kt|swift|rs|go)$/.test(p)) return false;
-    if (p.startsWith("node_modules/") || p.includes("/node_modules/")) return false;
-    try {
-      const stat = fs.statSync(path.resolve(root, p));
-      return stat.isFile() && stat.size <= 4 * 1024 * 1024;
-    } catch { return false; }
-  });
-  if (sources.length === 0) continue;
-  const corpus = sources.map((p) => readSource(p)).join("\n \n");
-  const textNames = fileTextNames(text);
-  for (const m of text.matchAll(MATCH_LINE_RE)) {
-    if (!subjectIsFileText(m[1], textNames)) continue; // 파일 본문이 아닌 값에 건 단언
-    let re;
-    try {
-      re = new RegExp(m[2], m[3].replace(/g/, ""));
-    } catch {
-      continue; // 동적 조립·비호환 플래그는 판단하지 않는다(오탐 금지).
+  for (const gate of gateFiles) {
+    const name = gate;
+    const gateFile = readFile(name);
+    if (!gateFile.isFile || gateFile.size > MAX_SOURCE_BYTES) {
+      throw new Error(`gate is not a readable text file within the scan limit: ${name}`);
     }
-    if (!re.test(corpus)) {
-      deadAnchors += 1;
-      entries.push(`STALE-ANCHOR|${name}|${m[2]}`);
-      report.push(`STALE-ANCHOR ${name}: /${m[2].slice(0, 90)}/ matches none of [${sources.join(", ")}]`);
+    const text = gateFile.text;
+    const missing = new Set();
+    for (const m of text.matchAll(PATH_RE)) {
+      if (readFile(m[2]).exists) continue;
+      // "이 파일은 삭제된 채로 있어야 한다"를 지키는 게이트가 있다. 그런 존재 검사에 쓰인 경로는
+      // 죽은 경로가 아니라 그 게이트의 요점이다(실측: test-automation-setup-request).
+      const before = text.slice(Math.max(0, m.index - 140), m.index);
+      // 존재 검사(삭제 유지 계약)와 게이트가 **직접 만드는** 픽스처 경로는 죽은 경로가 아니다.
+      if (/existsSync\s*\(|writeFileSync\s*\(|mkdirSync\s*\(|cpSync\s*\(|\bpath:\s*$/.test(before)) continue;
+      // 같은 계약을 **목록으로** 쓰는 흔한 모양도 있다:
+      //   for (const retired of ["a.tsx", "b.tsx"]) assert.ok(!existsSync(join(root, retired)))
+      // 이때 경로 리터럴 앞에는 existsSync 가 없고 뒤에 온다. 뒤도 보지 않으면 "지워진 채로
+      // 있어야 한다"는 계약을 매번 죽은 경로로 오탐한다(2026-08-23 실측: 9건이 전부 이 모양).
+      const after = text.slice(m.index, Math.min(text.length, m.index + 600));
+      // 목록이 길면 140자 창에는 `of [` 가 안 들어온다(항목 4번째부터 오탐이 되살아난다).
+      // 목록 머리를 찾기 위한 창은 넉넉히 잡는다.
+      const beforeWide = text.slice(Math.max(0, m.index - 900), m.index);
+      const listHead = beforeWide.lastIndexOf("of [");
+      const inAbsenceLoop = listHead >= 0
+        && !beforeWide.slice(listHead).includes("]")
+        && /!\s*(?:fs\.)?existsSync\s*\(/.test(after);
+      if (inAbsenceLoop) continue;
+      missing.add(m[2]);
+    }
+    if (missing.size) {
+      deadPaths += missing.size;
+      for (const miss of missing) entries.push(`STALE-PATH|${name}|${miss}`);
+      report.push(`STALE-PATH   ${name}: ${[...missing].join(", ")}`);
+    }
+    // 이 게이트가 명시적으로 읽는 소스들의 합본에 대해 앵커 정규식을 시험한다.
+    // 소스 집합은 "이 게이트가 인라인으로 읽는 파일"이 아니라 "이 게이트가 언급하는 저장소
+    // 파일 전부"다. 경로를 변수에 담아 읽는 게이트(path.join(root, "…") → readFileSync(변수))가
+    // 흔해서, 인라인 readFileSync 만 보면 앵커가 살아 있는데도 죽었다고 보고한다(오탐).
+    // 상위집합을 쓰면 오탐 대신 미탐 쪽으로 기운다 — 관문으로 쓰려면 그쪽이 안전하다.
+    const sources = [...new Set([
+      ...[...text.matchAll(READ_RE)].map((m) => m[2]),
+      ...[...text.matchAll(CORPUS_PATH_RE)].map((m) => m[2]),
+      // path.join(root, "renderer", "components", "X.tsx") 처럼 조각으로 만든 경로. 한 덩이
+      // 문자열이 없어서 위 두 패턴에 안 잡히고, 그러면 살아 있는 앵커가 죽었다고 보고된다.
+      ...[...text.matchAll(JOIN_RE)].map((m) => m[1]
+        .split(",")
+        .map((piece) => piece.trim().replace(/^["'`]|["'`]$/g, ""))
+        .filter((piece) => piece && piece !== "..")
+        .join("/")),
+    ])].filter((p) => {
+      // 코퍼스는 게이트가 언급하는 **모든** 저장소 텍스트 파일이다. renderer/electron/shared 로
+      // 좁히면 모바일·문서·설정 파일에 건 앵커가 "죽었다"로 잘못 보고된다(실측 오탐 6건).
+      if (!/\.(?:tsx?|jsx?|cjs|mjs|css|json|md|txt|html|sh|py|toml|ya?ml|dart|kt|swift|rs|go)$/.test(p)) return false;
+      if (p.startsWith("node_modules/") || p.includes("/node_modules/")) return false;
+      const file = readFile(p);
+      return file.isFile && file.size <= MAX_SOURCE_BYTES;
+    });
+    if (sources.length === 0) continue;
+    const corpus = sources.map((p) => readFile(p).text).join("\n \n");
+    const textNames = fileTextNames(text);
+    for (const m of text.matchAll(MATCH_LINE_RE)) {
+      if (!subjectIsFileText(m[1], textNames)) continue; // 파일 본문이 아닌 값에 건 단언
+      let re;
+      try {
+        re = new RegExp(m[2], m[3].replace(/g/, ""));
+      } catch {
+        continue; // 동적 조립·비호환 플래그는 판단하지 않는다(오탐 금지).
+      }
+      if (!re.test(corpus)) {
+        deadAnchors += 1;
+        entries.push(`STALE-ANCHOR|${name}|${m[2]}`);
+        report.push(`STALE-ANCHOR ${name}: /${m[2].slice(0, 90)}/ matches none of [${sources.join(", ")}]`);
+      }
     }
   }
+
+  return { entries: [...new Set(entries)].sort(), report, deadPaths, deadAnchors, gateCount: gateFiles.length };
 }
 
+let result;
+try {
+  if (mode === "staged") {
+    const head = treeFiles("HEAD");
+    const index = treeFiles("INDEX");
+    const trackedUnion = new Set([...head.keys(), ...index.keys()]);
+    // Local-only gates and sources share one immutable, cached disk view across
+    // both scans. Only the versioned HEAD/INDEX content is allowed to differ.
+    const previous = scan(snapshotGates(head, trackedUnion), snapshotReader(head, trackedUnion));
+    const current = scan(snapshotGates(index, trackedUnion), snapshotReader(index, trackedUnion));
+    const known = new Set(previous.entries);
+    const fresh = current.entries.filter((entry) => !known.has(entry));
+    const fixed = previous.entries.filter((entry) => !current.entries.includes(entry));
+    console.log(`gate freshness: HEAD → INDEX — new ${fresh.length}, resolved ${fixed.length}, existing ${current.entries.length - fresh.length}`);
+    for (const entry of current.entries) console.log(`${known.has(entry) ? "EXISTING" : "NEW"} ${entry}`);
+    for (const entry of fixed) console.log(`RESOLVED ${entry}`);
+    if (fresh.length) console.error("gate freshness: staged changes introduce stale checks; update the affected contract and its gate together.");
+    process.exit(fresh.length ? 1 : 0);
+  }
+  if (BASE_REF) {
+    const files = treeFiles(BASE_REF);
+    const trackedUnion = new Set([...files.keys(), ...treeFiles("HEAD").keys(), ...treeFiles("INDEX").keys()]);
+    result = scan(snapshotGates(files, trackedUnion), snapshotReader(files, trackedUnion));
+  } else {
+    result = scan(diskGates.filter((name) => diskFile(name).isFile).sort(), diskFile);
+  }
+} catch (error) {
+  console.error(`gate freshness: snapshot/read failed — ${error.message}`);
+  process.exit(1);
+}
+const { entries, report, deadPaths, deadAnchors, gateCount } = result;
 const BASELINE = path.join(root, "scripts", "gate-staleness-baseline.json");
-const mode = process.argv.includes("--update-baseline")
-  ? "update"
-  : process.argv.includes("--baseline") ? "baseline" : "report";
 
 if (mode === "update") {
   fs.writeFileSync(BASELINE, `${JSON.stringify({
@@ -279,7 +304,7 @@ if (mode === "baseline") {
 }
 
 for (const line of report) console.log(line);
-console.log(`gate freshness: ${gateFiles.length} gates scanned — dead paths ${deadPaths}, dead anchors ${deadAnchors}`);
+console.log(`gate freshness: ${gateCount} gates scanned — dead paths ${deadPaths}, dead anchors ${deadAnchors}`);
 // 탐지기는 보고가 임무다: 낡음이 있어도 exit 0으로 두면 아무도 안 본다. 단, 전면 빨강으로
 // 개발을 막지 않게 "확실한 것"만 실패시킨다 — dead path는 확실, dead anchor는 SUSPECT 경고.
 process.exit(deadPaths > 0 ? 1 : 0);

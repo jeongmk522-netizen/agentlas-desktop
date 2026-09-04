@@ -5855,6 +5855,7 @@ import { formatScienceCell } from "./format-cell.js";
   }
 
   function render() {
+    if (state.drawer && window.matchMedia("(max-width: 680px)").matches) state.railCollapsed = true;
     const selectedRendererIdentity = (() => {
       if (state.mode !== "lab" || state.inspectedArtifactVersion) return null;
       const artifacts = (state.labContextsById.get(state.selectedLabId) || []).map((context) => context.artifact);
@@ -8847,6 +8848,7 @@ import { formatScienceCell } from "./format-cell.js";
     if (event.target?.matches?.("[data-workspace-tabs]")) syncWorkspaceTabOverflow();
   }, true);
   window.addEventListener("resize", () => {
+    if (state.drawer && window.matchMedia("(max-width: 680px)").matches) state.railCollapsed = true;
     syncRailPresentation();
     requestAnimationFrame(() => {
       revealActiveWorkspaceTab();

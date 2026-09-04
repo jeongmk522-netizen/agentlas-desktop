@@ -274,7 +274,11 @@ async function main() {
   // 7. 빈 답이 빈 말풍선으로 남지 않는다 — 단, 조용히 삼키지도 않는다.
   await check("빈 최종 답은 저장 전에 걸러지고 사실은 원장에 남는다", () => {
     const src = fs.readFileSync(path.join(root, "electron/mcp/client.ts"), "utf8");
-    assert.match(src, /if \(displayWithFloor\.trim\(\)\) \{\s*\n\s*appendChatMessage\(chat\.id, "assistant", displayWithFloor\);/, "빈 답 가드가 없다");
+    assert.match(
+      src,
+      /if \(persistedDisplay\.trim\(\) \|\| finalImageOptions\?\.images\?\.length\) \{\s*\n\s*durableAssistantEntry = appendChatMessage\(chat\.id, "assistant", persistedDisplay, finalImageOptions\);/,
+      "텍스트와 이미지가 모두 빈 최종 답을 거르는 저장 가드가 없다",
+    );
     assert.match(src, /emptyDisplayText: true/, "빈 답 사실이 원장에 남지 않는다 — 조용한 삭제 금지");
   });
 
@@ -396,7 +400,7 @@ async function main() {
      * 기본값이 갈리고, 실측에서 정확히 그 일이 있었다: cwd 는 agentRunCwd() 로
      * 폴백하는데 등록 목록은 빈 채로 남아 --add-dir 가 인자에서 통째로 사라졌다.
      */
-    assert.match(src, /const agyWorkDir = runReq\.cwd \?\? agentRunCwd\(\)/,
+    assert.match(src, /const agyWorkDir = (?:browserProject\?\.workspace \?\? )?runReq\.cwd \?\? agentRunCwd\(\)/,
       "작업 폴더 폴백이 한 곳에서 정해지지 않는다");
     assert.match(src, /cwd: agyWorkDir,/,
       "스폰 cwd 가 등록 폴더와 다른 식으로 계산된다 — 둘이 갈리면 쓰기가 딴 데로 간다");

@@ -12,8 +12,9 @@ import { AccountChip } from "./AccountChip";
 import { CreditBalanceWidget } from "./CreditBalanceWidget";
 import { UpdateBanner } from "./UpdateBanner";
 import { navigate } from "@/lib/navigation";
-import { ipc, ipcEvents } from "@/lib/ipc";
+import { ipc } from "@/lib/ipc";
 import { requestScienceInstall, SCIENCE_INSTALL_DISCOVERY_ENABLED } from "@/lib/science-install-entry";
+import { useScienceSuiteStatus } from "@/lib/use-science-suite-status";
 import { classifyHubEntity, entityClassShortLabel } from "@/lib/agent-entity-kind";
 import { pickLocalized, useT } from "@/lib/i18n";
 import {
@@ -40,7 +41,6 @@ import {
   IconSidebar,
 } from "./Icon";
 import type { MarketplaceListing } from "@/lib/types";
-import type { ScienceSuiteStatus } from "@shared/product-extension";
 import type { ComponentType } from "react";
 
 type IconType = ComponentType<{ size?: number }>;
@@ -84,7 +84,7 @@ export function SideNav({
   const [searchSuggestions, setSearchSuggestions] = useState<MarketplaceListing[]>([]);
   const [searchSuggestionQuery, setSearchSuggestionQuery] = useState("");
   const [searchActiveIndex, setSearchActiveIndex] = useState(0);
-  const [scienceSuite, setScienceSuite] = useState<ScienceSuiteStatus | null>(null);
+  const scienceSuite = useScienceSuiteStatus();
   const scienceReady = Boolean(scienceSuite?.installed && scienceSuite.enabled);
   const searchGenerationRef = useRef(0);
   // 텔레그램 항목은 이동이 아니라 팝업이라, 활성 표시가 pathname 이 아니라 팝업 상태를 따른다.
@@ -100,23 +100,6 @@ export function SideNav({
     } catch {
       /* ignore */
     }
-  }, []);
-
-  useEffect(() => {
-    let disposed = false;
-    const sync = () => {
-      void ipc()?.productExtensions?.scienceSuiteStatus?.().then((status) => {
-        if (!disposed) setScienceSuite(status);
-      }).catch(() => {
-        if (!disposed) setScienceSuite(null);
-      });
-    };
-    sync();
-    const off = ipcEvents()?.onProductExtensionChanged?.(() => sync());
-    return () => {
-      disposed = true;
-      off?.();
-    };
   }, []);
 
   // 글로벌 Hub 검색은 Enter 제출 전용이 아니다. 입력 중 실제 Hub 결과를 짧게

@@ -45,12 +45,14 @@ import {
   codexResidentSessionAlive,
   codexSessionPool,
   isCodexApprovalRequest,
+  isCodexMcpElicitationRequest,
   looksLikeMissingAppServer,
   markCodexAppServerUnsupported,
   openCodexResidentSession,
   type CodexResidentSession,
   type CodexTurnSink,
 } from "./codex-session";
+import { answerCodexMcpElicitation } from "./codex-elicitation";
 import { residencyDisabledFor } from "./claude-session";
 import { isResidencyExemptAgent, resolveAgentResidencySource } from "./agent-residency";
 import type { AcpSessionLease } from "./acp-session-pool";
@@ -1111,6 +1113,11 @@ async function runCodexResidentTurn(input: {
   let interrupted = false;
   let settleTurn: ((reason: "completed" | "closed") => void) | null = null;
   let closedReason = "";
+  // Every blocking MCP elicitation belongs to this one turn, even when the
+  // underlying app-server process survives for later turns. Stop, transport
+  // close, or checkout release must cancel the question before the session can
+  // be reused by another chat/turn.
+  const elicitationAbort = new AbortController();
 
   const openThinking = (): void => {
     if (thinkingOpen) return;
@@ -1324,6 +1331,38 @@ async function runCodexResidentTurn(input: {
           ],
         };
       }
+      if (isCodexMcpElicitationRequest(method)) {
+        const expectedThreadId = session.threadId ?? "";
+        const expectedTurnId = turnId;
+        const isCurrent = () => (
+          !session.closed
+          && session.active === sink
+          && session.threadId === expectedThreadId
+          && turnId === expectedTurnId
+          && !elicitationAbort.signal.aborted
+        );
+        const outcome = await answerCodexMcpElicitation(params, {
+          chatId: req.approvalChatId ?? chatId,
+          threadId: expectedThreadId,
+          turnId: expectedTurnId,
+          unattended: req.unattended === true || req.noSynchronousAsk === true,
+          signal: elicitationAbort.signal,
+          isCurrent,
+        });
+        // The helper rechecks immediately before accept. Check once more at the
+        // transport boundary so a close/replacement between its return and this
+        // callback cannot send collected form content into a stale app-server.
+        const staleAccept = outcome.response.action === "accept" && !isCurrent();
+        const response = staleAccept ? { action: "cancel" as const } : outcome.response;
+        const receipt = staleAccept
+          ? { ...outcome.receipt, action: "cancel" as const, reason: "stale" as const, fieldCount: 0 }
+          : outcome.receipt;
+        const safe = (value: string) => value.replace(/[^a-zA-Z0-9_.:-]/g, "_").slice(0, 96) || "unknown";
+        events.onStatus(
+          `[mcp-elicitation] runtime=${KIND} server=${safe(receipt.serverName)} chat=${safe(receipt.chatId)} thread=${safe(receipt.threadId)} turn=${safe(receipt.turnId)} action=${receipt.action} reason=${receipt.reason} fields=${receipt.fieldCount}`,
+        );
+        return response;
+      }
       /*
        * ★실행 **전** 승인 — codex 가 처음으로 승인 칩에 참여하는 자리.
        * 계약은 ACP `answerPermission` 과 같다: 중재자가 없으면 보수적 기본값,
@@ -1341,6 +1380,7 @@ async function runCodexResidentTurn(input: {
     onStatus: (status) => events.onStatus(status),
     onTransportClosed: (reason) => {
       closedReason = reason;
+      elicitationAbort.abort(new Error(reason));
       settleTurn?.("closed");
     },
   };
@@ -1350,6 +1390,7 @@ async function runCodexResidentTurn(input: {
   const onAbort = (): void => {
     broken = true;
     interrupted = true;
+    elicitationAbort.abort(req.signal?.reason);
     /*
      * 취소는 프로토콜 1급이다 — 먼저 `turn/interrupt` 로 이 턴을 멈추고, **그 다음** 세션을
      * 버린다(상태를 모르는 세션을 다음 턴에 물려주지 않는다).
@@ -1542,6 +1583,7 @@ async function runCodexResidentTurn(input: {
     throw err;
   } finally {
     req.signal?.removeEventListener("abort", onAbort);
+    elicitationAbort.abort(new Error("Codex turn settled"));
     closeThinking();
     // 취소가 프로토콜에 도달한 뒤에 죽인다(상한 2초 — 응답이 없어도 폐기는 반드시 일어난다).
     if (interruptAck) {

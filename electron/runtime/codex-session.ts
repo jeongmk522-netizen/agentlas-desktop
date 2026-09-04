@@ -40,6 +40,7 @@ import {
   type RuntimeToolPermissionAsk,
   type RuntimeToolPermissionDecision,
 } from "./tool-approval";
+import { CODEX_MCP_ELICITATION_METHOD } from "./codex-elicitation";
 
 export type { AcpSessionLease };
 
@@ -62,15 +63,21 @@ export const CODEX_CLIENT_REQUESTS = [
   "turn/start",
 ] as const;
 
-/** 서버가 우리에게 보내는 요청 — 승인 요청과 Main-owned dynamic tool call. */
-export const CODEX_SERVER_REQUESTS = [
+/** 실행 승인을 묻는 서버 요청. MCP form elicitation은 정보 입력이며 별도 경계다. */
+export const CODEX_APPROVAL_REQUESTS = [
   "applyPatchApproval",
   "execCommandApproval",
   "item/commandExecution/requestApproval",
   "item/fileChange/requestApproval",
   "item/permissions/requestApproval",
-  "item/tool/call",
   "item/tool/requestUserInput",
+] as const;
+
+/** 서버가 우리에게 보내는 요청 — 승인, MCP elicitation, Main-owned dynamic tool call. */
+export const CODEX_SERVER_REQUESTS = [
+  ...CODEX_APPROVAL_REQUESTS,
+  CODEX_MCP_ELICITATION_METHOD,
+  "item/tool/call",
 ] as const;
 
 /** 우리가 실제로 소비하는 알림. 여기 없는 알림은 무시된다(모르는 것을 지어내지 않는다). */
@@ -362,7 +369,11 @@ export interface CodexApprovalContext {
 
 /** 이 요청이 승인 대상인가(우리가 답을 아는 6종). */
 export function isCodexApprovalRequest(method: string): boolean {
-  return (CODEX_SERVER_REQUESTS as readonly string[]).includes(method);
+  return (CODEX_APPROVAL_REQUESTS as readonly string[]).includes(method);
+}
+
+export function isCodexMcpElicitationRequest(method: string): boolean {
+  return method === CODEX_MCP_ELICITATION_METHOD;
 }
 
 const text = (value: unknown): string | undefined => {

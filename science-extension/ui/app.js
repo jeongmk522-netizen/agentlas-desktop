@@ -9367,7 +9367,7 @@ import { formatScienceCell } from "./format-cell.js";
       state.newProjectStep = "field";
       state.selectedResearchTemplateId = null;
       state.newProjectDraft = { title: "", question: "" };
-      await selectProject(result.project.id);
+      await selectProject(result.project.id, { openFolder: true });
       // project.create persists the first question as a user message. Start that
       // exact message immediately so a new project opens on a live Research
       // Director turn instead of looking like an empty shell that needs a second

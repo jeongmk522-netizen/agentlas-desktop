@@ -53,7 +53,14 @@ fs.mkdirSync(outputDir, { recursive: true, mode: 0o700 });
 fs.writeFileSync(diagnosticTimelinePath, "", { encoding: "utf8", mode: 0o600 });
 
 function appendDiagnosticEvent(event, detail = {}) {
-  fs.appendFileSync(diagnosticTimelinePath, `${JSON.stringify({ at: new Date().toISOString(), event, ...detail })}\n`, "utf8");
+  try {
+    fs.appendFileSync(diagnosticTimelinePath, `${JSON.stringify({ at: new Date().toISOString(), event, ...detail })}\n`, "utf8");
+  } catch (error) {
+    // Late Playwright close callbacks may arrive after the private QA root was
+    // intentionally removed. Teardown diagnostics are best-effort and must not
+    // turn an otherwise clean bounded shutdown into a process failure.
+    if (error?.code !== "ENOENT") throw error;
+  }
 }
 
 function readDiagnosticTimeline() {

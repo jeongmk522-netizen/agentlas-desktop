@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import type { ProductExtensionStatus, ProductExtensionViewBounds, ProductExtensionViewStatus } from "@shared/product-extension";
+import { AskUserSheet } from "@/components/AskUserSheet";
 import { ProductModeMenu } from "@/components/one/ProductModeMenu";
 import { ipc, ipcEvents } from "@/lib/ipc";
 import { navigate } from "@/lib/navigation";
@@ -16,6 +17,14 @@ function elementBounds(element: HTMLElement): ProductExtensionViewBounds {
     width: Math.max(1, Math.round(rect.width)),
     height: Math.max(1, Math.round(rect.height)),
   };
+}
+
+function scienceViewBounds(element: HTMLElement): ProductExtensionViewBounds {
+  const bounds = elementBounds(element);
+  const askCard = document.querySelector<HTMLElement>('[data-ask-card="true"]');
+  if (!askCard) return bounds;
+  const reservedHeight = Math.min(bounds.height - 1, Math.ceil(askCard.getBoundingClientRect().height) + 44);
+  return { ...bounds, height: Math.max(1, bounds.height - reservedHeight) };
 }
 
 export default function ScienceHostPage() {
@@ -41,7 +50,7 @@ export default function ScienceHostPage() {
       setExtension(status);
       if (!status || status.phase !== "installed" || !status.enabled) return;
       openedRef.current = true;
-      const nextView = await api.productExtensions.openScienceView(elementBounds(surface), leaseId).catch((): ProductExtensionViewStatus => ({
+      const nextView = await api.productExtensions.openScienceView(scienceViewBounds(surface), leaseId).catch((): ProductExtensionViewStatus => ({
         id: "agentlas-science",
         leaseId,
         state: "error",
@@ -55,10 +64,17 @@ export default function ScienceHostPage() {
     const resize = new ResizeObserver(() => {
       window.cancelAnimationFrame(frame);
       frame = window.requestAnimationFrame(() => {
-        if (openedRef.current) void api.productExtensions.setScienceViewBounds(elementBounds(surface), leaseId);
+        if (openedRef.current) void api.productExtensions.setScienceViewBounds(scienceViewBounds(surface), leaseId);
       });
     });
     resize.observe(surface);
+    const askCardObserver = new MutationObserver(() => {
+      window.cancelAnimationFrame(frame);
+      frame = window.requestAnimationFrame(() => {
+        if (openedRef.current) void api.productExtensions.setScienceViewBounds(scienceViewBounds(surface), leaseId);
+      });
+    });
+    askCardObserver.observe(document.body, { childList: true, subtree: true });
     const offView = ipcEvents()?.onProductExtensionViewStatus?.((status) => {
       if (status.leaseId === leaseId) setView(status);
     });
@@ -75,6 +91,7 @@ export default function ScienceHostPage() {
       if (mountEpochRef.current === epoch) mountEpochRef.current += 1;
       window.cancelAnimationFrame(frame);
       resize.disconnect();
+      askCardObserver.disconnect();
       offView?.();
       offExtension?.();
       openedRef.current = false;
@@ -85,23 +102,26 @@ export default function ScienceHostPage() {
   const unavailable = extension !== null && (extension.phase !== "installed" || !extension.enabled);
   const failed = view?.state === "error";
   return (
-    <div className={styles.page}>
-      <header className={`${styles.header} titlebar-drag`}>
-        <div className="titlebar-nodrag"><ProductModeMenu current="science" darkText locale={ko ? "ko" : "en"} /></div>
-        <div className={styles.title}>{ko ? "재현 가능한 연구 워크벤치" : "Reproducible research workbench"}</div>
-        <div className={styles.status}>{view?.state === "ready" ? (view.title || "Agentlas Science") : view?.state === "opening" ? (ko ? "여는 중" : "Opening") : ""}</div>
-      </header>
-      <div ref={surfaceRef} className={styles.surface}>
-        {(unavailable || failed) && (
-          <div className={styles.fallback}>
-            <div className={styles.fallbackCard}>
-              <h1>{failed ? (ko ? "Science를 열지 못했습니다" : "Science could not be opened") : (ko ? "Science가 설치되어 있지 않습니다" : "Science is not installed")}</h1>
-              <p>{failed ? (view?.errorMessage ?? view?.errorCode) : (ko ? "설정에서 검증된 Science 확장을 설치하거나 다시 켜세요." : "Install or re-enable the verified Science extension in Settings.")}</p>
-              <button type="button" onClick={() => navigate("/settings")}>{ko ? "설정 열기" : "Open Settings"}</button>
+    <>
+      <div className={styles.page}>
+        <header className={`${styles.header} titlebar-drag`}>
+          <div className="titlebar-nodrag"><ProductModeMenu current="science" darkText locale={ko ? "ko" : "en"} /></div>
+          <div className={styles.title}>{ko ? "재현 가능한 연구 워크벤치" : "Reproducible research workbench"}</div>
+          <div className={styles.status}>{view?.state === "ready" ? (view.title || "Agentlas Science") : view?.state === "opening" ? (ko ? "여는 중" : "Opening") : ""}</div>
+        </header>
+        <div ref={surfaceRef} className={styles.surface}>
+          {(unavailable || failed) && (
+            <div className={styles.fallback}>
+              <div className={styles.fallbackCard}>
+                <h1>{failed ? (ko ? "Science를 열지 못했습니다" : "Science could not be opened") : (ko ? "Science가 설치되어 있지 않습니다" : "Science is not installed")}</h1>
+                <p>{failed ? (view?.errorMessage ?? view?.errorCode) : (ko ? "설정에서 검증된 Science 확장을 설치하거나 다시 켜세요." : "Install or re-enable the verified Science extension in Settings.")}</p>
+                <button type="button" onClick={() => navigate("/settings")}>{ko ? "설정 열기" : "Open Settings"}</button>
+              </div>
             </div>
-          </div>
-        )}
+          )}
+        </div>
       </div>
-    </div>
+      <AskUserSheet />
+    </>
   );
 }

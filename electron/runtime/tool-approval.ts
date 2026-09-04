@@ -271,17 +271,19 @@ export function clearSessionGrants(sessionKey: string): void {
  * 이 제품에서 "끝나지 않는 실행"은 이미 한 번 비싼 대가를 치른 실패 모양이다.
  */
 export function requestToolApproval(
-  input: Omit<ToolApprovalRequest, "id" | "requestedAt" | "mode"> & { sessionKey: string; timeoutMs?: number },
+  input: Omit<ToolApprovalRequest, "id" | "requestedAt" | "expiresAt" | "mode"> & { sessionKey: string; timeoutMs?: number },
 ): Promise<ToolApprovalOutcome> {
   const { sessionKey, timeoutMs = 5 * 60_000, ...rest } = input;
   if (hasSessionGrant(sessionKey, rest)) {
     return Promise.resolve({ decision: "allow_session", decidedAt: new Date().toISOString() });
   }
+  const requestedAt = new Date();
   const request: ToolApprovalRequest = {
     ...rest,
     id: `approval:${Date.now().toString(36)}:${Math.random().toString(36).slice(2, 10)}`,
     mode: "live",
-    requestedAt: new Date().toISOString(),
+    requestedAt: requestedAt.toISOString(),
+    expiresAt: new Date(requestedAt.getTime() + timeoutMs).toISOString(),
   };
   return new Promise<ToolApprovalOutcome>((resolve) => {
     const timer = setTimeout(() => {
@@ -330,7 +332,7 @@ const ANNOUNCED_LIMIT = 200;
  * 답을 기다리지 않는다(기다릴 대상이 없다). 선택은 다음 실행의 허용 범위에만 쓰인다.
  */
 export function announceToolDenied(
-  input: Omit<ToolApprovalRequest, "id" | "requestedAt" | "mode"> & { sessionKey?: string },
+  input: Omit<ToolApprovalRequest, "id" | "requestedAt" | "expiresAt" | "mode"> & { sessionKey?: string },
 ): ToolApprovalRequest {
   const { sessionKey, ...rest } = input;
   const request: ToolApprovalRequest = {

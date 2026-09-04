@@ -7956,6 +7956,8 @@ export interface ToolApprovalRequestEvent {
   mode: "live" | "post-denial";
   deniedBy?: "runtime-headless" | "sandbox";
   requestedAt: string;
+  /** Main이 이 live 요청을 자동 거부하는 정확한 시각. 오래된 요청은 없을 수 있다. */
+  expiresAt?: string;
   /**
    * 요청이 붙어 있는 대화(chat id). 승인 카드는 이 대화 안에서만 뜨고, 다른 화면에는
    * 확인필요 배지만 남는다(오너 결정 2026-08-15). 없으면(대화 없는 실행) 전역 배지.

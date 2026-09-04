@@ -370,7 +370,18 @@ export class ScienceConversationService {
       userPrompt: userMessage.content,
       promptOrigin: turn.origin === "loop-continuation" ? "system" : "user",
       taskIntent: "conversation",
-      permissions: "read",
+      // A Science turn acts: it proposes a contract, records hypotheses, freezes a plan, runs a Lab
+      // and composes a manuscript. Under a read-only sandbox Codex treats every MCP tool call as
+      // needing approval, and a non-interactive turn has nobody to ask, so it recorded each call as
+      // "user rejected MCP tool call" -- a rejection by a user who was never asked. Measured across
+      // seven live astronomy runs: every Science tool call died that way and the study never left
+      // phase 1 of 12.
+      //
+      // The boundary that matters here is not the sandbox. Every Science write goes through
+      // Main-owned tools that ScienceStore revalidates against the exact project, turn and grant;
+      // workspace-write bounds the filesystem to the project folder on top of that. Owner decision,
+      // 2026-09-04, taken over the narrower alternative of per-tool approval declarations.
+      permissions: "write",
       sessionRouting: true,
       locale,
     }, undefined, {

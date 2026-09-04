@@ -364,7 +364,13 @@ export function closeScienceStore(): void {
   activeEarthquakeCatalogService = null;
   activeNoaaCoopsWaterLevelService = null;
   activeEconomicsCatalogService = null;
+  activeEconomicsAnalysisService = null;
   activeGenomicsCatalogService = null;
+  activeComparativeGenomicsService = null;
+  activeExtantReferenceAssemblyService = null;
+  activeComparativeGenomicsTableService = null;
+  activeHypotheticalAsrService = null;
+  activeExtantArchosaurLocusPanelService = null;
   activeMaterialsCatalogService = null;
   activePhysicsInspireLiveService = null;
   activePhysicsHepDataLiveService = null;
@@ -373,6 +379,7 @@ export function closeScienceStore(): void {
   activeManuscriptRenderService = null;
   activeArtifactPublicationValidator = null;
   activeDomainAnalysisService = null;
+  activeEarthAnalysisService = null;
   activePhysicsAnalysisService = null;
   activeEvidenceGraphService = null;
   activeStore?.close();

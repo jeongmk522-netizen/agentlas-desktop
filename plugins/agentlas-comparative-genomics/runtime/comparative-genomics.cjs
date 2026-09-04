@@ -53,7 +53,6 @@ function buildReferenceAssemblyManifestRequest(input) {
     const genomeUrl = new URL(`/info/genomes/${encodeURIComponent(speciesName)}`, ENSEMBL_ORIGIN);
     genomeUrl.searchParams.set("content-type", "application/json");
     const assemblyUrl = new URL(`/info/assembly/${encodeURIComponent(speciesName)}`, ENSEMBL_ORIGIN);
-    assemblyUrl.searchParams.set("synonyms", "1");
     assemblyUrl.searchParams.set("content-type", "application/json");
     const fastaBase = `/pub/current_fasta/${encodeURIComponent(speciesName)}/dna/`;
     return {

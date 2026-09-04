@@ -17,7 +17,7 @@ const MAX_RELEASE_BYTES = 512 * 1024 * 1024;
  * Reconciliation must update a pin whenever a built-in plugin manifest moves.
  */
 const SOURCE_MANIFEST_PINS: Readonly<Record<string, string>> = Object.freeze({
-  "agentlas-comparative-genomics": "69a2e990ebb7fc7f2ad970fa23e8a23439925095475d480f9f123740c1d62a44",
+  "agentlas-comparative-genomics": "47cd4c193e22f978c545852c8b2f937659286cb42fad06cd4512e1628eb3d6a1",
   "agentlas-astronomy": "8665b7a75d95aa4edbd2f59f59e8a47ae6f9b7bd37c477adc8147a62ba1da241",
   "agentlas-earth-science": "f536feae47f1241065b620b7ddc5f7f47a6b671f307ea34eea0844c9942159c0",
   "agentlas-physics": "946c84cc3d7e64182608624c64286170d5ad95aadc7d49d5b08f4749a73d050b",

@@ -107,8 +107,8 @@
       },
       {
         "path": "runtime/comparative-genomics.cjs",
-        "sha256": "0a71c3ce175148c511ee9efb09b6ba9ed21d271bc59d7d7f452053b270311e6e",
-        "bytes": 24765
+        "sha256": "9b8ef6131ed105d360e1aba940826c1ef5318e881297ae11cb0af6291d8af16d",
+        "bytes": 24714
       },
       {
         "path": "runtime/extant-archosaur-locus-panel.cjs",

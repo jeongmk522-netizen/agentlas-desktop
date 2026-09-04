@@ -134,16 +134,34 @@ async function fetchExact(url: string, kind: "json" | "text", fetchImpl: typeof 
   const restAllowed = parsed.origin === ENSEMBL_ORIGIN && (parsed.pathname === "/info/data" || parsed.pathname.startsWith("/info/genomes/") || parsed.pathname.startsWith("/info/assembly/"));
   const ftpAllowed = parsed.origin === ENSEMBL_FTP_ORIGIN && /^\/pub\/current_fasta\/[a-z][a-z0-9_]+\/dna\/(?:README|CHECKSUMS)$/u.test(parsed.pathname);
   if ((kind === "json" && !restAllowed) || (kind === "text" && !ftpAllowed)) throw new Error("science-extant-reference-assembly-endpoint-denied");
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 35_000);
-  try {
-    const response = await fetchImpl(parsed, { signal: controller.signal, redirect: "error", headers: { accept: kind === "json" ? "application/json" : "text/plain,*/*;q=0.1", "user-agent": "Agentlas-Science/1.0 (extant reference assembly manifest; https://agentlas.ai)" } });
-    if (response.status !== 200) { await response.body?.cancel().catch(() => undefined); throw new Error(`science-extant-reference-assembly-http-${response.status}`); }
-    const mime = (response.headers.get("content-type") ?? "").toLowerCase().split(";", 1)[0]!.trim();
-    if (kind === "json" && mime !== "application/json") { await response.body?.cancel().catch(() => undefined); throw new Error("science-extant-reference-assembly-response-invalid"); }
-    if (kind === "text" && !["text/plain", "application/octet-stream", ""].includes(mime)) { await response.body?.cancel().catch(() => undefined); throw new Error("science-extant-reference-assembly-response-invalid"); }
-    return { body: await readBounded(response, kind === "json" ? MAX_JSON_BYTES : MAX_TEXT_BYTES), retrievedAt: new Date().toISOString() };
-  } finally { clearTimeout(timeout); }
+  const retryableStatuses = new Set([429, 500, 502, 503, 504]);
+  let lastError: unknown = null;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 35_000);
+    try {
+      const response = await fetchImpl(parsed, { signal: controller.signal, redirect: "error", headers: { accept: kind === "json" ? "application/json" : "text/plain,*/*;q=0.1", "user-agent": "Agentlas-Science/1.0 (extant reference assembly manifest; https://agentlas.ai)" } });
+      if (response.status !== 200) {
+        await response.body?.cancel().catch(() => undefined);
+        const error = new Error(`science-extant-reference-assembly-http-${response.status}`);
+        if (!retryableStatuses.has(response.status) || attempt === 2) throw error;
+        lastError = error;
+      } else {
+        const mime = (response.headers.get("content-type") ?? "").toLowerCase().split(";", 1)[0]!.trim();
+        if (kind === "json" && mime !== "application/json") { await response.body?.cancel().catch(() => undefined); throw new Error("science-extant-reference-assembly-response-invalid"); }
+        if (kind === "text" && !["text/plain", "application/octet-stream", ""].includes(mime)) { await response.body?.cancel().catch(() => undefined); throw new Error("science-extant-reference-assembly-response-invalid"); }
+        return { body: await readBounded(response, kind === "json" ? MAX_JSON_BYTES : MAX_TEXT_BYTES), retrievedAt: new Date().toISOString() };
+      }
+    } catch (error) {
+      lastError = error;
+      const transientNetworkFailure = error instanceof Error && (error.name === "AbortError" || error.name === "TypeError");
+      if (!transientNetworkFailure || attempt === 2) throw error;
+    } finally {
+      clearTimeout(timeout);
+    }
+    await new Promise((resolve) => setTimeout(resolve, 250 * (attempt + 1)));
+  }
+  throw lastError instanceof Error ? lastError : new Error("science-extant-reference-assembly-fetch-failed");
 }
 
 export class ScienceExtantReferenceAssemblyService {

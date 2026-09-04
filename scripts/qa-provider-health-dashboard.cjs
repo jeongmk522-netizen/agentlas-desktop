@@ -185,7 +185,10 @@ function watchPage(page, errors) {
 function forceLocale(context, locale) {
   return context.addInitScript((value) => {
     window.localStorage.setItem("agentlas.locale", value);
-    window.localStorage.setItem("agentlas.work.firstRunOnboarding.v2", "1");
+    // Keep dashboard assertions behind the real current Work onboarding gate.
+    // The component moved to v3; leaving v2 here makes the first-run modal
+    // intercept every dashboard click and turns this fixture into a false fail.
+    window.localStorage.setItem("agentlas.work.firstRunOnboarding.v3", "1");
   }, locale);
 }
 

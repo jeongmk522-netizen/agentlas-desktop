@@ -176,11 +176,26 @@ export function ChatRightPanel({
     if (artifact || surface) setViewerSource("workbench");
   }, [artifact?.id, surface?.id]);
 
+  /*
+   * ★사본은 **내용이 채워질 때도** 따라가야 한다(2026-09-04 실측).
+   *
+   * 부모는 자리를 먼저 열고 파일을 읽어 같은 경로의 미리보기를 내용과 함께 다시 보낸다.
+   * 그런데 이 복사는 의존성이 경로·URL 뿐이라 두 번째(내용 있는) 판을 무시했고, 화면에는
+   * 내용 없는 첫 판이 그대로 남아 "이 파일의 내용을 읽지 못했습니다" 가 떴다.
+   * 방금 에이전트가 만든 파일이 영영 안 열렸다 — 읽기는 88자를 정상으로 돌려주고 있었다.
+   */
   useEffect(() => {
     if (!externalFilePreview) return;
     setFilePreview(externalFilePreview);
     setViewerSource("file");
-  }, [externalFilePreview?.path, externalFilePreview?.fileUrl]);
+  }, [
+    externalFilePreview?.path,
+    externalFilePreview?.fileUrl,
+    externalFilePreview?.content,
+    externalFilePreview?.size,
+    externalFilePreview?.available,
+    externalFilePreview?.revision,
+  ]);
 
   useEffect(() => {
     if (!onResizeWidth || activeTab !== "panel" || !isWideOutputKind(outputKind)) return;

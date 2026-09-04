@@ -1105,7 +1105,7 @@ button.manuscriptBinding:hover { border-color: var(--line-strong); background: v
 }
 .chatQuestionSheet {
   position: fixed;
-  right: 22px;
+  right: calc(var(--science-chat-width) - 12px + 1cm);
   bottom: 124px;
   width: min(360px, calc(100vw - 44px));
   max-height: min(640px, calc(100vh - 170px));
@@ -1910,6 +1910,7 @@ button.manuscriptBinding:hover { border-color: var(--line-strong); background: v
   .workspaceResearchTab { width: 112px; flex-basis: 112px; }
   .workspaceTabAdd { width: 30px; height: 30px !important; flex-basis: 30px; }
   .chatDock, .workspace[data-workspace-mode="session"] .chatDock, .workspace[data-workspace-mode="manuscript"] .chatDock { min-width: var(--science-chat-width-compact); flex-basis: var(--science-chat-width-compact); padding: 10px 10px 10px 12px; }
+  .chatQuestionSheet { right: calc(var(--science-chat-width-compact) - 12px + 1cm); }
   .researchView { padding-top: 40px; }
   .labWorkGrid { width: calc(100% - 24px); grid-template-columns: minmax(0, 1fr); gap: 12px; }
   .artifactWorkspace.historyOpen .labWorkGrid { grid-template-columns: minmax(0, 1fr) 220px; }
@@ -1944,6 +1945,7 @@ button.manuscriptBinding:hover { border-color: var(--line-strong); background: v
 }
 
 @media (max-width: 680px) {
+  .chatQuestionSheet { right: 12px; }
   .topbar { padding: 0 12px; }
   .topbar nav { gap: 15px; }
   .statusPill { display: none; }

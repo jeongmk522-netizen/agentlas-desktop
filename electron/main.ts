@@ -36,6 +36,7 @@ import {
   type InstallIdentity,
 } from "./install-identity";
 import { registerIpcHandlers } from "./ipc";
+import { listPendingAskUserRequests, submitAskUserAnswer } from "./confirm/ask-user";
 import { buildAppMenu } from "./menu";
 import { closeStore, initStore, runPostContinuityStoreRepairs } from "./store/db";
 import { onDesktopStoreChange } from "./store/change-bus";
@@ -1573,6 +1574,18 @@ app.whenReady().then(async () => {
     assertScienceExtensionViewPermission(event.sender.id, permission);
     return status;
   };
+  ipcMain.handle("science:askUser:list", (event, envelope: unknown) => {
+    assertScienceSender(event, envelope, "science:agent-runtime");
+    return listPendingAskUserRequests().filter((request) => request.askedBy === "agentlas-science");
+  });
+  ipcMain.handle("science:askUser:answer", (event, envelope: unknown) => {
+    assertScienceSender(event, envelope, "science:agent-runtime");
+    const input = envelope && typeof envelope === "object" ? envelope as { requestId?: unknown; answer?: unknown } : {};
+    const requestId = typeof input.requestId === "string" ? input.requestId : "";
+    const pending = listPendingAskUserRequests().find((request) => request.requestId === requestId && request.askedBy === "agentlas-science");
+    if (!pending) return false;
+    return submitAskUserAnswer(requestId, typeof input.answer === "string" ? input.answer : null);
+  });
   const scienceTurnSubscribers = new Map<number, { projectId: string; conversationId: string }>();
   const scienceLifecycleSubscribers = new Map<number, string>();
   let scienceLifecycleProjectionStarted = false;

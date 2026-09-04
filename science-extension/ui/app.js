@@ -23,7 +23,7 @@ import { formatScienceCell } from "./format-cell.js";
     resultArtifacts: [], resultFigureIds: new Set(), resultValidations: new Map(), resultsError: "", resultsProjectId: null,
     literatureSources: [], literatureUnresolvedIds: [], literatureLoading: false, literatureError: "",
     acquisitionRuns: [], acquisitionUnresolvedIds: [], acquisitionLoading: false, acquisitionError: "",
-    activeTurn: null, composerSending: false, composerDraft: "", composerError: "", composerEventDispose: null, lifecycleChangeDispose: null,
+    activeTurn: null, composerSending: false, composerDraft: "", composerError: "", composerEventDispose: null, lifecycleChangeDispose: null, runtimeQuestions: [], runtimeQuestionDispose: null, runtimeQuestionBusy: false, runtimeQuestionError: "",
     vegaDraft: null, vegaSaving: false, vegaSaveError: "", pendingDraftNavigation: null,
     selectedManuscriptId: null, selectedAnalysisPlanId: null, manuscriptDraft: null, manuscriptSaving: false, manuscriptSaveError: "", manuscriptView: "paper", manuscriptInspectorOpen: false, selectedJournalProfileId: null, journalValidation: null, journalSheet: false, submissionSheet: false, submissionDraft: null, journalActionBusy: false, journalActionError: "",
     manuscriptEditorModel: null, manuscriptArtifactContexts: new Map(), manuscriptArtifactLineages: new Map(), manuscriptArtifactPreviewUrls: new Map(), manuscriptEditProposals: [], manuscriptSelectionContexts: [], manuscriptSelectionContext: null, manuscriptSelectionBusy: false, manuscriptSelectionError: "", manuscriptInsertion: null, manuscriptInsertBusy: false, manuscriptInsertError: "", manuscriptTransactionBusy: false, manuscriptProposalBusy: null, manuscriptNotice: "",
@@ -51,6 +51,7 @@ import { formatScienceCell } from "./format-cell.js";
   let workspacePersistChain = Promise.resolve();
   let workspacePersistError = null;
   let jbrowseRuntimePromise = null;
+  let runtimeQuestionTimer = null;
   const uiCopy = (ko, en) => state.locale === "ko" ? ko : en;
   const domainLabels = {
     general: "인문·사회·융합", "life-science": "생명과학", chemistry: "화학", physics: "물리학",
@@ -5720,6 +5721,62 @@ import { formatScienceCell } from "./format-cell.js";
     }
   }
 
+  function runtimeQuestionMarkup() {
+    const request = state.runtimeQuestions[0];
+    if (!request) return "";
+    const options = Array.isArray(request.options) ? request.options : [];
+    const compact = options.length === 2
+      && options.every((option) => !option.description && String(option.label || "").length <= 22);
+    const optionRows = options.map((option, index) => `<button type="button" data-action="answer-runtime-question" data-runtime-question-answer="${escapeHtml(option.label)}" ${state.runtimeQuestionBusy ? "disabled" : ""}><span>${index + 1}</span><strong>${escapeHtml(option.label)}</strong>${option.description ? `<em>${escapeHtml(option.description)}</em>` : ""}</button>`).join("");
+    const freeText = request.allowFreeText
+      ? `<form class="runtimeQuestionFreeText" id="runtime-question-form"><input name="answer" required maxlength="2000" autocomplete="off" placeholder="${uiCopy("직접 답하기", "Type an answer")}" aria-label="${uiCopy("직접 답하기", "Type an answer")}" ${state.runtimeQuestionBusy ? "disabled" : ""}><button type="submit" ${state.runtimeQuestionBusy ? "disabled" : ""}>${uiCopy("보내기", "Send")}</button></form>`
+      : "";
+    return `<div class="runtimeQuestionLayer" data-runtime-question-layer role="presentation"><section class="runtimeQuestionPopover" role="dialog" aria-modal="false" aria-labelledby="runtime-question-title" data-compact="${compact}" data-runtime-question-id="${escapeHtml(request.requestId)}"><header><span>${escapeHtml(request.askedBy || "Agentlas Science")}</span><button type="button" data-action="dismiss-runtime-question" aria-label="${uiCopy("질문 닫기", "Dismiss question")}" ${state.runtimeQuestionBusy ? "disabled" : ""}>×</button></header><p id="runtime-question-title">${escapeHtml(request.question)}</p><div class="runtimeQuestionOptions">${optionRows}</div>${freeText}${state.runtimeQuestionError ? `<div class="runtimeQuestionError" role="alert">${escapeHtml(state.runtimeQuestionError)}</div>` : ""}</section></div>`;
+  }
+
+  function syncRuntimeQuestionPopover() {
+    document.querySelector("[data-runtime-question-layer]")?.remove();
+    if (runtimeQuestionTimer) window.clearTimeout(runtimeQuestionTimer);
+    runtimeQuestionTimer = null;
+    const request = state.runtimeQuestions[0];
+    if (!request) return;
+    root.insertAdjacentHTML("beforeend", runtimeQuestionMarkup());
+    const remaining = Math.max(0, Number(request.expiresAt) - Date.now());
+    runtimeQuestionTimer = window.setTimeout(() => {
+      state.runtimeQuestions = state.runtimeQuestions.filter((item) => item.requestId !== request.requestId);
+      syncRuntimeQuestionPopover();
+    }, remaining);
+  }
+
+  function receiveRuntimeQuestion(request) {
+    if (!request || typeof request.requestId !== "string" || request.askedBy !== "agentlas-science") return;
+    if (!Number.isFinite(Number(request.expiresAt)) || Number(request.expiresAt) <= Date.now()) {
+      state.runtimeQuestions = state.runtimeQuestions.filter((item) => item.requestId !== request.requestId);
+    } else if (!state.runtimeQuestions.some((item) => item.requestId === request.requestId)) {
+      state.runtimeQuestions = [...state.runtimeQuestions, request];
+      state.runtimeQuestionError = "";
+    }
+    syncRuntimeQuestionPopover();
+  }
+
+  async function answerRuntimeQuestion(answer) {
+    const request = state.runtimeQuestions[0];
+    if (!request || state.runtimeQuestionBusy) return;
+    state.runtimeQuestionBusy = true;
+    state.runtimeQuestionError = "";
+    syncRuntimeQuestionPopover();
+    try {
+      const delivered = await science.questions.answer(request.requestId, typeof answer === "string" && answer.trim() ? answer.trim() : null);
+      if (delivered !== true) throw new Error("science-runtime-question-answer-not-delivered");
+      state.runtimeQuestions = state.runtimeQuestions.filter((item) => item.requestId !== request.requestId);
+    } catch {
+      state.runtimeQuestionError = uiCopy("답을 전달하지 못했습니다. 다시 선택해 주세요.", "The answer was not delivered. Choose again.");
+    } finally {
+      state.runtimeQuestionBusy = false;
+      syncRuntimeQuestionPopover();
+    }
+  }
+
   function welcome() {
     return `<section class="welcome"><div class="welcomeInner"><div class="welcomeLabel">Agentlas Science</div><h1>질문에서 검증 가능한 연구까지.</h1><p>대화, 근거, 실험, 시각 자료와 논문을 하나의 로컬 연구 기록으로 연결합니다. 아직 생성된 연구는 없습니다.</p><button class="startButton" data-action="new">새 연구 시작</button></div>${modal()}</section>`;
   }
@@ -5783,6 +5840,7 @@ import { formatScienceCell } from "./format-cell.js";
       void hydrateEvidenceGraph();
     }
     syncRailPresentation();
+    syncRuntimeQuestionPopover();
     requestAnimationFrame(revealActiveWorkspaceTab);
   }
 
@@ -7593,6 +7651,8 @@ import { formatScienceCell } from "./format-cell.js";
   root.addEventListener("click", (event) => {
     const target = event.target.closest("button");
     if (!target) return;
+    if (target.dataset.action === "answer-runtime-question") { void answerRuntimeQuestion(target.dataset.runtimeQuestionAnswer || ""); return; }
+    if (target.dataset.action === "dismiss-runtime-question") { void answerRuntimeQuestion(null); return; }
     if (target.dataset.tablePage !== undefined) {
       const page = Number(target.dataset.tablePage);
       if (Number.isSafeInteger(page) && page >= 0 && state.selectedArtifactId) {
@@ -8367,7 +8427,21 @@ import { formatScienceCell } from "./format-cell.js";
     window.setTimeout(syncWorkspaceTabOverflow, 220);
   }, { passive: true });
 
+  root.addEventListener("keydown", (event) => {
+    if (event.target.closest?.(".runtimeQuestionFreeText input")
+      && event.key === "Enter"
+      && (event.isComposing || event.keyCode === 229)) event.preventDefault();
+  });
+
   root.addEventListener("submit", async (event) => {
+    if (event.target.id === "runtime-question-form") {
+      event.preventDefault();
+      const form = new FormData(event.target);
+      const answer = String(form.get("answer") || "").trim();
+      if (!answer) return;
+      void answerRuntimeQuestion(answer);
+      return;
+    }
     if (event.target.id === "episode-result-review-form") {
       event.preventDefault();
       await submitEpisodeResultReview(event.target);
@@ -8697,6 +8771,11 @@ import { formatScienceCell } from "./format-cell.js";
     state.locale = i18n.setLocale(bootstrap?.locale);
     i18n.observe(root);
     if (science.renderers?.onStatus && !state.rendererStatusDispose) state.rendererStatusDispose = science.renderers.onStatus(applyRendererStatus);
+    if (science.questions?.onRequest && !state.runtimeQuestionDispose) state.runtimeQuestionDispose = science.questions.onRequest(receiveRuntimeQuestion);
+    if (science.questions?.list) {
+      const pendingQuestions = await science.questions.list();
+      if (Array.isArray(pendingQuestions)) pendingQuestions.forEach(receiveRuntimeQuestion);
+    }
     if (science.artifacts?.onChanged && !state.artifactChangeDispose) state.artifactChangeDispose = science.artifacts.onChanged((change) => {
       if (!change || !state.selectedId || change.projectId !== state.selectedId) return;
       // AI-driven research: while a turn is running, every new artifact opens its own Lab tab

@@ -2,7 +2,6 @@
 
 import { useEffect, useRef, useState } from "react";
 import type { ProductExtensionStatus, ProductExtensionViewBounds, ProductExtensionViewStatus } from "@shared/product-extension";
-import { AskUserSheet } from "@/components/AskUserSheet";
 import { ProductModeMenu } from "@/components/one/ProductModeMenu";
 import { ipc, ipcEvents } from "@/lib/ipc";
 import { navigate } from "@/lib/navigation";
@@ -105,7 +104,6 @@ export default function ScienceHostPage() {
           )}
         </div>
       </div>
-      <AskUserSheet />
     </>
   );
 }

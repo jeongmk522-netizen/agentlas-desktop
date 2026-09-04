@@ -1144,6 +1144,34 @@ button.manuscriptBinding:hover { border-color: var(--line-strong); background: v
 .chatQuestionSheet > footer > span { display: none; }
 .chatQuestionSheet > footer button { min-height: 34px; border-radius: 9px; padding: 0 12px; font-size: 12px; }
 
+/* Runtime approval lives inside the Science WebContents so it can truly float
+   above the extension. A host-layer card cannot overlay WebContentsView without
+   shortening the workspace, which is what moved the entire left rail upward. */
+.runtimeQuestionLayer { position: fixed; z-index: 90; inset: 0; pointer-events: none; }
+.runtimeQuestionPopover { position: absolute; right: 18px; bottom: 196px; width: min(360px, calc(100vw - 36px)); max-height: min(360px, calc(100vh - 232px)); overflow: auto; pointer-events: auto; border: 1px solid var(--science-border-default); border-radius: var(--science-radius-card); background: var(--science-surface-0); padding: 16px; box-shadow: var(--science-shadow-standard); animation: scienceChatQuestionEnter var(--motion-state) both; }
+.runtimeQuestionPopover > header { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.runtimeQuestionPopover > header span { min-width: 0; overflow: hidden; color: var(--grey-600); font-size: 12px; font-weight: 700; letter-spacing: .045em; text-overflow: ellipsis; text-transform: uppercase; white-space: nowrap; }
+.runtimeQuestionPopover > header button { width: var(--science-icon-button-size); height: var(--science-icon-button-size); display: grid; flex: 0 0 var(--science-icon-button-size); place-items: center; border: 0; border-radius: var(--science-radius-control); background: transparent; color: var(--grey-600); font-size: 20px; line-height: 1; }
+.runtimeQuestionPopover > header button:hover { background: var(--science-surface-1); color: var(--science-ink); }
+.runtimeQuestionPopover > p { display: -webkit-box; overflow: hidden; margin: 8px 0 16px; color: var(--science-ink); font-size: 14px; font-weight: 620; line-height: 1.5; -webkit-box-orient: vertical; -webkit-line-clamp: 4; }
+.runtimeQuestionOptions { display: grid; gap: 6px; }
+.runtimeQuestionPopover[data-compact="true"] .runtimeQuestionOptions { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.runtimeQuestionOptions > button { min-width: 0; min-height: var(--science-button-s-height); display: grid; grid-template-columns: 22px minmax(0, 1fr); align-items: center; gap: 6px; border: 0; border-radius: var(--science-radius-button-s); background: var(--science-surface-1); padding: 0 12px; color: var(--science-ink); text-align: left; }
+.runtimeQuestionOptions > button:hover, .runtimeQuestionOptions > button:focus-visible { background: var(--science-surface-2); outline: 0; box-shadow: 0 0 0 2px rgba(54, 53, 53, .14); }
+.runtimeQuestionOptions > button:disabled, .runtimeQuestionPopover > header button:disabled, .runtimeQuestionFreeText button:disabled { opacity: .5; cursor: default; }
+.runtimeQuestionOptions > button > span { width: 22px; height: 22px; display: grid; place-items: center; border-radius: 50%; background: var(--science-surface-0); color: var(--grey-600); font-size: 12px; font-weight: 700; }
+.runtimeQuestionOptions > button > strong { min-width: 0; overflow: hidden; font-size: 14px; font-weight: 660; text-overflow: ellipsis; white-space: nowrap; }
+.runtimeQuestionOptions > button > em { grid-column: 2; padding-bottom: 8px; color: var(--grey-600); font-size: 12px; font-style: normal; line-height: 1.4; }
+.runtimeQuestionFreeText { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 7px; margin-top: 7px; }
+.runtimeQuestionFreeText input { min-width: 0; height: var(--science-button-m-height); border: 1px solid var(--science-border-default); border-radius: var(--science-radius-control); background: var(--science-surface-0); padding: 0 12px; color: var(--science-ink); font: inherit; font-size: 14px; outline: 0; }
+.runtimeQuestionFreeText input:focus { border-color: var(--science-ink); box-shadow: 0 0 0 2px rgba(54, 53, 53, .12); }
+.runtimeQuestionFreeText button { min-height: var(--science-button-m-height); border: 0; border-radius: var(--science-radius-button-m); background: var(--science-ink); padding: 0 16px; color: var(--science-surface-0); font-size: 16px; font-weight: 650; }
+.runtimeQuestionError { margin-top: 8px; color: var(--alarm); font-size: 12px; line-height: 1.45; }
+
+@media (max-width: 760px) {
+  .runtimeQuestionPopover { right: 12px; bottom: 12px; width: min(340px, calc(100vw - 24px)); max-height: calc(100vh - 24px); }
+}
+
 /* Journal checklist: one quiet list grammar, no nested mini-cards. */
 .journalProfileSection { background: var(--surface); }
 .journalProfileSelect { padding-bottom: 12px; border-bottom: 1px solid #e0e2e3; }

@@ -10,6 +10,15 @@ contextBridge.exposeInMainWorld("agentlasScience", Object.freeze({
   shell: Object.freeze({
     backToWork: () => ipcRenderer.invoke("science:shell:backToWork", { extensionId }),
   }),
+  questions: Object.freeze({
+    list: () => ipcRenderer.invoke("science:askUser:list", { extensionId }),
+    answer: (requestId: string, answer: string | null) => ipcRenderer.invoke("science:askUser:answer", { extensionId, requestId, answer }),
+    onRequest: (callback: (request: unknown) => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, request: unknown) => callback(request);
+      ipcRenderer.on("science:askUser", listener);
+      return () => ipcRenderer.removeListener("science:askUser", listener);
+    },
+  }),
   rendererPacks: Object.freeze({
     list: () => ipcRenderer.invoke("science:rendererPacks:list", { extensionId }),
   }),

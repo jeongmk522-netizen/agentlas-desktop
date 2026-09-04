@@ -11,6 +11,7 @@ import {
   SCIENCE_PROJECT_DESTINATIONS,
   SCIENCE_PROJECT_LAB_ACTIVATORS,
   SCIENCE_PROJECT_WORKSPACE_TAB_KINDS,
+  SCIENCE_RESEARCH_TEMPLATE_IDS,
   SCIENCE_RENDERER_IDS,
   SCIENCE_RESEARCH_RUN_RUNTIMES,
   SCIENCE_SOURCE_ACCESS_STATES,
@@ -90,6 +91,8 @@ import {
   type StartScienceTurnInput,
   type StartScienceTurnResult,
   type ScienceProject,
+  type ScienceProjectLibrarySummary,
+  type ScienceResearchTemplateId,
   type ScienceProjectDestination,
   type ScienceProjectLabBinding,
   type ScienceProjectNavigationState,
@@ -554,7 +557,7 @@ import {
   builtinAgentId,
 } from "../architecture/manifest";
 
-export const SCIENCE_SCHEMA_VERSION = 55;
+export const SCIENCE_SCHEMA_VERSION = 56;
 const UUID_RE = /^[a-f0-9]{8}-[a-f0-9]{4}-[1-8][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/i;
 const SHA256_RE = /^[a-f0-9]{64}$/;
 const SCIENCE_SOURCE_TEXT_CHUNK_MAX_BYTES = 2_400;
@@ -718,6 +721,12 @@ function statisticsNumericRange(values: readonly number[]): { minimum: number; m
 function safeDomain(value: unknown): ScienceDomain {
   if (!SCIENCE_DOMAINS.includes(value as ScienceDomain)) throw new Error("science-domain-invalid");
   return value as ScienceDomain;
+}
+
+function safeResearchTemplateId(value: unknown): ScienceResearchTemplateId {
+  const templateId = String(value ?? "");
+  if (!(SCIENCE_RESEARCH_TEMPLATE_IDS as readonly string[]).includes(templateId)) throw new Error("science-research-template-invalid");
+  return templateId as ScienceResearchTemplateId;
 }
 
 function safePositiveInteger(value: unknown, minimum: number, maximum: number, field: string): number {
@@ -1986,6 +1995,8 @@ function projectFromRow(row: Record<string, unknown>, relatedDomains: ScienceDom
     question: String(row.question),
     domain: String(row.domain) as ScienceDomain,
     relatedDomains,
+    researchTemplateId: row.research_template_id === null || row.research_template_id === undefined ? null : safeResearchTemplateId(row.research_template_id),
+    initialLabId: row.initial_lab_id === null || row.initial_lab_id === undefined ? null : safeResearchTemplateId(row.initial_lab_id),
     status: String(row.status) as ScienceProject["status"],
     version: Number(row.version),
     createdAt: String(row.created_at),
@@ -4236,6 +4247,8 @@ export class ScienceStore {
           title TEXT NOT NULL,
           question TEXT NOT NULL,
           domain TEXT NOT NULL CHECK (domain IN ('general','life-science','chemistry','physics','materials-science','genomics','astronomy','earth-ecology','statistics','economics','finance')),
+          research_template_id TEXT CHECK (research_template_id IS NULL OR research_template_id IN ('data-table','statistics-analysis','data-visualization','economic-indicators','literature-network','astronomy-sky','biodiversity-map','paleontology-evidence','earthquake-observations','physics-data','materials-structures','genomics-variants','comparative-genomics','molecular-structure','chemistry')),
+          initial_lab_id TEXT CHECK (initial_lab_id IS NULL OR initial_lab_id IN ('data-table','statistics-analysis','data-visualization','economic-indicators','literature-network','astronomy-sky','biodiversity-map','paleontology-evidence','earthquake-observations','physics-data','materials-structures','genomics-variants','comparative-genomics','molecular-structure','chemistry')),
           status TEXT NOT NULL CHECK (status IN ('draft','active','paused','archived')),
           version INTEGER NOT NULL CHECK (version >= 1),
           created_at TEXT NOT NULL,
@@ -8821,6 +8834,11 @@ export class ScienceStore {
           `);
         }
         if (found < 28) this.repairCanonicalResearchLifecycles();
+        if (found < 56) {
+          const projectColumns = new Set((this.db.pragma("table_info('projects')") as Array<{ name: string }>).map((column) => column.name));
+          if (!projectColumns.has("research_template_id")) this.db.exec("ALTER TABLE projects ADD COLUMN research_template_id TEXT");
+          if (!projectColumns.has("initial_lab_id")) this.db.exec("ALTER TABLE projects ADD COLUMN initial_lab_id TEXT");
+        }
         const migrationForeignKeyViolations = this.db.pragma("foreign_key_check") as Array<Record<string, unknown>>;
         if (migrationForeignKeyViolations.length > 0) throw new Error("science-schema-foreign-key-invalid");
         this.db.pragma(`user_version = ${SCIENCE_SCHEMA_VERSION}`);
@@ -9646,13 +9664,100 @@ export class ScienceStore {
     return rows.map((row) => projectFromRow(row, this.listProjectRelatedDomains(String(row.id))));
   }
 
+  listProjectLibrarySummaries(limit = 100): ScienceProjectLibrarySummary[] {
+    const safeLimit = Math.max(1, Math.min(500, Math.floor(limit)));
+    const rows = this.db.prepare(`SELECT p.id AS project_id,
+      (SELECT COUNT(*) FROM artifacts a WHERE a.project_id = p.id AND a.status = 'ready' AND a.kind = 'table') AS table_count,
+      (SELECT COUNT(*) FROM research_runs r WHERE r.project_id = p.id AND r.status = 'succeeded') AS analysis_count,
+      (SELECT COUNT(*) FROM manuscripts m WHERE m.project_id = p.id) AS manuscript_count
+      FROM projects p WHERE p.status != 'archived' ORDER BY p.updated_at DESC, p.id LIMIT ?`).all(safeLimit) as Record<string, unknown>[];
+    const summaries = new Map(rows.map((row) => [String(row.project_id), {
+      projectId: String(row.project_id),
+      fileCount: 0,
+      dataCount: Number(row.table_count),
+      analysisCount: Number(row.analysis_count),
+      manuscriptCount: Number(row.manuscript_count),
+      pdfCount: 0,
+    }]));
+    if (!summaries.size) return [];
+    const ids = [...summaries.keys()];
+    const placeholders = ids.map(() => "?").join(",");
+
+    const sourceRows = this.db.prepare(`SELECT s.project_id, s.id AS source_id, s.kind, s.current_version,
+      v.id AS source_version_id, v.version FROM sources s JOIN source_versions v ON v.source_id = s.id
+      WHERE s.project_id IN (${placeholders}) AND v.asset_ref IS NOT NULL`).all(...ids) as Record<string, unknown>[];
+    for (const row of sourceRows) {
+      const summary = summaries.get(String(row.project_id));
+      if (!summary) continue;
+      try {
+        const source = this.getSourceVersionForProject(String(row.project_id), String(row.source_id), String(row.source_version_id));
+        if (!source || !this.verifiedSourceBytes(source)) continue;
+        summary.fileCount += 1;
+        if (row.kind === "dataset" && Number(row.version) === Number(row.current_version)) summary.dataCount += 1;
+      } catch {}
+    }
+
+    const figureRows = this.db.prepare(`SELECT id, project_id FROM source_figures
+      WHERE project_id IN (${placeholders}) AND asset_ref IS NOT NULL`).all(...ids) as Record<string, unknown>[];
+    for (const row of figureRows) {
+      const summary = summaries.get(String(row.project_id));
+      if (!summary) continue;
+      try {
+        if (this.sourceFigureBytesForProject(String(row.project_id), String(row.id))) summary.fileCount += 1;
+      } catch {}
+    }
+
+    const captureRows = this.db.prepare(`SELECT avc.*, a.project_id FROM artifact_visual_captures avc
+      JOIN artifacts a ON a.id = avc.artifact_id
+      WHERE a.project_id IN (${placeholders}) AND avc.adopted = 1`).all(...ids) as Record<string, unknown>[];
+    for (const row of captureRows) {
+      const summary = summaries.get(String(row.project_id));
+      const assetSha256 = String(row.asset_sha256 ?? "");
+      if (!summary || !SHA256_RE.test(assetSha256)) continue;
+      try {
+        const target = path.join(this.assetRoot, assetSha256.slice(0, 2), `${assetSha256}.png`);
+        const stat = fs.lstatSync(target);
+        const bytes = fs.readFileSync(target);
+        const dimensions = pngDimensions(bytes);
+        if (!stat.isSymbolicLink() && stat.isFile()
+          && bytes.length === Number(row.byte_size)
+          && dimensions.width === Number(row.width)
+          && dimensions.height === Number(row.height)
+          && createHash("sha256").update(bytes).digest("hex") === assetSha256) summary.fileCount += 1;
+      } catch {}
+    }
+
+    const exportRows = this.db.prepare(`SELECT project_id, package_ref, package_sha256, package_byte_size
+      FROM submission_exports WHERE project_id IN (${placeholders}) AND status = 'ready'
+      AND package_ref IS NOT NULL AND package_sha256 IS NOT NULL AND package_byte_size IS NOT NULL`).all(...ids) as Record<string, unknown>[];
+    for (const row of exportRows) {
+      const summary = summaries.get(String(row.project_id));
+      if (!summary) continue;
+      try {
+        const bytes = this.readPrivateCas(this.submissionExportRoot, "science-submission-cas", "zip", String(row.package_ref), String(row.package_sha256));
+        if (bytes.length !== Number(row.package_byte_size)) continue;
+        const bundle = unzipSync(bytes);
+        summary.fileCount += 1;
+        if (bundle["manuscript/manuscript.pdf"]?.length) summary.pdfCount += 1;
+      } catch {}
+    }
+    return ids.map((id) => summaries.get(id)!);
+  }
+
   createProject(input: CreateScienceProjectInput): CreateScienceProjectResult {
     if (!input || typeof input !== "object" || !UUID_RE.test(String(input.requestId ?? ""))) throw new Error("science-request-id-invalid");
     const question = safeText(input.question, 20_000, "question");
     const title = input.title === undefined || input.title === "" ? defaultTitle(question) : safeText(input.title, 160, "title");
     const domain = safeDomain(input.domain);
     const relatedDomains = normalizeRelatedDomains(input.relatedDomains, domain);
-    const inputSha256 = sha256Json({ question, title, domain, relatedDomains });
+    const hasResearchTemplate = input.researchTemplateId !== undefined || input.initialLabId !== undefined;
+    if (hasResearchTemplate && (input.researchTemplateId === undefined || input.initialLabId === undefined)) throw new Error("science-research-template-binding-invalid");
+    const researchTemplateId = hasResearchTemplate ? safeResearchTemplateId(input.researchTemplateId) : null;
+    const initialLabId = hasResearchTemplate ? safeResearchTemplateId(input.initialLabId) : null;
+    if (researchTemplateId !== initialLabId) throw new Error("science-research-template-binding-invalid");
+    const inputSha256 = researchTemplateId
+      ? sha256Json({ question, title, domain, relatedDomains, researchTemplateId, initialLabId })
+      : sha256Json({ question, title, domain, relatedDomains });
     const result = this.db.transaction(() => {
       const prior = this.replay<CreateScienceProjectResult>(input.requestId, "project.create", inputSha256);
       if (prior) {
@@ -9663,23 +9768,34 @@ export class ScienceStore {
         return { ...prior, project, lifecycle, replayed: true };
       }
       const now = new Date().toISOString();
-      const project: ScienceProject = { id: randomUUID(), title, question, domain, relatedDomains, status: "draft", version: 1, createdAt: now, updatedAt: now };
+      const project: ScienceProject = { id: randomUUID(), title, question, domain, relatedDomains, researchTemplateId, initialLabId, status: "draft", version: 1, createdAt: now, updatedAt: now };
       const conversation: ScienceConversation = { id: randomUUID(), projectId: project.id, title, createdAt: now, updatedAt: now };
       const message: ScienceMessage = { id: randomUUID(), projectId: project.id, conversationId: conversation.id, role: "user", visibility: "visible", content: question, createdAt: now };
-      this.db.prepare("INSERT INTO projects (id,title,question,domain,status,version,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?)")
-        .run(project.id, project.title, project.question, project.domain, project.status, project.version, now, now);
+      this.db.prepare("INSERT INTO projects (id,title,question,domain,research_template_id,initial_lab_id,status,version,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?)")
+        .run(project.id, project.title, project.question, project.domain, project.researchTemplateId, project.initialLabId, project.status, project.version, now, now);
       this.db.prepare("INSERT INTO conversations (id,project_id,title,created_at,updated_at) VALUES (?,?,?,?,?)")
         .run(conversation.id, conversation.projectId, conversation.title, now, now);
       this.db.prepare("INSERT INTO messages (id,project_id,conversation_id,role,visibility,content,created_at) VALUES (?,?,?,?,?,?,?)")
         .run(message.id, message.projectId, message.conversationId, message.role, message.visibility, message.content, now);
       const insertRelatedDomain = this.db.prepare("INSERT INTO project_related_domains (project_id,domain,display_order,created_at) VALUES (?,?,?,?)");
       relatedDomains.forEach((relatedDomain, index) => insertRelatedDomain.run(project.id, relatedDomain, index, now));
+      if (project.initialLabId) {
+        this.db.prepare(`INSERT INTO project_lab_bindings
+          (id,project_id,lab_id,enabled,pinned,display_order,activated_by,config_json,created_at,updated_at)
+          VALUES (?,?,?,1,1,0,'template',?,?,?)`)
+          .run(randomUUID(), project.id, project.initialLabId, JSON.stringify({ researchTemplateId: project.researchTemplateId }), now, now);
+      }
       this.db.prepare(`INSERT INTO project_navigation_states
-        (project_id,destination,selected_conversation_id,selected_lab_id,updated_at) VALUES (?,'overview',?,NULL,?)`)
-        .run(project.id, conversation.id, now);
+        (project_id,destination,selected_conversation_id,selected_lab_id,updated_at) VALUES (?,'overview',?,?,?)`)
+        .run(project.id, conversation.id, project.initialLabId, now);
       this.db.prepare(`INSERT INTO project_workspace_tabs
         (id,project_id,kind,target_id,exact_version,exact_content_sha256,dirty,selected,display_order,created_at,updated_at)
-        VALUES ('research',?,'research',NULL,NULL,NULL,0,1,0,?,?)`).run(project.id, now, now);
+        VALUES ('research',?,'research',NULL,NULL,NULL,0,?,0,?,?)`).run(project.id, project.initialLabId ? 0 : 1, now, now);
+      if (project.initialLabId) {
+        this.db.prepare(`INSERT INTO project_workspace_tabs
+          (id,project_id,kind,target_id,exact_version,exact_content_sha256,dirty,selected,display_order,created_at,updated_at)
+          VALUES (?,?,'lab',?,NULL,NULL,0,1,1,?,?)`).run(`lab:${project.initialLabId}`, project.id, project.initialLabId, now, now);
+      }
       const studyId = randomUUID();
       this.insertCanonicalResearchStudy({
         projectId: project.id,

@@ -544,8 +544,9 @@ generic fit or a hand-derived number.
   `analyze_earthquake_gutenberg_richter` for magnitude-frequency at a declared completeness
   magnitude; `analyze_usgs_seismicity_b_value` when the completeness magnitude itself is the
   question (maximum curvature, goodness-of-fit, b-value stability). `analyze_usgs_omori_utsu` for
-  aftershock decay and `analyze_usgs_aftershock_productivity` to extend it with Bath's law, the
-  aftershock b-value and sequence duration to a declared background rate.
+  aftershock decay and `analyze_aftershock_catalog_table` for the host's provenance-bound catalog
+  table workflow. Use `analyze_usgs_aftershock_productivity` to extend an exact catalog with Bath's
+  law, the aftershock b-value and sequence duration to a declared background rate.
 - **Earth science — water, climate and hazard**: `fetch_noaa_coops_water_levels` (or
   `normalize_noaa_coops_water_level_json` for a local download) for observed water levels;
   `analyze_tidal_harmonics` for constituent amplitudes with the Rayleigh criterion;
@@ -699,7 +700,7 @@ Route by capability, then verify the actual live tool and its receipt:
   extant-relative result to a dinosaur genome or revival;
 - biodiversity/geospatial observations -> biodiversity or map capability;
 - earthquake magnitude-frequency analysis -> `analyze_earthquake_gutenberg_richter`, bound to the exact completed USGS catalog run and explicit completeness/magnitude choices;
-- aftershock decay -> `analyze_usgs_omori_utsu`, bound to one exact completed USGS catalog and every explicit mainshock/window/completeness/bin/p-c boundary;
+- aftershock decay -> `analyze_usgs_omori_utsu` or the host route `analyze_aftershock_catalog_table`, bound to one exact completed USGS catalog and every explicit mainshock/window/completeness/bin/p-c boundary;
 - collider and HEP goodness-of-fit -> `analyze_hepdata_chi_square`, bound to the exact completed HEPData table run, prediction vector, units, uncertainty labels, and fitted-parameter count;
 - crystal structures and materials properties -> `search_materials_structures`, then `analyze_materials_lattice_metrics` only for an exact returned structure ID; retain the OQMD raw-response Source, parent ResearchRun, artifact version, normalized hash, and missing-value semantics;
 - astrometric kinematics -> `analyze_astrometric_kinematics` only from an exact uncertainty-bearing dataset and source hash; never substitute the current ten-column SIMBAD search result;

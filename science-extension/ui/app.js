@@ -14,7 +14,7 @@ import { formatScienceCell } from "./format-cell.js";
   const state = {
     locale: "en",
     projects: [], selectedId: null, lifecycle: null, conversations: [], selectedConversationId: null, messages: [], sources: [], sourceFigures: [], runs: [], artifacts: [], labs: [], workspaceLabBindings: [], labCatalog: [], labDecisionProjections: [], rendererPacks: [], manuscripts: [], claimLedger: null, journalProfiles: [], submissionExports: [], analysisSpecs: [], decisions: [],
-    artifactContextsByMessage: new Map(), labContextsById: new Map(), artifactHistoryById: new Map(), selectedLabId: null, selectedArtifactOriginVersion: null, inspectedArtifactVersion: null, inspectedArtifactContext: null, artifactComparison: null, draftHistoryGuard: null, labsExpanded: true, expandedLabGroups: new Set(["chemistry"]), expandedLabDecisions: new Set(), projectMenuOpen: false, projectLibraryFilter: "all", historyOpen: false, railCollapsed: readRailCollapsed(),
+    artifactContextsByMessage: new Map(), labContextsById: new Map(), artifactHistoryById: new Map(), selectedLabId: null, selectedArtifactOriginVersion: null, inspectedArtifactVersion: null, inspectedArtifactContext: null, artifactComparison: null, draftHistoryGuard: null, labsExpanded: true, expandedLabGroups: new Set(["chemistry"]), expandedLabDecisions: new Set(), projectMenuOpen: false, projectLibrarySummaries: new Map(), projectLibrarySummaryState: "loading", newProjectStep: "field", selectedResearchTemplateId: null, newProjectDraft: { title: "", question: "" }, historyOpen: false, railCollapsed: readRailCollapsed(),
     blocksByMessage: new Map(), citationsByMessage: new Map(), evidenceById: new Map(), selectedSourceId: null, selectedArtifactId: null,
     evidenceGraph: null, evidenceGraphReviews: [], evidenceGraphLoading: false, evidenceGraphError: "", selectedEvidenceGraphNodeId: null, selectedEvidenceGraphCandidateId: null, evidenceGraphReviewSheet: false, evidenceGraphReviewDecision: "accepted", evidenceGraphReviewBusy: false, evidenceGraphReviewError: "", evidenceGraphPathAnchorId: null, evidenceGraphPath: null,
     mode: "session", drawer: null, modal: false, manuscriptModal: false, saving: false, loadingProject: false, projectError: "", activeVegaView: null, activeCytoscape: null, activeNumericSurface: null, activeJBrowseTarget: null, scrollByMode: { session: 0, lab: 0, manuscript: 0 }, returnMessageId: null,
@@ -65,23 +65,26 @@ import { formatScienceCell } from "./format-cell.js";
     statistics: "Statistics", economics: "Economics & management", finance: "Finance",
   };
   const domainLabel = (domain) => (state.locale === "ko" ? domainLabels : domainLabelsEn)[domain] || domain;
-  const projectLibraryFolders = [
-    { id: "natural", label: "자연과학", labelEn: "Natural sciences", description: "관찰, 실험과 물질·생명·지구 연구", descriptionEn: "Observation, experiments, matter, life and Earth", domains: ["life-science", "chemistry", "physics", "materials-science", "genomics", "astronomy", "earth-ecology"] },
-    { id: "quantitative-social", label: "정량·사회과학", labelEn: "Quantitative & social sciences", description: "통계, 경제, 금융과 인간·조직 연구", descriptionEn: "Statistics, economics, finance, people and organizations", domains: ["general", "statistics", "economics", "finance"] },
+  const researchTemplates = [
+    { id: "data-table", domain: "statistics", label: "표 데이터 정리", labelEn: "Data tables", description: "CSV와 표 데이터를 검증 가능한 형태로 정리합니다.", descriptionEn: "Organize CSV and tabular data into a verifiable dataset." },
+    { id: "statistics-analysis", domain: "statistics", label: "통계 분석", labelEn: "Statistical analysis", description: "가설과 데이터에 맞는 통계 방법을 선택해 분석합니다.", descriptionEn: "Choose and run statistical methods suited to your hypothesis and data." },
+    { id: "data-visualization", domain: "statistics", label: "데이터 시각화", labelEn: "Data visualization", description: "정확한 데이터를 설명하는 차트와 3D 시각화를 만듭니다.", descriptionEn: "Create charts and 3D views grounded in exact data." },
+    { id: "economic-indicators", domain: "economics", label: "경제·경영 지표", labelEn: "Economic & management indicators", description: "공식 경제 지표로 경제·경영의 변화와 관계를 분석합니다.", descriptionEn: "Analyze economics and management questions with official indicators." },
+    { id: "literature-network", domain: "general", label: "문헌·인문사회", labelEn: "Literature & humanities", description: "인문사회 선행 문헌과 논문 인용 관계를 근거 중심으로 탐색합니다.", descriptionEn: "Explore humanities and social-science literature through evidence-backed citation relationships." },
+    { id: "astronomy-sky", domain: "astronomy", label: "천체·우주 관측", labelEn: "Astronomy & sky", description: "천체 목록, 좌표와 관측값을 분석합니다.", descriptionEn: "Analyze astronomical catalogs, coordinates, and observations." },
+    { id: "biodiversity-map", domain: "earth-ecology", label: "생물다양성 지도", labelEn: "Biodiversity maps", description: "종 관측 기록과 공간 분포를 지도에서 비교합니다.", descriptionEn: "Compare species observations and spatial distributions on a map." },
+    { id: "paleontology-evidence", domain: "earth-ecology", label: "화석·고생물 근거", labelEn: "Paleontology evidence", description: "화석 산출과 지층 기록에서 검증 가능한 근거를 찾습니다.", descriptionEn: "Find verifiable evidence in fossil occurrences and strata." },
+    { id: "earthquake-observations", domain: "earth-ecology", label: "지진 관측", labelEn: "Earthquake observations", description: "지진의 위치, 깊이, 규모와 시간 패턴을 분석합니다.", descriptionEn: "Analyze earthquake location, depth, magnitude, and timing." },
+    { id: "physics-data", domain: "physics", label: "물리 측정", labelEn: "Physics measurements", description: "물리 실험과 공개 측정 데이터를 비교·분석합니다.", descriptionEn: "Compare and analyze experimental and public physics measurements." },
+    { id: "materials-structures", domain: "materials-science", label: "소재·결정 구조", labelEn: "Materials & structures", description: "재료의 결정 구조와 물성 데이터를 살펴봅니다.", descriptionEn: "Inspect crystal structures and material properties." },
+    { id: "genomics-variants", domain: "genomics", label: "유전체 변이", labelEn: "Genomic variants", description: "유전체 좌표와 변이 기록을 정확한 참조 위에서 탐색합니다.", descriptionEn: "Explore genomic coordinates and variants against exact references." },
+    { id: "comparative-genomics", domain: "genomics", label: "비교 유전체", labelEn: "Comparative genomics", description: "종과 유전체 사이의 보존·차이를 비교합니다.", descriptionEn: "Compare conservation and differences across species and genomes." },
+    { id: "molecular-structure", domain: "life-science", label: "분자·단백질 구조", labelEn: "Molecular structures", description: "분자와 단백질 구조를 3D로 조사합니다.", descriptionEn: "Investigate molecular and protein structures in 3D." },
+    { id: "chemistry", domain: "chemistry", label: "화학 연구", labelEn: "Chemistry", description: "분자, 반응과 화학적 성질을 근거와 함께 연구합니다.", descriptionEn: "Study molecules, reactions, and chemical properties with evidence." },
   ];
-  const projectDomainChoices = [
-    { group: "natural", value: "life-science", label: "생명과학", labelEn: "Life science", icon: "beaker" },
-    { group: "natural", value: "chemistry", label: "화학", labelEn: "Chemistry", icon: "beaker" },
-    { group: "natural", value: "physics", label: "물리학", labelEn: "Physics", icon: "chart" },
-    { group: "natural", value: "materials-science", label: "재료과학", labelEn: "Materials science", icon: "cube" },
-    { group: "natural", value: "genomics", label: "유전체학", labelEn: "Genomics", icon: "table" },
-    { group: "natural", value: "astronomy", label: "천문학", labelEn: "Astronomy", icon: "globe" },
-    { group: "natural", value: "earth-ecology", label: "지구·생태·고생물", labelEn: "Earth, ecology & paleontology", icon: "globe" },
-    { group: "quantitative-social", value: "statistics", label: "통계학", labelEn: "Statistics", icon: "chart" },
-    { group: "quantitative-social", value: "economics", label: "경제·경영", labelEn: "Economics & management", icon: "chart" },
-    { group: "quantitative-social", value: "finance", label: "금융", labelEn: "Finance", icon: "chart" },
-    { group: "quantitative-social", value: "general", label: "인문·사회·융합", labelEn: "Humanities, social & interdisciplinary", icon: "book" },
-  ];
+  const researchTemplateById = (id) => researchTemplates.find((template) => template.id === id) || null;
+  const researchTemplateLabel = (template) => template ? (state.locale === "ko" ? template.label : template.labelEn) : "";
+  const researchTemplateDescription = (template) => template ? (state.locale === "ko" ? template.description : template.descriptionEn) : "";
   const labLabels = { chemistry: "Ketcher", "molecular-structure": "Mol* Structure Viewer", "literature-network": "Citation Network", "data-visualization": "Figure Lab", "data-table": "Data Table", "statistics-analysis": "Statistical Analysis", "economic-indicators": "Economic Indicators", "physics-data": "Physics Measurements", "materials-structures": "OQMD Structures", imaging: "Imaging", "astronomy-sky": "Sky Catalog", "biodiversity-map": "Biodiversity Map", "earthquake-observations": "Earthquake Observations", "paleontology-evidence": "Paleontology Evidence", "genomics-variants": "JBrowse Variants", "comparative-genomics": "Comparative Genomics" };
   const labLabel = (labId) => labLabels[labId] || String(labId || "Lab").split(/[._-]/).map((part) => part ? part[0].toUpperCase() + part.slice(1) : "").join(" ");
   const labCapabilityLabel = (labId) => state.labCatalog.find((lab) => lab.id === labId)?.label || `${labLabel(labId)} Lab`;
@@ -180,6 +183,14 @@ import { formatScienceCell } from "./format-cell.js";
   const sourceById = (id) => state.sources.find((source) => source.id === id) || null;
   const citationById = (id) => [...state.citationsByMessage.values()].flat().find((citation) => citation.id === id) || null;
   const selectedProject = () => state.projects.find((item) => item.id === state.selectedId) || null;
+  const setProjectLibrarySummaries = (rows) => {
+    state.projectLibrarySummaries = new Map((Array.isArray(rows) ? rows : []).filter((row) => row?.projectId).map((row) => [row.projectId, row]));
+    state.projectLibrarySummaryState = "ready";
+  };
+  async function refreshProjectLibrarySummaries() {
+    state.projectLibrarySummaryState = "loading";
+    setProjectLibrarySummaries(await science.projects.library());
+  }
   const selectedConversation = () => state.conversations.find((item) => item.id === state.selectedConversationId) || state.conversations[0] || null;
   const evidenceGraphNodeById = (id) => state.evidenceGraph?.nodes?.find((node) => node.id === id) || null;
   const evidenceGraphCandidateById = (id) => state.evidenceGraph?.inferenceCandidates?.find((candidate) => candidate.id === id) || null;
@@ -1386,6 +1397,7 @@ import { formatScienceCell } from "./format-cell.js";
     return `<article class="literatureSource" data-source-id="${escapeHtml(source.id)}" data-access-state="${escapeHtml(version?.accessState || "unknown")}" data-text-scope="${escapeHtml(scope)}" data-verification-status="${escapeHtml(source.verificationStatus || "unverified")}">
       <header class="literatureSourceHeader">
         <strong>${escapeHtml(source.title || "제목이 기록되지 않은 출처")}</strong>
+        <button class="literatureSourceOpen" type="button" data-source-id="${escapeHtml(source.id)}">${uiCopy("파일 열기", "Open file")} ${heroIcon("chevron-right")}</button>
         <span class="literatureSourceKind">${escapeHtml(source.kind || "kind 미기록")}${source.publicationYear ? ` · ${escapeHtml(source.publicationYear)}` : ""}${source.containerTitle ? ` · ${escapeHtml(source.containerTitle)}` : ""}</span>
       </header>
       <p class="literatureSourceUri"><code>${escapeHtml(source.canonicalUri || "정규 URI가 기록되지 않았습니다.")}</code></p>
@@ -5577,14 +5589,16 @@ import { formatScienceCell } from "./format-cell.js";
 
   function modal() {
     if (!state.modal) return "";
-    const domainGroups = [
-      { id: "natural", label: uiCopy("자연과학", "Natural sciences") },
-      { id: "quantitative-social", label: uiCopy("정량·사회과학", "Quantitative & social sciences") },
-    ].map((group) => `<fieldset class="projectDomainGroup"><legend>${group.label}</legend><div class="projectDomainGrid">${projectDomainChoices.filter((choice) => choice.group === group.id).map((choice, index) => {
-      const label = state.locale === "ko" ? choice.label : choice.labelEn;
-      return `<label class="projectDomainCard"><input type="radio" name="domain" value="${escapeHtml(choice.value)}" data-domain-choice="${escapeHtml(label)}" aria-label="${escapeHtml(label)}" ${group.id === "natural" && index === 0 ? "checked" : ""} required><span>${heroIcon(choice.icon)}<span><strong>${escapeHtml(label)}</strong></span></span></label>`;
-    }).join("")}</div></fieldset>`).join("");
-    return `<div class="modalBackdrop" role="presentation"><form class="modal newProjectModal" id="new-project-form" role="dialog" aria-modal="true" aria-labelledby="new-project-title"><header><div><span>New research project</span><h2 id="new-project-title">${uiCopy("새 연구 프로젝트", "New research project")}</h2></div><button class="newProjectClose" type="button" data-action="cancel" aria-label="${uiCopy("새 연구 닫기", "Close new research")}">×</button></header><p class="modalLead">${uiCopy("이름과 분야를 먼저 정한 뒤, 검증할 질문을 입력하세요.", "Name the project, choose its field, then enter the question you want to investigate.")}</p><label class="field"><span>${uiCopy("프로젝트 이름", "Project name")}</span><input name="title" required maxlength="80" autocomplete="off" placeholder="${uiCopy("예: 백악기 공룡 분자 흔적", "e.g. Cretaceous molecular traces")}" /></label><div class="projectDomainPicker"><strong>${uiCopy("연구 분야", "Research field")}</strong>${domainGroups}</div><label class="field"><span>${uiCopy("연구 질문", "Research question")}</span><textarea name="question" required maxlength="20000" placeholder="${uiCopy("무엇을 발견하거나 검증하고 싶나요?", "What do you want to discover or test?")}"></textarea></label><div class="formError" id="form-error" role="alert"></div><div class="modalActions"><button class="secondaryButton" type="button" data-action="cancel">${uiCopy("취소", "Cancel")}</button><button class="primaryButton" type="submit" ${state.saving ? "disabled" : ""}>${state.saving ? uiCopy("저장 중…", "Saving…") : uiCopy("프로젝트 만들기", "Create project")}</button></div></form></div>`;
+    if (state.newProjectStep === "field") {
+      const cards = researchTemplates.map((template) => `<button class="researchTemplateCard" type="button" data-research-template="${escapeHtml(template.id)}" aria-pressed="${state.selectedResearchTemplateId === template.id}"><img src="./assets/research-templates/${escapeHtml(template.id)}.png" alt=""><span><strong>${escapeHtml(researchTemplateLabel(template))}</strong><em>${escapeHtml(researchTemplateDescription(template))}</em></span><i aria-hidden="true">✓</i></button>`).join("");
+      return `<div class="modalBackdrop projectCreationBackdrop" role="presentation"><section class="modal newProjectModal researchTemplateModal" role="dialog" aria-modal="true" aria-labelledby="new-project-title"><header><div><span>${uiCopy("1단계 · 연구 분야", "Step 1 · Research field")}</span><h2 id="new-project-title">${uiCopy("어떤 연구를 시작할까요?", "What would you like to research?")}</h2></div><button class="newProjectClose" type="button" data-action="cancel" aria-label="${uiCopy("새 연구 닫기", "Close new research")}">×</button></header><p class="modalLead">${uiCopy("분야를 고르면 그 연구에 맞는 첫 Lab이 프로젝트와 함께 열립니다.", "Choose a field and its matching first Lab will open with the project.")}</p><div class="researchTemplateGrid" aria-label="${uiCopy("15개 연구 분야", "15 research fields")}">${cards}</div></section></div>`;
+    }
+    const template = researchTemplateById(state.selectedResearchTemplateId);
+    if (!template) {
+      state.newProjectStep = "field";
+      return modal();
+    }
+    return `<div class="modalBackdrop projectCreationBackdrop" role="presentation"><form class="modal newProjectModal projectDetailsModal" id="new-project-form" role="dialog" aria-modal="true" aria-labelledby="new-project-title"><header><div><span>${uiCopy("2단계 · 프로젝트 설정", "Step 2 · Project details")}</span><h2 id="new-project-title">${uiCopy("이름과 연구 질문을 적어 주세요", "Name the project and set its question")}</h2></div><button class="newProjectClose" type="button" data-action="cancel" aria-label="${uiCopy("새 연구 닫기", "Close new research")}">×</button></header><button class="selectedResearchTemplate" type="button" data-action="project-template-back"><img src="./assets/research-templates/${escapeHtml(template.id)}.png" alt=""><span><strong>${escapeHtml(researchTemplateLabel(template))}</strong><em>${escapeHtml(researchTemplateDescription(template))}</em></span><small>${uiCopy("분야 바꾸기", "Change field")}</small></button><input type="hidden" name="researchTemplateId" value="${escapeHtml(template.id)}"><label class="field"><span>${uiCopy("프로젝트 이름", "Project name")}</span><input name="title" required maxlength="80" autocomplete="off" value="${escapeHtml(state.newProjectDraft.title)}" placeholder="${uiCopy("예: 백악기 공룡 분자 흔적", "e.g. Cretaceous molecular traces")}" /></label><label class="field"><span>${uiCopy("연구 질문", "Research question")}</span><textarea name="question" required maxlength="20000" placeholder="${uiCopy("무엇을 발견하거나 검증하고 싶나요?", "What do you want to discover or test?")}">${escapeHtml(state.newProjectDraft.question)}</textarea></label><div class="formError" id="form-error" role="alert"></div><div class="modalActions"><button class="secondaryButton" type="button" data-action="project-template-back">${uiCopy("이전", "Back")}</button><button class="primaryButton" type="submit" ${state.saving ? "disabled" : ""}>${state.saving ? uiCopy("저장 중…", "Saving…") : uiCopy("프로젝트 만들기", "Create project")}</button></div></form></div>`;
   }
 
   function manuscriptModal() {
@@ -5807,22 +5821,25 @@ import { formatScienceCell } from "./format-cell.js";
   }
 
   function projectLibrary() {
-    const folderFor = (project) => projectLibraryFolders.find((folder) => folder.domains.includes(project.domain)) || projectLibraryFolders[0];
-    const visibleProjects = state.projectLibraryFilter === "all"
-      ? state.projects
-      : state.projects.filter((project) => folderFor(project).id === state.projectLibraryFilter);
-    const folders = projectLibraryFolders.map((folder) => {
-      const count = state.projects.filter((project) => folder.domains.includes(project.domain)).length;
-      const selected = state.projectLibraryFilter === folder.id;
-      const countLabel = state.locale === "ko" ? `${count}개 프로젝트` : `${count} ${count === 1 ? "project" : "projects"}`;
-      return `<button class="projectFolderCard" data-library-filter="${escapeHtml(folder.id)}" aria-pressed="${selected}"><span class="projectFolderVisual">${heroIcon(folder.id === "natural" ? "beaker" : "chart")}</span><span><strong>${escapeHtml(state.locale === "ko" ? folder.label : folder.labelEn)}</strong><em>${escapeHtml(state.locale === "ko" ? folder.description : folder.descriptionEn)}</em><small>${escapeHtml(countLabel)}</small></span></button>`;
+    const emptySummary = { fileCount: 0, dataCount: 0, analysisCount: 0, manuscriptCount: 0, pdfCount: 0 };
+    const cards = state.projects.map((project) => {
+      const hasSummary = state.projectLibrarySummaries.has(project.id);
+      const summary = state.projectLibrarySummaries.get(project.id) || emptySummary;
+      const folderState = !hasSummary ? "unavailable" : summary.pdfCount > 0 ? "complete" : Object.values(summary).some((count) => Number(count) > 0) ? "data" : "empty";
+      const template = researchTemplateById(project.researchTemplateId || project.initialLabId);
+      const fieldLabel = template ? researchTemplateLabel(template) : domainLabel(project.domain);
+      const metrics = hasSummary ? [
+        [uiCopy("파일", "Files"), summary.fileCount],
+        [uiCopy("데이터", "Data"), summary.dataCount],
+        [uiCopy("분석", "Analyses"), summary.analysisCount],
+        [uiCopy("원고", "Manuscripts"), summary.manuscriptCount],
+        ["PDF", summary.pdfCount],
+      ].map(([label, count]) => `<span><strong>${escapeHtml(count)}</strong><em>${escapeHtml(label)}</em></span>`).join("") : `<span class="libraryMetricUnavailable">${uiCopy("집계 불가", "Counts unavailable")}</span>`;
+      const folderAsset = folderState === "unavailable" ? "empty" : folderState;
+      return `<button class="libraryProjectCard projectButton" data-project-id="${escapeHtml(project.id)}" data-folder-state="${escapeHtml(folderState)}"><span class="libraryProjectFolder"><img src="./assets/research-templates/folder-${escapeHtml(folderAsset)}.png" alt=""></span><span class="libraryProjectCopy"><span class="libraryProjectMeta">${escapeHtml(fieldLabel)} · ${escapeHtml(formatDate(project.updatedAt))}</span><strong title="${escapeHtml(project.title)}">${escapeHtml(project.title)}</strong><em title="${escapeHtml(project.question)}">${escapeHtml(project.question)}</em><span class="libraryProjectMetrics">${metrics}</span></span><span class="libraryProjectArrow">${heroIcon("chevron-right")}</span></button>`;
     }).join("");
-    const cards = visibleProjects.map((project) => `<button class="libraryProjectCard projectButton" data-project-id="${escapeHtml(project.id)}"><span class="libraryProjectIcon">${heroIcon(project.domain === "chemistry" || project.domain === "life-science" ? "beaker" : project.domain === "astronomy" || project.domain === "earth-ecology" ? "globe" : project.domain === "materials-science" ? "cube" : project.domain === "statistics" || project.domain === "economics" || project.domain === "finance" ? "chart" : "book")}</span><span class="libraryProjectCopy"><span class="libraryProjectMeta">${escapeHtml(domainLabel(project.domain))} · ${escapeHtml(formatDate(project.updatedAt))}</span><strong title="${escapeHtml(project.title)}">${escapeHtml(project.title)}</strong><em>${escapeHtml(project.question)}</em></span><span class="libraryProjectArrow">${heroIcon("chevron-right")}</span></button>`).join("");
-    const heading = state.projectLibraryFilter === "all"
-      ? uiCopy("모든 프로젝트", "All projects")
-      : (() => { const folder = projectLibraryFolders.find((item) => item.id === state.projectLibraryFilter); return folder ? (state.locale === "ko" ? folder.label : folder.labelEn) : uiCopy("프로젝트", "Projects"); })();
-    const projectCount = (count) => state.locale === "ko" ? `${count}개` : `${count} ${count === 1 ? "project" : "projects"}`;
-    return `<section class="projectLibrary"><header class="projectLibraryTopbar"><span class="projectLibraryBrand"><img src="./assets/agentlas-mark.png" alt=""><strong>Agentlas <em>Science*</em></strong></span><button data-action="back-to-work">Agentlas Work</button></header><main class="projectLibraryMain"><div class="projectLibraryHeading"><div><span>Research library</span><h1>${uiCopy("프로젝트", "Projects")}</h1><p>${uiCopy("분야별 폴더에서 연구를 선택하거나 새 프로젝트를 시작하세요.", "Choose a study from a field folder or start a new project.")}</p></div><button class="primaryButton" data-action="new">${heroIcon("plus")}${uiCopy("새 프로젝트", "New project")}</button></div><section class="projectFolders"><header><h2>${uiCopy("분야", "Fields")}</h2><button data-library-filter="all" aria-pressed="${state.projectLibraryFilter === "all"}">${uiCopy("전체", "All")} ${escapeHtml(state.projects.length)}</button></header><div>${folders}</div></section><section class="libraryProjects"><header><h2>${escapeHtml(heading)}</h2><span>${escapeHtml(projectCount(visibleProjects.length))}</span></header><div class="libraryProjectGrid">${cards || `<div class="libraryEmpty"><strong>${uiCopy("이 폴더에는 아직 프로젝트가 없습니다.", "There are no projects in this folder yet.")}</strong><span>${uiCopy("새 프로젝트를 만들면 짧은 이름과 연구 질문이 여기에 표시됩니다.", "Create a project to see its short name and research question here.")}</span><button class="secondaryButton" data-action="new">${uiCopy("새 프로젝트 만들기", "Create a new project")}</button></div>`}</div></section></main>${modal()}</section>`;
+    const projectCount = state.locale === "ko" ? `${state.projects.length}개 프로젝트` : `${state.projects.length} ${state.projects.length === 1 ? "project" : "projects"}`;
+    return `<section class="projectLibrary"><header class="projectLibraryTopbar"><button class="projectLibraryExit" data-action="back-to-work" aria-label="${uiCopy("Agentlas Work로 돌아가기", "Back to Agentlas Work")}">${heroIcon("chevron-right", "uiIcon isReverse")}<span>Agentlas Work</span></button><span class="projectLibraryBrand"><img src="./assets/agentlas-mark.png" alt=""><strong>Agentlas <em>Science*</em></strong></span><span class="projectLibraryCount">${escapeHtml(projectCount)}</span></header><main class="projectLibraryMain"><div class="projectLibraryHeading"><div><span>Research library</span><h1>${uiCopy("연구 보관함", "Research library")}</h1><p>${uiCopy("프로젝트 폴더를 열어 연구를 이어가거나, 새 연구를 시작하세요.", "Open a project folder to continue, or start a new study.")}</p></div><button class="primaryButton" data-action="new">${heroIcon("plus")}${uiCopy("새 연구", "New research")}</button></div><section class="libraryProjects"><header><h2>${uiCopy("프로젝트 폴더", "Project folders")}</h2><span>${escapeHtml(projectCount)}</span></header><div class="libraryProjectGrid">${cards || `<div class="libraryEmpty"><strong>${uiCopy("아직 연구 프로젝트가 없습니다.", "No research projects yet.")}</strong><span>${uiCopy("15개 연구 분야 중 하나를 골라 첫 프로젝트를 만들어 보세요.", "Choose one of 15 research fields to create your first project.")}</span><button class="secondaryButton" data-action="new">${uiCopy("새 연구 시작", "Start new research")}</button></div>`}</div></section></main>${modal()}</section>`;
   }
 
   function workspace() {
@@ -5854,7 +5871,7 @@ import { formatScienceCell } from "./format-cell.js";
     root.setAttribute("aria-busy", "false");
     const contentPane = document.querySelector(".contentPane");
     if (contentPane) contentPane.scrollTop = state.scrollByMode[state.mode] || 0;
-    if (state.modal) document.querySelector('input[name="title"]')?.focus();
+    if (state.modal) document.querySelector(state.newProjectStep === "field" ? "[data-research-template]" : 'input[name="title"]')?.focus();
     if (state.researchContractSheet) requestAnimationFrame(() => document.querySelector(".researchContractSheet")?.focus({ preventScroll: true }));
     if (!state.resultReviewSheet && state.mode === "lab" && state.selectedArtifactId && state.artifactHistoryById.has(state.selectedArtifactId)) {
       void hydrateArtifactRenderer();
@@ -8112,12 +8129,21 @@ import { formatScienceCell } from "./format-cell.js";
         state.drawer = null;
         state.projectMenuOpen = false;
         render();
+        void refreshProjectLibrarySummaries().then(render).catch((error) => {
+          state.projectLibrarySummaryState = "unavailable";
+          state.projectLibrarySummaries = new Map();
+          state.workspaceSyncError = error instanceof Error ? error.message : String(error);
+          render();
+        });
       };
       if (!guardArtifactDraftNavigation(action)) action();
       return;
     }
-    if (target.dataset.libraryFilter) {
-      state.projectLibraryFilter = target.dataset.libraryFilter;
+    if (target.dataset.researchTemplate) {
+      const template = researchTemplateById(target.dataset.researchTemplate);
+      if (!template) return;
+      state.selectedResearchTemplateId = template.id;
+      state.newProjectStep = "details";
       render();
       return;
     }
@@ -8132,8 +8158,21 @@ import { formatScienceCell } from "./format-cell.js";
     if (target.dataset.closeWorkspaceTab) { closeWorkspaceTab(target.dataset.closeWorkspaceTab); return; }
     if (target.dataset.workspaceTabId) { activateWorkspaceTab(target.dataset.workspaceTabId); return; }
     if (target.dataset.action === "new") {
-      const action = () => { state.modal = true; render(); };
+      const action = () => {
+        state.modal = true;
+        state.saving = false;
+        state.newProjectStep = "field";
+        state.selectedResearchTemplateId = null;
+        state.newProjectDraft = { title: "", question: "" };
+        render();
+      };
       if (!guardArtifactDraftNavigation(action)) action();
+      return;
+    }
+    if (target.dataset.action === "project-template-back") {
+      state.newProjectStep = "field";
+      state.saving = false;
+      render();
       return;
     }
     if (target.dataset.action === "new-manuscript") { state.manuscriptModal = true; state.saving = false; render(); return; }
@@ -8324,7 +8363,15 @@ import { formatScienceCell } from "./format-cell.js";
       requestAnimationFrame(() => document.querySelector(".dockedComposer textarea")?.focus());
       return;
     }
-    if (target.dataset.action === "cancel") { state.modal = false; render(); return; }
+    if (target.dataset.action === "cancel") {
+      state.modal = false;
+      state.saving = false;
+      state.newProjectStep = "field";
+      state.selectedResearchTemplateId = null;
+      state.newProjectDraft = { title: "", question: "" };
+      render();
+      return;
+    }
     if (target.dataset.action === "retry-project" && state.selectedId) { void selectProject(state.selectedId); return; }
     if (target.dataset.action === "toggle-drawer") { rememberScroll(); state.drawer = state.drawer ? null : { kind: state.mode === "lab" ? "artifact" : state.mode === "manuscript" ? "manuscript" : "source", id: state.mode === "lab" ? state.selectedArtifactId : state.mode === "manuscript" ? state.selectedManuscriptId : state.selectedSourceId }; render(); return; }
     if (target.dataset.action === "close-drawer") { rememberScroll(); state.drawer = null; render(); return; }
@@ -8592,6 +8639,12 @@ import { formatScienceCell } from "./format-cell.js";
   });
 
   root.addEventListener("input", (event) => {
+    const newProjectForm = event.target.closest("#new-project-form");
+    if (newProjectForm) {
+      const form = new FormData(newProjectForm);
+      state.newProjectDraft = { title: String(form.get("title") || ""), question: String(form.get("question") || "") };
+      return;
+    }
     const manuscriptInsertSearch = event.target.closest("[data-manuscript-insert-search]");
     if (manuscriptInsertSearch && state.manuscriptInsertion) {
       const value = manuscriptInsertSearch.value;
@@ -9125,13 +9178,32 @@ import { formatScienceCell } from "./format-cell.js";
     if (event.target.id !== "new-project-form") return;
     event.preventDefault();
     const form = new FormData(event.target);
+    const template = researchTemplateById(String(form.get("researchTemplateId") || ""));
+    const title = String(form.get("title") || "").trim();
+    const question = String(form.get("question") || "").trim();
+    if (!template || !title || !question) {
+      const errorNode = document.getElementById("form-error");
+      if (errorNode) errorNode.textContent = uiCopy("프로젝트 이름과 연구 질문을 모두 입력해 주세요.", "Enter both a project name and a research question.");
+      return;
+    }
     state.saving = true;
     render();
     try {
-      const result = await science.projects.create({ requestId: crypto.randomUUID(), question: String(form.get("question") || "").trim(), domain: String(form.get("domain") || "general"), title: String(form.get("title") || "").trim() });
+      const result = await science.projects.create({
+        requestId: crypto.randomUUID(),
+        question,
+        title,
+        domain: template.domain,
+        researchTemplateId: template.id,
+        initialLabId: template.id,
+      });
       state.projects = [result.project, ...state.projects.filter((item) => item.id !== result.project.id)];
+      state.projectLibrarySummaries.set(result.project.id, { projectId: result.project.id, fileCount: 0, dataCount: 0, analysisCount: 0, manuscriptCount: 0, pdfCount: 0 });
       state.modal = false;
       state.saving = false;
+      state.newProjectStep = "field";
+      state.selectedResearchTemplateId = null;
+      state.newProjectDraft = { title: "", question: "" };
       await selectProject(result.project.id);
       // project.create persists the first question as a user message. Start that
       // exact message immediately so a new project opens on a live Research
@@ -9265,6 +9337,12 @@ import { formatScienceCell } from "./format-cell.js";
       });
     });
     state.projects = Array.isArray(bootstrap.projects) ? bootstrap.projects : [];
+    try {
+      setProjectLibrarySummaries(await science.projects.library());
+    } catch {
+      state.projectLibrarySummaries = new Map();
+      state.projectLibrarySummaryState = "unavailable";
+    }
     state.rendererPacks = Array.isArray(bootstrap.rendererPacks) ? bootstrap.rendererPacks : [];
     render();
   }

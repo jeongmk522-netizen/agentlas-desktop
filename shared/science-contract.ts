@@ -38,6 +38,25 @@ export const SCIENCE_DOMAINS = [
 ] as const;
 export type ScienceDomain = typeof SCIENCE_DOMAINS[number];
 
+export const SCIENCE_RESEARCH_TEMPLATE_IDS = [
+  "data-table",
+  "statistics-analysis",
+  "data-visualization",
+  "economic-indicators",
+  "literature-network",
+  "astronomy-sky",
+  "biodiversity-map",
+  "paleontology-evidence",
+  "earthquake-observations",
+  "physics-data",
+  "materials-structures",
+  "genomics-variants",
+  "comparative-genomics",
+  "molecular-structure",
+  "chemistry",
+] as const;
+export type ScienceResearchTemplateId = typeof SCIENCE_RESEARCH_TEMPLATE_IDS[number];
+
 export interface ScienceProject {
   id: string;
   title: string;
@@ -45,10 +64,23 @@ export interface ScienceProject {
   domain: ScienceDomain;
   /** Additional discovery metadata. `domain` remains the backwards-compatible primary domain. */
   relatedDomains: ScienceDomain[];
+  /** Exact creation template. Legacy projects remain null and keep their original domain semantics. */
+  researchTemplateId?: ScienceResearchTemplateId | null;
+  /** The first Lab bound by the creation template. It is stored independently for auditability. */
+  initialLabId?: ScienceResearchTemplateId | null;
   status: "draft" | "active" | "paused" | "archived";
   version: number;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface ScienceProjectLibrarySummary {
+  projectId: string;
+  fileCount: number;
+  dataCount: number;
+  analysisCount: number;
+  manuscriptCount: number;
+  pdfCount: number;
 }
 
 export const SCIENCE_PROJECT_DESTINATIONS = [
@@ -708,6 +740,8 @@ export interface CreateScienceProjectInput {
   title?: string;
   domain: ScienceDomain;
   relatedDomains?: ScienceDomain[];
+  researchTemplateId?: ScienceResearchTemplateId;
+  initialLabId?: ScienceResearchTemplateId;
 }
 
 export interface CreateScienceProjectResult {

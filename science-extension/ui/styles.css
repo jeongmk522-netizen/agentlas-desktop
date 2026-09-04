@@ -1835,13 +1835,16 @@ button.manuscriptBinding:hover { border-color: var(--line-strong); background: v
 .startButton { margin-top: 22px; border: 0; border-radius: 9px; background: var(--ink); color: #fff; padding: 11px 16px; font-weight: 680; }
 
 .projectLibrary { width: 100%; height: 100%; min-width: 0; display: flex; flex-direction: column; overflow: hidden; background: var(--surface); }
-.projectLibraryTopbar { height: 64px; flex: 0 0 64px; display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid var(--line); padding: 0 24px; }
-.projectLibraryTopbar > button { min-height: 34px; border: 0; border-radius: 8px; background: transparent; padding: 0 10px; color: var(--muted-deep); font-size: 12px; }
+.projectLibraryTopbar { height: 64px; flex: 0 0 64px; display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); align-items: center; border-bottom: 1px solid var(--line); padding: 0 24px; }
+.projectLibraryTopbar > button { min-height: var(--science-button-s-height); border: 0; border-radius: var(--science-radius-control); background: transparent; padding: 0 10px; color: var(--muted-deep); font-size: 12px; }
 .projectLibraryTopbar > button:hover { background: var(--soft); color: var(--ink); }
+.projectLibraryExit { width: max-content; display: inline-flex; align-items: center; gap: 7px; justify-self: start; }
+.projectLibraryExit .uiIcon { width: 14px; height: 14px; }
 .projectLibraryBrand { display: flex; align-items: center; gap: 9px; }
 .projectLibraryBrand img { width: 28px; height: 31px; object-fit: contain; }
 .projectLibraryBrand strong { font-size: 18px; letter-spacing: -.025em; }
 .projectLibraryBrand em { color: var(--brand-coral); font-style: normal; }
+.projectLibraryCount { justify-self: end; color: var(--grey-500); font-size: 11px; }
 .projectLibraryMain { width: min(1180px, 100%); min-height: 0; flex: 1 1 auto; align-self: center; overflow-y: auto; padding: 44px 36px 64px; scrollbar-width: thin; }
 .projectLibraryHeading { display: flex; align-items: end; justify-content: space-between; gap: 24px; }
 .projectLibraryHeading > div > span { color: var(--grey-500); font-size: 11px; font-weight: 720; letter-spacing: .08em; text-transform: uppercase; }
@@ -1849,34 +1852,25 @@ button.manuscriptBinding:hover { border-color: var(--line-strong); background: v
 .projectLibraryHeading p { margin: 0; color: var(--grey-600); font-size: 13px; line-height: 1.6; }
 .projectLibraryHeading > .primaryButton { min-height: 40px; display: inline-flex; align-items: center; gap: 7px; white-space: nowrap; }
 .projectLibraryHeading > .primaryButton .uiIcon { width: 15px; height: 15px; }
-.projectFolders { margin-top: 38px; }
-.projectFolders > header, .libraryProjects > header { display: flex; align-items: center; justify-content: space-between; min-height: 34px; margin-bottom: 10px; }
-.projectFolders h2, .libraryProjects h2 { margin: 0; font-size: 15px; font-weight: 680; }
-.projectFolders > header button { min-height: 28px; border: 0; border-radius: 7px; background: transparent; padding: 0 9px; color: var(--grey-600); font-size: 11px; }
-.projectFolders > header button:hover, .projectFolders > header button[aria-pressed="true"] { background: var(--grey-100); color: var(--ink); }
-.projectFolders > div { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
-.projectFolderCard { min-width: 0; min-height: 132px; display: grid; grid-template-columns: 76px minmax(0, 1fr); align-items: center; gap: 18px; border: 1px solid var(--grey-200); border-radius: 16px; background: var(--grey-50); padding: 18px; text-align: left; }
-.projectFolderCard:nth-child(2) { background: #f4f2f7; }
-.projectFolderCard:hover, .projectFolderCard[aria-pressed="true"] { border-color: var(--grey-400); box-shadow: var(--elev-1); }
-.projectFolderVisual { width: 76px; height: 66px; display: grid; place-items: center; border-radius: 10px 10px 14px 14px; background: #dedede; color: var(--grey-700); box-shadow: inset 0 1px 0 rgba(255,255,255,.7); }
-.projectFolderCard:nth-child(2) .projectFolderVisual { background: #ddd7e7; }
-.projectFolderVisual .uiIcon { width: 25px; height: 25px; }
-.projectFolderCard > span:last-child { min-width: 0; }
-.projectFolderCard strong, .projectFolderCard em, .projectFolderCard small { display: block; }
-.projectFolderCard strong { font-size: 16px; }
-.projectFolderCard em { margin-top: 5px; overflow: hidden; color: var(--grey-600); font-size: 11px; font-style: normal; text-overflow: ellipsis; white-space: nowrap; }
-.projectFolderCard small { margin-top: 12px; color: var(--grey-500); font-size: 10px; }
-.libraryProjects { margin-top: 34px; }
+.libraryProjects { margin-top: 38px; }
+.libraryProjects > header { display: flex; align-items: center; justify-content: space-between; min-height: 34px; margin-bottom: 10px; }
+.libraryProjects h2 { margin: 0; font-size: 15px; font-weight: 680; }
 .libraryProjects > header > span { color: var(--grey-500); font-size: 11px; }
 .libraryProjectGrid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
-.libraryProjectCard { min-width: 0; min-height: 154px; display: grid; grid-template-columns: 38px minmax(0, 1fr) 18px; align-items: start; gap: 11px; margin: 0; border: 1px solid var(--grey-200); border-radius: 16px; background: var(--surface); padding: 16px; text-align: left; }
+.libraryProjectCard { min-width: 0; min-height: 196px; display: grid; grid-template-columns: 108px minmax(0, 1fr) 16px; align-items: center; gap: 12px; margin: 0; border: 1px solid var(--grey-200); border-radius: var(--science-radius-card); background: var(--surface); padding: 14px; text-align: left; }
 .libraryProjectCard:hover { border-color: var(--grey-400); background: var(--grey-50); box-shadow: var(--elev-1); }
-.libraryProjectIcon { width: 38px; height: 38px; display: grid; place-items: center; border-radius: 9px; background: var(--grey-100); color: var(--grey-700); }
-.libraryProjectIcon .uiIcon { width: 18px; height: 18px; }
+.libraryProjectCard:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
+.libraryProjectFolder { width: 108px; height: 92px; display: grid; place-items: center; overflow: hidden; border-radius: var(--science-radius-card); background: var(--grey-50); }
+.libraryProjectFolder img { width: 100%; height: 100%; display: block; object-fit: cover; }
 .libraryProjectCopy { min-width: 0; }
 .libraryProjectMeta { display: block; overflow: hidden; color: var(--grey-500); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
-.libraryProjectCopy > strong { display: block; overflow: hidden; margin-top: 7px; font-size: 14px; line-height: 1.35; text-overflow: ellipsis; white-space: nowrap; }
-.libraryProjectCopy > em { display: -webkit-box; overflow: hidden; margin-top: 7px; color: var(--grey-600); font-size: 11px; font-style: normal; line-height: 1.55; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
+.libraryProjectCopy > strong { display: -webkit-box; overflow: hidden; margin-top: 7px; font-size: 14px; line-height: 1.35; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow-wrap: anywhere; }
+.libraryProjectCopy > em { display: -webkit-box; overflow: hidden; margin-top: 7px; color: var(--grey-600); font-size: 11px; font-style: normal; line-height: 1.5; -webkit-box-orient: vertical; -webkit-line-clamp: 3; overflow-wrap: anywhere; }
+.libraryProjectMetrics { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 3px; margin-top: 11px; }
+.libraryProjectMetrics > span { min-width: 0; display: grid; gap: 2px; }
+.libraryProjectMetrics strong { color: var(--ink); font-size: 11px; line-height: 1; }
+.libraryProjectMetrics em { overflow: hidden; color: var(--grey-500); font-size: 10px; font-style: normal; text-overflow: ellipsis; white-space: nowrap; }
+.libraryMetricUnavailable { grid-column: 1 / -1; color: var(--grey-500); font-size: 10px; }
 .libraryProjectArrow { align-self: center; color: var(--grey-400); }
 .libraryProjectArrow .uiIcon { width: 15px; height: 15px; }
 .libraryEmpty { grid-column: 1 / -1; min-height: 180px; display: grid; place-items: center; align-content: center; gap: 7px; border: 1px dashed var(--grey-300); border-radius: 12px; color: var(--grey-600); text-align: center; }
@@ -1909,11 +1903,11 @@ button.manuscriptBinding:hover { border-color: var(--line-strong); background: v
 .primaryButton { border: 1px solid var(--ink); background: var(--ink); color: #fff; }
 .primaryButton:disabled { cursor: wait; opacity: .55; }
 
-.modal.newProjectModal { width: min(760px, 100%); border-radius: 16px; padding: 0; overflow-y: auto; box-shadow: 0 18px 48px rgba(54,53,53,.16); }
+.modal.newProjectModal { width: min(760px, 100%); border-radius: var(--science-radius-card); padding: 0; overflow-y: auto; box-shadow: 0 18px 48px rgba(54,53,53,.16); }
 .newProjectModal > header { display: flex; align-items: start; justify-content: space-between; gap: 16px; padding: 22px 24px 0; }
 .newProjectModal > header > div > span { color: var(--grey-500); font-size: 10px; font-weight: 720; letter-spacing: .08em; text-transform: uppercase; }
 .newProjectModal > header h2 { margin-top: 5px; }
-.newProjectClose { width: 32px; height: 32px; border: 0; border-radius: 8px; background: transparent; color: var(--grey-600); font-size: 20px; }
+.newProjectClose { width: var(--science-icon-button-size); height: var(--science-icon-button-size); border: 0; border-radius: var(--science-radius-control); background: transparent; color: var(--grey-600); font-size: 20px; }
 .newProjectClose:hover { background: var(--grey-100); color: var(--ink); }
 .newProjectModal > .modalLead, .newProjectModal > .field, .newProjectModal > .projectDomainPicker, .newProjectModal > .formError { margin-right: 24px; margin-left: 24px; }
 .newProjectModal > .modalLead { margin-bottom: 14px; }
@@ -1936,6 +1930,30 @@ button.manuscriptBinding:hover { border-color: var(--line-strong); background: v
 .projectDomainCard strong { font-size: 11px; }
 .projectDomainCard small { margin-top: 2px; color: var(--grey-500); font-size: 8px; font-weight: 500; }
 .newProjectModal > .modalActions { position: sticky; bottom: 0; margin-top: 4px; border-top: 1px solid var(--line); background: var(--surface); padding: 14px 24px 16px; }
+.researchTemplateModal { width: min(1080px, 100%) !important; }
+.researchTemplateModal > .modalLead { margin-bottom: 16px; }
+.researchTemplateGrid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; padding: 0 24px 24px; }
+.researchTemplateCard { position: relative; min-width: 0; min-height: 112px; display: grid; grid-template-columns: 104px minmax(0, 1fr); align-items: center; gap: 12px; overflow: hidden; border: 1px solid var(--grey-200); border-radius: var(--science-radius-card); background: var(--surface); padding: 8px; text-align: left; }
+.researchTemplateCard:hover { border-color: var(--grey-400); background: var(--grey-50); box-shadow: var(--elev-1); }
+.researchTemplateCard[aria-pressed="true"] { border: 2px solid var(--ink); padding: 7px; }
+.researchTemplateCard:focus-visible { outline: 2px solid var(--brand-coral); outline-offset: 3px; }
+.researchTemplateCard > img { width: 104px; height: 78px; display: block; border-radius: var(--science-radius-control); object-fit: cover; }
+.researchTemplateCard > span { min-width: 0; }
+.researchTemplateCard strong, .researchTemplateCard em { display: block; }
+.researchTemplateCard strong { color: var(--ink); font-size: 13px; line-height: 1.35; overflow-wrap: anywhere; }
+.researchTemplateCard em { display: -webkit-box; overflow: hidden; margin-top: 5px; color: var(--grey-600); font-size: 10px; font-style: normal; line-height: 1.45; -webkit-box-orient: vertical; -webkit-line-clamp: 3; }
+.researchTemplateCard > i { position: absolute; top: 7px; right: 7px; width: 20px; height: 20px; display: none; place-items: center; border-radius: 50%; background: var(--ink); color: #fff; font-size: 11px; font-style: normal; }
+.researchTemplateCard[aria-pressed="true"] > i { display: grid; }
+.projectDetailsModal { width: min(680px, 100%) !important; }
+.selectedResearchTemplate { min-width: 0; min-height: var(--science-button-l-height); display: grid; grid-template-columns: 112px minmax(0, 1fr) auto; align-items: center; gap: 13px; margin: 18px 24px 8px; border: 1px solid var(--grey-200); border-radius: var(--science-radius-card); background: var(--grey-50); padding: 9px; text-align: left; }
+.selectedResearchTemplate:hover { border-color: var(--grey-400); }
+.selectedResearchTemplate:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
+.selectedResearchTemplate img { width: 112px; height: 84px; display: block; border-radius: var(--science-radius-control); object-fit: cover; }
+.selectedResearchTemplate > span { min-width: 0; }
+.selectedResearchTemplate strong, .selectedResearchTemplate em { display: block; }
+.selectedResearchTemplate strong { color: var(--ink); font-size: 14px; }
+.selectedResearchTemplate em { display: -webkit-box; overflow: hidden; margin-top: 5px; color: var(--grey-600); font-size: 10px; font-style: normal; line-height: 1.45; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
+.selectedResearchTemplate small { color: var(--grey-600); font-size: 10px; white-space: nowrap; }
 
 @media (max-width: 1280px) and (min-width: 1280px) {
   .workspace, .workspace.drawerOpen { grid-template-columns: var(--rail-expanded) minmax(0, 1fr); }
@@ -3571,6 +3589,10 @@ button.manuscriptBinding:hover { border-color: var(--line-strong); background: v
 .approvalScopeBadge { justify-self: start; margin-left: 36px; border-radius: 5px; background: var(--grey-100); padding: 1px 7px; color: var(--grey-600); font-size: 11px; font-weight: 600; }
 .acquisitionRunHeader, .literatureSourceHeader { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: baseline; gap: 6px 12px; }
 .acquisitionRunHeader > strong, .literatureSourceHeader > strong { grid-column: 1; color: var(--ink); font-size: 14px; font-weight: 660; line-height: 1.45; }
+.literatureSourceOpen { grid-column: 2; grid-row: 1; display: inline-flex; align-items: center; gap: 5px; border: 0; border-radius: var(--science-radius-button-s); background: transparent; padding: 5px 8px; color: var(--grey-600); font-size: 11px; font-weight: 650; }
+.literatureSourceOpen:hover, .literatureSourceOpen:focus-visible { background: var(--grey-100); color: var(--ink); }
+.literatureSourceOpen:focus-visible { outline: 2px solid var(--brand-coral); outline-offset: 2px; }
+.literatureSourceOpen .uiIcon { width: 12px; height: 12px; }
 .literatureSourceUri { overflow-wrap: anywhere; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
 .acquisitionRunFacts, .analysisRunFacts, .literatureSourceFacts { display: flex; flex-wrap: wrap; gap: 6px 16px; }
 .acquisitionRunSummary, .analysisRunSummary { color: var(--grey-700); font-size: 12px; line-height: 1.65; }
@@ -4409,25 +4431,37 @@ button:has(> span:only-child > .uiIcon:only-child) {
   .workspace .railProjectIdentity { display: none; }
   .projectLibraryMain { padding-right: 24px; padding-left: 24px; }
   .libraryProjectGrid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .projectDomainGrid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+
+@media (max-width: 900px) {
+  .researchTemplateGrid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 
 @media (max-width: 680px) {
   .projectLibraryTopbar { padding: 0 16px; }
   .projectLibraryBrand strong { font-size: 16px; }
+  .projectLibraryExit { width: 36px; height: 36px; justify-content: center; padding: 0 !important; }
+  .projectLibraryExit > span { display: none; }
+  .projectLibraryCount { font-size: 9px; }
   .projectLibraryMain { padding: 28px 16px 48px; }
-  .projectLibraryHeading { align-items: start; }
-  .projectLibraryHeading p { max-width: 220px; }
-  .projectFolders { margin-top: 28px; }
-  .projectFolders > div, .libraryProjectGrid { grid-template-columns: minmax(0, 1fr); }
-  .projectFolderCard { min-height: 112px; grid-template-columns: 62px minmax(0, 1fr); padding: 14px; }
-  .projectFolderVisual { width: 62px; height: 58px; }
+  .projectLibraryHeading { align-items: stretch; flex-direction: column; }
+  .projectLibraryHeading p { max-width: none; }
+  .projectLibraryHeading > .primaryButton { width: 100%; justify-content: center; }
+  .libraryProjectGrid { grid-template-columns: minmax(0, 1fr); }
+  .libraryProjectMetrics { grid-template-columns: repeat(3, minmax(0, 1fr)); row-gap: 8px; }
+  .libraryProjectCard { min-height: 180px; grid-template-columns: 92px minmax(0, 1fr) 14px; gap: 10px; padding: 12px; }
+  .libraryProjectFolder { width: 92px; height: 78px; }
   .libraryProjects { margin-top: 26px; }
   .modalBackdrop { padding: 8px; }
   .newProjectModal > header { padding: 18px 16px 0; }
   .newProjectModal > .modalLead, .newProjectModal > .field, .newProjectModal > .projectDomainPicker, .newProjectModal > .formError { margin-right: 16px; margin-left: 16px; }
   .newProjectModal > .modalActions { padding-right: 16px; padding-left: 16px; }
-  .projectDomainGrid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .researchTemplateGrid { grid-template-columns: minmax(0, 1fr); padding: 0 16px 18px; }
+  .researchTemplateCard { min-height: 98px; grid-template-columns: 88px minmax(0, 1fr); }
+  .researchTemplateCard > img { width: 88px; height: 66px; }
+  .selectedResearchTemplate { grid-template-columns: 78px minmax(0, 1fr); margin-right: 16px; margin-left: 16px; }
+  .selectedResearchTemplate img { width: 78px; height: 59px; }
+  .selectedResearchTemplate small { grid-column: 2; white-space: normal; }
   .workspace,
   .workspace.drawerOpen,
   .workspace[data-rail-collapsed="true"],

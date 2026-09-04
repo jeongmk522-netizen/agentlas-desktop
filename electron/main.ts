@@ -1644,6 +1644,10 @@ app.whenReady().then(async () => {
     assertScienceSender(event, input);
     return scienceStore().listProjects();
   });
+  ipcMain.handle("science:projects:library", (event, input: unknown) => {
+    assertScienceSender(event, input);
+    return scienceStore().listProjectLibrarySummaries();
+  });
   ipcMain.handle("science:projects:create", (event, envelope: unknown) => {
     assertScienceSender(event, envelope);
     const input = envelope && typeof envelope === "object" && "input" in envelope ? (envelope as { input?: unknown }).input : null;

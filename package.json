@@ -140,6 +140,7 @@
     "test:approval-never-blocks": "npm run build:electron && electron scripts/approval-never-blocks-contract.mjs",
     "test:right-panel-artifacts": "npm run build:electron && node scripts/right-panel-artifacts-contract.mjs",
     "qa:live-renderers": "npm run build:electron && cross-env NEXT_PUBLIC_AGENTLAS_QA_SURFACES=1 npm run build:renderer && electron scripts/qa-live-renderers-electron.cjs",
+    "qa:file-viewers": "npm run build:electron && cross-env NEXT_PUBLIC_AGENTLAS_QA_SURFACES=1 npm run build:renderer && node scripts/qa-file-viewers-electron.cjs",
     "test:store-isolation": "node scripts/store-isolation-contract.mjs",
     "build:model-catalog-snapshot": "node scripts/build-model-catalog-snapshot.cjs",
     "test:effort-per-model": "node scripts/effort-per-model-contract.mjs",

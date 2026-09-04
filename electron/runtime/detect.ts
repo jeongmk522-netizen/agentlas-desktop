@@ -348,6 +348,16 @@ async function detectRuntimesUncached(): Promise<RuntimeStatus[]> {
     });
   }
 
+  const claudeCodeDisabled = runtimeProbeDisabled("claude-code");
+  const codexDisabled = runtimeProbeDisabled("codex");
+  const antigravityDisabled = runtimeProbeDisabled("antigravity");
+  const kimiDisabled = runtimeProbeDisabled("kimi");
+  const grokDisabled = runtimeProbeDisabled("grok");
+  const cursorDisabled = runtimeProbeDisabled("cursor");
+  const ollamaDisabled = runtimeProbeDisabled("ollama");
+  const lmstudioDisabled = runtimeProbeDisabled("lmstudio");
+  const mlxDisabled = runtimeProbeDisabled("mlx");
+
   const [
     cc,
     cx,
@@ -372,16 +382,18 @@ async function detectRuntimesUncached(): Promise<RuntimeStatus[]> {
     customByok,
     claudeEfforts,
   ] = await Promise.all([
-    probeClaudeCode(),
-    probeCodex(),
-    readCodexModelDiscovery(),
-    probeAntigravity(),
-    probeKimi(),
-    runtimeProbeDisabled("grok") ? Promise.resolve(null) : probeGrok(),
-    probeCursor(),
-    probeOllama(),
-    probeLMStudio(),
-    probeMLX(),
+    claudeCodeDisabled ? Promise.resolve(null) : probeClaudeCode(),
+    codexDisabled ? Promise.resolve(null) : probeCodex(),
+    codexDisabled
+      ? Promise.resolve({ inventory: [], discovery: unsupportedDiscovery("runtime-disabled") })
+      : readCodexModelDiscovery(),
+    antigravityDisabled ? Promise.resolve(null) : probeAntigravity(),
+    kimiDisabled ? Promise.resolve(null) : probeKimi(),
+    grokDisabled ? Promise.resolve(null) : probeGrok(),
+    cursorDisabled ? Promise.resolve(null) : probeCursor(),
+    ollamaDisabled ? Promise.resolve(null) : probeOllama(),
+    lmstudioDisabled ? Promise.resolve(null) : probeLMStudio(),
+    mlxDisabled ? Promise.resolve(null) : probeMLX(),
     hasApiKey("anthropic"),
     hasApiKey("openai"),
     hasApiKey("google"),
@@ -393,7 +405,7 @@ async function detectRuntimesUncached(): Promise<RuntimeStatus[]> {
     hasApiKey("openrouter"),
     hasApiKey("upstage"),
     hasApiKey("custom"),
-    probeClaudeEfforts(),
+    claudeCodeDisabled ? Promise.resolve([]) : probeClaudeEfforts(),
   ]);
 
   const list: RuntimeStatus[] = [];
@@ -651,7 +663,7 @@ async function detectRuntimesUncached(): Promise<RuntimeStatus[]> {
   // dedicated kind (OpenCode, Goose, Copilot CLI) plus user profiles in ACP mode.
   // Presence = the command exists; models = ACP session/new (cached 10 min).
   // Detection is best-effort per spec: one broken agent never hides the others.
-  for (const spec of listAcpKindSpecs()) {
+  for (const spec of runtimeProbeDisabled("acp") ? [] : listAcpKindSpecs()) {
     try {
       const found = await resolveAcpCommand(spec);
       if (!found) continue;

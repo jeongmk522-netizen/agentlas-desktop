@@ -28,6 +28,11 @@ const projectTitle = "Dinosaur resurrection proxy research";
 const nudge = process.env.AGENTLAS_DINOSAUR_NUDGE ||
   "이어서 계속 진행해줘. 이미 검증된 다음 단계가 있으면 Research Director가 Science 도구로 실행하고, 사람의 확인이 필요한 결정만 바텀시트 질문으로 남겨줘. 화석 근거를 DNA나 부활 증거로 과장하지 마.";
 const requiredRuntimeKind = process.env.AGENTLAS_DINOSAUR_RUNTIME_KIND || "codex";
+const runtimeProbeKinds = ["claude-code", "codex", "antigravity", "kimi", "grok", "cursor", "ollama", "lmstudio", "mlx", "acp"];
+const disabledRuntimeKinds = [...new Set([
+  ...String(process.env.AGENTLAS_DISABLED_RUNTIME_KINDS || "").split(",").map((value) => value.trim()).filter(Boolean),
+  ...runtimeProbeKinds.filter((kind) => kind !== requiredRuntimeKind),
+])];
 const turnBudget = Number(process.env.AGENTLAS_DINOSAUR_TURNS || 8);
 const turnTimeoutMs = Number(process.env.AGENTLAS_DINOSAUR_TURN_TIMEOUT_MS || 900_000);
 const totalTimeoutMs = Number(process.env.AGENTLAS_DINOSAUR_TOTAL_TIMEOUT_MS || 1_800_000);
@@ -107,6 +112,7 @@ const env = {
   AGENTLAS_QA_USER_DATA_DIR: userData,
   AGENTLAS_STORE_PATH: path.join(qaRoot, "desktop.sqlite"),
   AGENTLAS_DISABLE_DAEMON: "1",
+  AGENTLAS_DISABLED_RUNTIME_KINDS: disabledRuntimeKinds.join(","),
   AGENTLAS_PRODUCT_EXTENSION_TRUSTED_KEYS_JSON: built.trustedKeysJson,
   AGENTLAS_PRODUCT_EXTENSION_ROOT_DIR: extensionRoot,
   AGENTLAS_SCIENCE_RESEARCH_DIRECTOR_PLUGIN_ROOT: directorRoot,
@@ -969,6 +975,11 @@ async function main() {
     const observedRequired = requiredTools.filter((toolId) => requiredToolAliases[toolId].some((alias) => allToolIds.includes(alias)));
     const finalSnapshot = report.turns.at(-1)?.snapshot || snapshot;
     const finalAssistant = finalSnapshot.messages.find((message) => message.id === finalSnapshot.assistantMessageId) || null;
+    const runtimeChildKindsObserved = [...new Set(readDiagnosticTimeline()
+      .filter((event) => event.event === "runtime-child-observed")
+      .map((event) => event.executable === "claude" ? "claude-code" : event.executable)
+      .filter(Boolean))];
+    const unexpectedRuntimeChildKinds = runtimeChildKindsObserved.filter((kind) => kind !== requiredRuntimeKind);
     if (allManuscripts.length >= 1) {
       await recorder.capture("manuscript-before-pdf-export");
       trace("pdf:ui-export-start");
@@ -989,6 +1000,9 @@ async function main() {
       actualElectron: true,
       signedScienceExtension: true,
       realRuntimeDetected: Boolean(report.runtime),
+      runtimeChildKindsObserved,
+      unexpectedRuntimeChildKinds,
+      selectedRuntimeIsolationVerified: unexpectedRuntimeChildKinds.length === 0,
       promptCreatedProject: Boolean(report.project?.id),
       exactEnglishQuestionBound: report.promptBinding?.exactMatch === true,
       projectFolderShownBeforeWorkspace: report.folder?.folderState === "empty" && Boolean(report.folder?.screenshot),
@@ -1003,7 +1017,7 @@ async function main() {
       comparativeProxyBoundaryInAssistant: Boolean(finalAssistant && /comparative|proxy|프록시|비교/i.test(finalAssistant.content)),
       biologicalRevivalClaimNotAsserted: Boolean(finalAssistant && !/성공적으로 부활|실제 부화 완료|successfully revived|hatched successfully/i.test(finalAssistant.content)),
       noHorizontalOverflow: await evaluateScience(desktop, "document.documentElement.scrollWidth - document.documentElement.clientWidth <= 1").catch(() => false),
-      completedFullDinosaurChain: requiredTools.every((toolId) => observedRequired.includes(toolId)) && allManuscripts.length >= 1 && pdfVerified && videoVerified,
+      completedFullDinosaurChain: unexpectedRuntimeChildKinds.length === 0 && requiredTools.every((toolId) => observedRequired.includes(toolId)) && allManuscripts.length >= 1 && pdfVerified && videoVerified,
     };
     report.elapsedMs = Date.now() - startedAt;
     persistReport();

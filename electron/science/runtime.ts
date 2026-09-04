@@ -28,6 +28,7 @@ import { ScienceJournalPublicationService } from "./journal-publication";
 import { ScienceManuscriptRenderService } from "./manuscript";
 import { ScienceArtifactPublicationValidator } from "./artifact-publication-validator";
 import { ScienceDomainAnalysisService } from "./domain-analysis";
+import { ScienceEarthAnalysisService } from "./earth-analysis";
 import { SciencePhysicsAnalysisService } from "./physics-analysis";
 import {
   resolveExactVerifiedScienceRenderer,
@@ -69,6 +70,7 @@ let activeJournalPublicationService: ScienceJournalPublicationService | null = n
 let activeManuscriptRenderService: ScienceManuscriptRenderService | null = null;
 let activeArtifactPublicationValidator: ScienceArtifactPublicationValidator | null = null;
 let activeDomainAnalysisService: ScienceDomainAnalysisService | null = null;
+let activeEarthAnalysisService: ScienceEarthAnalysisService | null = null;
 let activePhysicsAnalysisService: SciencePhysicsAnalysisService | null = null;
 let activeLongRunBridge: ScienceLongRunBridge | null = null;
 let activeEvidenceGraphService: ScienceEvidenceGraphService | null = null;
@@ -259,6 +261,11 @@ export function scienceArtifactPublicationValidator(): ScienceArtifactPublicatio
 export function scienceDomainAnalysisService(): ScienceDomainAnalysisService {
   if (!activeDomainAnalysisService) activeDomainAnalysisService = new ScienceDomainAnalysisService(scienceStore());
   return activeDomainAnalysisService;
+}
+
+export function scienceEarthAnalysisService(): ScienceEarthAnalysisService {
+  if (!activeEarthAnalysisService) activeEarthAnalysisService = new ScienceEarthAnalysisService(scienceStore());
+  return activeEarthAnalysisService;
 }
 
 export function sciencePhysicsAnalysisService(): SciencePhysicsAnalysisService {

@@ -28,7 +28,8 @@ import {
 import { isScienceResidueInteraction, type ScienceProteinColorTheme, type ScienceProteinRepresentation } from "../../shared/science-renderer-runtime";
 import { commitScienceChemistrySmilesEdit, commitScienceMolstarViewEdit } from "./lab-editors";
 import type { ExecuteStatisticsAnalysisInput } from "./tool-gateway";
-import { scienceAcademicFullTextService, scienceAcademicSearchService, scienceArtifactPublicationValidator, scienceAstronomyCatalogService, scienceBiodiversityCatalogService, scienceChemistryValidator, scienceComparativeGenomicsService, scienceComparativeGenomicsTableService, scienceDeextinctionFeasibilityService, scienceDomainAnalysisService, scienceEarthquakeCatalogService, scienceEconomicsAnalysisService, scienceEconomicsCatalogService, scienceEvidenceGraphService, scienceExtantArchosaurLocusPanelService, scienceExtantReferenceAssemblyService, scienceGenomicsCatalogService, scienceHypotheticalAsrService, scienceJournalPublicationService, scienceManuscriptRenderService, scienceMaterialsCatalogService, scienceNoaaCoopsWaterLevelService, sciencePaleontologyAnalysisService, sciencePaleontologyCandidateComparisonService, sciencePaleontologyCatalogService, sciencePhysicsAnalysisService, sciencePhysicsHepDataLiveService, sciencePhysicsInspireLiveService, scienceScientificDataService, scienceStore, scienceToolGateway } from "./runtime";
+import { scienceAcademicFullTextService, scienceAcademicSearchService, scienceArtifactPublicationValidator, scienceAstronomyCatalogService, scienceBiodiversityCatalogService, scienceChemistryValidator, scienceComparativeGenomicsService, scienceComparativeGenomicsTableService, scienceDeextinctionFeasibilityService, scienceDomainAnalysisService, scienceEarthAnalysisService, scienceEarthquakeCatalogService, scienceEconomicsAnalysisService, scienceEconomicsCatalogService, scienceEvidenceGraphService, scienceExtantArchosaurLocusPanelService, scienceExtantReferenceAssemblyService, scienceGenomicsCatalogService, scienceHypotheticalAsrService, scienceJournalPublicationService, scienceManuscriptRenderService, scienceMaterialsCatalogService, scienceNoaaCoopsWaterLevelService, sciencePaleontologyAnalysisService, sciencePaleontologyCandidateComparisonService, sciencePaleontologyCatalogService, sciencePhysicsAnalysisService, sciencePhysicsHepDataLiveService, sciencePhysicsInspireLiveService, scienceScientificDataService, scienceStore, scienceToolGateway } from "./runtime";
+import { earthAnalysisToolSummary, isEarthAnalysisToolId } from "./earth-analysis";
 import { deextinctionFeasibilityToolSummary } from "./deextinction-feasibility";
 import { paleontologyCandidateComparisonToolSummary } from "./paleontology-candidate-comparison";
 import { physicsAnalysisKindForToolId } from "./physics-analysis";
@@ -1734,7 +1735,7 @@ const PLATFORM_TOOLS: McpTool[] = [
   {
     name: "propose_analysis_plan",
     route: "/v1/platform/analysis-plans/propose",
-    description: "Create the first immutable version of a confirmatory analysis plan bound to exact project artifact versions. If the estimand or dependence structure is unresolved, include exactly one matching human decision draft; otherwise decisions must be empty. This does not freeze or authorize execution.",
+    description: "Create the first immutable version of a confirmatory analysis plan bound to exact project artifact versions. Exact shapes matter: estimand is null or {population,treatmentOrExposure,comparator,outcome,summaryMeasure,timeHorizon}; design.dependence is one typed object with kind; data.inputs use camelCase {artifactId,artifactVersion,contentSha256}; model is null for domain-specific tools, otherwise exactly {family,formula,distribution,link,groupingVariables,randomEffects,rationale} with family lm|glm|mixed-effects|gee; expectedArtifacts contains {role,title}, where role is result-table|figure|diagnostics|methods. If the estimand or dependence structure is unresolved, include exactly one matching human decision draft; otherwise decisions must be empty. This does not freeze or authorize execution.",
     inputSchema: {
       type: "object",
       properties: {
@@ -2431,6 +2432,7 @@ export function scienceDesktopHostCompatibilitySnapshot(): ScienceDesktopHostCom
 }
 
 const IMPLEMENTED_TOOL_IDS = new Set([
+  "agentlas.earth-aftershock-table-study",
   "agentlas.earth-gutenberg-richter-analysis",
   "agentlas.physics-hepdata-chi-square-analysis",
   "agentlas.physics-spectrum-fit-analysis",
@@ -2668,13 +2670,14 @@ function assertNoUndeclaredToolProperties(
   schemaValue: unknown,
   code: string,
   rootSchemaValue: unknown = schemaValue,
+  path = "$",
 ): void {
   if (!schemaValue || typeof schemaValue !== "object" || Array.isArray(schemaValue)) return;
   const schema = schemaValue as Record<string, unknown>;
   if (typeof schema.$ref === "string") {
     const resolved = localJsonSchemaRef(rootSchemaValue, schema.$ref);
     if (!resolved) throw new Error(code);
-    assertNoUndeclaredToolProperties(value, resolved, code, rootSchemaValue);
+    assertNoUndeclaredToolProperties(value, resolved, code, rootSchemaValue, path);
     return;
   }
   const alternatives = [
@@ -2683,7 +2686,7 @@ function assertNoUndeclaredToolProperties(
   ];
   if (Array.isArray(value)) {
     if (schema.items !== undefined) {
-      for (const item of value) assertNoUndeclaredToolProperties(item, schema.items, code, rootSchemaValue);
+      for (const [index, item] of value.entries()) assertNoUndeclaredToolProperties(item, schema.items, code, rootSchemaValue, `${path}[${index}]`);
     }
     return;
   }
@@ -2691,28 +2694,40 @@ function assertNoUndeclaredToolProperties(
   const properties = schema.properties && typeof schema.properties === "object" && !Array.isArray(schema.properties)
     ? schema.properties as Record<string, unknown>
     : null;
-  if (schema.additionalProperties === false
-    && Object.keys(value).some((key) => !properties || !Object.prototype.hasOwnProperty.call(properties, key))) {
-    throw new Error(code);
+  if (schema.additionalProperties === false) {
+    const unexpectedProperty = Object.keys(value).find((key) => !properties || !Object.prototype.hasOwnProperty.call(properties, key));
+    if (unexpectedProperty) throw new ToolInputSchemaError(code, path, unexpectedProperty, properties ? Object.keys(properties) : []);
   }
   if (properties) {
     const recordValue = value as Record<string, unknown>;
     for (const [key, propertySchema] of Object.entries(properties)) {
       if (Object.prototype.hasOwnProperty.call(recordValue, key)) {
-        assertNoUndeclaredToolProperties(recordValue[key], propertySchema, code, rootSchemaValue);
+        assertNoUndeclaredToolProperties(recordValue[key], propertySchema, code, rootSchemaValue, `${path}.${key}`);
       }
     }
   }
   if (!properties && alternatives.length > 0) {
     for (const alternative of alternatives) {
       try {
-        assertNoUndeclaredToolProperties(value, alternative, code, rootSchemaValue);
+        assertNoUndeclaredToolProperties(value, alternative, code, rootSchemaValue, path);
         return;
       } catch (error) {
         if (!(error instanceof Error) || error.message !== code) throw error;
       }
     }
     throw new Error(code);
+  }
+}
+
+class ToolInputSchemaError extends Error {
+  constructor(
+    code: string,
+    readonly path: string,
+    readonly unexpectedProperty: string,
+    readonly allowedProperties: string[],
+  ) {
+    super(code);
+    this.name = "ToolInputSchemaError";
   }
 }
 
@@ -3073,6 +3088,19 @@ async function dispatchDescriptorTool(
       selection: result.analysis.selection,
       estimates: result.analysis.estimates,
       parentRunId: result.parentRunId,
+    };
+  }
+  if (isEarthAnalysisToolId(tool.id)) {
+    const result = scienceEarthAnalysisService().execute(tool.id, {
+      requestId: common.requestId,
+      projectId: common.projectId,
+      conversationId: common.conversationId,
+      originMessageId: common.originMessageId,
+    }, body);
+    return {
+      ...artifactResult(tool, result.artifact, result.replayed, { id: result.runId, status: "succeeded" }),
+      parentRunId: result.parentRunId,
+      analysis: earthAnalysisToolSummary(result),
     };
   }
   if (tool.id === "agentlas.astronomy-light-curve-periodicity") {
@@ -5433,7 +5461,9 @@ async function handle(request: http.IncomingMessage, response: http.ServerRespon
     // report of it was the model saying "the Science host declined". Route and code only -- never
     // the body, which carries project content.
     console.error(`[science-tool] refused route=${route} code=${code}`);
-    respond(response, 400, { ok: false, code });
+    respond(response, 400, error instanceof ToolInputSchemaError
+      ? { ok: false, code, path: error.path, unexpectedProperty: error.unexpectedProperty, allowedProperties: error.allowedProperties }
+      : { ok: false, code });
   }
 }
 

@@ -2264,6 +2264,169 @@
       }
     },
     {
+      "id": "agentlas.earth-aftershock-table-study",
+      "version": "1.0.0",
+      "runtime": "electron-main",
+      "capability": "science:compute",
+      "network": "deny",
+      "labId": "earthquake-observations",
+      "operation": "execute",
+      "primaryArtifact": {
+        "ordinal": 1,
+        "kind": "chart.vega",
+        "rendererId": "agentlas.vega",
+        "labId": "earthquake-observations"
+      },
+      "mcp": {
+        "name": "analyze_aftershock_catalog_table",
+        "route": "/v1/labs/earthquake-observations/tools/aftershock-table-study",
+        "description": "Analyze one exact project Data Table containing event ids, elapsed days since a mainshock, and magnitudes. The trusted host fits a bounded Omori-Utsu decay model and compares Aki b-values before and after one explicit split, preserving the 400-row parent hash, inclusion counts, numeric results, uncertainty, limitations, publication table, Figure, and ResearchRun receipts. Omori parameter intervals, background seismicity, secondary triggering, and uncertainty in the supplied completeness/split boundaries are not computed.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "tool_call_id": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 160
+            },
+            "source_table": {
+              "type": "object",
+              "properties": {
+                "artifact_id": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 120
+                },
+                "artifact_version": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "content_sha256": {
+                  "type": "string",
+                  "pattern": "^[a-f0-9]{64}$"
+                }
+              },
+              "required": [
+                "artifact_id",
+                "artifact_version",
+                "content_sha256"
+              ],
+              "additionalProperties": false
+            },
+            "columns": {
+              "type": "object",
+              "properties": {
+                "event_id_column": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 240
+                },
+                "time_days_column": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 240
+                },
+                "magnitude_column": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 240
+                }
+              },
+              "required": [
+                "event_id_column",
+                "time_days_column",
+                "magnitude_column"
+              ],
+              "additionalProperties": false
+            },
+            "completeness_start_days": {
+              "type": "number",
+              "minimum": 0,
+              "exclusiveMaximum": 366
+            },
+            "completeness_magnitude": {
+              "type": "number",
+              "minimum": -2,
+              "maximum": 10
+            },
+            "split_time_days": {
+              "type": "number",
+              "exclusiveMinimum": 0,
+              "maximum": 366
+            },
+            "bin_width": {
+              "type": "number",
+              "minimum": 0.01,
+              "maximum": 1,
+              "default": 0.01
+            },
+            "rate_bin_width_days": {
+              "type": "number",
+              "exclusiveMinimum": 0,
+              "maximum": 31
+            },
+            "parameter_bounds": {
+              "type": "object",
+              "properties": {
+                "p_min": {
+                  "type": "number",
+                  "minimum": 0.1,
+                  "maximum": 5
+                },
+                "p_max": {
+                  "type": "number",
+                  "minimum": 0.1,
+                  "maximum": 5
+                },
+                "c_min_days": {
+                  "type": "number",
+                  "exclusiveMinimum": 0,
+                  "maximum": 366
+                },
+                "c_max_days": {
+                  "type": "number",
+                  "exclusiveMinimum": 0,
+                  "maximum": 366
+                }
+              },
+              "required": [
+                "p_min",
+                "p_max",
+                "c_min_days",
+                "c_max_days"
+              ],
+              "additionalProperties": false
+            },
+            "confidence_level": {
+              "type": "number",
+              "enum": [
+                0.9,
+                0.95,
+                0.99
+              ],
+              "default": 0.95
+            },
+            "title": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 240
+            }
+          },
+          "required": [
+            "tool_call_id",
+            "source_table",
+            "columns",
+            "completeness_start_days",
+            "completeness_magnitude",
+            "split_time_days",
+            "rate_bin_width_days",
+            "parameter_bounds"
+          ],
+          "additionalProperties": false
+        }
+      }
+    },
+    {
       "id": "agentlas.physics-dataset",
       "version": "1.0.0",
       "runtime": "native-sidecar",

@@ -2707,14 +2707,17 @@ function assertNoUndeclaredToolProperties(
     }
   }
   if (!properties && alternatives.length > 0) {
+    let schemaError: ToolInputSchemaError | null = null;
     for (const alternative of alternatives) {
       try {
         assertNoUndeclaredToolProperties(value, alternative, code, rootSchemaValue, path);
         return;
       } catch (error) {
         if (!(error instanceof Error) || error.message !== code) throw error;
+        if (error instanceof ToolInputSchemaError && !schemaError) schemaError = error;
       }
     }
+    if (schemaError) throw schemaError;
     throw new Error(code);
   }
 }
@@ -2729,6 +2732,44 @@ class ToolInputSchemaError extends Error {
     super(code);
     this.name = "ToolInputSchemaError";
   }
+}
+
+function scienceToolErrorPayload(route: string, error: unknown): Record<string, unknown> {
+  const code = error instanceof Error ? error.message.slice(0, 240) : "science-tool-control-failed";
+  if (route === "/v1/platform/analysis-plans/propose") {
+    if (code === "science-analysis-dependence-invalid"
+      || (error instanceof ToolInputSchemaError && error.path === "$.document.design.dependence")) {
+      return {
+        ok: false, code, path: "$.document.design.dependence",
+        unexpectedProperty: error instanceof ToolInputSchemaError ? error.unexpectedProperty : null,
+        allowedProperties: ["kind", "subjectIdVariable", "timeVariable", "clusterVariables"],
+        allowedValues: ["unresolved", "independent", "repeated", "clustered", "repeated-and-clustered"],
+      };
+    }
+    if (code === "science-analysis-model-invalid"
+      || (error instanceof ToolInputSchemaError && error.path === "$.document.model")) {
+      return {
+        ok: false, code, path: "$.document.model",
+        unexpectedProperty: error instanceof ToolInputSchemaError ? error.unexpectedProperty : null,
+        allowedProperties: ["family", "formula", "distribution", "link", "groupingVariables", "randomEffects", "rationale"],
+        allowedValues: ["lm", "glm", "mixed-effects", "gee", null],
+        guidance: "Use null for a domain-specific analysis tool.",
+      };
+    }
+    if (code === "science-analysis-expected-artifact-invalid"
+      || (error instanceof ToolInputSchemaError && error.path.startsWith("$.document.expectedArtifacts["))) {
+      return {
+        ok: false, code, path: "$.document.expectedArtifacts[*]",
+        unexpectedProperty: error instanceof ToolInputSchemaError ? error.unexpectedProperty : null,
+        allowedProperties: ["role", "title"],
+        allowedValues: ["result-table", "figure", "diagnostics", "methods"],
+      };
+    }
+  }
+  if (error instanceof ToolInputSchemaError) {
+    return { ok: false, code, path: error.path, unexpectedProperty: error.unexpectedProperty, allowedProperties: error.allowedProperties };
+  }
+  return { ok: false, code };
 }
 
 function exactPatternText(value: unknown, maximum: number, pattern: RegExp, code: string): string {
@@ -5461,9 +5502,7 @@ async function handle(request: http.IncomingMessage, response: http.ServerRespon
     // report of it was the model saying "the Science host declined". Route and code only -- never
     // the body, which carries project content.
     console.error(`[science-tool] refused route=${route} code=${code}`);
-    respond(response, 400, error instanceof ToolInputSchemaError
-      ? { ok: false, code, path: error.path, unexpectedProperty: error.unexpectedProperty, allowedProperties: error.allowedProperties }
-      : { ok: false, code });
+    respond(response, 400, scienceToolErrorPayload(route, error));
   }
 }
 

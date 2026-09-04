@@ -18706,7 +18706,11 @@ export class ScienceStore {
       const document = analysisSpec.version.document;
       const openDecisions = this.listDecisionRequests(input.projectId, analysisSpec.id, ["queued", "presented", "deferred"]);
       if (openDecisions.length) throw new Error("science-analysis-open-decision");
-      if (!document.estimand || !document.design.experimentalUnit || document.design.dependence.kind === "unresolved" || !document.model || document.missingData.strategy === "unresolved" || document.multiplicity.strategy === "unresolved" || document.requiredDiagnostics.length === 0 || document.data.inputs.length === 0) throw new Error("science-analysis-spec-incomplete");
+      // `experimentalUnit` and `model` are deliberately nullable in the public plan schema:
+      // observational catalogues may have no manipulable experimental unit, and domain-specific
+      // tools carry their model contract themselves. Treating either null as incomplete made a
+      // schema-valid domain plan impossible to freeze.
+      if (!document.estimand || document.design.dependence.kind === "unresolved" || document.missingData.strategy === "unresolved" || document.multiplicity.strategy === "unresolved" || document.requiredDiagnostics.length === 0 || document.data.inputs.length === 0) throw new Error("science-analysis-spec-incomplete");
       this.validateAnalysisDocumentReferences(input.projectId, document);
       const now = new Date().toISOString();
       this.db.prepare("UPDATE analysis_specs SET status = 'frozen', lock_version = lock_version + 1, frozen_at = ?, updated_at = ? WHERE id = ? AND project_id = ? AND lock_version = ?")

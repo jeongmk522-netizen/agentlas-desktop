@@ -649,6 +649,8 @@ async function main() {
     video: null,
     artifactVerification: null,
     assertions: {},
+    electronExit: null,
+    closeRequestedAt: null,
   };
   const reportPath = path.join(outputDir, "report.json");
   const persistReport = () => {
@@ -660,6 +662,16 @@ async function main() {
   try {
     trace("launch:start", { qaRoot, outputDir });
     desktop = await electron.launch({ args: [root, "--lang=ko-KR"], cwd: root, env, timeout: 120_000 });
+    desktop.process()?.once("exit", (code, signal) => {
+      report.electronExit = {
+        at: new Date().toISOString(),
+        code,
+        signal,
+        closeRequested: Boolean(report.closeRequestedAt),
+      };
+      trace("electron:exit", report.electronExit);
+      persistReport();
+    });
     // A cold packaged Electron launch can exceed one minute when another
     // renderer is compiling or reclaiming memory. Keep the startup gate
     // bounded, but do not misclassify slow startup as a missing runtime.
@@ -871,7 +883,11 @@ async function main() {
     persistReport();
     throw error;
   } finally {
+    report.closeRequestedAt = new Date().toISOString();
+    persistReport();
     await closeDesktop(desktop);
+    report.elapsedMs = Date.now() - startedAt;
+    persistReport();
     if (process.env.AGENTLAS_DINOSAUR_KEEP_QA_ROOT !== "1") {
       fs.rmSync(qaRoot, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
     }

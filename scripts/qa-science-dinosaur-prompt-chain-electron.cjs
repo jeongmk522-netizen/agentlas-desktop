@@ -808,8 +808,13 @@ async function main() {
     await desktop.evaluate(({ BrowserWindow }) => {
       const owner = BrowserWindow.getAllWindows()[0];
       owner.setContentSize(1488, 986);
-      void owner.loadURL("agentlas://app/science.html");
     });
+    // Navigate through Playwright's page boundary so the owner renderer's old
+    // execution context may disappear without also rejecting an Electron-main
+    // evaluate that already started loadURL as a side effect. Wait for the host
+    // document before polling the separately mounted Science child view.
+    await page.goto("agentlas://app/science.html", { waitUntil: "domcontentloaded", timeout: 180_000 });
+    await page.waitForFunction(() => location.pathname.endsWith("/science.html"), null, { timeout: 180_000 });
     await waitForScienceView(desktop);
     recorder = await startScienceRecorder(desktop);
     await recorder.capture("science-library");

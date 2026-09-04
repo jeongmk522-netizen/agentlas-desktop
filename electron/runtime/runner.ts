@@ -562,6 +562,30 @@ This run is unattended — no user is present and nobody can answer questions.
 - When a decision has an obvious safe default, take it and state the assumption in your reply.
 - If required information or a decision has no safe default, do NOT guess or fabricate. Stop and reply with a single line starting with "NEEDS-INPUT:" describing exactly what is missing.`;
 
+/**
+ * 사람이 보고 있는 Work 실행에서 **묻는 방법**을 알려 준다.
+ *
+ * 배경(2026-09-04 실측): Work 에는 질문 시트 UI 가 있고 렌더러는 `<<agentlas-ask>>` 를
+ * 읽어 그 시트를 그린다. 그런데 **그 형식을 알려 주는 곳이 태스크포스 합성 프롬프트뿐**이었다.
+ * 내장 `ask_user` 도구는 로컬 런타임(local-tool-loop·byok)에만 실리고 CLI 런타임
+ * (claude-code·codex)에는 없다. 그래서 기본 경로인 CLI 실행은 구조화해서 물을 수단이
+ * 하나도 없었고, 모델은 산문으로 되물었다("…새로 만들까요, 아니면 수정할까요?").
+ * 그 물음은 시트로 뜨지 않으니 사용자는 고를 것이 없고 답을 타이핑해야 했다.
+ *
+ * 남용을 막기 위해 조건을 좁게 적는다 — 진짜로 막힌 갈림길에서 한 번만.
+ */
+export const ATTENDED_ASK_DIRECTIVE = `## Asking the person (this surface can answer)
+A person is watching this run and can answer.
+- If an \`ask_user\` tool is available, use it and do not also emit the block below.
+- Otherwise, when the work is genuinely blocked on a choice only the person can make, end the
+  answer with exactly one block and stop:
+<<agentlas-ask>>
+{"question":"<one short question ending with ?>","header":"<short label>","multiSelect":false,"options":[{"label":"<option>","description":"<what happens if chosen>"},{"label":"<other option>","description":"<what happens if chosen>"}]}
+<</agentlas-ask>>
+- Use it only for a real fork with no safe default. If a sensible default exists, take it and say
+  which assumption you made. Never ask what you can find out yourself.
+- Keep the prose before the block natural, and never print or explain the wire format.`;
+
 export const MOBILE_DURABLE_ASK_DIRECTIVE = `## Mobile decision surface (final authority)
 The synchronous ask_user tool is unavailable on this remote surface. Never call it.
 When an explicit answer is required, emit the <<agentlas-ask>> fenced Decision contract above and STOP. The user will answer from Mobile in the next turn. Never guess an answer.`;

@@ -181,6 +181,7 @@ import {
   type RunnerRequest,
   SURFACE_INTENT_MARKER,
   UNATTENDED_NO_ASK_DIRECTIVE,
+  ATTENDED_ASK_DIRECTIVE,
   MOBILE_DURABLE_ASK_DIRECTIVE,
 } from "../runtime/runner";
 import {
@@ -4205,6 +4206,11 @@ ${effectiveUserPrompt}`;
     systemPrompt = `${systemPrompt}\n\n${UNATTENDED_NO_ASK_DIRECTIVE}`;
   } else if (usesMobileDurableDecision(executionContext)) {
     systemPrompt = `${systemPrompt}\n\n${MOBILE_DURABLE_ASK_DIRECTIVE}`;
+  } else if (!req.agentAppMode && chat.kind !== "division") {
+    // 사람이 보고 있는 실행에는 **묻는 방법**을 알려 준다. 질문 시트 UI 와 렌더러 파서는
+    // 이미 있는데 그 형식을 아는 프롬프트가 태스크포스 합성뿐이라, 기본 경로인 CLI 실행은
+    // 구조화해서 물을 수단이 없어 산문으로 되물었다(2026-09-04 실측).
+    systemPrompt = `${systemPrompt}\n\n${ATTENDED_ASK_DIRECTIVE}`;
   }
 
   // 사용자 메시지 영구화 + 첫 메시지면 제목 자동 생성

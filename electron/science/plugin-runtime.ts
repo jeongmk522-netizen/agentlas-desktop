@@ -18,7 +18,7 @@ const MAX_RELEASE_BYTES = 512 * 1024 * 1024;
  */
 const SOURCE_MANIFEST_PINS: Readonly<Record<string, string>> = Object.freeze({
   "agentlas-comparative-genomics": "69a2e990ebb7fc7f2ad970fa23e8a23439925095475d480f9f123740c1d62a44",
-  "agentlas-astronomy": "1da127c708831b7bde50647dbd608f06e1ee94956cc616ea65f81a6b2fd0c37e",
+  "agentlas-astronomy": "8665b7a75d95aa4edbd2f59f59e8a47ae6f9b7bd37c477adc8147a62ba1da241",
   "agentlas-earth-science": "f536feae47f1241065b620b7ddc5f7f47a6b671f307ea34eea0844c9942159c0",
   "agentlas-physics": "946c84cc3d7e64182608624c64286170d5ad95aadc7d49d5b08f4749a73d050b",
   "agentlas-materials-science": "fe4b6a90efb60d0f60c424ef3fb9e063f8728ae6566b5a19452b173903a3725e",

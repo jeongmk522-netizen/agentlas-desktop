@@ -115,8 +115,8 @@
       },
       {
         "path": "runtime/astronomy.cjs",
-        "sha256": "9ec858d05f4cdb5b59474f7529ee90af5a16365a72853481aea45ec5470dee92",
-        "bytes": 83447
+        "sha256": "52edcbb23d80da976b2fb181858f94a641695345e32ba9aa2af4ade55db9513f",
+        "bytes": 88144
       },
       {
         "path": "runtime/colour-magnitude.cjs",

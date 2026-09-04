@@ -714,7 +714,11 @@ async function main() {
   };
   const reportPath = path.join(outputDir, "report.json");
   const persistReport = () => {
-    report.timeline = readDiagnosticTimeline();
+    const timeline = readDiagnosticTimeline();
+    // A late close callback may persist once more after the private QA root is
+    // removed. Preserve the last non-empty diagnostic record rather than
+    // replacing it with an empty read from a file that no longer exists.
+    if (timeline.length > 0 || report.timeline.length === 0) report.timeline = timeline;
     report.reportPath = reportPath;
     fs.writeFileSync(reportPath, `${JSON.stringify(report, null, 2)}\n`, { encoding: "utf8", mode: 0o600 });
   };

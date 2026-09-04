@@ -744,7 +744,7 @@ import { formatScienceCell } from "./format-cell.js";
     state.blocksByMessage = messageEvidence.blocks;
     state.citationsByMessage = messageEvidence.citations;
     state.evidenceById = messageEvidence.spans;
-    state.activeTurn = attached?.turn || state.activeTurn;
+    state.activeTurn = attached?.turn || null;
     state.composerError = composerTurnError(state.activeTurn);
     state.manuscripts = Array.isArray(manuscripts) ? manuscripts : state.manuscripts;
     state.journalProfiles = Array.isArray(journalProfiles) ? journalProfiles : state.journalProfiles;
@@ -762,7 +762,7 @@ import { formatScienceCell } from "./format-cell.js";
       const manuscript = manuscriptById(tab.manuscriptId);
       if (manuscript) { tab.title = manuscript.title; tab.exactVersion = manuscript.currentVersion; tab.exactContentSha256 = manuscript.version?.contentSha256 || null; }
     }
-    if (!state.projectFolderOpen && await maybeOpenDraftJobManuscript(projectId, { terminal: ["completed", "failed", "cancelled", "interrupted"].includes(state.activeTurn?.status) })) return;
+    if (!state.projectFolderOpen && await maybeOpenDraftJobManuscript(projectId, { terminalStatus: state.activeTurn?.status })) return;
     if (state.researchContractSheet) { render(); return; }
     renderWorkspaceTabs();
     renderChatDock();
@@ -1063,7 +1063,7 @@ import { formatScienceCell } from "./format-cell.js";
       state.acquisitionRuns = [];
       state.acquisitionUnresolvedIds = [];
       state.acquisitionError = "";
-      if (!state.projectFolderOpen && await maybeOpenDraftJobManuscript(projectId, { terminal: ["completed", "failed", "cancelled", "interrupted"].includes(state.activeTurn?.status) })) return;
+      if (!state.projectFolderOpen && await maybeOpenDraftJobManuscript(projectId, { terminalStatus: state.activeTurn?.status })) return;
       render();
       // Read the hypotheses on opening the project, not only on arriving at their screen: the rail
       // badge tells the researcher that something is waiting on them, and a badge that only appears
@@ -2122,6 +2122,9 @@ import { formatScienceCell } from "./format-cell.js";
         if (String(state.composerError || "").trim()) {
           return `<strong>아직 결과가 없습니다.</strong><p>이 실행은 시작되지 않았습니다. 위의 안내에 이유가 적혀 있습니다.</p>`;
         }
+        if (state.activeTurn?.status === "cancelled") {
+          return `<strong>${uiCopy("이번 실행에서 완성된 연구 응답은 없습니다.", "This run produced no completed research response.")}</strong>${state.researchContract?.status === "draft" ? `<p>${uiCopy("연구 계약은 아직 승인 대기 중입니다. 위의 초안에서 목표와 중단 기준을 확인하세요.", "The research contract still awaits approval. Review its objective and stop criteria in the draft above.")}</p>` : ""}`;
+        }
         if (state.researchContract?.status === "draft") {
           return `<strong><span class="stateGlyph" data-state="awaiting-human" aria-hidden="true"></span>이 연구는 아직 시작되지 않았습니다.</strong><p>연구 계약을 승인하면 시작됩니다. 위의 초안에서 목표와 중단 기준을 확인해 주세요.</p>`;
         }
@@ -2143,6 +2146,13 @@ import { formatScienceCell } from "./format-cell.js";
    */
   function runFailureNotice() {
     const raw = String(state.composerError || "").trim();
+    if (!raw && state.activeTurn?.status === "cancelled") {
+      const retryFirst = state.messages.length === 1 && state.messages[0].role === "user";
+      const nextAction = retryFirst
+        ? uiCopy("화살표 버튼으로 저장된 첫 질문을 다시 실행할 수 있습니다.", "Use the arrow button to run your saved first question again.")
+        : uiCopy("후속 질문을 보내면 새 실행을 시작할 수 있습니다.", "Send a follow-up to start a new run.");
+      return `<div class="failClosed" data-run-state="cancelled" role="status"><strong>${uiCopy("연구 실행이 중단되었습니다", "Research run stopped")}</strong><p>${nextAction}</p></div>`;
+    }
     if (!raw) return "";
     if (raw === "no-runtime") {
       return `<div class="failClosed" role="status"><strong>${uiCopy("연결된 AI 런타임이 없습니다", "No AI runtime is connected")}</strong><p>${uiCopy("질문은 저장됐지만 연구는 실행되지 않았습니다. Agentlas Work에서 AI 런타임을 연결한 뒤 이 프로젝트로 돌아와 다시 요청하세요.", "Your question is saved, but the research did not run. Connect an AI runtime in Agentlas Work, then return to this project and try again.")}</p><button class="secondaryButton" data-action="back-to-work">${uiCopy("Agentlas Work로 이동", "Open Agentlas Work")}</button></div>`;
@@ -5410,10 +5420,11 @@ import { formatScienceCell } from "./format-cell.js";
   function manuscriptDraftJobMarkup() {
     const job = state.manuscriptDraftJob;
     if (!job || job.projectId !== state.selectedId) return "";
-    const label = job.status === "created" ? "Manuscript created" : job.status === "blocked" || job.status === "failed" ? "Manuscript not created" : "Publication draft in progress";
+    const label = job.status === "created" ? "Manuscript created" : job.status === "cancelled" ? uiCopy("원고 작성이 중단되었습니다", "Manuscript drafting stopped") : job.status === "blocked" || job.status === "failed" ? "Manuscript not created" : "Publication draft in progress";
     const detail = job.status === "created"
       ? `Blueprint v${job.receipt?.blueprintVersion || "-"} · ${job.receipt?.eligibilityReceiptIds?.length || 0} eligible comparables`
-      : job.error || "Research Director is collecting full text, qualifying 5+ comparable papers, calibrating the Blueprint, and drafting substantive sections.";
+      : job.status === "cancelled" ? uiCopy("중단 전에 완료·검증된 원고는 확인되지 않았습니다. 준비되면 원고 작성을 다시 요청할 수 있습니다.", "No completed, validated manuscript was found before this run stopped. You can request manuscript drafting again when ready.")
+        : job.error || "Research Director is collecting full text, qualifying 5+ comparable papers, calibrating the Blueprint, and drafting substantive sections.";
     return `<section class="manuscriptDraftJobCard" data-manuscript-draft-status="${escapeHtml(job.status)}"><span>${heroIcon("book")}</span><div><strong>${escapeHtml(label)}</strong><p>${escapeHtml(detail)}</p></div></section>`;
   }
 
@@ -5429,9 +5440,10 @@ import { formatScienceCell } from "./format-cell.js";
     return `Start a publication-grade manuscript workflow for this project.\n\nResearch objective: ${job.objective}\nArticle family: ${job.articleFamily}\nTarget journal: ${target}.${seed}\n\nUse the Research Director MCP path only. Do not create a renderer-side manuscript or an empty IMRaD scaffold.\n1. Collect and content-check relevant full-text prior work.\n2. Record immutable quantitative eligibility receipts for at least five comparable sources from one source-domain cohort and one article family; bind exact SourceVersions and two distinct-section byte quotes.\n3. Create a current corpus-calibrated Blueprint, binding verified official journal guidance if a target is supplied.\n4. Map every paragraph job, claim, citation, figure, table, and equation before prose; preserve the corpus-observed section transitions.\n5. Draft substantive sections in durable passes until the corpus-derived word and paragraph ranges are met without repeated-paragraph padding; draft the Abstract last.\n6. Assemble the versioned manuscript only through the gated MCP route, then close scholarly flow, claim, numeric provenance, and journal validation.\n\nIf evidence is missing, ask for the smallest necessary input instead of creating a placeholder.\n\n<<agentlas-manuscript-draft-job:v1 ${JSON.stringify({ requestId: job.requestId, projectId: job.projectId, conversationId: job.conversationId, articleFamily: job.articleFamily, journalTarget: job.journalTarget || null, seedBinding: job.seedBinding || null })}>>`;
   }
 
-  async function maybeOpenDraftJobManuscript(projectId, { terminal = false } = {}) {
+  async function maybeOpenDraftJobManuscript(projectId, { terminalStatus = null } = {}) {
     const job = state.manuscriptDraftJob;
-    if (!job || job.projectId !== projectId || job.status === "created") return false;
+    if (!job || job.projectId !== projectId || ["created", "cancelled"].includes(job.status)) return false;
+    if (state.activeTurn?.conversationId && state.activeTurn.conversationId !== job.conversationId) return false;
     const candidates = state.manuscripts.filter((item) => !job.existingManuscriptIds.includes(item.id));
     for (const manuscript of candidates) {
       try {
@@ -5449,7 +5461,9 @@ import { formatScienceCell } from "./format-cell.js";
         return true;
       } catch { /* fail closed until the exact closure can be read */ }
     }
-    if (terminal) {
+    if (terminalStatus === "cancelled") {
+      state.manuscriptDraftJob = { ...job, status: "cancelled", error: "" };
+    } else if (["completed", "failed", "interrupted"].includes(terminalStatus)) {
       state.manuscriptDraftJob = { ...job, status: "blocked", error: "The Research Director turn ended without a closed manuscript + Blueprint + 5 eligible-comparable receipt. No manuscript tab was opened." };
       state.composerError = state.manuscriptDraftJob.error;
     }
@@ -5457,7 +5471,9 @@ import { formatScienceCell } from "./format-cell.js";
   }
 
   function composerTurnError(turn) {
-    return turn && ["failed", "cancelled", "interrupted"].includes(turn.status)
+    // The terminal status is authoritative; some runtimes retain a generic
+    // runner error code even when their receipt explicitly records cancellation.
+    return turn && ["failed", "interrupted"].includes(turn.status)
       ? turn.errorCode || `Research run ${turn.status}`
       : "";
   }
@@ -5482,7 +5498,7 @@ import { formatScienceCell } from "./format-cell.js";
     // .failClosed 가 본문 위쪽(303px)에 폭 760 으로 그려진다. 그래서 가리켜도 된다.
     return explained ? "실행을 시작하지 못했습니다 · 위 안내를 확인하세요" : t;
   };
-  const status = composerStatusText(state.composerError) || (running ? (state.activeTurn.status === "cancelling" ? "연구 실행을 중단하는 중…" : "Agent runtime 연구 중…") : needsInitialRun ? "저장된 첫 질문을 실행할 수 있습니다" : "Agent runtime 준비");
+  const status = composerStatusText(state.composerError) || (running ? (state.activeTurn.status === "cancelling" ? "연구 실행을 중단하는 중…" : "Agent runtime 연구 중…") : state.activeTurn?.status === "cancelled" ? uiCopy("연구 실행 중단됨", "Research run stopped") : needsInitialRun ? "저장된 첫 질문을 실행할 수 있습니다" : "Agent runtime 준비");
     return `<footer class="composer${docked ? " dockedComposer" : ""}"><div class="composerBox"><textarea data-composer-input ${disabled || running || needsInitialRun ? "disabled" : ""} rows="2" aria-label="후속 질문" placeholder="후속 질문, 분석 또는 실험 요청">${escapeHtml(state.composerDraft)}</textarea><div class="composerBar"><div class="composerTools"><span class="composerStatus">${escapeHtml(status)}</span><button class="composerAttachButton" disabled title="첨부는 다음 단계에서 연결됩니다" aria-label="첨부 준비 중">${heroIcon("plus")}</button><span class="composerModePill">${heroIcon("sparkles")} Science</span></div><button class="sendButton" data-action="${running ? "cancel-turn" : "send-turn"}" ${sendDisabled ? "disabled" : ""} aria-label="${running ? "중단" : needsInitialRun ? "첫 질문 실행" : "보내기"}">${running ? "■" : "↑"}</button></div></div></footer>`;
   }
 
@@ -9518,7 +9534,7 @@ import { formatScienceCell } from "./format-cell.js";
         state.activeTurn = turn;
         if (["completed", "failed", "cancelled", "interrupted"].includes(turn.status)) {
           const projectId = state.selectedId;
-          recordRunFailure(turn.status === "completed" ? "" : (turn.errorCode || `연구 실행이 ${turn.status} 상태로 종료되었습니다.`));
+          recordRunFailure(composerTurnError(turn));
           if (projectId) {
             if (state.projectFolderOpen) void selectProject(projectId, { openFolder: true, preserveWorkspace: true });
             else if (state.mode === "lab") void refreshConversationOnly(projectId).catch((error) => {

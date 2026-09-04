@@ -27,6 +27,7 @@ const question = process.env.AGENTLAS_DINOSAUR_QUESTION ||
 const projectTitle = "Dinosaur resurrection proxy research";
 const nudge = process.env.AGENTLAS_DINOSAUR_NUDGE ||
   "이어서 계속 진행해줘. 이미 검증된 다음 단계가 있으면 Research Director가 Science 도구로 실행하고, 사람의 확인이 필요한 결정만 바텀시트 질문으로 남겨줘. 화석 근거를 DNA나 부활 증거로 과장하지 마.";
+const requiredRuntimeKind = process.env.AGENTLAS_DINOSAUR_RUNTIME_KIND || "codex";
 const turnBudget = Number(process.env.AGENTLAS_DINOSAUR_TURNS || 8);
 const turnTimeoutMs = Number(process.env.AGENTLAS_DINOSAUR_TURN_TIMEOUT_MS || 900_000);
 const totalTimeoutMs = Number(process.env.AGENTLAS_DINOSAUR_TOTAL_TIMEOUT_MS || 1_800_000);
@@ -668,8 +669,19 @@ async function main() {
     const page = await waitForElectronWindow(desktop, 180_000);
     await page.waitForFunction(() => Boolean(window.agentlas), null, { timeout: 180_000 });
     const runtimes = await retryEvaluate(() => page.evaluate(() => window.agentlas.runtime.detect(true)));
-    const active = Array.isArray(runtimes) ? runtimes.find((candidate) => candidate.active) || null : null;
-    assert.ok(active, `no active runtime: ${JSON.stringify(runtimes)}`);
+    const requestedRuntime = Array.isArray(runtimes)
+      ? runtimes.find((candidate) => candidate.kind === requiredRuntimeKind && candidate.ready !== false) || null
+      : null;
+    assert.ok(requestedRuntime, `required runtime unavailable (${requiredRuntimeKind}): ${JSON.stringify(runtimes)}`);
+    const selectedRuntimes = requestedRuntime.active ? runtimes : await page.evaluate((selection) => window.agentlas.runtime.setActive(selection), {
+      kind: requestedRuntime.kind,
+      backend: requestedRuntime.backend,
+      source: requestedRuntime.source,
+      ...(requestedRuntime.model ? { model: requestedRuntime.model } : {}),
+      ...(typeof requestedRuntime.longContextEnabled === "boolean" ? { longContext: requestedRuntime.longContextEnabled } : {}),
+    });
+    const active = Array.isArray(selectedRuntimes) ? selectedRuntimes.find((candidate) => candidate.active) || null : null;
+    assert.equal(active?.kind, requiredRuntimeKind, `runtime activation failed (${requiredRuntimeKind}): ${JSON.stringify(selectedRuntimes)}`);
     report.runtime = { id: active.id || null, kind: active.kind || null, backend: active.backend || null, model: active.model || null, source: active.source || null };
     trace("runtime:detected", report.runtime);
 

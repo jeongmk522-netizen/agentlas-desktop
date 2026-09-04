@@ -5156,8 +5156,18 @@ async function handle(request: http.IncomingMessage, response: http.ServerRespon
   }
   try {
     const body = JSON.parse(Buffer.concat(chunks).toString("utf8")) as Record<string, unknown>;
-    const toolCallId = typeof body.tool_call_id === "string" ? body.tool_call_id.trim() : "";
-    if (!toolCallId || toolCallId.length > 160) throw new Error("science-tool-call-id-invalid");
+    // The call id exists to make a repeated call idempotent, not to prove the caller is polite.
+    //
+    // Requiring the model to invent one made every runtime that bridges MCP generically fail here:
+    // measured on a live study under the Antigravity runtime, which calls through a single
+    // `call_mcp_tool` and forwards no id, so the very first workspace inspection was refused with
+    // `science-tool-call-id-invalid` and the study could not start. Derive it instead, from the
+    // grant and the exact request, which is deterministic for the same call and different for a
+    // different one -- the property idempotency actually needs.
+    const declaredCallId = typeof body.tool_call_id === "string" ? body.tool_call_id.trim() : "";
+    if (declaredCallId.length > 160) throw new Error("science-tool-call-id-invalid");
+    const toolCallId = declaredCallId
+      || `derived-${createHash("sha256").update(`${grant.context.invocationRunId}\u0000${route}\u0000${JSON.stringify(body)}`).digest("hex").slice(0, 32)}`;
     if (route === "/v1/platform/astronomy/catalog-search") {
       exactToolBody(body, ["tool_call_id", "center_ra_deg", "center_dec_deg", "radius_deg", "limit", "title"], "science-astronomy-catalog-input-invalid");
     }

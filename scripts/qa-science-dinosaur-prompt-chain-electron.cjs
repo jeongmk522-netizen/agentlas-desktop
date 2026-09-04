@@ -36,7 +36,10 @@ const disabledRuntimeKinds = [...new Set([
 const turnBudget = Number(process.env.AGENTLAS_DINOSAUR_TURNS || 8);
 const turnTimeoutMs = Number(process.env.AGENTLAS_DINOSAUR_TURN_TIMEOUT_MS || 900_000);
 const totalTimeoutMs = Number(process.env.AGENTLAS_DINOSAUR_TOTAL_TIMEOUT_MS || 1_800_000);
+const teardownReserveMs = Math.min(60_000, Math.max(10_000, Math.floor(totalTimeoutMs / 10)));
 assert.ok(Number.isSafeInteger(turnBudget) && turnBudget >= 1 && turnBudget <= 24, "invalid turn budget");
+assert.ok(Number.isSafeInteger(turnTimeoutMs) && turnTimeoutMs >= 1_000, "invalid turn timeout");
+assert.ok(Number.isSafeInteger(totalTimeoutMs) && totalTimeoutMs > teardownReserveMs, "invalid total timeout");
 
 const qaRoot = fs.mkdtempSync(path.join(os.tmpdir(), "agentlas-science-dinosaur-prompt-chain-"));
 const userData = path.join(qaRoot, "user-data");
@@ -379,8 +382,17 @@ async function approveDraftContract(desktop, projectId) {
         };
         diagnostics.submitAttempts += 1;
         form.requestSubmit(submit);
-        await new Promise((resolve) => setTimeout(resolve, 100));
-        continue;
+        return {
+          found: true,
+          clicked: true,
+          approved: false,
+          status: contract.status,
+          id: contract.id,
+          version: contract.version,
+          displayed,
+          diagnostics,
+          pendingCanonicalConfirmation: true,
+        };
       }
 
       const workspace = document.querySelector('.workspace');
@@ -420,6 +432,20 @@ async function approveDraftContract(desktop, projectId) {
       diagnostics,
     }));
   })()`);
+}
+
+function contractReceiptFromSnapshot(contract, source = "canonical-store") {
+  if (contract?.status !== "approved") return null;
+  return {
+    found: true,
+    clicked: false,
+    approved: true,
+    status: contract.status,
+    id: contract.id,
+    version: contract.version,
+    displayed: null,
+    source,
+  };
 }
 
 async function waitForNextTurn(desktop, projectId, previousTurnId, timeout = 60_000) {
@@ -675,6 +701,7 @@ async function main() {
     assertions: {},
     electronExit: null,
     closeRequestedAt: null,
+    timeout: { totalTimeoutMs, teardownReserveMs, workDeadlineReached: false },
     timeline: [],
   };
   const reportPath = path.join(outputDir, "report.json");
@@ -684,7 +711,10 @@ async function main() {
     fs.writeFileSync(reportPath, `${JSON.stringify(report, null, 2)}\n`, { encoding: "utf8", mode: 0o600 });
   };
   const startedAt = Date.now();
-  const totalDeadline = startedAt + totalTimeoutMs;
+  // Leave a bounded window for the report/video finalization and Electron
+  // shutdown. Otherwise an outer 600-second runner can kill the process while
+  // this harness is still attempting post-deadline UI capture.
+  const totalDeadline = startedAt + totalTimeoutMs - teardownReserveMs;
   try {
     trace("launch:start", { qaRoot, outputDir });
     desktop = await electron.launch({ args: [root, "--lang=ko-KR"], cwd: root, env, timeout: 120_000 });
@@ -863,6 +893,18 @@ async function main() {
           await recorder.capture(`turn-${index + 1}:${current.turn?.status || "none"}${visibleInteraction.runtimeQuestion ? ":runtime-question" : visibleInteraction.contract ? ":contract" : visibleInteraction.researchDecision ? ":decision" : ""}`);
           lastCaptureAt = Date.now();
         }
+        // The store is the canonical persisted contract surface. Immediately
+        // accept its approved state even if the renderer is still showing the
+        // previous draft form; retrying that stale form adds a false 30-second
+        // approval wait after the approval has already committed.
+        if (!contractApproval && current.contract?.status === "approved") {
+          contractApproval = contractReceiptFromSnapshot(current.contract);
+          approvedContractReceipt = contractApproval;
+          if (!report.approvals.some((approval) => approval.kind === "research-contract" && approval.id === contractApproval.id && approval.approved)) {
+            report.approvals.push({ kind: "research-contract", at: new Date().toISOString(), ...contractApproval });
+          }
+          trace("contract:canonical-approved", { id: current.contract.id, version: current.contract.version });
+        }
         // Contract approval is the one expected human receipt in this path.
         // Approve it as soon as the runtime has materialized the draft; waiting
         // until the turn deadline would leave a legitimate director turn
@@ -906,9 +948,21 @@ async function main() {
         }
         await sleep(750);
       }
+      if (Date.now() >= totalDeadline) {
+        report.timeout.workDeadlineReached = true;
+        current = await storeSnapshot(desktop, created.projectEntry).catch(() => current);
+        const contract = contractApproval || contractReceiptFromSnapshot(current.contract);
+        if (contract?.approved) approvedContractReceipt = contract;
+        report.turns.push({ ordinal: index + 1, screenshot: null, snapshot: current, contract, decisions: [], timedOut: true });
+        snapshot = current;
+        trace("turn:work-deadline", { ordinal: index + 1, status: current.turn?.status || null, runs: current.runs.length, executions: current.executions.length });
+        persistReport();
+        break;
+      }
       const screenshot = await captureScience(desktop, `turn-${String(index + 1).padStart(2, "0")}.png`);
       await recorder.capture(`turn-${index + 1}:terminal`);
-      const contract = contractApproval || await approveDraftContract(desktop, created.projectEntry).catch((error) => ({ error: String(error) }));
+      const contract = contractApproval || contractReceiptFromSnapshot(current.contract)
+        || await approveDraftContract(desktop, created.projectEntry).catch((error) => ({ error: String(error) }));
       if (contract?.approved) {
         approvedContractReceipt = contract;
         if (contract.clicked && !report.approvals.some((approval) => approval.kind === "research-contract" && approval.id === contract.id)) {
@@ -1031,8 +1085,9 @@ async function main() {
     // a harness crash. The report remains machine-readable for the next loop.
     process.exitCode = report.assertions.completedFullDinosaurChain ? 0 : 2;
   } catch (error) {
-    report.failure = { message: error instanceof Error ? error.message : String(error), stack: error instanceof Error ? error.stack : null };
-    if (desktop) {
+    const failureMessage = error instanceof Error ? error.message : String(error);
+    report.failure = { message: failureMessage, stack: error instanceof Error ? error.stack : null };
+    if (desktop && !/Target page, context or browser has been closed|Target closed/iu.test(failureMessage)) {
       report.failure.screenshot = await captureScience(desktop, "failure.png").catch(() => null);
     }
     if (recorder) {

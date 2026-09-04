@@ -120,6 +120,8 @@ export interface StreamMessage {
    * 심각도와 함께 뜨고, 기계 원문은 접혀 있다.
    */
   notices?: ChatNotice[];
+  /** Main-authoritative terminal failure, kept separate from assistant copy. */
+  failure?: { code: string; message: string };
 }
 
 export interface ChatNotice {
@@ -821,6 +823,7 @@ const Bubble = memo(function Bubble({
     const isError = message.text.trim().startsWith("⚠️");
     return (
       <div
+        data-chat-failure-code={message.failure?.code}
         style={{
           alignSelf: "stretch",
           maxWidth: 760,

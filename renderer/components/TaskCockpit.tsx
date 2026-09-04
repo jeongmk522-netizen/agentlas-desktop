@@ -98,17 +98,28 @@ function receiptRecoveryMessage(
   if (!receipt || receipt.status === "completed" || receipt.status === "running" || receipt.status === "cancelling") {
     return null;
   }
-  const text = receipt.status === "cancelled"
+  const isFailure = receipt.status === "failed" || receipt.status === "interrupted";
+  const baseText = receipt.status === "cancelled"
     ? (locale === "ko"
       ? "이전 모델 실행이 최종 답변 전에 취소되었습니다. 마지막 지시와 대화 기록은 남아 있습니다."
       : "The previous model turn was cancelled before a final response. Your last instruction and conversation are preserved.")
     : (locale === "ko"
       ? "이전 모델 실행이 최종 답변 전에 중단되었습니다. 마지막 지시와 대화 기록은 남아 있습니다."
       : "The previous model turn stopped before a final response. Your last instruction and conversation are preserved.");
+  const errorCode = receipt.errorCode?.trim();
+  const errorMessage = receipt.errorMessage?.trim();
+  const failure = isFailure && (errorCode || errorMessage)
+    ? { code: errorCode || "runtime_error", message: errorMessage || baseText }
+    : undefined;
+  const failureDetail = isFailure && (errorMessage || errorCode)
+    ? `\n${locale === "ko" ? "실패 사유" : "Failure reason"}: ${errorMessage || (locale === "ko" ? "실행 오류" : "Runtime error")}${errorCode ? ` [${errorCode}]` : ""}`
+    : "";
+  const text = `${isFailure ? "⚠️ " : ""}${baseText}${failureDetail}`;
   return {
     id: `run-recovery:${receipt.runId}:${receipt.status}`,
     role: "system",
     text,
+    ...(failure ? { failure } : {}),
   };
 }
 
@@ -1253,6 +1264,13 @@ function ChatPage() {
   const [resolvedOrg, setResolvedOrg] = useState<ResolvedOrg | null>(null);
   const [project, setProject] = useState<Project | null>(null);
   const [messages, setMessages] = useState<StreamMessage[]>([]);
+  // A chat transition renders once with the previous transcript while the new
+  // history is loading. Rich-output auto-restore must wait for the current
+  // chat's snapshot, or the previous chat's latest artifact can briefly appear
+  // in the new chat.
+  const [hydratedChatId, setHydratedChatId] = useState<string | null>(null);
+  const currentChatIdRef = useRef(chatId);
+  currentChatIdRef.current = chatId;
   const [busy, setBusy] = useState(false);
   const [cancelPending, setCancelPending] = useState(false);
   // Every renderer-owned transcript mutation advances this clock. Async
@@ -1652,6 +1670,7 @@ function ChatPage() {
     writeRightPanelPreference(false, rightPanelTab);
   }, [rightPanelTab]);
   const openWorkspaceFilePreview = useCallback(async (preview: WorkspaceFilePreview) => {
+    const requestChatId = chatId;
     let next = preview;
     const api = ipc();
     /* ★읽을 경로는 `path` 하나가 아니라 후보 전체에서 고른다.
@@ -1683,11 +1702,14 @@ function ChatPage() {
     openPanelTab("panel");
     const shouldReadText =
       api &&
-      Boolean(chatId) &&
+      Boolean(requestChatId) &&
       Boolean(readablePath) &&
       ["markdown", "json", "text", "browser"].includes(preview.viewerKind);
     if (shouldReadText && readablePath) {
-      const text = await api.fs.readTextFile(readablePath, { kind: "chat-assets", chatId }).catch(() => null);
+      const text = await api.fs.readTextFile(readablePath, { kind: "chat-assets", chatId: requestChatId }).catch(() => null);
+      // The user may have moved to another chat while Main was reading. Do
+      // not let that late response put the old file back into the new rail.
+      if (currentChatIdRef.current !== requestChatId) return;
       if (text) {
         next = {
           ...next,
@@ -1700,6 +1722,7 @@ function ChatPage() {
       }
     }
     // 읽은 내용으로 채운다. 자리는 위에서 이미 열었으므로 여기서 다시 열지 않는다.
+    if (currentChatIdRef.current !== requestChatId) return;
     setMediaPreview(next);
   }, [chatId, openPanelTab]);
 
@@ -1709,7 +1732,7 @@ function ChatPage() {
   // respected until a different output key arrives.
   const autoPresentedWorkspaceOutputRef = useRef<string | null>(null);
   useEffect(() => {
-    if (!chatId || busy || linkedOutputFiles.length === 0) return;
+    if (!chatId || hydratedChatId !== chatId || busy || linkedOutputFiles.length === 0) return;
     const candidate = [...linkedOutputFiles].reverse().find((file) => (
       ["markdown", "json", "text", "browser", "image", "video", "audio", "pdf", "document", "spreadsheet", "presentation", "archive"]
         .includes(file.viewerKind)
@@ -1719,7 +1742,7 @@ function ChatPage() {
     if (autoPresentedWorkspaceOutputRef.current === key) return;
     autoPresentedWorkspaceOutputRef.current = key;
     void openWorkspaceFilePreview(candidate);
-  }, [busy, chatId, linkedOutputFiles, openWorkspaceFilePreview]);
+  }, [busy, chatId, hydratedChatId, linkedOutputFiles, openWorkspaceFilePreview]);
   const openLinkedFile = useCallback((file: LinkedFileArtifact) => {
     void openWorkspaceFilePreview(workspacePreviewFromLinkedFile(file));
   }, [openWorkspaceFilePreview]);
@@ -2352,6 +2375,13 @@ function ChatPage() {
         const terminalStatus = wasUserCancel
           ? (locale === "ko" ? "취소됨" : "Cancelled")
           : (locale === "ko" ? "중단됨" : "Stopped");
+        const failureCode = ev.error?.code?.trim() || "runtime_error";
+        const failureMessage = ev.error?.message?.trim()
+          || (locale === "ko" ? "실행이 완료되지 않았습니다." : "The run did not complete.");
+        const failureId = `run-error:${placeholderId}`;
+        const failureText = locale === "ko"
+          ? `⚠️ 작업이 완료되지 않았습니다.\n사유: ${failureMessage} [${failureCode}]`
+          : `⚠️ The work did not complete.\nReason: ${failureMessage} [${failureCode}]`;
         const keepPlaceholder = (m: StreamMessage[]) =>
           m.flatMap((msg) => {
             if (msg.id !== placeholderId) return [msg];
@@ -2365,7 +2395,19 @@ function ChatPage() {
               pipeline: completePipeline(msg.pipeline),
             }];
           });
-        setMessages(keepPlaceholder);
+        setMessages((current) => {
+          const settled = keepPlaceholder(current);
+          if (wasUserCancel || settled.some((message) => message.id === failureId)) return settled;
+          return [
+            ...settled,
+            {
+              id: failureId,
+              role: "system",
+              text: failureText,
+              failure: { code: failureCode, message: failureMessage },
+            },
+          ];
+        });
         setBusy(false);
         setCancelPending(false);
         cancelRequestedRef.current = false;
@@ -2448,6 +2490,7 @@ function ChatPage() {
   // 메타데이터 effect는 번역/콜백 변화에도 다시 돌 수 있으므로, 전환 초기화는 chatId에만 묶는다.
   useEffect(() => {
     if (!chatId) return;
+    setHydratedChatId(null);
     transcriptRevisionRef.current += 1;
     // 이전 채팅 뷰를 캐시에 저장 — 되돌아올 때 히스토리 로드를 기다리지 않고 즉시 복원.
     const prevChatId = prevChatIdRef.current;
@@ -2627,6 +2670,7 @@ function ChatPage() {
             : attachMcpStepsToLatestAgent(historyMessages, mcpSteps);
           const recovery = receiptRecoveryMessage(receipt, locale);
           const restoredMessages = recovery ? [...historyWithMcp, recovery] : historyWithMcp;
+          setHydratedChatId(chatId);
           setMessages((current) => {
             if (transcriptRevisionRef.current !== hydrationRevision) return current;
             const hasLiveDraft = current.some((msg) => msg.busy || msg.streaming);
@@ -2638,6 +2682,7 @@ function ChatPage() {
             return hasLiveDraft ? current : preserveRichStepsBySignature(current, restoredMessages);
           });
         }).catch(() => {
+          if (!cancelled) setHydratedChatId(chatId);
           if (!cancelled && requestedFocusMessageId) {
             setSessionNotice(
               locale === "ko"

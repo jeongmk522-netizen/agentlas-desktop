@@ -197,6 +197,15 @@ export function ChatRightPanel({
     externalFilePreview?.revision,
   ]);
 
+  // The parent clears its chat-scoped preview during navigation. Clear the
+  // panel's local copy too; otherwise a persisted open-rail preference can
+  // remount the panel with the previous chat's file still selected.
+  useEffect(() => {
+    if (externalFilePreview) return;
+    setFilePreview(null);
+    setViewerSource("workbench");
+  }, [externalFilePreview]);
+
   useEffect(() => {
     if (!onResizeWidth || activeTab !== "panel" || !isWideOutputKind(outputKind)) return;
     // The right rail widens once for a new rich result. The width dependency is
@@ -760,6 +769,12 @@ function RunReceiptCard({ chatId, busy }: { chatId: string | null; busy: boolean
               <IconFolder size={12} />
               <span>{ko ? "결과 경로 복사" : "Copy result path"}</span>
             </button>
+          )}
+          {(receipt.errorMessage || receipt.errorCode) && (
+            <div data-run-receipt-error="true" style={receiptErrorStyle}>
+              <div>{receipt.errorMessage || (ko ? "실행 오류" : "Runtime error")}</div>
+              {receipt.errorCode && <code>{receipt.errorCode}</code>}
+            </div>
           )}
           {openError && (
             <div role="alert" style={receiptErrorStyle}>{openError}</div>

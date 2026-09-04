@@ -274,8 +274,81 @@ async function storeSnapshot(desktop, projectId) {
   return retryEvaluate(() => desktop.evaluate(async (_electron, id) => {
     const localRequire = process.getBuiltinModule("node:module").createRequire(`${process.cwd()}/package.json`);
     const nodePath = process.getBuiltinModule("node:path");
+    const nodeCrypto = localRequire("node:crypto");
     const { scienceStore } = localRequire(nodePath.join(process.cwd(), "dist", "electron", "science", "runtime.js"));
     const store = scienceStore();
+    const boundedText = (value, maximum) => typeof value === "string" && value.length > 0 ? value.slice(0, maximum) : null;
+    const digest = (value) => nodeCrypto.createHash("sha256").update(value).digest("hex");
+    const parseBoundedJson = (resource) => {
+      if (!resource || !Number.isSafeInteger(resource.byteSize) || resource.byteSize < 2 || resource.byteSize > 64 * 1024
+        || typeof resource.mimeType !== "string" || !/json/iu.test(resource.mimeType)) return null;
+      try {
+        const value = JSON.parse(store.readRunBlob(resource).toString("utf8"));
+        return value && typeof value === "object" && !Array.isArray(value) ? value : null;
+      } catch { return null; }
+    };
+    const summarizeSpecies = (value) => {
+      const raw = value && typeof value === "object" && !Array.isArray(value) ? value.request?.species ?? value.species : null;
+      const species = Array.isArray(raw) ? raw : typeof raw === "string" ? [raw] : [];
+      if (species.length < 1) return null;
+      const allStrings = species.filter((item) => typeof item === "string");
+      const strings = allStrings.slice(0, 8);
+      return {
+        count: species.length,
+        hashedCount: strings.length,
+        nonStringCount: species.length - allStrings.length,
+        truncated: species.length > strings.length,
+        slugs: strings.map((slug, index) => ({ ordinal: index + 1, length: slug.length, sha256: digest(slug) })),
+      };
+    };
+    const summarizeEndpoints = (receipt) => [...new Set([receipt?.endpoint, receipt?.releaseEndpoint, receipt?.treeEndpoint]
+      .filter((value) => typeof value === "string" && /^https:\/\//u.test(value))
+      .slice(0, 3)
+      .map((value) => {
+        try {
+          const parsed = new URL(value);
+          parsed.username = "";
+          parsed.password = "";
+          parsed.search = "";
+          parsed.hash = "";
+          return parsed.toString().slice(0, 1_024);
+        } catch { return null; }
+      }).filter(Boolean))];
+    const summarizeRun = (run) => ({
+      id: boundedText(run?.id, 80),
+      toolId: boundedText(run?.toolId, 160),
+      status: boundedText(run?.status, 32),
+      parentRunId: boundedText(run?.parentRunId, 80),
+      errorCode: run?.status === "failed" ? boundedText(run?.summary, 240) : null,
+      inputManifestSha256: boundedText(run?.inputManifestSha256, 64),
+      inputCount: Array.isArray(run?.inputs) ? run.inputs.length : 0,
+      outputCount: Array.isArray(run?.outputs) ? run.outputs.length : 0,
+      inputs: (Array.isArray(run?.inputs) ? run.inputs : []).slice(0, 16).map((resource) => ({
+        id: boundedText(resource?.id, 80),
+        role: boundedText(resource?.role, 160),
+        mimeType: boundedText(resource?.mimeType, 160),
+        byteSize: Number.isSafeInteger(resource?.byteSize) ? resource.byteSize : null,
+        sha256: boundedText(resource?.sha256, 64),
+        species: summarizeSpecies(parseBoundedJson(resource)),
+      })),
+      failureReceipts: (Array.isArray(run?.outputs) ? run.outputs : [])
+        .filter((resource) => typeof resource?.role === "string" && resource.role.endsWith("failure-receipt"))
+        .slice(0, 8)
+        .map((resource) => {
+          const receipt = parseBoundedJson(resource);
+          return {
+            id: boundedText(resource.id, 80),
+            role: boundedText(resource.role, 160),
+            byteSize: Number.isSafeInteger(resource.byteSize) ? resource.byteSize : null,
+            sha256: boundedText(resource.sha256, 64),
+            schema: boundedText(receipt?.schema, 160),
+            runId: boundedText(receipt?.runId, 80),
+            status: Number.isSafeInteger(receipt?.status) ? receipt.status : boundedText(receipt?.status, 64),
+            endpoints: summarizeEndpoints(receipt),
+            errorCode: boundedText(receipt?.code, 240) || (run?.status === "failed" ? boundedText(run?.summary, 240) : null),
+          };
+        }),
+    });
     const project = store.getProject(id);
     const conversation = store.listConversations(id)[0] || null;
     const messages = conversation ? store.listMessagesForProject(id, conversation.id) : [];
@@ -311,7 +384,14 @@ async function storeSnapshot(desktop, projectId) {
       turns: turns.map((turn) => ({ id: turn.id, status: turn.status, invocationRunId: turn.invocationRunId, runtimeChatId: turn.runtimeChatId, errorCode: turn.errorCode || null })),
       messages: messages.map((message) => ({ id: message.id, role: message.role, content: String(message.content || "").slice(0, 4000) })),
       executions: executions.map((execution) => ({ id: execution.id, toolId: execution.toolId, phase: execution.phase, labId: execution.labId, runId: execution.runId, artifactId: execution.artifactId || null, failureCode: execution.failureCode || null })),
-      runs: runs.map((run) => ({ id: run.id, toolId: run.toolId, status: run.status, parentRunId: run.parentRunId || null, summary: run.summary || null })),
+      runs: runs.slice(0, 100).map((run) => ({
+        id: run.id,
+        toolId: run.toolId,
+        status: run.status,
+        parentRunId: run.parentRunId || null,
+        summary: run.summary ? String(run.summary).slice(0, 240) : null,
+        qaEvidence: summarizeRun(run),
+      })),
       manuscripts: manuscripts.map((manuscript) => ({ id: manuscript.id, status: manuscript.status, currentVersion: manuscript.currentVersion, title: manuscript.title, bindingCount: manuscript.version.bindings.length })),
       assistantPreview: assistant ? String(assistant.content || "").replace(/[\\s]+/g, " ").slice(0, 1000) : null,
       assistantMessageId: assistant?.id || null,
@@ -932,6 +1012,7 @@ async function main() {
             invocationRunId: current.turn?.invocationRunId || null,
             runs: current.runs.length,
             executions: current.executions.length,
+            runEvidence: current.runs.map((run) => run.qaEvidence),
           };
           persistReport();
         }

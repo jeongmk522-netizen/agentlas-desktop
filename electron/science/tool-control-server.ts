@@ -5449,7 +5449,7 @@ if(!catalog||catalog.schema!=="agentlas.science-mcp-catalog/v1"||!Array.isArray(
 const tools=[];const byName=new Map();
 for(const item of catalog.tools){if(!item||typeof item.name!=="string"||!/^[a-z][a-z0-9_]{0,79}$/.test(item.name)||typeof item.route!=="string"||!/^\/v1\/[a-z0-9/._-]+$/.test(item.route)||typeof item.description!=="string"||!item.inputSchema||typeof item.inputSchema!=="object"||byName.has(item.name))process.exit(78);const tool={name:item.name,description:item.description,inputSchema:item.inputSchema};tools.push(tool);byName.set(item.name,item.route)}
 const result=(value,error=false)=>{const visual=value&&(value.schema==="agentlas.science-artifact-visual-inspection/v1"||value.schema==="agentlas.science.statistics-figure-png-export/v1")&&value.visual&&value.visual.mimeType==="image/png"&&typeof value.visual.dataBase64==="string"&&/^[A-Za-z0-9+/]+={0,2}$/.test(value.visual.dataBase64)?value.visual:null;const textValue=visual?JSON.parse(JSON.stringify(value)):value;if(visual)delete textValue.visual.dataBase64;return{content:[{type:"text",text:JSON.stringify(textValue)},...(visual?[{type:"image",data:visual.dataBase64,mimeType:"image/png"}]:[])],...(error?{isError:true}:{})}};
-async function handle(req){if(req.method==="initialize")return{protocolVersion:"2024-11-05",capabilities:{tools:{}},serverInfo:{name:"agentlas-science",version:"2.1.0"}};if(req.method==="notifications/initialized")return;if(req.method==="ping")return{};if(req.method==="tools/list")return{tools};if(req.method!=="tools/call")throw Object.assign(new Error("Method not found"),{code:-32601});const route=req.params&&byName.get(req.params.name);if(!route)return result({ok:false,code:"science-tool-unknown"},true);const response=await fetch(endpoint+route,{method:"POST",headers:{authorization:"Bearer "+token,"content-type":"application/json"},body:JSON.stringify(req.params.arguments||{})});const text=await response.text();let value;try{value=JSON.parse(text)}catch{value={ok:false,code:"science-tool-invalid-response"}}return result(value,!response.ok||value.ok!==true)}
+async function handle(req){if(req.method==="initialize")return{protocolVersion:"2024-11-05",capabilities:{tools:{}},serverInfo:{name:"agentlas-science",version:"2.1.0"}};if(req.method==="notifications/initialized")return;if(req.method==="ping")return{};if(req.method==="tools/list")return{tools};if(req.method!=="tools/call")throw Object.assign(new Error("Method not found"),{code:-32601});const route=req.params&&byName.get(req.params.name);if(!route)return result({ok:false,code:"science-tool-unknown"},true);let response;try{response=await fetch(endpoint+route,{method:"POST",headers:{authorization:"Bearer "+token,"content-type":"application/json"},body:JSON.stringify(req.params.arguments||{})})}catch(error){return result({ok:false,code:"science-tool-transport-failed",detail:String(error&&error.message?error.message:error).slice(0,200),endpoint},true)}const text=await response.text();let value;try{value=JSON.parse(text)}catch{value={ok:false,code:"science-tool-invalid-response",status:response.status,body:text.slice(0,200)}}return result(value,!response.ok||value.ok!==true)}
 function emit(req,payload){if(req.id===undefined||payload===undefined)return;process.stdout.write(JSON.stringify({jsonrpc:"2.0",id:req.id,result:payload})+"\n")}
 let input="";process.stdin.setEncoding("utf8");process.stdin.on("data",chunk=>{input+=chunk;let i;while((i=input.indexOf("\n"))>=0){const line=input.slice(0,i).replace(/\r$/,"");input=input.slice(i+1);if(!line)continue;let req;try{req=JSON.parse(line);Promise.resolve(handle(req)).then(value=>emit(req,value)).catch(error=>{if(req.id!==undefined)process.stdout.write(JSON.stringify({jsonrpc:"2.0",id:req.id,error:{code:Number(error&&error.code)||-32603,message:"Agentlas Science tool failed."}})+"\n")})}catch{} }if(Buffer.byteLength(input,"utf8")>MAX)process.exit(78)});`;
 
@@ -5481,6 +5481,16 @@ function materializeScienceCodexHome(invocationRunId: string, serverKey: string,
   fs.mkdirSync(home, { recursive: true, mode: 0o700 });
   const config = [
     "# Generated per Science turn. Not user configuration -- edits here are discarded.",
+    // Codex asks for approval before each MCP tool call. A Science turn runs non-interactively, so
+    // there is nobody to answer, and Codex records every call as "user rejected MCP tool call" --
+    // a user who was never asked. Measured: every Science tool call in six live runs failed this
+    // way, before reaching this process, which is why no refusal ever appeared in our own logs.
+    //
+    // This is not a widening. The isolated home declares exactly ONE server, whose tools are all
+    // host-owned and revalidated by ScienceStore; shell and files stay bounded by the --sandbox
+    // flag the runner passes, which this does not touch.
+    'approval_policy = "never"',
+    "",
     `[mcp_servers.${serverKey}]`,
     `command = ${toml(command)}`,
     `args = ${tomlArray(args)}`,

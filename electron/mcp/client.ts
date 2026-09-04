@@ -2695,6 +2695,18 @@ ${effectiveUserPrompt}`;
         reselect: () => autoSelectMcpTools({ ...autoSelectInput, bypassSelectionMemo: true }),
       });
       selectedContext = keyGate.context;
+      if (!selectedContext.needsDecided) {
+        sink({
+          kind: "notice",
+          notice: {
+            level: "warning",
+            code: "mcp-selection-undecided",
+            message: locale === "ko"
+              ? "필요한 도구를 고를 판단 모델에 연결되지 않아 선택 도구 없이 계속합니다. 브라우저나 컴퓨터 제어가 필요한 결과는 완료로 간주하지 말고, 런타임 연결을 확인한 뒤 같은 요청을 다시 보내 주세요."
+              : "No judgment model was connected to choose the tools this task needs, so the run is continuing without optional tools. Do not treat browser or computer-control work as complete; check the runtime connection and send the same request again.",
+          },
+        });
+      }
       isolatedMcpConfig = selectedContext.effectiveToolMode === "browser";
       if (keyGate.outcome !== "skipped") {
         sink({

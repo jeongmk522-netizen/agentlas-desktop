@@ -93,6 +93,7 @@ export interface ComparativeGenomicsProviderValidationFailureReceipt extends Jso
   treeEndpoint: string;
   observedRootTaxonomyId: number | string | null;
   observedRootScientificName: string | null;
+  observedTaxonomyIds: Array<number | string>;
   releaseResponseSha256: string;
   treeResponseSha256: string;
   retrievedAt: string;
@@ -158,6 +159,22 @@ function observedRootTaxonomy(treeResponse: JsonRecord): { id: number | string |
   const id = typeof record.id === "number" || typeof record.id === "string" ? record.id : null;
   const scientificName = typeof record.scientific_name === "string" ? record.scientific_name.slice(0, 240) : null;
   return { id, scientificName };
+}
+
+function observedTaxonomyIds(treeResponse: JsonRecord): Array<number | string> {
+  const ids = new Set<number | string>();
+  const visit = (value: unknown, depth: number): void => {
+    if (depth > 256 || ids.size >= 2500 || !value || typeof value !== "object" || Array.isArray(value)) return;
+    const record = value as JsonRecord;
+    const taxonomy = record.taxonomy;
+    if (taxonomy && typeof taxonomy === "object" && !Array.isArray(taxonomy)) {
+      const id = (taxonomy as JsonRecord).id;
+      if (typeof id === "number" || typeof id === "string") ids.add(id);
+    }
+    if (Array.isArray(record.children)) record.children.forEach((child) => visit(child, depth + 1));
+  };
+  visit(treeResponse.tree, 0);
+  return [...ids].sort((left, right) => String(left).localeCompare(String(right), "en"));
 }
 
 async function readBounded(response: Response): Promise<Buffer> {
@@ -282,6 +299,7 @@ export class ScienceComparativeGenomicsService {
           treeEndpoint: built.treeUrl,
           observedRootTaxonomyId: observedRoot.id,
           observedRootScientificName: observedRoot.scientificName,
+          observedTaxonomyIds: observedTaxonomyIds(treeJson),
           releaseResponseSha256: sha256(releaseResponse.body),
           treeResponseSha256: sha256(treeResponse.body),
           retrievedAt: releaseResponse.retrievedAt > treeResponse.retrievedAt ? releaseResponse.retrievedAt : treeResponse.retrievedAt,

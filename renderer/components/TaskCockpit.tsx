@@ -68,6 +68,14 @@ import { KeyStatusBanner } from "@/components/KeyStatusBanner";
 import { hubBookmarkIdentityKey, onHubBookmarkChange } from "@/lib/hub-bookmark-events";
 import { onAgentRosterChange } from "@/lib/agent-roster-events";
 import { OneSuggestionReviewHandoffBanner } from "@/components/one/OneSuggestionReviewHandoff";
+import {
+  appendChatFileMarker,
+  chatFileItem,
+  chatFilesBridge,
+  parseChatFileMessage,
+  type ChatFileDraft,
+  type ChatFileItem,
+} from "@/lib/chat-files";
 
 function uid(): string {
   return Math.random().toString(36).slice(2);
@@ -883,18 +891,20 @@ function completePipeline(stages: PipelineStage[] | undefined): PipelineStage[] 
 }
 
 function historyEntryToStreamMessage(entry: { id: string; role: string; text: string; imageDataUrls?: string[] }): StreamMessage {
+  const parsedFiles = parseChatFileMessage(entry.text);
   const role: StreamMessage["role"] =
     entry.role === "assistant" ? "agent" : entry.role === "user" ? "user" : "system";
   if (role !== "agent") {
-    return { id: entry.id, role, text: entry.text, imageDataUrls: entry.imageDataUrls };
+    return { id: entry.id, role, text: parsedFiles.visibleText, imageDataUrls: entry.imageDataUrls, chatFileGroupIds: parsedFiles.groupIds };
   }
-  const parsed = extractQuestions(entry.text, entry.id);
+  const parsed = extractQuestions(parsedFiles.visibleText, entry.id);
   const setup = stripMultimodalSetup(parsed.text);
   return {
     id: entry.id,
     role,
     text: setup.text,
     imageDataUrls: entry.imageDataUrls,
+    chatFileGroupIds: parsedFiles.groupIds,
     questions: parsed.questions.length > 0 ? parsed.questions : undefined,
     needsMultimodalSetup: setup.needsSetup || undefined,
   };
@@ -1264,6 +1274,33 @@ function ChatPage() {
   const [resolvedOrg, setResolvedOrg] = useState<ResolvedOrg | null>(null);
   const [project, setProject] = useState<Project | null>(null);
   const [messages, setMessages] = useState<StreamMessage[]>([]);
+  const hydratedChatFileGroupsRef = useRef(new Map<string, ChatFileItem[]>());
+  useEffect(() => {
+    hydratedChatFileGroupsRef.current.clear();
+  }, [chatId]);
+  useEffect(() => {
+    if (!chatId) return;
+    const bridge = chatFilesBridge();
+    if (!bridge) return;
+    const groupIds = [...new Set(messages.flatMap((message) => message.chatFileGroupIds ?? []))]
+      .filter((groupId) => !hydratedChatFileGroupsRef.current.has(groupId));
+    if (groupIds.length === 0) return;
+    let cancelled = false;
+    void Promise.all(groupIds.map(async (groupId) => {
+      const stored = await bridge.listGroup({ chatId, groupId });
+      return [groupId, stored.map((file) => chatFileItem(file, "user-attachment"))] as const;
+    })).then((groups) => {
+      if (cancelled) return;
+      for (const [groupId, files] of groups) hydratedChatFileGroupsRef.current.set(groupId, files);
+      setMessages((current) => current.map((message) => {
+        const files = (message.chatFileGroupIds ?? []).flatMap((groupId) => hydratedChatFileGroupsRef.current.get(groupId) ?? []);
+        return files.length > 0 ? { ...message, chatFiles: files } : message;
+      }));
+    }).catch(() => {
+      if (!cancelled) setSessionNotice(locale === "ko" ? "첨부 파일 기록을 불러오지 못했습니다." : "Attachment records could not be loaded.");
+    });
+    return () => { cancelled = true; };
+  }, [chatId, locale, messages]);
   // A chat transition renders once with the previous transcript while the new
   // history is loading. Rich-output auto-restore must wait for the current
   // chat's snapshot, or the previous chat's latest artifact can briefly appear
@@ -1389,6 +1426,7 @@ function ChatPage() {
       optimisticMessageId: string;
       opts?: {
         images?: ImageAttachment[];
+        files?: ChatFileDraft[];
         permissions?: PermissionLevel;
         planMode?: boolean;
         goalMode?: boolean;
@@ -1719,6 +1757,11 @@ function ChatPage() {
           truncated: text.truncated,
           reason: text.reason,
         };
+      } else {
+        // A persisted transcript link can outlive the file it referenced.
+        // Keep the tab and show an explicit unavailable state instead of an
+        // empty viewer that looks like a successfully opened blank document.
+        next = { ...next, content: "", available: false };
       }
     }
     // 읽은 내용으로 채운다. 자리는 위에서 이미 열었으므로 여기서 다시 열지 않는다.
@@ -1745,6 +1788,21 @@ function ChatPage() {
   }, [busy, chatId, hydratedChatId, linkedOutputFiles, openWorkspaceFilePreview]);
   const openLinkedFile = useCallback((file: LinkedFileArtifact) => {
     void openWorkspaceFilePreview(workspacePreviewFromLinkedFile(file));
+  }, [openWorkspaceFilePreview]);
+  const openChatFile = useCallback((file: ChatFileItem) => {
+    void (async () => {
+      let preview = file.viewer;
+      if (file.kind === "file" && file.fileUrl && ["markdown", "json", "text", "browser"].includes(preview.viewerKind)) {
+        try {
+          const response = await fetch(file.fileUrl);
+          if (!response.ok) throw new Error(`HTTP ${response.status}`);
+          preview = { ...preview, content: await response.text(), available: true };
+        } catch {
+          preview = { ...preview, available: false, content: "" };
+        }
+      }
+      await openWorkspaceFilePreview(preview);
+    })();
   }, [openWorkspaceFilePreview]);
 
   useEffect(() => {
@@ -3197,6 +3255,7 @@ function ChatPage() {
       userPrompt: string,
       opts?: {
         images?: ImageAttachment[];
+        files?: ChatFileDraft[];
         permissions?: PermissionLevel;
         planMode?: boolean;
         goalMode?: boolean;
@@ -3231,7 +3290,26 @@ function ChatPage() {
         const defined = await api.chats.defineGoal(chat.id, userPrompt, locale).catch(() => null);
         if (defined) setGoalContext(defined);
       }
-      const routeInput = userPrompt;
+      let attachedChatFiles: ChatFileItem[] | undefined;
+      let boundUserPrompt = userPrompt;
+      if (opts?.files?.length) {
+        const bridge = chatFilesBridge();
+        if (!bridge) {
+          setSessionNotice(locale === "ko" ? "Desktop 파일 연결을 사용할 수 없어 첨부를 보내지 않았습니다." : "The attachment was not sent because the Desktop file bridge is unavailable.");
+          return false;
+        }
+        try {
+          const snapshot = await bridge.snapshot({ chatId: chat.id, files: opts.files });
+          attachedChatFiles = snapshot.files.map((file) => chatFileItem(file, "user-attachment"));
+          hydratedChatFileGroupsRef.current.set(snapshot.groupId, attachedChatFiles);
+          boundUserPrompt = appendChatFileMarker(userPrompt, snapshot.groupId);
+        } catch (cause) {
+          const detail = cause instanceof Error ? cause.message : String(cause);
+          setSessionNotice(locale === "ko" ? `첨부를 보내지 않았습니다: ${detail}` : `The attachment was not sent: ${detail}`);
+          return false;
+        }
+      }
+      const routeInput = boundUserPrompt;
       const invocationPrompt = routeInput;
       const visiblePrompt = userPrompt;
       if (isPlaceholderTaskTitle(chat.title)) {
@@ -3280,7 +3358,7 @@ function ChatPage() {
       transcriptRevisionRef.current += 1;
       setMessages((m) => [
         ...m,
-        { id: uid(), role: "user" as const, text: visiblePrompt, imageDataUrls },
+        { id: uid(), role: "user" as const, text: visiblePrompt, imageDataUrls, chatFiles: attachedChatFiles },
         {
           id: placeholderId,
           role: "agent",
@@ -3456,35 +3534,49 @@ function ChatPage() {
         const api = ipc();
         if (!api || !chat) return;
         const optimisticMessageId = `steer:${uid()}`;
-        steerQueueRef.current.push({ text, opts, optimisticMessageId });
-        setQueuedSteers(steerQueueRef.current.map((q) => q.text));
-        transcriptRevisionRef.current += 1;
-        setMessages((current) => [...current, {
-          id: optimisticMessageId,
-          role: "user",
-          text,
-          imageDataUrls: opts?.images?.map((image) => `data:${image.mediaType};base64,${image.data}`),
-        }]);
-        void api.invoke.steer({
-          chatId: chat.id,
-          userPrompt: text,
-          steeringMode: "interrupt",
-          images: opts?.images,
-          locale,
-          permissions: opts?.permissions ?? DEFAULT_PERMISSION,
-          planMode: opts?.planMode,
-          goalMode: opts?.goalMode,
-          appsGenerateMode: opts?.appsGenerateMode,
-          taskForceTargets: opts?.taskForceTargets,
-          sessionRouting: project ? true : opts?.sessionRouting,
-          stormbreakerMode: opts?.stormbreakerMode,
-          runtimeSelection: chat.runtimeSelection ?? undefined,
-        }).catch(() => {
+        void (async () => {
+          let boundText = text;
+          let attachedChatFiles: ChatFileItem[] | undefined;
+          if (opts?.files?.length) {
+            const bridge = chatFilesBridge();
+            if (!bridge) throw new Error(locale === "ko" ? "Desktop 파일 연결을 사용할 수 없습니다." : "The Desktop file bridge is unavailable.");
+            const snapshot = await bridge.snapshot({ chatId: chat.id, files: opts.files });
+            attachedChatFiles = snapshot.files.map((file) => chatFileItem(file, "user-attachment"));
+            hydratedChatFileGroupsRef.current.set(snapshot.groupId, attachedChatFiles);
+            boundText = appendChatFileMarker(text, snapshot.groupId);
+          }
+          steerQueueRef.current.push({ text: boundText, opts, optimisticMessageId });
+          setQueuedSteers(steerQueueRef.current.map((q) => parseChatFileMessage(q.text).visibleText));
+          transcriptRevisionRef.current += 1;
+          setMessages((current) => [...current, {
+            id: optimisticMessageId,
+            role: "user",
+            text,
+            imageDataUrls: opts?.images?.map((image) => `data:${image.mediaType};base64,${image.data}`),
+            chatFiles: attachedChatFiles,
+          }]);
+          await api.invoke.steer({
+            chatId: chat.id,
+            userPrompt: boundText,
+            steeringMode: "interrupt",
+            images: opts?.images,
+            locale,
+            permissions: opts?.permissions ?? DEFAULT_PERMISSION,
+            planMode: opts?.planMode,
+            goalMode: opts?.goalMode,
+            appsGenerateMode: opts?.appsGenerateMode,
+            taskForceTargets: opts?.taskForceTargets,
+            sessionRouting: project ? true : opts?.sessionRouting,
+            stormbreakerMode: opts?.stormbreakerMode,
+            runtimeSelection: chat.runtimeSelection ?? undefined,
+          });
+        })().catch((cause) => {
           steerQueueRef.current = steerQueueRef.current.filter((item) => item.optimisticMessageId !== optimisticMessageId);
           setQueuedSteers(steerQueueRef.current.map((item) => item.text));
           setMessages((current) => current.map((message) => message.id === optimisticMessageId
             ? { id: message.id, role: "system", text: locale === "ko" ? "방향 전환을 전달하지 못했습니다. 다시 보내 주세요." : "The new direction was not delivered. Please send it again." }
             : message));
+          setSessionNotice(cause instanceof Error ? cause.message : String(cause));
         });
         return;
       }
@@ -4321,6 +4413,7 @@ function ChatPage() {
     text: string,
     opts?: {
       images?: ImageAttachment[];
+      files?: ChatFileDraft[];
       permissions?: PermissionLevel;
       planMode?: boolean;
       goalMode?: boolean;
@@ -4332,6 +4425,7 @@ function ChatPage() {
   ) => {
     submitOrQueue(text, {
       images: opts?.images,
+      files: opts?.files,
       permissions: opts?.permissions,
       planMode: opts?.planMode,
       goalMode: opts?.goalMode,
@@ -4762,6 +4856,7 @@ function ChatPage() {
           onOpenArtifact={handleOpenArtifact}
           onOpenMedia={handleOpenMedia}
           onOpenLinkedFile={openLinkedFile}
+          onOpenChatFile={openChatFile}
           onOpenWorkflow={handleOpenWorkflow}
           onOpenMultimodalSetup={handleOpenMultimodalSetup}
           interactionBusy={busy}

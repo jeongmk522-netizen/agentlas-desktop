@@ -35,6 +35,8 @@ import {
   preferredOutputRailWidth,
   type OutputPresentationKind,
 } from "@/lib/output-presentation";
+import { ChatFileTabs, nextFileTabSelection, type ChatFileTab } from "./ChatFileExperience";
+import { previewTabIdentity } from "@/lib/chat-files";
 
 export type ChatRightPanelTab = "agent" | "file" | "panel" | "memory";
 type PanelViewerSource = "workbench" | "file";
@@ -120,6 +122,8 @@ export function ChatRightPanel({
   const { locale } = useT();
   const ko = locale === "ko";
   const [filePreview, setFilePreview] = useState<WorkspaceFilePreview | null>(null);
+  const [fileTabs, setFileTabs] = useState<Array<ChatFileTab & { preview: WorkspaceFilePreview }>>([]);
+  const [activeFileTabId, setActiveFileTabId] = useState<string | null>(null);
   const [viewerSource, setViewerSource] = useState<PanelViewerSource>("workbench");
   const [resizing, setResizing] = useState(false);
   const [isNarrow, setIsNarrow] = useState(false);
@@ -147,6 +151,8 @@ export function ChatRightPanel({
         : "empty";
   useEffect(() => {
     setFilePreview(null);
+    setFileTabs([]);
+    setActiveFileTabId(null);
     setViewerSource("workbench");
   }, [chatId]);
 
@@ -186,25 +192,41 @@ export function ChatRightPanel({
    */
   useEffect(() => {
     if (!externalFilePreview) return;
+    const id = previewTabIdentity(externalFilePreview);
+    setFileTabs((current) => current.some((tab) => tab.id === id)
+      ? current.map((tab) => tab.id === id ? { ...tab, name: externalFilePreview.name, preview: externalFilePreview } : tab)
+      : [...current, { id, name: externalFilePreview.name, provenance: "linked-file", preview: externalFilePreview }]);
+    setActiveFileTabId(id);
     setFilePreview(externalFilePreview);
     setViewerSource("file");
-  }, [
-    externalFilePreview?.path,
-    externalFilePreview?.fileUrl,
-    externalFilePreview?.content,
-    externalFilePreview?.size,
-    externalFilePreview?.available,
-    externalFilePreview?.revision,
-  ]);
+  }, [externalFilePreview]);
 
   // The parent clears its chat-scoped preview during navigation. Clear the
   // panel's local copy too; otherwise a persisted open-rail preference can
   // remount the panel with the previous chat's file still selected.
   useEffect(() => {
-    if (externalFilePreview) return;
+    if (externalFilePreview || fileTabs.length > 0) return;
     setFilePreview(null);
     setViewerSource("workbench");
-  }, [externalFilePreview]);
+  }, [externalFilePreview, fileTabs.length]);
+
+  const selectFileTab = useCallback((id: string) => {
+    const target = fileTabs.find((tab) => tab.id === id);
+    if (!target) return;
+    setActiveFileTabId(id);
+    setFilePreview(target.preview);
+    setViewerSource("file");
+  }, [fileTabs]);
+  const closeFileTab = useCallback((id: string) => {
+    const nextActive = nextFileTabSelection(fileTabs, id, activeFileTabId);
+    const nextTabs = fileTabs.filter((tab) => tab.id !== id);
+    setFileTabs(nextTabs);
+    setActiveFileTabId(nextActive);
+    if (activeFileTabId !== id) return;
+    const target = nextTabs.find((tab) => tab.id === nextActive) ?? null;
+    setFilePreview(target?.preview ?? null);
+    if (!target) setViewerSource("workbench");
+  }, [activeFileTabId, fileTabs]);
 
   useEffect(() => {
     if (!onResizeWidth || activeTab !== "panel" || !isWideOutputKind(outputKind)) return;
@@ -420,7 +442,10 @@ export function ChatRightPanel({
               ko={ko}
             />
           ) : showFilePreview ? (
-            <FileViewer file={filePreview} />
+            <div style={{ display: "flex", flexDirection: "column", minHeight: 0, height: "100%" }}>
+              <ChatFileTabs tabs={fileTabs} activeId={activeFileTabId} locale={ko ? "ko" : "en"} onSelect={selectFileTab} onClose={closeFileTab} />
+              <div style={{ minHeight: 0, flex: 1 }}><FileViewer file={filePreview} /></div>
+            </div>
           ) : showWorkbench ? (
             <WorkbenchPanel
               embedded
@@ -983,7 +1008,7 @@ function FileViewer({ file }: { file: WorkspaceFilePreview }) {
           </div>
         </header>
       )}
-      {file.available === false && <div role="status" style={fileNoticeStyle}>{ko ? "파일 교체를 감지했습니다. 새 버전을 기다리는 중…" : "File replacement detected. Waiting for the new version…"}</div>}
+      {file.available === false && <div role="alert" data-file-unavailable="true" style={fileNoticeStyle}>{ko ? "파일이 없거나 옮겨졌거나, 이 대화에 읽기 권한이 없습니다. 경로를 확인한 뒤 다시 첨부하세요." : "The file is missing, moved, or not readable by this conversation. Check the path and attach it again."}</div>}
       <div style={fileViewerBodyStyle}>
         {codePreview && !file.content ? (
           /* ★코드·HTML 도 **백지 대신 이유를 말한다.** 마크다운·JSON·텍스트에는 이미 이

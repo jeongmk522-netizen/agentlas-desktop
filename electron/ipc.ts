@@ -408,6 +408,7 @@ import {
   setChatWorkingFolder,
   unarchiveChat,
 } from "./store/chats";
+import { listChatFileSnapshot, persistChatFileSnapshot } from "./store/chat-message-attachments";
 import {
   completeGoalLedgerGoal,
   deriveGoalAcceptanceCriteria,
@@ -2374,6 +2375,10 @@ export function registerIpcHandlers(): void {
   // This channel is intentionally absent from window.agentlas. Only the isolated
   // preload bridge can pair webUtils.getPathForFile(File) with this grant call.
   ipcMain.handle("fs:grantDroppedPath", (_e, droppedPath: string) => grantDroppedPath(droppedPath));
+  // Only preload can submit grants. Renderer text can never promote an
+  // arbitrary path into a durable chat file.
+  ipcMain.handle("chatFiles:snapshot", (_e, input: unknown) => persistChatFileSnapshot(input as Parameters<typeof persistChatFileSnapshot>[0]));
+  ipcMain.handle("chatFiles:listGroup", (_e, input: unknown) => listChatFileSnapshot(input as Parameters<typeof listChatFileSnapshot>[0]));
   // 클립보드 이미지는 경로가 없다 — main이 내용을 비공개 파일로 고정하고 같은 등급의
   // capability를 돌려준다. 그래야 붙여넣기가 드롭·파일선택과 같은 첨부 경로를 탄다.
   ipcMain.handle("fs:grantPastedImage", (_e, input: unknown) =>

@@ -25,6 +25,7 @@ import { ipc } from "@/lib/ipc";
 import {
   isWideOutputKind,
   outputPresentationKindForName,
+  outputPresentationKindForViewerKind,
   type OutputPresentationKind,
 } from "@/lib/output-presentation";
 import { designOutputSurfaceProps, designSurfaceKindForOutput } from "@/lib/design-output-tokens";
@@ -46,6 +47,8 @@ import { toolFailureCopy } from "@shared/tool-failure";
 import type { OnePermissionMode } from "./OneComposerControls";
 import { OneComputerHistory } from "./OneComputerHistory";
 import { McpResultPreview } from "../McpResultPreview";
+import { ChatFileTabs, nextFileTabSelection } from "../ChatFileExperience";
+import { CHAT_FILE_OPEN_EVENT, isChatFileItem, type ChatFileItem } from "@/lib/chat-files";
 import styles from "./OneActivityTimeline.module.css";
 
 const ONE_OUTPUT_SECTIONS_STORAGE_KEY = "agentlas.one.output-sections.v1";
@@ -588,6 +591,31 @@ function ArtifactOpenViewer({ target, locale, wide }: { target: OneArtifactOpenR
   return capability.kind === "data" && isCodeArtifactName(target.label)
     ? <CodeIdeViewer source={capability.capabilityUrl} name={target.label} locale={locale} fill={wide} />
     : <LiveOutputViewer source={capability.capabilityUrl} name={target.label} kind={liveKindForCapability(capability)} mimeType={capability.mimeType} size={capability.sizeBytes} locale={locale} fill placement="sidebar" />;
+}
+
+function ChatFileOpenViewer({ file, locale }: { file: ChatFileItem; locale: "ko" | "en" }) {
+  const preview = file.viewer;
+  const liveKinds = new Set<LiveOutputKind>(["image", "video", "audio", "pdf", "document", "spreadsheet", "presentation", "archive"]);
+  const liveKind = liveKinds.has(preview.viewerKind as LiveOutputKind) ? preview.viewerKind as LiveOutputKind : null;
+  return <div data-chat-file-viewer="true" data-chat-file-tab-id={file.tabId} style={{ display: "flex", flexDirection: "column", minHeight: 0, height: "100%" }}>
+    <div style={{ display: "grid", gap: 2, padding: "8px 10px", borderBottom: "1px solid var(--paper-edge)", fontSize: 10.5, color: "var(--muted-deep)" }}>
+      <strong style={{ color: "var(--ink)", overflowWrap: "anywhere" }}>{file.name}</strong>
+      <span>{file.size} bytes · SHA-256 {file.sha256}</span>
+      <span>{locale === "ko" ? "바인딩" : "Binding"}: {file.chatId}/{file.groupId}/{file.id}</span>
+      <span>{locale === "ko" ? "탭 ID" : "Tab ID"}: {file.tabId}</span>
+    </div>
+    <div style={{ minHeight: 0, flex: 1, overflow: "auto" }}>
+      {file.kind === "directory" || ["markdown", "json", "text"].includes(preview.viewerKind) ? (
+        <pre style={{ margin: 0, padding: 12, fontFamily: "var(--font-mono)", fontSize: 11.5, lineHeight: 1.55, whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>{preview.content || (locale === "ko" ? "내용을 읽을 수 없습니다." : "The file content is unavailable.")}</pre>
+      ) : liveKind && file.fileUrl ? (
+        <LiveOutputViewer source={file.fileUrl} name={file.name} kind={liveKind} mimeType={file.mediaType} size={file.size} locale={locale} fill placement="sidebar" />
+      ) : (
+        <div role="alert" style={{ padding: 16, fontSize: 12, color: "var(--red-deep)" }}>
+          {locale === "ko" ? "이 형식은 인앱 미리보기를 지원하지 않습니다. 원본 경로를 저장하지 않아 Finder 열기는 제공되지 않습니다." : "This format has no in-app preview. Finder is unavailable because the original path is not retained."}
+        </div>
+      )}
+    </div>
+  </div>;
 }
 
 export function taskBrowserUrl(items: OneActivityItem[]): string | undefined {
@@ -1372,6 +1400,8 @@ export function OneActivityArtifactRail({
   const [historyHeight, setHistoryHeight] = useState(readOutputHistoryHeight);
   const [browserUrlsByScope, setBrowserUrlsByScope] = useState<Record<string, string>>({});
   const [openedArtifact, setOpenedArtifact] = useState<OneArtifactOpenRequest | null>(null);
+  const [chatFileTabs, setChatFileTabs] = useState<ChatFileItem[]>([]);
+  const [activeChatFileTabId, setActiveChatFileTabId] = useState<string | null>(null);
   const presentedBrowserTargetRef = useRef<string | null>(null);
   const presentedAppTargetRef = useRef<string | null>(null);
   const presentedResultKeyRef = useRef<string | null>(null);
@@ -1492,6 +1522,7 @@ export function OneActivityArtifactRail({
     ?? browserHistoryUrl
     ?? (browserScopeKey ? browserUrlsByScope[browserScopeKey] : undefined);
   const latestArtifactId = items.at(-1)?.id ?? null;
+  const activeChatFile = chatFileTabs.find((file) => file.tabId === activeChatFileTabId) ?? null;
   const openedArtifactKind = openedArtifact ? outputPresentationKindForName(openedArtifact.label) : "standard";
   const latestArtifactKind = outputPresentationKindForName(items.at(-1)?.label);
   const activeOutputKind: OutputPresentationKind = appPreview
@@ -1502,10 +1533,14 @@ export function OneActivityArtifactRail({
         ? resultKind
         : preferredBrowserUrl
           ? "web"
-          : openedArtifact
+            : activeChatFile
+              ? outputPresentationKindForViewerKind(activeChatFile.viewer.viewerKind)
+              : openedArtifact
             ? "document"
             : latestArtifactKind;
-  const outputIdentity = openedArtifact
+  const outputIdentity = activeChatFile
+    ? `chat-file:${activeChatFile.tabId}`
+    : openedArtifact
     ? `artifact:${openedArtifact.binding.runId}:${openedArtifact.binding.artifactRef}`
     : appPreview
       ? `app:${appPreview.appId}:${appPreview.url}`
@@ -1523,11 +1558,43 @@ export function OneActivityArtifactRail({
       const detail = (event as CustomEvent<unknown>).detail;
       if (!isOneArtifactOpenRequest(detail)) return;
       setOpenedArtifact(detail);
+      setActiveChatFileTabId(null);
       setRailView("result");
     };
     window.addEventListener(ONE_ARTIFACT_OPEN_EVENT, handleOpen);
     return () => window.removeEventListener(ONE_ARTIFACT_OPEN_EVENT, handleOpen);
   }, []);
+  useEffect(() => {
+    setChatFileTabs([]);
+    setActiveChatFileTabId(null);
+  }, [browserScopeKey]);
+  useEffect(() => {
+    const handleChatFile = (event: Event) => {
+      const detail = (event as CustomEvent<unknown>).detail;
+      if (!isChatFileItem(detail) || (browserScopeKey && detail.chatId !== browserScopeKey)) return;
+      setChatFileTabs((current) => current.some((file) => file.tabId === detail.tabId)
+        ? current.map((file) => file.tabId === detail.tabId ? detail : file)
+        : [...current, detail]);
+      setActiveChatFileTabId(detail.tabId);
+      setOpenedArtifact(null);
+      setOpenTabs((tabs) => tabs.includes("result") ? tabs : [...tabs, "result"]);
+      setRailView("result");
+    };
+    window.addEventListener(CHAT_FILE_OPEN_EVENT, handleChatFile);
+    return () => window.removeEventListener(CHAT_FILE_OPEN_EVENT, handleChatFile);
+  }, [browserScopeKey]);
+  const selectChatFileTab = useCallback((id: string) => {
+    if (!chatFileTabs.some((file) => file.tabId === id)) return;
+    setActiveChatFileTabId(id);
+    setOpenedArtifact(null);
+    setRailView("result");
+  }, [chatFileTabs]);
+  const closeChatFileTab = useCallback((id: string) => {
+    const tabs = chatFileTabs.map((file) => ({ id: file.tabId, name: file.name, provenance: file.provenance }));
+    const nextId = nextFileTabSelection(tabs, id, activeChatFileTabId);
+    setChatFileTabs((current) => current.filter((file) => file.tabId !== id));
+    setActiveChatFileTabId(nextId);
+  }, [activeChatFileTabId, chatFileTabs]);
   useEffect(() => {
     const handleInAppLink = (event: Event) => {
       const detail = (event as CustomEvent<unknown>).detail;
@@ -1860,14 +1927,22 @@ export function OneActivityArtifactRail({
           ? ({ "--one-preview-height": `${previewHeight}px` } as React.CSSProperties)
           : undefined}
       >
-        {railView === "result" && (openedArtifact || result) && <div className={styles.resultView}>
-          {openedArtifact && <>
+        {railView === "result" && (activeChatFile || openedArtifact || result) && <div className={styles.resultView}>
+          {chatFileTabs.length > 0 && <ChatFileTabs
+            tabs={chatFileTabs.map((file) => ({ id: file.tabId, name: file.name, provenance: file.provenance }))}
+            activeId={activeChatFileTabId}
+            locale={locale}
+            onSelect={selectChatFileTab}
+            onClose={closeChatFileTab}
+          />}
+          {activeChatFile && <ChatFileOpenViewer file={activeChatFile} locale={locale} />}
+          {!activeChatFile && openedArtifact && <>
             <button type="button" className={styles.artifactBackButton} onClick={() => setOpenedArtifact(null)}>
               <IconArrowLeft size={13} /> {locale === "ko" ? "결과로 돌아가기" : "Back to result"}
             </button>
             <ArtifactOpenViewer target={openedArtifact} locale={locale} wide={isWideOutputKind(activeOutputKind) || (width ?? defaultWidth) >= 560} />
           </>}
-          {!openedArtifact && result}
+          {!activeChatFile && !openedArtifact && result}
         </div>}
         {railView === "activity" && <>
           <OutputDisclosure section="files" label={locale === "ko" ? "결과물" : "Artifacts"} count={items.length} expanded={sectionExpanded("files")} onToggle={toggleSection}>

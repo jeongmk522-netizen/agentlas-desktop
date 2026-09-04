@@ -30,6 +30,7 @@ import {
   IconCheck,
   IconClose,
   IconFileUp,
+  IconFolder,
   IconMoreHorizontal,
   IconPanelRight,
   IconPlus,
@@ -175,6 +176,15 @@ import {
 import { planOneThreadWork, projectThreadRuns, type OneThreadRunBlock } from "@/lib/one-thread-work";
 import { memberUnavailable, speakableCountIncludingOne } from "@/lib/one-team-availability";
 import { ToolApprovalInline } from "@/components/ToolApprovalInline";
+import { ChatFileCards } from "@/components/ChatFileExperience";
+import {
+  appendChatFileMarker,
+  chatFileItem,
+  chatFilesBridge,
+  parseChatFileMessage,
+  requestChatFileOpen,
+  type ChatFileItem,
+} from "@/lib/chat-files";
 import {
   OneComposerControls,
   type OneComposerMenuKey,
@@ -489,7 +499,9 @@ type UiMessage = {
    * 없어졌다.
    */
   images?: string[];
-  files?: Array<{ name: string; kind: "image" | "file" }>;
+  files?: Array<{ name: string; kind: "image" | "file" | "directory" }>;
+  chatFiles?: ChatFileItem[];
+  chatFileGroupIds?: string[];
   /** Durable rows only (ISO). Optimistic rows have none and sort after every durable row. */
   createdAt?: string;
 };
@@ -526,7 +538,7 @@ type OneAttachmentDraft = {
   name: string;
   mediaType: string;
   size: number;
-  kind: "image" | "file";
+  kind: "image" | "file" | "directory";
   previewUrl: string | null;
 };
 
@@ -661,11 +673,13 @@ function toUiMessages(history: ChatHistoryEntry[]): UiMessage[] {
       userTurnAwaitingAnswer = true;
     }
     if (entry.role === "assistant") userTurnAwaitingAnswer = false;
+    const parsedFiles = parseChatFileMessage(entry.text);
     visible.push({
       id: entry.id,
       role: entry.role === "assistant" ? "assistant" : entry.role,
-      text: entry.text,
+      text: parsedFiles.visibleText,
       images: entry.imageDataUrls?.length ? entry.imageDataUrls : undefined,
+      chatFileGroupIds: parsedFiles.groupIds,
       createdAt: entry.createdAt,
     });
   }
@@ -1143,6 +1157,7 @@ export function OneShell() {
   const [teamPreflightBusy, setTeamPreflightBusy] = useState(false);
   const [pendingTeamPrompt, setPendingTeamPrompt] = useState<PendingTeamPrompt | null>(null);
   const [messages, setMessages] = useState<UiMessage[]>([]);
+  const oneChatFileGroupsRef = useRef(new Map<string, ChatFileItem[]>());
   const [surface, setSurface] = useState<OneSurfaceManifestV1 | null>(null);
   // One and Work share the same main-owned generated-app preview. One keeps
   // only the verified descriptor here; the native WebContentsView belongs to
@@ -2726,6 +2741,32 @@ export function OneShell() {
   }, [projections, selectedTaskId]);
 
   const activeThreadChatId = selected?.chatId ?? conversation?.id ?? null;
+  useEffect(() => {
+    oneChatFileGroupsRef.current.clear();
+  }, [activeThreadChatId]);
+  useEffect(() => {
+    if (!activeThreadChatId) return;
+    const bridge = chatFilesBridge();
+    if (!bridge) return;
+    const groupIds = [...new Set(messages.flatMap((message) => message.chatFileGroupIds ?? []))]
+      .filter((groupId) => !oneChatFileGroupsRef.current.has(groupId));
+    if (groupIds.length === 0) return;
+    let cancelled = false;
+    void Promise.all(groupIds.map(async (groupId) => {
+      const stored = await bridge.listGroup({ chatId: activeThreadChatId, groupId });
+      return [groupId, stored.map((file) => chatFileItem(file, "user-attachment"))] as const;
+    })).then((groups) => {
+      if (cancelled) return;
+      for (const [groupId, files] of groups) oneChatFileGroupsRef.current.set(groupId, files);
+      setMessages((current) => current.map((message) => {
+        const chatFiles = (message.chatFileGroupIds ?? []).flatMap((groupId) => oneChatFileGroupsRef.current.get(groupId) ?? []);
+        return chatFiles.length > 0 ? { ...message, chatFiles } : message;
+      }));
+    }).catch((cause) => {
+      if (!cancelled) setAttachmentError(cause instanceof Error ? cause.message : String(cause));
+    });
+    return () => { cancelled = true; };
+  }, [activeThreadChatId, messages]);
   const activeThreadChatIdRef = useRef(activeThreadChatId);
   // Keep the guard synchronous with render. An effect leaves one commit where
   // a picker started in chat A can settle after navigation and paint A's path
@@ -3100,6 +3141,27 @@ export function OneShell() {
       window.dispatchEvent(new CustomEvent("agentlas:in-app-linked-file", { detail: file }));
     }
   }, [runtimeArtifacts]);
+  const openOneChatFile = useCallback(async (file: ChatFileItem) => {
+    setContextRailOpen(true);
+    const needsText = file.kind === "file"
+      && ["markdown", "json", "text", "browser"].includes(file.viewer.viewerKind)
+      && Boolean(file.fileUrl)
+      && !file.viewer.content;
+    if (!needsText) {
+      requestChatFileOpen(file);
+      return;
+    }
+    try {
+      const response = await fetch(file.fileUrl!);
+      if (!response.ok) throw new Error(`attachment read failed: ${response.status}`);
+      requestChatFileOpen({
+        ...file,
+        viewer: { ...file.viewer, content: await response.text(), available: true, reason: undefined },
+      });
+    } catch {
+      requestChatFileOpen({ ...file, viewer: { ...file.viewer, available: false } });
+    }
+  }, []);
   const oneOutputKind: OutputPresentationKind = useMemo(() => {
     if (oneLiveAppPreview) return "web";
     const surfaceKind = outputPresentationKindForManifest(surface);
@@ -4136,28 +4198,47 @@ export function OneShell() {
       setSubmissionBusy(true);
       setError(null);
       let preparedAttachments: PreparedOneAttachments | null = null;
+      let runPrompt = value;
       // Resolve new-chat intent in Main before team preflight. A cold model can
       // miss the fast judgment budget, in which case the explicitly labeled
       // undecided result keeps the safe conversational default.
       const requestIntentPromise = taskIntent === "conversation" && attachmentSnapshot.length === 0
-        ? api.oneRequestIntent.resolve(value).catch(() => null)
+        ? api.oneRequestIntent.resolve(runPrompt).catch(() => null)
         : Promise.resolve(null);
       try {
         if (attachmentSnapshot.length > 0) {
+          const fileBridge = chatFilesBridge();
+          if (!fileBridge) throw new Error(appLocale === "ko" ? "Desktop 파일 연결을 사용할 수 없습니다." : "The Desktop file bridge is unavailable.");
+          const snapshot = await fileBridge.snapshot({
+            chatId,
+            files: attachmentSnapshot.map((item) => ({
+              grant: item.grant,
+              name: item.name,
+              mediaType: item.mediaType,
+              size: item.size,
+              kind: item.kind === "image" ? "file" : item.kind,
+            })),
+          });
+          const chatFiles = snapshot.files.map((file) => chatFileItem(file, "user-attachment"));
+          oneChatFileGroupsRef.current.set(snapshot.groupId, chatFiles);
+          runPrompt = appendChatFileMarker(value, snapshot.groupId);
+          setMessages((current) => current.map((message) => message.id === preflightId
+            ? { ...message, files: undefined, chatFiles, chatFileGroupIds: [snapshot.groupId] }
+            : message));
           const attachments: OneAttachmentPrepareItem[] = attachmentSnapshot.map((item) => ({
             grant: item.grant,
             displayName: item.name,
             claimedMediaType: item.mediaType,
             claimedSize: item.size,
           }));
-          preparedAttachments = await api.oneAttachments.prepare({ chatId, userPrompt: value, attachments });
+          preparedAttachments = await api.oneAttachments.prepare({ chatId, userPrompt: runPrompt, attachments });
         }
         const mainIntent = await requestIntentPromise;
         const resolvedIntent = preparedAttachments
           || taskIntent === "task"
           || recurrenceSnapshot
           || mainIntent?.intent === "task"
-          || classifyOneRequestIntent(value) === "task"
+          || classifyOneRequestIntent(runPrompt) === "task"
           ? "task"
           : "conversation";
         /*
@@ -4187,7 +4268,7 @@ export function OneShell() {
             chatId,
             taskId,
             taskVersion,
-            value,
+            runPrompt,
             "conversation",
             {
               attachments: preparedAttachments,
@@ -4202,7 +4283,7 @@ export function OneShell() {
         }
         const prepared = await api.oneTeamPreflight.prepare({
           chatId,
-          userPrompt: value,
+          userPrompt: runPrompt,
           expectedTaskId: taskId,
           expectedTaskVersion: taskVersion,
           permission: onePermission === "read" ? "read" : "write",
@@ -4231,7 +4312,7 @@ export function OneShell() {
             chatId,
             taskId,
             taskVersion,
-            value,
+            runPrompt,
             resolvedIntent,
             {
               attachments: preparedAttachments,
@@ -4254,7 +4335,7 @@ export function OneShell() {
         setTeamPreflight(prepared.proposal);
         const pendingPrompt: PendingTeamPrompt = {
           proposalId: prepared.proposal.proposalId,
-          text: value,
+          text: runPrompt,
           attachments: preparedAttachments,
           recurrence: recurrenceSnapshot,
           overrides: overrideSnapshot,
@@ -5645,7 +5726,7 @@ export function OneShell() {
     let totalBytes = current.reduce((sum, item) => sum + item.size, 0);
     const errors: string[] = [];
     for (const file of incoming) {
-      const kind = attachmentKind(file);
+      let kind: OneAttachmentDraft["kind"] = attachmentKind(file);
       const perFileLimit = kind === "image" ? ONE_ATTACHMENT_LIMITS.maxImageBytes : ONE_ATTACHMENT_LIMITS.maxFileBytes;
       if (file.size > perFileLimit) {
         errors.push(tFor(appLocale, "one.shell.attach.file_limit", { name: file.name, limit: kind === "image" ? tFor(appLocale, "one.shell.attach.limit_image") : tFor(appLocale, "one.shell.attach.limit_file") }));
@@ -5663,15 +5744,18 @@ export function OneShell() {
         // 이전 preload와의 일시적 호환: 새 bridge가 아직 없더라도 이미지 붙여넣기는 유지.
         ?? (kind === "image" ? await grantForPastedImage(file) : null);
       if (!grant || grant.kind !== "file") {
-        errors.push(tFor(appLocale, "one.shell.attach.not_regular_file", { name: attachmentDisplayName(file, appLocale) }));
-        continue;
+        if (!grant || grant.kind !== "directory") {
+          errors.push(tFor(appLocale, "one.shell.attach.not_regular_file", { name: attachmentDisplayName(file, appLocale) }));
+          continue;
+        }
+        kind = "directory";
       }
       const previewUrl = kind === "image" ? URL.createObjectURL(file) : null;
       next.push({
         id: uid(),
         grant,
         name: attachmentDisplayName(file, appLocale),
-        mediaType: file.type,
+        mediaType: kind === "directory" ? "application/vnd.agentlas.directory+json" : file.type,
         size: file.size,
         kind,
         previewUrl,
@@ -6456,6 +6540,9 @@ export function OneShell() {
                                 ))}
                               </div>
                             )}
+                            {message.chatFiles && message.chatFiles.length > 0 && (
+                              <ChatFileCards files={message.chatFiles} locale={appLocale} onOpen={openOneChatFile} />
+                            )}
                             {(visibleText || (message.files?.some((file) => file.kind !== "image") ?? false)) && (
                             <div className={styles.messageBody} data-doc={message.role === "assistant" && !message.streaming && isDocumentLikeText(message.text) ? "true" : undefined}>
                               {message.files && message.files.filter((f) => f.kind !== "image").length > 0 && (
@@ -6826,7 +6913,7 @@ export function OneShell() {
                   <div key={item.id} className={styles.attachmentChip} data-kind={item.kind}>
                     {item.previewUrl
                       ? <img src={item.previewUrl} alt="" aria-hidden="true" />
-                      : <span className={styles.attachmentFileIcon} aria-hidden="true"><IconFileUp size={15} /></span>}
+                      : <span className={styles.attachmentFileIcon} aria-hidden="true">{item.kind === "directory" ? <IconFolder size={15} /> : <IconFileUp size={15} />}</span>}
                     <span className={styles.attachmentCopy}>
                       <strong>{item.name}</strong>
                       <small>{attachmentTypeLabel(item.mediaType, item.name)} · {attachmentSize(item.size)}</small>

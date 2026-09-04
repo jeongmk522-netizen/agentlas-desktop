@@ -22,6 +22,8 @@ import {
 } from "@shared/agent-control-blocks";
 import { McpResultPreview } from "./McpResultPreview";
 import { LiveOutputViewer } from "./LiveOutputViewer";
+import { ChatFileCards } from "./ChatFileExperience";
+import type { ChatFileItem } from "@/lib/chat-files";
 
 /** 작업 중 패널에 누적되는 단일 단계. 새 이벤트마다 push (replace 아님). */
 export interface StreamStep {
@@ -99,6 +101,9 @@ export interface StreamMessage {
   busy?: boolean;
   /** 첨부된 이미지 미리보기 URL — data:image/... base64 */
   imageDataUrls?: string[];
+  /** Durable generic attachment groups are resolved to in-app file cards. */
+  chatFiles?: ChatFileItem[];
+  chatFileGroupIds?: string[];
   /** 본문에서 fence로 추출된 질문들 — UI는 본문 텍스트 아래에 카드로 렌더 */
   questions?: ChatQuestion[];
   /** 생성 토큰 수 — "N tokens" 표시 (Claude Code 스타일) */
@@ -157,6 +162,7 @@ export function ChatStream({
   onOpenArtifact,
   onOpenMedia,
   onOpenLinkedFile,
+  onOpenChatFile,
   onOpenWorkflow,
   onAnswerQuestion,
   onOpenMultimodalSetup,
@@ -176,6 +182,7 @@ export function ChatStream({
   onOpenArtifact?: (a: CodeArtifact) => void;
   onOpenMedia?: (a: MediaArtifact) => void;
   onOpenLinkedFile?: (a: LinkedFileArtifact) => void;
+  onOpenChatFile?: (file: ChatFileItem) => void;
   onOpenWorkflow?: () => void;
   onStop?: () => void;
   /** 사용자가 질문에 답함 — 부모가 user 메시지로 전송 */
@@ -361,6 +368,7 @@ export function ChatStream({
               onOpenArtifact={onOpenArtifact}
               onOpenMedia={onOpenMedia}
               onOpenLinkedFile={onOpenLinkedFile}
+              onOpenChatFile={onOpenChatFile}
               onOpenWorkflow={onOpenWorkflow}
               onStop={onStop}
               onAnswerQuestion={onAnswerQuestion}
@@ -746,6 +754,7 @@ const Bubble = memo(function Bubble({
   onOpenArtifact,
   onOpenMedia,
   onOpenLinkedFile,
+  onOpenChatFile,
   onOpenWorkflow,
   onAnswerQuestion,
   onOpenMultimodalSetup,
@@ -760,6 +769,7 @@ const Bubble = memo(function Bubble({
   onOpenArtifact?: (a: CodeArtifact) => void;
   onOpenMedia?: (a: MediaArtifact) => void;
   onOpenLinkedFile?: (a: LinkedFileArtifact) => void;
+  onOpenChatFile?: (file: ChatFileItem) => void;
   onOpenWorkflow?: () => void;
   onStop?: () => void;
   onAnswerQuestion?: (messageId: string, questionId: string, answers: string[]) => void;
@@ -781,6 +791,9 @@ const Bubble = memo(function Bubble({
     }
     return (
       <div style={{ alignSelf: "flex-end", maxWidth: "75%" }}>
+        {message.chatFiles && message.chatFiles.length > 0 && onOpenChatFile && (
+          <ChatFileCards files={message.chatFiles} locale={locale === "ko" ? "ko" : "en"} onOpen={onOpenChatFile} />
+        )}
         {message.imageDataUrls && message.imageDataUrls.length > 0 && (
           <div style={{ display: "flex", gap: 6, marginBottom: 6, flexWrap: "wrap", justifyContent: "flex-end" }}>
             {message.imageDataUrls.map((url, i) => (
@@ -857,6 +870,9 @@ const Bubble = memo(function Bubble({
         className="agentlas-chat-answer"
         style={{ minWidth: 0, flex: 1, padding: "9px 0 14px" }}
       >
+        {message.chatFiles && message.chatFiles.length > 0 && onOpenChatFile && (
+          <ChatFileCards files={message.chatFiles} locale={locale === "ko" ? "ko" : "en"} onOpen={onOpenChatFile} />
+        )}
         {message.pipeline && message.pipeline.length > 0 && showParallelWork && (
           <PipelineStepper stages={message.pipeline} running={Boolean(message.busy)} />
         )}

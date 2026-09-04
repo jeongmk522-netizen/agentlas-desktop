@@ -1038,6 +1038,10 @@ contextBridge.exposeInMainWorld("agentlas", api);
 // 드래그&드롭으로 들어온 File/폴더의 실제 경로는 preload 안에서만 얻는다.
 // renderer에는 raw-path grant API 대신 main이 발급한 제한된 capability만 돌려준다.
 contextBridge.exposeInMainWorld("agentlasFiles", {
+  chatFiles: {
+    snapshot: (input: unknown) => ipcRenderer.invoke("chatFiles:snapshot", input),
+    listGroup: (input: unknown) => ipcRenderer.invoke("chatFiles:listGroup", input),
+  },
   grantForFile: async (file: File): Promise<FsPathGrant | null> => {
     try {
       const droppedPath = webUtils.getPathForFile(file);

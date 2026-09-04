@@ -374,6 +374,9 @@ button { cursor: pointer; color: inherit; }
 .chatMessage.isUser { max-width: 100%; margin-left: 0; border: 0; border-left: 2px solid var(--grey-300); border-radius: 0; background: transparent; box-shadow: none; padding: 10px 0 10px 12px; }
 .chatMessageRole { margin-bottom: 6px; color: var(--grey-500); font-size: 11px; font-weight: 620; }
 .chatMessageContent { font-size: 13px; line-height: 1.55; white-space: pre-wrap; overflow-wrap: anywhere; }
+.chatMessageInstructions { margin-top: 10px; min-width: 0; color: var(--grey-700); }
+.chatMessageInstructions > summary { cursor: pointer; font-size: 12px; line-height: 1.6; }
+.chatMessageInstructions > .chatMessageContent { margin-top: 8px; }
 .chatArtifactLink { width: 100%; margin-top: 9px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface-subtle); padding: 9px 10px; text-align: left; font-size: 12px; }
 .chatArtifactLink:hover { border-color: var(--line-strong); background: var(--soft); }
 .chatArtifactLink strong { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }

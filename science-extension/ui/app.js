@@ -740,6 +740,7 @@ import { formatScienceCell } from "./format-cell.js";
     ]);
     if (projectId !== state.selectedId || conversation.id !== selectedConversation()?.id) return;
     state.messages = safeMessages;
+    state.chatMessagesScope = JSON.stringify([projectId, conversation.id]);
     state.artifactContextsByMessage = new Map(messageArtifactRows.map(([messageId, contexts]) => [messageId, Array.isArray(contexts) ? contexts : []]));
     state.blocksByMessage = messageEvidence.blocks;
     state.citationsByMessage = messageEvidence.citations;
@@ -811,6 +812,7 @@ import { formatScienceCell } from "./format-cell.js";
     state.conversations = [];
     state.selectedConversationId = null;
     state.messages = [];
+    state.chatMessagesScope = null;
     state.sources = [];
     state.sourceFigures = [];
     state.runs = [];
@@ -971,6 +973,7 @@ import { formatScienceCell } from "./format-cell.js";
       state.selectedSourceId = safeSources[0]?.id || null;
       state.selectedArtifactId = (labRows[0]?.[1]?.[0]?.artifact?.id) || safeArtifacts[0]?.id || null;
       state.messages = safeMessages;
+      state.chatMessagesScope = conversation ? JSON.stringify([projectId, conversation.id]) : null;
       state.activeTurn = attached?.turn || null;
       state.composerError = composerTurnError(state.activeTurn);
       state.blocksByMessage = messageEvidence.blocks;
@@ -4619,6 +4622,9 @@ import { formatScienceCell } from "./format-cell.js";
     const conversation = state.conversations.find((item) => item.id === conversationId);
     if (!conversation || !state.selectedId) return;
     state.selectedConversationId = conversation.id;
+    state.chatMessagesScope = null;
+    state.activeTurn = null;
+    state.composerError = "";
     state.mode = "session";
     state.currentDestination = "overview";
     const tab = state.workspaceTabs.find((item) => item.kind === "conversation" && item.conversationId === conversation.id);
@@ -5380,16 +5386,38 @@ import { formatScienceCell } from "./format-cell.js";
     void startComposerTurn({ forceAppend: true });
   }
 
+  function manuscriptRequestSummary(message, rawText) {
+    if (message.role !== "user") return null;
+    const raw = String(rawText || "");
+    const marker = /\n\n<<agentlas-manuscript-draft-job:v1 (\{[^\n]*\})>>$/.exec(raw);
+    if (!marker) return null;
+    try {
+      const job = JSON.parse(marker[1]);
+      if (job.projectId !== message.projectId || job.conversationId !== message.conversationId) return null;
+      const families = { empirical: "Empirical study", "theoretical-proof": "Theoretical / proof", "review-synthesis": "Review / synthesis", "methods-model": "Methods / model", "data-resource": "Data resource" };
+      if (!Object.hasOwn(families, job.articleFamily) || typeof job.requestId !== "string" || (job.journalTarget !== null && typeof job.journalTarget !== "string")) return null;
+      const prefix = "Start a publication-grade manuscript workflow for this project.\n\nResearch objective: ";
+      const end = raw.lastIndexOf(`\nArticle family: ${job.articleFamily}\nTarget journal: `, marker.index);
+      if (!raw.startsWith(prefix) || end < prefix.length) return null;
+      job.objective = raw.slice(prefix.length, end);
+      // Summarize only our exact generated request. Edited/ordinary messages
+      // remain verbatim, and the original instructions remain inspectable.
+      if (manuscriptDraftJobPrompt(job) !== raw) return null;
+      return `${uiCopy("원고 작성 요청", "Manuscript drafting request")}\n\n${job.objective}\n\n${uiCopy("논문 유형", "Article family")}: ${families[job.articleFamily]}\n${uiCopy("대상 학술지", "Target journal")}: ${job.journalTarget || uiCopy("미선택", "Not selected")}`;
+    } catch { return null; }
+  }
+
   function compactChatMessage(message) {
     const blocks = state.blocksByMessage.get(message.id) || [];
     const rawText = blocks.length ? blocks.map((block) => block.content).join("\n\n") : message.content;
-    const text = String(rawText || "")
-      .replace(/\n*<<agentlas-manuscript-selection:v1 \{[^\n]*\}>>\s*$/u, "")
-      .replace(/\n*<<agentlas-manuscript-draft-job:v1 \{[^\n]*\}>>\s*$/u, "");
+    const requestSummary = manuscriptRequestSummary(message, rawText);
+    const text = requestSummary || String(rawText || "")
+      .replace(/\n*<<agentlas-manuscript-selection:v1 \{[^\n]*\}>>\s*$/u, "");
+    const instructions = requestSummary ? `<details class="chatMessageInstructions" data-chat-instructions="${escapeHtml(message.id)}"><summary>${uiCopy("실행 지시문 보기", "View execution instructions")}</summary><div class="chatMessageContent">${escapeHtml(rawText)}</div></details>` : "";
     const artifactContexts = state.artifactContextsByMessage.get(message.id) || [];
     const artifacts = artifactContexts.map((context) => `<button class="chatArtifactLink" data-chat-artifact-id="${escapeHtml(context.artifact.id)}" data-chat-artifact-version="${escapeHtml(context.selectedVersion.version)}" data-chat-conversation-id="${escapeHtml(message.conversationId)}" data-chat-message-id="${escapeHtml(message.id)}" title="${escapeHtml(`Open exact v${context.selectedVersion.version} in ${labLabel(context.linkage.labId)}`)}"><strong>${escapeHtml(context.artifact.title)}</strong><span>${escapeHtml(labLabel(context.linkage.labId))} · open v${escapeHtml(context.selectedVersion.version)} →</span></button>`).join("");
     const user = message.role === "user";
-    return `<article class="chatMessage ${user ? "isUser" : "isAssistant"}"><div class="chatMessageRole">${user ? "You" : "Agentlas Science"}</div><div class="chatMessageContent">${escapeHtml(text)}</div>${artifacts}${paleontologyCatalogReceiptMarkup(message)}</article>`;
+    return `<article class="chatMessage ${user ? "isUser" : "isAssistant"}" data-chat-message-id="${escapeHtml(message.id)}"><div class="chatMessageRole">${user ? "You" : "Agentlas Science"}</div><div class="chatMessageContent">${escapeHtml(text)}</div>${instructions}${artifacts}${paleontologyCatalogReceiptMarkup(message)}</article>`;
   }
 
   function manuscriptProposalCardsMarkup() {
@@ -5429,6 +5457,7 @@ import { formatScienceCell } from "./format-cell.js";
   }
 
   function chatThreadMarkup() {
+    if (!chatMessagesReady()) return `<div class="chatDockEmpty" role="status">${uiCopy("대화를 불러오는 중…", "Loading conversation…")}</div>`;
     const messages = state.messages.length ? state.messages.map(compactChatMessage).join("") : `<div class="chatDockEmpty">This project conversation continues here.</div>`;
     const failure = state.mode !== "session" || state.currentDestination !== "overview" ? runFailureNotice() : "";
     return `${messages}${failure}${manuscriptDraftJobMarkup()}${manuscriptProposalCardsMarkup()}`;
@@ -5481,7 +5510,7 @@ import { formatScienceCell } from "./format-cell.js";
   function composer(docked = false) {
     const running = state.activeTurn && ["queued", "running", "cancelling"].includes(state.activeTurn.status);
     const needsInitialRun = !running && state.messages.length === 1 && state.messages[0].role === "user" && !state.messages.some((message) => message.role === "assistant");
-    const disabled = state.composerSending || !selectedConversation();
+    const disabled = state.composerSending || !selectedConversation() || !chatMessagesReady();
     const sendDisabled = !running && (disabled || (!needsInitialRun && !state.composerDraft.trim()));
     // 같은 실패가 두 번 나오면 안 된다. 본문 .failClosed 가 사람 문장으로 설명하는 경우
   // 하단 상태줄까지 오류 원문을 되풀이하면, 사람은 잘린 개발자 문자열
@@ -5531,7 +5560,46 @@ import { formatScienceCell } from "./format-cell.js";
   }
 
   function chatDock() {
-    return `<aside class="chatDock" data-chat-dock aria-label="연구 협업 채팅"><div class="chatDockFrame"><header class="chatDockHeader"><div class="chatPartner"><span class="chatPartnerMark">${heroIcon("book")}</span><span><strong>연구 채팅</strong><em>${escapeHtml(lifecycleCompactLabel())}</em></span></div><button class="chatHeaderAction" data-action="toggle-drawer" aria-label="연구 문맥과 세부 정보">${heroIcon("ellipsis")}</button></header><div class="chatDockBody" data-chat-dock-body>${chatThreadMarkup()}</div><div class="chatDockComposer" data-chat-dock-composer>${chatDockComposerMarkup()}</div></div></aside>`;
+    return `<aside class="chatDock" data-chat-dock aria-label="연구 협업 채팅"><div class="chatDockFrame"><header class="chatDockHeader"><div class="chatPartner"><span class="chatPartnerMark">${heroIcon("book")}</span><span><strong>연구 채팅</strong><em>${escapeHtml(lifecycleCompactLabel())}</em></span></div><button class="chatHeaderAction" data-action="toggle-drawer" aria-label="연구 문맥과 세부 정보">${heroIcon("ellipsis")}</button></header><div class="chatDockBody" data-chat-dock-body data-chat-project-id="${escapeHtml(state.selectedId || "")}" data-chat-conversation-id="${escapeHtml(selectedConversation()?.id || "")}" data-chat-hydrated="${chatMessagesReady()}">${chatThreadMarkup()}</div><div class="chatDockComposer" data-chat-dock-composer>${chatDockComposerMarkup()}</div></div></aside>`;
+  }
+
+  const chatScrollSnapshots = new Map();
+
+  function chatMessagesReady() {
+    const conversation = selectedConversation();
+    return Boolean(state.selectedId && conversation && state.chatMessagesScope === JSON.stringify([state.selectedId, conversation.id]));
+  }
+
+  function chatScrollKey(body) {
+    const { chatProjectId, chatConversationId } = body?.dataset || {};
+    return chatProjectId && chatConversationId ? JSON.stringify([chatProjectId, chatConversationId]) : null;
+  }
+
+  function rememberChatScroll(body = document.querySelector("[data-chat-dock-body]")) {
+    const key = chatScrollKey(body);
+    if (!key || body.dataset.chatHydrated !== "true") return;
+    const top = body.getBoundingClientRect().top;
+    const anchor = [...body.querySelectorAll("article[data-chat-message-id]")].find((message) => message.getBoundingClientRect().bottom > top);
+    chatScrollSnapshots.delete(key);
+    chatScrollSnapshots.set(key, {
+      top: body.scrollTop,
+      following: body.scrollHeight - body.scrollTop - body.clientHeight < 80,
+      anchorId: anchor?.dataset.chatMessageId,
+      anchorOffset: anchor ? anchor.getBoundingClientRect().top - top : 0,
+      openInstructions: [...body.querySelectorAll("details[data-chat-instructions][open]")].map((details) => details.dataset.chatInstructions),
+    });
+    if (chatScrollSnapshots.size > 100) chatScrollSnapshots.delete(chatScrollSnapshots.keys().next().value);
+  }
+
+  function restoreChatScroll(body = document.querySelector("[data-chat-dock-body]")) {
+    const key = chatScrollKey(body);
+    if (!key) return;
+    const saved = chatScrollSnapshots.get(key);
+    for (const details of body.querySelectorAll("details[data-chat-instructions]")) details.open = saved?.openInstructions.includes(details.dataset.chatInstructions) || false;
+    if (!saved || saved.following) { body.scrollTop = body.scrollHeight; return; }
+    body.scrollTop = saved.top;
+    const anchor = [...body.querySelectorAll("article[data-chat-message-id]")].find((message) => message.dataset.chatMessageId === saved.anchorId);
+    if (anchor) body.scrollTop += anchor.getBoundingClientRect().top - body.getBoundingClientRect().top - saved.anchorOffset;
   }
 
   function renderChatDock() {
@@ -5541,10 +5609,13 @@ import { formatScienceCell } from "./format-cell.js";
       render();
       return;
     }
-    const followLatest = body.scrollHeight - body.scrollTop - body.clientHeight < 80;
+    rememberChatScroll(body);
+    body.dataset.chatProjectId = state.selectedId || "";
+    body.dataset.chatConversationId = selectedConversation()?.id || "";
+    body.dataset.chatHydrated = String(chatMessagesReady());
     body.innerHTML = chatThreadMarkup();
     composerHost.innerHTML = chatDockComposerMarkup();
-    if (followLatest) body.scrollTop = body.scrollHeight;
+    restoreChatScroll(body);
   }
 
   /**
@@ -5565,7 +5636,7 @@ import { formatScienceCell } from "./format-cell.js";
   async function startComposerTurn(options = {}) {
     const project = selectedProject();
     const conversation = selectedConversation();
-    if (!project || !conversation || state.composerSending) return;
+    if (!project || !conversation || state.composerSending || !chatMessagesReady()) return;
     const needsInitialRun = !options.forceAppend && state.messages.length === 1 && state.messages[0].role === "user" && !state.messages.some((message) => message.role === "assistant");
     const content = state.composerDraft.trim();
     const selectionContext = !needsInitialRun && state.mode === "manuscript" ? state.manuscriptSelectionContext : null;
@@ -6015,6 +6086,7 @@ import { formatScienceCell } from "./format-cell.js";
   }
 
   function render() {
+    rememberChatScroll();
     if (state.drawer && window.matchMedia("(max-width: 680px)").matches) state.railCollapsed = true;
     const selectedRendererIdentity = (() => {
       if (state.mode !== "lab" || state.inspectedArtifactVersion) return null;
@@ -6030,6 +6102,7 @@ import { formatScienceCell } from "./format-cell.js";
     root.innerHTML = workspace();
     i18n.localizeTree(root);
     root.setAttribute("aria-busy", "false");
+    restoreChatScroll();
     const contentPane = document.querySelector(".contentPane");
     if (contentPane) contentPane.scrollTop = state.scrollByMode[state.mode] || 0;
     if (state.modal) document.querySelector(state.newProjectStep === "field" ? "[data-research-template]" : 'input[name="title"]')?.focus();

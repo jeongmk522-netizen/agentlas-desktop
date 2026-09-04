@@ -13,6 +13,11 @@ import {
   resolveToolApproval,
 } from "../runtime/tool-approval";
 import {
+  listPendingAskUserRequests,
+  onAskUserLifecycle,
+  submitAskUserAnswer,
+} from "../confirm/ask-user";
+import {
   browserResolveApproval,
   listPendingBrowserApprovals,
   onBrowserApprovalLifecycle,
@@ -176,6 +181,7 @@ import {
   type MobileBridgeToolCallDisplayDto,
   type MobileBridgeToolPayloadSize,
   type MobileBridgeToolPayloadSummaryDto,
+  type MobileBridgeUserInputDto,
 } from "../../shared/mobile-bridge";
 import { buildToolCallDisplay, normalizeToolCall } from "../../shared/tool-call-detail";
 import type { MobileBridgeHostIdentity } from "./pairing";
@@ -214,6 +220,7 @@ const MOBILE_ONE_ARTIFACT_CURSOR_RE = /^[A-Za-z0-9_-]{1,512}$/;
 /** 도구 승인 id — tool-approval 이 발급하는 `approval:<t>:<rand>` / `denied:<t>:<rand>`. */
 const TOOL_APPROVAL_ID_RE = /^(approval|denied):[a-z0-9]{1,16}:[a-z0-9]{1,16}$/;
 const TERMINAL_APPROVAL_ID_RE = /^approval:[a-z0-9]{1,16}:[a-z0-9]{1,16}$/;
+const ASK_USER_REQUEST_ID_RE = /^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/iu;
 const EVENT_TEXT_MAX_BYTES = 200_000;
 const EVENT_DELTA_MAX_BYTES = 64_000;
 const EVENT_ONE_ARTIFACT_LIMIT = 32;
@@ -2815,6 +2822,23 @@ export class AgentlasDesktopMobileBridgeAuthority implements MobileBridgeAuthori
         }, request.method);
       }
 
+      case "runtime.submitUserInput": {
+        const params = guardedParams(request, ["requestId", "answer"]);
+        const requestId = requiredIdentifier(params, "requestId", ASK_USER_REQUEST_ID_RE);
+        let answer: string | null = null;
+        if (params.answer !== null) {
+          answer = requiredText(params, "answer", 4_000).trim();
+          if (!answer) throw new TypeError("answer must be non-empty text or null");
+        }
+        const resolved = submitAskUserAnswer(requestId, answer);
+        this.scheduleSnapshotUpdated();
+        return asJsonValue({
+          resolved,
+          requestId,
+          idempotencyKey: request.idempotencyKey ?? null,
+        }, request.method);
+      }
+
       // DESKTOP_MOBILE_BRIDGE: Automation reads/writes use the same SQLite store
       // and scheduler as IPC; prompt/graph/trigger secrets stay in the projector.
       case "automations.list": {
@@ -3851,6 +3875,35 @@ export class AgentlasDesktopMobileBridgeAuthority implements MobileBridgeAuthori
           ...(approval.agentId ? { agentId: approval.agentId } : {}),
         };
       });
+    const pendingUserInputs: MobileBridgeUserInputDto[] = listPendingAskUserRequests()
+      .flatMap((request) => {
+        // Only a live One/Work chat-bound request is a Mobile surface. Generic
+        // Desktop prompts stay local, and an expired row never becomes a card.
+        if (!request.chatId || !getChat(request.chatId) || request.expiresAt <= Date.now()) return [];
+        const question = boundedRedactedText(request.question, 1_200);
+        if (!question) return [];
+        const options = request.options.flatMap((option) => {
+          const label = boundedRedactedText(option.label, 200);
+          if (!label) return [];
+          const description = option.description
+            ? boundedRedactedText(option.description, 400)
+            : "";
+          return [{ label, ...(description ? { description } : {}) }];
+        }).slice(0, 8);
+        const askedBy = request.askedBy
+          ? boundedRedactedText(request.askedBy, 200)
+          : "";
+        return [{
+          requestId: request.requestId,
+          question,
+          options,
+          allowFreeText: request.allowFreeText,
+          ...(askedBy ? { askedBy } : {}),
+          chatId: request.chatId,
+          createdAt: new Date(request.createdAt).toISOString(),
+          expiresAt: new Date(request.expiresAt).toISOString(),
+        }];
+      });
     const ontology = await this.projectOntology(this.ontologyRefreshRequested);
     return projectMobileBridgeSnapshot({
       hostIdentity: this.options.hostIdentity,
@@ -3860,6 +3913,7 @@ export class AgentlasDesktopMobileBridgeAuthority implements MobileBridgeAuthori
       includeMessagesForChatIds: activeChatIds,
       pendingBrowserApprovals,
       pendingToolApprovals,
+      pendingUserInputs,
       ontology,
     });
   }
@@ -3920,6 +3974,11 @@ export class AgentlasDesktopMobileBridgeAuthority implements MobileBridgeAuthori
       onBrowserApprovalLifecycle((event) => this.forwardBrowserApproval(event)),
       onToolApprovalRequested(() => this.scheduleSnapshotUpdated()),
       onToolApprovalResolved(() => this.scheduleSnapshotUpdated()),
+      onAskUserLifecycle((event) => {
+        if (!event.chatId || !getChat(event.chatId)) return false;
+        this.scheduleSnapshotUpdated();
+        return true;
+      }),
       onDesktopStoreChange((change) => {
         this.scheduleSnapshotUpdated(change.entity === "automation" ? change.id : undefined);
       }),

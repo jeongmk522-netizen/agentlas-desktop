@@ -93,6 +93,8 @@ export const MOBILE_BRIDGE_METHODS = [
   "invoke.activeChats",
   "confirm.listPending",
   "browser.resolveApproval",
+  // 동기 런타임 질문 — 기존 chat Decision/도구 승인과 섞지 않는다.
+  "runtime.submitUserInput",
   // 런타임 도구 승인 — 데스크탑의 승인 칩과 같은 결정을 폰에서도 답한다.
   // 투영만 하고 답을 못 하게 두면 "보이는데 누를 수 없는" 반쪽 배선이 된다.
   "runtime.resolveToolApproval",
@@ -154,6 +156,7 @@ export const MOBILE_BRIDGE_WRITE_METHODS: ReadonlySet<MobileBridgeMethod> = new 
   "invoke.steer",
   "invoke.cancel",
   "browser.resolveApproval",
+  "runtime.submitUserInput",
   "runtime.resolveToolApproval",
   "automations.toggle",
   "automations.runNow",
@@ -1202,6 +1205,23 @@ export interface MobileBridgePendingConfirmationDto {
 }
 
 /**
+ * One live Desktop `askUser` request. This is neither a chat Decision nor a
+ * permission approval: Mobile may submit exactly one answer (or decline) to
+ * the waiting runtime request id.
+ */
+export interface MobileBridgeUserInputDto {
+  requestId: string;
+  question: string;
+  options: Array<{ label: string; description?: string }>;
+  allowFreeText: boolean;
+  askedBy?: string;
+  /** Only chat-bound One/Work questions cross the bridge. */
+  chatId: string;
+  createdAt: string;
+  expiresAt: string;
+}
+
+/**
  * Main-owned Decision projection for One Mobile. The nested view is the exact
  * closed `OneDecisionViewV1` produced by Desktop Main; Mobile must never infer
  * risk, options, or authority from the legacy pending-confirmation DTO.
@@ -1923,6 +1943,8 @@ export interface MobileBridgeSnapshot {
    * 새 빌드는 대기가 없을 때 빈 배열을 보내 폰이 낡은 카드를 지울 수 있게 한다.
    */
   pendingToolApprovals?: MobileBridgeToolApprovalDto[];
+  /** Live synchronous runtime questions; [] clears cards resolved elsewhere. */
+  pendingUserInputs?: MobileBridgeUserInputDto[];
   automations: MobileBridgeAutomationDto[];
   usage: MobileBridgeUsageProviderDto[];
   activeChatIds: string[];
@@ -2650,6 +2672,15 @@ function validateParams(method: MobileBridgeMethod, params: Record<string, unkno
             validateEnum(params, "decision", ["allow_once", "allow_session", "allow_always", "deny"], false),
           )
         : "runtime.resolveToolApproval accepts only id and decision";
+    case "runtime.submitUserInput":
+      return hasOnlyKeys(params, ["requestId", "answer"])
+        ? firstError(
+            requiredString(params, "requestId", 160),
+            params.answer === null
+              ? null
+              : requiredString(params, "answer", 4_000),
+          )
+        : "runtime.submitUserInput accepts only requestId and answer";
     case "automations.get":
     case "automations.runNow":
       return hasOnlyKeys(params, ["id"]) ? requiredString(params, "id") : `${method} accepts only id`;

@@ -101,6 +101,7 @@ import {
   type MobileBridgeAutomationDto,
   type MobileBridgeBrowserApprovalDto,
   type MobileBridgeToolApprovalDto,
+  type MobileBridgeUserInputDto,
   type MobileBridgeChatDto,
   type MobileBridgeChatFileDto,
   type MobileBridgeChatImageDto,
@@ -259,6 +260,8 @@ export interface MobileBridgeProjectionOptions {
   pendingBrowserApprovals?: readonly MobileBridgeBrowserApprovalDto[];
   /** 실행 전에 사람을 기다리는 런타임 도구 승인(live 만). 없으면 빈 배열로 내려 낡은 카드를 지운다. */
   pendingToolApprovals?: readonly MobileBridgeToolApprovalDto[];
+  /** Chat-bound synchronous runtime questions. */
+  pendingUserInputs?: readonly MobileBridgeUserInputDto[];
   now?: Date;
   ontology?: {
     supported: boolean;
@@ -1709,6 +1712,7 @@ export async function projectMobileBridgeSnapshot(
     pendingConfirmations: projectMobileBridgeConfirmations(pendingConfirmations),
     pendingBrowserApprovals: [...(options.pendingBrowserApprovals ?? [])],
     pendingToolApprovals: [...(options.pendingToolApprovals ?? [])],
+    pendingUserInputs: [...(options.pendingUserInputs ?? [])],
     automations: automationsDto(),
     usage: projectMobileBridgeUsage(usage),
     activeChatIds,

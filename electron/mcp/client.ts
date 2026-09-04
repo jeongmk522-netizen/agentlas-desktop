@@ -178,6 +178,7 @@ import {
   runnerFailureFromError,
   type Runner,
   type RunnerFailure,
+  type RunnerEvents,
   type RunnerRequest,
   SURFACE_INTENT_MARKER,
   UNATTENDED_NO_ASK_DIRECTIVE,
@@ -4565,6 +4566,61 @@ ${effectiveUserPrompt}`;
       // 상태줄과 달리 대화에 남는다.
       onNotice: (notice: NonNullable<McpInvocationEvent["notice"]>) => sink({ kind: "notice", notice }),
     };
+    // Direct interactive fallback is a recovery chain, not an unbounded retry
+    // loop. The set lives for the whole invocation so a later Stormbreaker or
+    // One recovery pass cannot resurrect a runtime that already failed here.
+    const DIRECT_RUNTIME_RECOVERY_MAX_ATTEMPTS = 4;
+    const DIRECT_RUNTIME_RECOVERY_MAX_ELAPSED_MS = 30_000;
+    const DIRECT_RUNTIME_RECOVERY_MAX_RETRY_EVENTS = 3;
+    const attemptedRuntimeKeys = new Set<string>();
+    const attemptedRuntimeReceipts = new Map<string, {
+      kind: RuntimeStatus["kind"];
+      backend: RuntimeStatus["backend"];
+      source: string;
+      acpAgentId: string | null;
+      model: string | null;
+      attempt: number;
+    }>();
+    let runnerEventGeneration = 0;
+    const runtimeAttemptKey = (runtime: RuntimeStatus): string => JSON.stringify([
+      runtime.kind,
+      runtime.backend,
+      runtime.source,
+      runtime.acpAgentId ?? null,
+      runtime.model ?? null,
+    ]);
+    const runtimeAttemptReceipt = (runtime: RuntimeStatus, attempt: number) => ({
+      kind: runtime.kind,
+      backend: runtime.backend,
+      source: runtime.source,
+      acpAgentId: runtime.acpAgentId ?? null,
+      model: runtime.model ?? null,
+      attempt,
+    });
+    // A CLI can resolve its promise before a buffered stream callback arrives.
+    // Seal each runner's callbacks to its own generation so a late callback
+    // cannot mutate the next runtime's counters, artifacts, or transcript.
+    const createAttemptRunnerEvents = (): { events: RunnerEvents; settle: () => void } => {
+      const generation = ++runnerEventGeneration;
+      let settled = false;
+      const forward = <T extends unknown[]>(handler: (...args: T) => void) => (...args: T): void => {
+        if (settled || generation !== runnerEventGeneration || signal?.aborted) return;
+        handler(...args);
+      };
+      return {
+        events: {
+          onPartial: forward(runnerEvents.onPartial),
+          onStatus: forward(runnerEvents.onStatus),
+          onTool: forward(runnerEvents.onTool),
+          onUsage: forward(runnerEvents.onUsage),
+          onThinking: forward(runnerEvents.onThinking),
+          onNotice: forward(runnerEvents.onNotice),
+        },
+        settle: () => {
+          settled = true;
+        },
+      };
+    };
     const directRuntimeFallbackAllowed =
       !req.agentAppMode
       && !isUnattendedExecution(executionContext)
@@ -4572,31 +4628,102 @@ ${effectiveUserPrompt}`;
     const invokeCurrentRuntime = async (request: RunnerRequest): Promise<Awaited<ReturnType<Runner>>> => {
       const currentPicked = picked;
       if (!currentPicked) throw new Error("no-runner");
+      const recoveryStartedAt = Date.now();
+      let recoveryRetryEvents = 0;
+      let attemptCount = 0;
+      let originalFailure: RunnerFailure | null = null;
+      let terminalNoticeEmitted = false;
       let requestForRuntime: RunnerRequest = {
         ...runnerRequestForRuntime(active, currentPicked, request.userPrompt),
         images: request.images,
       };
-      while (true) {
+      const emitTerminalRecoveryFailure = (
+        result: Awaited<ReturnType<Runner>>,
+        reason: "candidate-exhausted" | "attempt-limit" | "time-limit" | "event-limit",
+      ): Awaited<ReturnType<Runner>> => {
+        const failure = result.failure;
+        if (!failure || terminalNoticeEmitted) return result;
+        terminalNoticeEmitted = true;
+        const elapsedMs = Math.max(0, Date.now() - recoveryStartedAt);
+        const details = JSON.stringify({
+          schema: "agentlas.runtime-recovery-terminal/v1",
+          code: "runtime-recovery-exhausted",
+          reason,
+          elapsedMs,
+          attempts: attemptCount,
+          retryEvents: recoveryRetryEvents,
+          attemptedRuntimeCount: attemptedRuntimeKeys.size,
+          runtimes: [...attemptedRuntimeReceipts.values()],
+          originalFailure: originalFailure ?? failure,
+          lastFailure: failure,
+        });
+        const koMessage = "실행 환경 복구 후보를 모두 확인했지만 실행을 끝내지 못했습니다. 원래 실패 원인은 자세히에서 확인하세요.";
+        const enMessage = "All bounded runtime recovery candidates were checked, but the run could not complete. See details for the original failure.";
+        sink({
+          kind: "notice",
+          model: failure.runtime,
+          modelRole: invocationModelRole,
+          notice: {
+            level: "error",
+            code: "runtime-recovery-exhausted",
+            message: locale === "ko" ? koMessage : enMessage,
+            i18n: { ko: koMessage, en: enMessage },
+            details,
+          },
+        });
+        return result;
+      };
+      while (attemptCount < DIRECT_RUNTIME_RECOVERY_MAX_ATTEMPTS) {
+        if (signal?.aborted) throw new Error(tStatus(locale, "aborted"));
+        if (Date.now() - recoveryStartedAt >= DIRECT_RUNTIME_RECOVERY_MAX_ELAPSED_MS) {
+          if (!originalFailure) throw new Error("runtime recovery time budget exhausted");
+          return emitTerminalRecoveryFailure({ text: "", failure: originalFailure }, "time-limit");
+        }
+        attemptCount += 1;
+        const selectedRuntime = active;
+        const selectedRuntimeKey = runtimeAttemptKey(selectedRuntime);
+        attemptedRuntimeKeys.add(selectedRuntimeKey);
+        attemptedRuntimeReceipts.set(
+          selectedRuntimeKey,
+          runtimeAttemptReceipt(selectedRuntime, attemptCount),
+        );
+        const attemptEvents = createAttemptRunnerEvents();
         let result: Awaited<ReturnType<Runner>>;
         try {
           const selected = picked;
           if (!selected) throw new Error("no-runner");
-          result = await selected.runner(requestForRuntime, runnerEvents);
+          result = await selected.runner(requestForRuntime, attemptEvents.events);
         } catch (error) {
           if (!directRuntimeFallbackAllowed || signal?.aborted) throw error;
           result = {
             text: "",
             failure: runnerFailureFromError(error, active.kind),
           };
+        } finally {
+          attemptEvents.settle();
         }
         if (!result.failure || !directRuntimeFallbackAllowed || signal?.aborted) return result;
         const failed = result.failure;
+        originalFailure = originalFailure ?? failed;
         const fallback = rolePriorityRuntimes(runtimes, "orchestrator", {
           failedRuntime: active,
           failure: failed,
-        })[0];
+        }).find((candidate) => {
+          const candidateKey = runtimeAttemptKey(candidate);
+          return candidateKey !== selectedRuntimeKey && !attemptedRuntimeKeys.has(candidateKey);
+        });
         const fallbackPicked = fallback ? pickRunner(fallback) : null;
-        if (!fallback || !fallbackPicked) return result;
+        if (!fallback || !fallbackPicked) return emitTerminalRecoveryFailure(result, "candidate-exhausted");
+        if (attemptCount >= DIRECT_RUNTIME_RECOVERY_MAX_ATTEMPTS) {
+          return emitTerminalRecoveryFailure(result, "attempt-limit");
+        }
+        if (Date.now() - recoveryStartedAt >= DIRECT_RUNTIME_RECOVERY_MAX_ELAPSED_MS) {
+          return emitTerminalRecoveryFailure(result, "time-limit");
+        }
+        if (recoveryRetryEvents >= DIRECT_RUNTIME_RECOVERY_MAX_RETRY_EVENTS) {
+          return emitTerminalRecoveryFailure(result, "event-limit");
+        }
+        recoveryRetryEvents += 1;
         if (oneControllerFallbackEligible) emitControllerRuntimeFallback(fallback, failed);
         sink({
           kind: "tool-use",
@@ -4612,6 +4739,7 @@ ${effectiveUserPrompt}`;
           images: request.images,
         };
       }
+      throw new Error("runtime recovery loop exited without a terminal result");
     };
     const advanceUsageFloor = () => {
       liveUsageFloor = liveUsageHigh;

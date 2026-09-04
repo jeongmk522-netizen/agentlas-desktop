@@ -7,22 +7,43 @@
 }
 :root {
   color-scheme: light;
+  /* Science owns this namespace. These tokens never escape the extension document. */
+  --science-surface-0: #FFFFFF;
+  --science-surface-1: #F7F7F7;
+  --science-surface-2: #EFEFEF;
+  --science-border-subtle: #E8E8E8;
+  --science-border-default: #DDDDDD;
+  --science-border-strong: #CFCFCF;
+  --science-ink: #363535;
+  --science-radius-card: 16px;
+  --science-radius-control: 12px;
+  --science-radius-button-l: 24px;
+  --science-radius-button-m: 20px;
+  --science-radius-button-s: 16px;
+  --science-button-l-height: 56px;
+  --science-button-m-height: 40px;
+  --science-button-s-height: 36px;
+  --science-icon-button-size: 40px;
+  --science-space-from-44: 32px;
+  --science-space-from-56: 24px;
+  --science-space-from-72: 12px;
+  --science-shadow-standard: 0 20px 26px rgba(54, 53, 53, .16);
   /* Pure white, with a neutral grey ramp. No paper cast, no warm tint: the rail and the
      tabstrip used to run two different greys (warm vs cool) and the seam showed.
      The app background and the card surface are now the same white, so separation comes from
      the border and the shadow rather than from a tint -- a card is told apart by its edge. */
-  --app-bg: #ffffff;
-  --sidebar-bg: #ffffff;
-  --surface: #ffffff;
-  --surface-subtle: var(--grey-50);
-  --surface-muted: var(--grey-100);
-  --ink: #1a1a1c;
+  --app-bg: var(--science-surface-1);
+  --sidebar-bg: var(--science-surface-0);
+  --surface: var(--science-surface-0);
+  --surface-subtle: var(--science-surface-1);
+  --surface-muted: var(--science-surface-2);
+  --ink: var(--science-ink);
   --muted: var(--grey-600);
   --muted-deep: var(--grey-700);
-  --line: var(--grey-200);
-  --line-strong: var(--grey-300);
-  --soft: var(--grey-100);
-  --soft-strong: var(--grey-200);
+  --line: var(--science-border-subtle);
+  --line-strong: var(--science-border-default);
+  --soft: var(--science-surface-1);
+  --soft-strong: var(--science-surface-2);
   /* Surface roles are named by where they live. The shell/rail is near-white,
      a panel or manuscript page is white, and only the preview stage behind that
      page is neutral grey. Keeping the roles separate prevents palette changes
@@ -44,15 +65,15 @@
      Neutral grey ramp. Every ad-hoc grey in this file resolves here; warm/paper greys
      do not come back. The older aliases above stay so the 470-odd existing references
      keep working while rows are migrated one at a time. */
-  --grey-50: #f7f7f9;
-  --grey-100: #f0f0f3;
-  --grey-200: #e4e4e9;
-  --grey-300: #d4d4da;
-  --grey-400: #b0b0b8;
+  --grey-50: var(--science-surface-1);
+  --grey-100: var(--science-surface-2);
+  --grey-200: var(--science-border-subtle);
+  --grey-300: var(--science-border-default);
+  --grey-400: var(--science-border-strong);
   --grey-500: #8c8c95;
   --grey-600: #6a6a73;
   --grey-700: #4a4a52;
-  --grey-800: #2e2e34;
+  --grey-800: var(--science-ink);
 
   /* Alarm is spent in exactly one place: a verification chain that actually broke.
      Everything else that "looks bad" is a different state with a different shape. */
@@ -62,13 +83,13 @@
   --notice-bg: rgba(190, 150, 30, .08);
 
   /* Elevation ladder (REF-09). Ring first, drop second; no new shadow values. */
-  --elev-1: 0 0 0 1px rgba(0,0,0,.05), 0 1px 1px rgba(0,0,0,.05), 0 2px 2px rgba(0,0,0,.05);
+  --elev-1: 0 1px 2px rgba(54, 53, 53, .06);
   /* A card on a pure-white page. The background and the card are the same white now, so what
      separates them is the edge and the lift -- a hairline ring for the boundary and one soft,
      wide shadow for the height. Kept faint on purpose: a card should look placed, not cut out. */
-  --elev-card: 0 0 0 1px rgba(0,0,0,.045), 0 1px 2px rgba(0,0,0,.04), 0 6px 16px rgba(0,0,0,.06);
-  --elev-3: 0 0 0 1px rgba(0,0,0,.05), 0 1px 1px rgba(0,0,0,.05), 0 2px 2px rgba(0,0,0,.05), 0 4px 4px rgba(0,0,0,.05), 0 8px 8px rgba(0,0,0,.05);
-  --elev-5: 0 0 0 1px rgba(0,0,0,.06), 0 1px 1px -.5px rgba(0,0,0,.06), 0 3px 3px -1.5px rgba(0,0,0,.06), 0 6px 6px -3px rgba(0,0,0,.06), 0 12px 12px -6px rgba(0,0,0,.06), 0 24px 24px -12px rgba(0,0,0,.06);
+  --elev-card: var(--science-shadow-standard);
+  --elev-3: var(--science-shadow-standard);
+  --elev-5: var(--science-shadow-standard);
 
   /* Motion budget: the board carried exactly one motion reference, and it was data
      movement, not decoration. */
@@ -3872,6 +3893,331 @@ dl dd:empty::after {
   /* 여기서부터는 줄여도 본문이 안 나온다. 사이드바를 아이콘만 남기고 접는다 --
      목적지는 아이콘으로 계속 닿을 수 있고, 본문은 읽을 수 있는 폭을 되찾는다. */
   .workspace, .workspace.drawerOpen { grid-template-columns: var(--rail-compact) minmax(0, 1fr); }
-  .workspace .railLabel, .workspace .projectNavLabel, .workspace .railBrandWordmark { display: none; }
+  .workspace .railLabel,
+  .workspace .projectNavLabel,
+  .workspace .railBrandWordmark,
+  .workspace .railCollapseButton,
+  .workspace .railBackButton,
+  .workspace .recentProjectsSection,
+  .workspace .currentProjectSection,
+  .workspace .railDisclosure,
+  .workspace .labChevron,
+  .workspace .labGroupLabel,
+  .workspace .labGroupDisclosure em,
+  .workspace .labEndChevron,
+  .workspace .labGroupChildren,
+  .workspace .researcherCard > span:nth-child(2),
+  .workspace .researcherCard button,
+  .workspace .railEmpty,
+  .workspace .newButton strong,
+  .workspace .projectWorkflowNav button > span { display: none; }
+  .workspace .railBrand { justify-content: center; padding-right: 0; padding-left: 0; }
+  .workspace .railBrandLockup { flex: 0 0 auto; justify-content: center; gap: 0; overflow: visible; }
+  .workspace .railBrandMark { width: 30px; height: 33px; flex-basis: 30px; }
+  .workspace .newButton { width: 40px; height: 40px; margin: 0 auto 12px; padding: 0; }
+  .workspace .labSection { border-top: 1px solid var(--line); }
+  .workspace .labList,
+  .workspace .labList.isOpen { display: block; padding: 8px 0; }
+  .workspace .labGroupDisclosure { width: 40px; height: 40px; justify-content: center; margin: 3px auto; padding: 0; }
+  .workspace .labGroupIcon { width: 18px; flex-basis: 18px; }
+  .workspace .labGroupIcon .uiIcon { width: 18px; height: 18px; }
+  .workspace .projectContextCard { margin: 0; }
+  .workspace .projectContextCard .currentProject { display: none; }
+  .workspace .projectWorkflowNav { max-height: none; overflow: visible; padding: 6px 0; }
+  .workspace .projectWorkflowNav button { width: 40px; min-height: 40px; margin: 1px auto; padding: 0; justify-content: center; gap: 0; }
+  .workspace .projectWorkflowNav button > .uiIcon { display: block; width: 18px; height: 18px; flex-basis: 18px; }
+  .workspace .researcherCard { justify-content: center; padding-right: 0; padding-left: 0; }
   :root { --science-chat-width: 288px; --science-chat-width-compact: 280px; }
+}
+
+/* Science-only owner token contract. Kept last so older component rules resolve to one
+   measurable geometry without exporting or overwriting any Desktop/One/Work token. */
+.modal,
+.scienceDialog,
+.bottomSheet,
+.chatDockFrame,
+.labStartView .labStartCard,
+.answerSkeletonCard,
+.scopeContract,
+.contractCriteriaCard,
+.decisionOptionCard,
+.evidenceCard,
+.resultArtifact,
+.hypothesisCard,
+.manuscriptDraftJobCard,
+.manuscriptProposalCard,
+.resultReviewActionCard,
+.skeletonCard,
+.submissionStatementCard,
+.publicationFigureStart {
+  border-color: var(--science-border-subtle);
+  border-radius: var(--science-radius-card);
+  background: var(--science-surface-0);
+  box-shadow: var(--science-shadow-standard);
+}
+
+.field input:not([type="radio"]):not([type="checkbox"]),
+.field textarea,
+.field select,
+input:not([type="radio"]):not([type="checkbox"]),
+textarea,
+select,
+.scienceDialog .field input,
+.scienceDialog .field textarea,
+.scienceDialog .field select,
+.statisticsLaunchGrid select,
+.statisticsMethodField input[type="search"],
+.statisticsMappingRowField select,
+.chatContextLine,
+.chatContextTokens > span,
+.citationChip,
+.composerModePill,
+.skeletonChip,
+.statusPill,
+.contractStatusPill,
+.originVersion {
+  border-radius: var(--science-radius-control);
+}
+
+.field > span:not(.fieldHint),
+.scienceDialog .field > span:not(.fieldHint),
+.bottomSheet .field > span:not(.fieldHint),
+.statisticsLaunchGrid .field > span:not(.fieldHint) {
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 20px;
+}
+
+.primaryButton,
+.secondaryButton,
+.newButton {
+  min-height: var(--science-button-m-height);
+  border-radius: var(--science-radius-button-m);
+  padding: 0 16px;
+  gap: 8px;
+  font-size: 16px;
+  font-weight: 600;
+  line-height: 20px;
+  letter-spacing: 0;
+}
+
+.startButton {
+  min-height: var(--science-button-l-height);
+  border-radius: var(--science-radius-button-l);
+  padding: 0 20px;
+  gap: 8px;
+  font-size: 18px;
+  font-weight: 600;
+  line-height: 24px;
+  letter-spacing: 0;
+}
+
+.topbar button.workspaceResearchTab {
+  height: var(--science-button-m-height) !important;
+  min-height: var(--science-button-m-height);
+  border: 1px solid var(--science-border-default) !important;
+  border-radius: var(--science-radius-button-m);
+  padding: 0 20px 0 12px !important;
+  gap: 4px;
+  font-size: 16px;
+  font-weight: 600;
+  line-height: 20px;
+}
+
+.primaryButton:has(.uiIcon),
+.secondaryButton:has(.uiIcon),
+.newButton:has(.uiIcon),
+.startButton:has(.uiIcon) {
+  padding-right: 20px;
+  padding-left: 12px;
+  gap: 4px;
+}
+
+.journalActions button,
+.topActions > button,
+.vegaEditorActions button,
+.statisticsFigureActions button,
+.statisticsFigureExport button,
+.dataTableSurface > footer button,
+.originStrip button,
+.evidenceGraphExactButton,
+.failClosed > button {
+  min-height: var(--science-button-s-height);
+  border-radius: var(--science-radius-button-s);
+  padding: 0 12px;
+  gap: 6px;
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 20px;
+  letter-spacing: 0;
+}
+
+.railCollapseButton,
+.workspaceSidebarReveal,
+.manuscriptSectionHeader button,
+.researcherCard button,
+.workspaceTabClose,
+.workspaceTabAdd,
+.workspaceTabOverflow,
+.chatHeaderAction,
+.composerBar button,
+.scienceDialog > header button,
+.bottomSheet > header button {
+  width: var(--science-icon-button-size);
+  height: var(--science-icon-button-size) !important;
+  min-width: var(--science-icon-button-size);
+  min-height: var(--science-icon-button-size);
+  flex-basis: var(--science-icon-button-size);
+  border-radius: var(--science-radius-control) !important;
+  padding: 0;
+}
+
+button:has(> .uiIcon:only-child),
+button:has(> span > .uiIcon:only-child) {
+  width: var(--science-icon-button-size);
+  height: var(--science-icon-button-size) !important;
+  min-width: var(--science-icon-button-size);
+  min-height: var(--science-icon-button-size);
+  border-radius: var(--science-radius-control) !important;
+  padding: 0;
+}
+
+.modalActions,
+.scienceDialog > footer,
+.bottomSheet > footer {
+  gap: 32px;
+}
+
+.workspaceTabFrame,
+.decisionOptionCard,
+.resultReviewChoices fieldset label,
+.resultReviewActionCard,
+.evidenceGraphReviewOptions label {
+  border: 1px solid var(--science-border-default);
+}
+
+.workspaceTabFrame:hover,
+.decisionOptionCard:hover,
+.resultReviewChoices fieldset label:hover,
+.resultReviewActionCard:hover,
+.evidenceGraphReviewOptions label:hover,
+.secondaryButton:hover {
+  background-color: var(--science-surface-1);
+}
+
+.workspaceTabFrame[data-selected="true"],
+.decisionOptionCard:has(input:checked),
+.resultReviewChoices fieldset label:has(input:checked),
+.resultReviewActionCard:has(input:checked),
+.evidenceGraphReviewOptions label:has(input:checked) {
+  border: 2px solid var(--science-ink);
+  box-shadow: none;
+}
+
+.topbar button.workspaceResearchTab[aria-selected="true"] {
+  border: 2px solid var(--science-ink) !important;
+}
+
+.decisionOptionCard:has(input:checked) .decisionOptionControl,
+.resultReviewChoices label:has(input:checked) input,
+.resultReviewActionCard:has(input:checked) input,
+.evidenceGraphReviewOptions label:has(input:checked) input {
+  border-color: var(--science-ink);
+  background: var(--science-ink);
+}
+
+.evidenceGraphState .primaryButton {
+  max-width: 100%;
+  white-space: normal;
+  font-size: 16px;
+}
+
+.researchView,
+.acquisitionView,
+.analysisRunsView,
+.resultsView,
+.submissionArchiveView {
+  padding-bottom: var(--science-space-from-72);
+}
+
+.evidenceGraphState { margin-top: var(--science-space-from-56); }
+.evidenceGraphView { padding-bottom: var(--science-space-from-56); }
+.manuscriptPaperHost { padding-bottom: var(--science-space-from-56); }
+.analysisPlanView { margin-bottom: var(--science-space-from-56); }
+.answerColumn > h1 { overflow-wrap: anywhere; word-break: break-word; }
+.analysisPlanView h1 { max-width: 100%; overflow-wrap: anywhere; word-break: break-word; }
+.bottomSheet { max-height: calc(100vh - var(--science-space-from-44)); }
+.researchDecisionSheet { width: min(360px, calc(100vw - var(--science-space-from-44))); }
+.manuscriptWorkGrid[data-inspector-open="true"] .manuscriptInspector {
+  width: min(286px, calc(100% - var(--science-space-from-44)));
+}
+
+.modal.manuscriptStartModal {
+  display: block;
+  overflow-y: auto;
+}
+.manuscriptStartModal .modalActions {
+  position: sticky;
+  z-index: 2;
+  bottom: 0;
+  padding: 12px 0;
+  background: var(--science-surface-0);
+}
+
+@media (max-width: 900px) {
+  .workspace .newButton { padding: 0; gap: 0; }
+}
+
+@media (max-width: 680px) {
+  .topActions { display: none; }
+  .workspaceBody {
+    min-height: 0;
+    flex-direction: column;
+    column-gap: 0;
+    padding-right: 0;
+  }
+  .workspaceCenter { min-height: 0; flex: 1 1 58%; }
+  .chatDock,
+  .workspace[data-workspace-mode="session"] .chatDock,
+  .workspace[data-workspace-mode="manuscript"] .chatDock {
+    width: 100%;
+    min-width: 0;
+    height: 42%;
+    min-height: 140px;
+    flex: 0 0 42%;
+    padding: 8px;
+  }
+  .topbar button.workspaceResearchTab {
+    width: var(--science-icon-button-size);
+    min-width: var(--science-icon-button-size);
+    flex-basis: var(--science-icon-button-size);
+    border-radius: var(--science-radius-control);
+    padding: 0 !important;
+  }
+  .workspaceResearchTab .workspaceTabLabel { display: none; }
+  .analysisPlanView { width: calc(100% - 24px); }
+  .analysisPlanView h1 { font-size: 20px; line-height: 1.25; }
+  .modal.manuscriptStartModal { width: 100%; }
+  .manuscriptStartModal > header { padding: 20px 16px 16px; }
+  .manuscriptStartModal > header h2 { font-size: 22px; }
+  .manuscriptStartGrid {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 16px;
+    padding: 16px 16px 8px;
+  }
+  .manuscriptStartFields,
+  .manuscriptStartFields .field,
+  .manuscriptStartFields input,
+  .manuscriptStartFields textarea,
+  .manuscriptStartFields select { min-width: 0; max-width: 100%; }
+  .manuscriptStartGate { grid-template-columns: minmax(0, 1fr); margin: 12px 16px 0; }
+  .manuscriptStartGate strong { white-space: normal; }
+  .manuscriptStartModal .formError { margin-right: 16px; margin-left: 16px; }
+  .manuscriptStartModal .modalActions { gap: 12px; padding-right: 16px; padding-left: 16px; }
+  .modalActions,
+  .scienceDialog > footer,
+  .bottomSheet > footer { gap: 24px; }
+  .scienceDialog > footer > span,
+  .bottomSheet > footer > span,
+  .contractFooterContext { display: none; }
 }

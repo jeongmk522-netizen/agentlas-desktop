@@ -3829,19 +3829,27 @@ export class AgentlasDesktopMobileBridgeAuthority implements MobileBridgeAuthori
     // live 요청만 폰에 보낸다 — 사후 고지(post-denial)는 데스크탑에서도 카드가 아니다.
     const pendingToolApprovals = listPendingToolApprovals()
       .filter((approval) => approval.mode === "live")
-      .map((approval) => ({
-        id: approval.id,
-        runtime: approval.runtime,
-        tool: approval.tool,
-        ...(approval.detail ? { detail: approval.detail.slice(0, 2_000) } : {}),
-        ...(approval.cwd ? { cwd: approval.cwd } : {}),
-        mode: approval.mode,
-        ...(approval.deniedBy ? { deniedBy: approval.deniedBy } : {}),
-        requestedAt: approval.requestedAt,
-        ...(approval.chatId ? { chatId: approval.chatId } : {}),
-        ...(approval.capability ? { capability: approval.capability } : {}),
-        ...(approval.agentId ? { agentId: approval.agentId } : {}),
-      }));
+      .map((approval) => {
+        // `expiresAt` was added after the original tool-approval event. Read it
+        // structurally so this bridge remains source-compatible with an older
+        // runtime registry while newer Desktop builds forward the exact
+        // deadline to Mobile.
+        const expiresAt = (approval as { expiresAt?: unknown }).expiresAt;
+        return {
+          id: approval.id,
+          runtime: approval.runtime,
+          tool: approval.tool,
+          ...(approval.detail ? { detail: approval.detail.slice(0, 2_000) } : {}),
+          ...(approval.cwd ? { cwd: approval.cwd } : {}),
+          mode: approval.mode,
+          ...(approval.deniedBy ? { deniedBy: approval.deniedBy } : {}),
+          requestedAt: approval.requestedAt,
+          ...(typeof expiresAt === "string" && expiresAt ? { expiresAt } : {}),
+          ...(approval.chatId ? { chatId: approval.chatId } : {}),
+          ...(approval.capability ? { capability: approval.capability } : {}),
+          ...(approval.agentId ? { agentId: approval.agentId } : {}),
+        };
+      });
     const ontology = await this.projectOntology(this.ontologyRefreshRequested);
     return projectMobileBridgeSnapshot({
       hostIdentity: this.options.hostIdentity,

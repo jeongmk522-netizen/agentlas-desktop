@@ -1559,6 +1559,8 @@ export interface MobileBridgeToolApprovalDto {
   mode: "live" | "post-denial";
   deniedBy?: "runtime-headless" | "sandbox";
   requestedAt: string;
+  /** Main's exact automatic-denial deadline for live requests. */
+  expiresAt?: string;
   chatId?: string;
   /** 능력 클래스(execute|edit|delete|network|other) — "항상 허용"이 무엇을 여는지 카드가 말한다. */
   capability?: string;

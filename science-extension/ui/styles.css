@@ -1884,7 +1884,7 @@ button.manuscriptBinding:hover { border-color: var(--line-strong); background: v
 .projectFolderHeroAsset img { width: 100%; height: 100%; display: block; object-fit: cover; }
 .projectFolderHeroCopy { min-width: 0; }
 .projectFolderHeroCopy > span, .projectFolderContents > header span { color: var(--grey-500); font-size: 10px; font-weight: 720; letter-spacing: .08em; text-transform: uppercase; }
-.projectFolderHeroCopy h1 { overflow-wrap: anywhere; margin: 6px 0 6px; font-size: clamp(24px, 3.2vw, 38px); line-height: 1.12; letter-spacing: -.04em; }
+.projectFolderHeroCopy h1 { overflow-wrap: anywhere; margin: 6px 0 6px; font-size: clamp(24px, 3.2vw, 38px); line-height: 1.12; letter-spacing: 0; word-spacing: .06em; }
 .projectFolderHeroCopy p { max-width: 720px; margin: 0; color: var(--grey-600); font-size: 12px; line-height: 1.55; overflow-wrap: anywhere; }
 .projectFolderHero > .primaryButton { min-height: 40px; display: inline-flex; align-items: center; gap: 7px; white-space: nowrap; }
 .projectFolderHero > .primaryButton .uiIcon { width: 14px; height: 14px; }
@@ -1976,8 +1976,8 @@ button.manuscriptBinding:hover { border-color: var(--line-strong); background: v
 .researchTemplateCard > img { width: 104px; height: 78px; display: block; border-radius: var(--science-radius-control); object-fit: cover; }
 .researchTemplateCard > span { min-width: 0; }
 .researchTemplateCard strong, .researchTemplateCard em { display: block; }
-.researchTemplateCard strong { color: var(--ink); font-size: 13px; line-height: 1.35; overflow-wrap: anywhere; }
-.researchTemplateCard em { display: block; margin-top: 5px; color: var(--grey-600); font-size: 10px; font-style: normal; line-height: 1.45; }
+.researchTemplateCard strong { color: var(--ink); font-size: 15px; font-weight: 600; line-height: 20px; overflow-wrap: anywhere; }
+.researchTemplateCard em { display: block; margin-top: 5px; color: var(--grey-600); font-size: 12px; font-style: normal; line-height: 16px; }
 .researchTemplateCard > i { position: absolute; top: 7px; right: 7px; width: 20px; height: 20px; display: none; place-items: center; border-radius: 50%; background: var(--ink); color: #fff; font-size: 11px; font-style: normal; }
 .researchTemplateCard[aria-pressed="true"] > i { display: grid; }
 .projectDetailsModal { width: min(680px, 100%) !important; }
@@ -1987,8 +1987,8 @@ button.manuscriptBinding:hover { border-color: var(--line-strong); background: v
 .selectedResearchTemplate img { width: 112px; height: 84px; display: block; border-radius: var(--science-radius-control); object-fit: cover; }
 .selectedResearchTemplate > span { min-width: 0; }
 .selectedResearchTemplate strong, .selectedResearchTemplate em { display: block; }
-.selectedResearchTemplate strong { color: var(--ink); font-size: 14px; }
-.selectedResearchTemplate em { display: block; margin-top: 5px; color: var(--grey-600); font-size: 10px; font-style: normal; line-height: 1.45; }
+.selectedResearchTemplate strong { color: var(--ink); font-size: 15px; font-weight: 600; line-height: 20px; }
+.selectedResearchTemplate em { display: block; margin-top: 5px; color: var(--grey-600); font-size: 12px; font-style: normal; line-height: 16px; }
 .selectedResearchTemplate small { color: var(--grey-600); font-size: 10px; white-space: nowrap; }
 
 @media (max-width: 1280px) and (min-width: 1280px) {

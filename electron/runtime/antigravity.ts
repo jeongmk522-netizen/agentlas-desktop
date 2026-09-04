@@ -38,6 +38,10 @@ import { BROWSER_CDP_LAUNCHER_BASENAME } from "../mcp-tools/browser-cdp-launcher
  */
 
 const ANTIGRAVITY_KIND = "antigravity";
+// `agy models` is a network-backed catalog. A cold 1.1.26 fetch can remain
+// silent for more than five seconds before returning a complete list; timing
+// it out there leaves a first-time user's picker empty despite a healthy CLI.
+export const ANTIGRAVITY_MODEL_DISCOVERY_TIMEOUT_MS = 12_000;
 
 export function antigravityCandidatePaths(
   platform = process.platform,
@@ -135,7 +139,7 @@ async function probeAgyModels(binary: string): Promise<DiscoveryOutcome> {
       // pipe alive. Preserve the validated stdout instead of turning a healthy
       // catalog into an empty engine-setting picker.
       finish({ timedOut: parseAgyModels(stdout).length === 0 });
-    }, 5_000);
+    }, ANTIGRAVITY_MODEL_DISCOVERY_TIMEOUT_MS);
     timer.unref?.();
     child.stdout?.on("data", (chunk: Buffer) => {
       if (stdout.length < 32_768) stdout = (stdout + probeDecoder.write(chunk)).slice(0, 32_768);

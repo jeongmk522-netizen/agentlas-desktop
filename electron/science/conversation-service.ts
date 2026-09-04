@@ -251,7 +251,10 @@ export class ScienceConversationService {
   }
 
   attach(input: { projectId: string; conversationId: string }): ScienceComposerAttachResult | null {
-    const turn = this.store.getActiveTurn(input.projectId, input.conversationId);
+    // A fast failure may finish before the renderer subscribes. Reattach its
+    // durable receipt as well; absence of an active run does not mean ready.
+    const turn = this.store.getActiveTurn(input.projectId, input.conversationId)
+      ?? this.store.getLatestTurn(input.projectId, input.conversationId);
     if (!turn) return null;
     return { turn, events: this.store.listTurnEvents(input.projectId, turn.id) };
   }

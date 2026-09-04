@@ -10200,6 +10200,14 @@ export class ScienceStore {
     return row ? this.verifiedTurnFromRow(row) : null;
   }
 
+  getLatestTurn(projectId: string, conversationId: string): ScienceTurn | null {
+    if (!UUID_RE.test(projectId) || !UUID_RE.test(conversationId)) return null;
+    const row = this.db.prepare(`SELECT * FROM science_turns
+      WHERE project_id = ? AND conversation_id = ?
+      ORDER BY created_at DESC, id DESC LIMIT 1`).get(projectId, conversationId) as Record<string, unknown> | undefined;
+    return row ? this.verifiedTurnFromRow(row) : null;
+  }
+
   private verifiedTurnFromRow(row: Record<string, unknown>): ScienceTurn {
     const turn = scienceTurnFromRow(row);
     if (turn.origin === "user" && (turn.continuationBasis !== null || turn.continuationBasisSha256 !== null)) {

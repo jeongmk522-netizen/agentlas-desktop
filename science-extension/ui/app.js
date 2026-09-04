@@ -745,6 +745,7 @@ import { formatScienceCell } from "./format-cell.js";
     state.citationsByMessage = messageEvidence.citations;
     state.evidenceById = messageEvidence.spans;
     state.activeTurn = attached?.turn || state.activeTurn;
+    state.composerError = composerTurnError(state.activeTurn);
     state.manuscripts = Array.isArray(manuscripts) ? manuscripts : state.manuscripts;
     state.journalProfiles = Array.isArray(journalProfiles) ? journalProfiles : state.journalProfiles;
     state.analysisSpecs = Array.isArray(analysisSpecs) ? analysisSpecs : state.analysisSpecs;
@@ -971,6 +972,7 @@ import { formatScienceCell } from "./format-cell.js";
       state.selectedArtifactId = (labRows[0]?.[1]?.[0]?.artifact?.id) || safeArtifacts[0]?.id || null;
       state.messages = safeMessages;
       state.activeTurn = attached?.turn || null;
+      state.composerError = composerTurnError(state.activeTurn);
       state.blocksByMessage = messageEvidence.blocks;
       state.citationsByMessage = messageEvidence.citations;
       state.evidenceById = messageEvidence.spans;
@@ -2124,6 +2126,9 @@ import { formatScienceCell } from "./format-cell.js";
   function runFailureNotice() {
     const raw = String(state.composerError || "").trim();
     if (!raw) return "";
+    if (raw === "no-runtime") {
+      return `<div class="failClosed" role="status"><strong>${uiCopy("연결된 AI 런타임이 없습니다", "No AI runtime is connected")}</strong><p>${uiCopy("질문은 저장됐지만 연구는 실행되지 않았습니다. Agentlas Work에서 AI 런타임을 연결한 뒤 이 프로젝트로 돌아와 다시 요청하세요.", "Your question is saved, but the research did not run. Connect an AI runtime in Agentlas Work, then return to this project and try again.")}</p><button class="secondaryButton" data-action="back-to-work">${uiCopy("Agentlas Work로 이동", "Open Agentlas Work")}</button></div>`;
+    }
     const mismatch = /science-research-director-package-version-mismatch:installed=([^\s:]+):expected=([^\s:]+)/.exec(raw);
     if (mismatch) {
       return `<div class="failClosed" role="status"><strong>${heroIcon("book")}연구를 시작하지 못했습니다</strong><p>이 연구는 연구 총괄 <code>${escapeHtml(mismatch[2])}</code>을 요구하는데 이 컴퓨터에 설치된 판은 <code>${escapeHtml(mismatch[1])}</code>입니다. 판이 맞지 않으면 같은 입력에서 같은 결과가 나온다고 보장할 수 없어 실행을 시작하지 않았습니다.</p></div>`;
@@ -5396,7 +5401,8 @@ import { formatScienceCell } from "./format-cell.js";
 
   function chatThreadMarkup() {
     const messages = state.messages.length ? state.messages.map(compactChatMessage).join("") : `<div class="chatDockEmpty">This project conversation continues here.</div>`;
-    return `${messages}${manuscriptDraftJobMarkup()}${manuscriptProposalCardsMarkup()}`;
+    const failure = state.mode !== "session" || state.currentDestination !== "overview" ? runFailureNotice() : "";
+    return `${messages}${failure}${manuscriptDraftJobMarkup()}${manuscriptProposalCardsMarkup()}`;
   }
 
   function manuscriptDraftJobPrompt(job) {
@@ -5432,6 +5438,12 @@ import { formatScienceCell } from "./format-cell.js";
     return false;
   }
 
+  function composerTurnError(turn) {
+    return turn && ["failed", "cancelled", "interrupted"].includes(turn.status)
+      ? turn.errorCode || `Research run ${turn.status}`
+      : "";
+  }
+
   function composer(docked = false) {
     const running = state.activeTurn && ["queued", "running", "cancelling"].includes(state.activeTurn.status);
     const needsInitialRun = !running && state.messages.length === 1 && state.messages[0].role === "user" && !state.messages.some((message) => message.role === "assistant");
@@ -5443,6 +5455,7 @@ import { formatScienceCell } from "./format-cell.js";
   const composerStatusText = (rawValue) => {
     const t = String(rawValue || "").trim();
     if (!t) return "";
+    if (t === "no-runtime") return uiCopy("AI 런타임 연결이 필요합니다", "AI runtime connection required");
     const explained = /^Error invoking remote method/i.test(t)
       || /science-research-director-package-version-mismatch/.test(t)
       || /package-integrity|package-signature/.test(t);

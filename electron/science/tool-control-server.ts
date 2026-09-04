@@ -3132,11 +3132,16 @@ async function dispatchDescriptorTool(
     };
   }
   if (isEarthAnalysisToolId(tool.id)) {
+    const lifecycle = scienceStore().getResearchLifecycleForProject(common.projectId);
+    const analysisPlan = tool.id === "agentlas.earth-aftershock-table-study" && lifecycle?.phase === "execution"
+      ? lifecycle.frozenAnalysisPlan
+      : null;
     const result = scienceEarthAnalysisService().execute(tool.id, {
       requestId: common.requestId,
       projectId: common.projectId,
       conversationId: common.conversationId,
       originMessageId: common.originMessageId,
+      analysisPlan,
     }, body);
     return {
       ...artifactResult(tool, result.artifact, result.replayed, { id: result.runId, status: "succeeded" }),

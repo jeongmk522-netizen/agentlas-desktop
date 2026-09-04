@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import type { ScienceArtifact, ScienceDatasetCell, ScienceDatasetTablePayload } from "../../shared/science-contract";
+import type { ScienceArtifact, ScienceDatasetCell, ScienceDatasetTablePayload, ScienceResearchRunAnalysisPlanBinding } from "../../shared/science-contract";
 import { validateScienceTablePayload } from "../../shared/science-table";
 import { ScienceStore } from "./store";
 import { EARTHQUAKE_CATALOG_TOOL_ID, EARTHQUAKE_CATALOG_TOOL_VERSION, type EarthquakeCatalogResult } from "./earthquake-catalog";
@@ -66,6 +66,7 @@ export interface EarthAnalysisContext {
   projectId: string;
   conversationId: string;
   originMessageId: string;
+  analysisPlan?: ScienceResearchRunAnalysisPlanBinding | null;
 }
 
 export interface EarthAnalysisResult {
@@ -1155,6 +1156,19 @@ export class ScienceEarthAnalysisService {
     const parent = request.parent.kind === "earthquake-catalog"
       ? exactEarthquakeParent(this.store, spec, context.projectId, request.parent.catalogRunId)
       : exactTableParent(this.store, spec, context.projectId, request.parent.spec);
+    const analysisPlan = context.analysisPlan ?? null;
+    if (analysisPlan) {
+      const exactPlan = this.store.getAnalysisSpecForProject(context.projectId, analysisPlan.analysisSpecId);
+      const expectedInput = exactPlan?.version.document.data.inputs[0];
+      if (!exactPlan || exactPlan.status !== "frozen" || exactPlan.currentVersion !== analysisPlan.version
+        || exactPlan.currentDocumentSha256 !== analysisPlan.contentSha256
+        || parent.sourceSummary.kind !== "table" || exactPlan.version.document.data.inputs.length !== 1
+        || expectedInput?.artifactId !== parent.sourceSummary.artifactId
+        || expectedInput?.artifactVersion !== parent.sourceSummary.artifactVersion
+        || expectedInput?.contentSha256 !== parent.sourceSummary.contentSha256) {
+        fail(`${code}-analysis-plan-input-binding-invalid`);
+      }
+    }
     const runtime = earthRuntime();
     const pluginInput = request.pluginInput(parent.pluginContext);
     const analysis = spec.key === "aftershock-table-study"
@@ -1184,7 +1198,7 @@ export class ScienceEarthAnalysisService {
     const created = this.store.createResearchRun({
       requestId: context.requestId, projectId: context.projectId, conversationId: context.conversationId, originMessageId: context.originMessageId,
       parentRunId: parent.parentRunId, toolId: spec.id, toolVersion: EARTH_ANALYSIS_TOOL_VERSION, runtime: "electron-main",
-      inputManifestSha256: sha256(canonicalJson(inputs)), environmentSha256, inputs,
+      inputManifestSha256: sha256(canonicalJson(inputs)), environmentSha256, analysisPlan, inputs,
     });
     let run = this.store.getResearchRunForProject(context.projectId, created.run.id) ?? created.run;
     if (created.replayed && run.status === "succeeded") {

@@ -134,6 +134,11 @@ export function conservativeLocalRuntimeAllocation(models: string[]): Pick<
 export function clearDetectCache(): void {
   detectCache = null;
   detectGeneration += 1;
+  // A successful CLI replacement invalidates both the assembled runtime list
+  // and the lower-level `--version` probe. Keeping the latter would let a
+  // fresh resident process run the new binary while runtime.detect() still
+  // reports the previous generation until its probe TTL expires.
+  clearCliVersionProbeCache();
   // `codex.ts` keeps the executable path separately for invocation; clearing
   // only the dashboard snapshot would pin a moved binary until app restart.
   clearCodexBinCache();

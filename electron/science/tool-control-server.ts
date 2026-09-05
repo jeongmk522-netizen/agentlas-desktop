@@ -80,13 +80,18 @@ import { inspectScienceManuscriptDepth } from "./manuscript/depth-preflight";
 import { assertScienceAgentManuscriptDraft } from "./manuscript/agent-draft-gate";
 import { ScienceExtantReferenceAssemblyHttpError } from "./extant-reference-assemblies";
 import { ScienceComparativeGenomicsProviderValidationError } from "./comparative-genomics";
+import {
+  SCIENCE_MCP_SERVER_KEY,
+  installedCodexSupportsExactMcpToolApproval,
+  scienceCodexExactToolApprovalConfigArgs,
+} from "./codex-tool-approval";
 
 const MAX_REQUEST_BYTES = 8 * 1024 * 1024;
 const MAX_AI_VISUAL_BYTES = 8 * 1024 * 1024;
 const TOKEN_ENV = "AGENTLAS_SCIENCE_MCP_TOKEN";
 const ENDPOINT_ENV = "AGENTLAS_SCIENCE_MCP_ENDPOINT";
 const CATALOG_ENV = "AGENTLAS_SCIENCE_MCP_CATALOG";
-const SERVER_KEY = "agentlas-science";
+const SERVER_KEY = SCIENCE_MCP_SERVER_KEY;
 
 type ScienceContext = NonNullable<InvocationExecutionContext["science"]>;
 type McpTool = { name: string; route: string; description: string; inputSchema: Record<string, unknown> };
@@ -5731,6 +5736,9 @@ export async function materializeScienceMcpGrant(context: ScienceContext, baseCo
   includedServer: { serverId: string; catalogId: string; configKey: string };
 }> {
   const catalog = await assertScienceServiceAuthority(testDescriptor);
+  const exactToolApprovalConfigArgs = scienceCodexExactToolApprovalConfigArgs(
+    await installedCodexSupportsExactMcpToolApproval(),
+  );
   const controlEndpoint = await ensureServer();
   const token = randomBytes(32).toString("base64url");
   grants.set(context.invocationRunId, {
@@ -5783,6 +5791,7 @@ export async function materializeScienceMcpGrant(context: ScienceContext, baseCo
       "-c", `mcp_servers.${SERVER_KEY}.env.${TOKEN_ENV}=${toml(token)}`,
       "-c", `mcp_servers.${SERVER_KEY}.env.${ENDPOINT_ENV}=${toml(controlEndpoint)}`,
       "-c", `mcp_servers.${SERVER_KEY}.env.${CATALOG_ENV}=${toml(encodedCatalog)}`,
+      ...exactToolApprovalConfigArgs,
     ],
     runtimeEnv: {
       [TOKEN_ENV]: token, [ENDPOINT_ENV]: controlEndpoint, [CATALOG_ENV]: encodedCatalog,

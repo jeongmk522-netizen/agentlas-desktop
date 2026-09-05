@@ -200,15 +200,16 @@ export interface WorkforceRuntimeToolGrant {
 
 export interface WorkforcePermissionEnforcementReceipt {
   permissionPolicyDigest: string;
-  enforcementMode: "native-sandbox" | "no-authority-sandbox" | "zero-tools" | "host-native";
+  enforcementMode: "native-sandbox" | "no-authority-sandbox" | "zero-tools" | "host-native" | "host-broker";
   status: "enforced";
   approvalReceiptIds: string[];
   enforcementEvidence: {
     runtimeKind: string;
     runtimeVersion: string | null;
-    sandboxMode: "read-only" | "no-filesystem" | "host-native" | "not-applicable";
-    toolInventory: "empty" | "non-authoritative" | "policy-filtered" | "host-observed";
+    sandboxMode: "read-only" | "no-filesystem" | "host-native" | "host-broker" | "not-applicable";
+    toolInventory: "empty" | "non-authoritative" | "policy-filtered" | "host-observed" | "broker-observed";
     hostObservation?: WorkforceHostObservation;
+    brokerObservation?: import("./workforce-broker").WorkforceBrokerObservation;
     disabledCapabilities: string[];
     ephemeral: boolean;
     ignoredUserConfig: boolean;

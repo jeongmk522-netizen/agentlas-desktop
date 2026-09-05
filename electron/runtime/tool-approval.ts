@@ -448,6 +448,9 @@ export interface BuiltinApprovalContext {
   chatId?: string;
   unattended: boolean;
   signal?: AbortSignal;
+  /** Main-owned broker ledger hook. It receives the actual arbiter decision,
+   * never a lossy allow/deny boolean. */
+  onApprovalDecision?: (decision: RuntimeToolPermissionDecision) => void;
 }
 
 export async function runApprovedBuiltinTool(
@@ -477,17 +480,18 @@ export async function runApprovedBuiltinTool(
     ...(ctx.unattended ? { unattended: true as const } : {}),
   };
   const arbiter = getRuntimeToolPermissionArbiter();
-  let approved: boolean;
+  let decision: RuntimeToolPermissionDecision;
   if (!arbiter) {
-    approved = defaultRuntimeToolPermission(ask) !== "deny";
+    decision = defaultRuntimeToolPermission(ask);
   } else {
     try {
-      approved = (await arbiter(ask)) !== "deny";
+      decision = await arbiter(ask);
     } catch {
-      approved = false; // 중재자 실패는 거부다 — 실패가 허용이 되면 관문이 아니다.
+      decision = "deny"; // 중재자 실패는 거부다 — 실패가 허용이 되면 관문이 아니다.
     }
   }
-  if (!approved) {
+  ctx.onApprovalDecision?.(decision);
+  if (decision === "deny") {
     const denied = `tool call denied — "${toolName}" was not approved for this run.`;
     events.onTool?.(toolName, JSON.stringify(args), denied, callId, true);
     return { ok: false, content: denied };

@@ -2623,7 +2623,7 @@ const { stripAgentControlBlocks, stripStormbreakerContinueMarker, STORMBREAKER_C
     }
   }
 
-  function manuscriptPreview(markdown) {
+  function manuscriptPreview(markdown, inline = inlineManuscriptMarkdown) {
     const rows = String(markdown || "").split(/\r?\n/);
     const output = [];
     let paragraph = [];
@@ -2632,12 +2632,12 @@ const { stripAgentControlBlocks, stripStormbreakerContinueMarker, STORMBREAKER_C
     let inCode = false;
     const flushParagraph = () => {
       if (!paragraph.length) return;
-      output.push(`<p>${inlineManuscriptMarkdown(paragraph.join(" "))}</p>`);
+      output.push(`<p>${inline(paragraph.join(" "))}</p>`);
       paragraph = [];
     };
     const flushList = () => {
       if (!list.length) return;
-      output.push(`<ul>${list.map((item) => `<li>${inlineManuscriptMarkdown(item)}</li>`).join("")}</ul>`);
+      output.push(`<ul>${list.map((item) => `<li>${inline(item)}</li>`).join("")}</ul>`);
       list = [];
     };
     const flushCode = () => {
@@ -2659,7 +2659,7 @@ const { stripAgentControlBlocks, stripStormbreakerContinueMarker, STORMBREAKER_C
         flushParagraph();
         flushList();
         const level = heading[1].length;
-        output.push(`<h${level}>${inlineManuscriptMarkdown(heading[2])}</h${level}>`);
+        output.push(`<h${level}>${inline(heading[2])}</h${level}>`);
         continue;
       }
       const item = /^[-*]\s+(.+)$/.exec(row);
@@ -2676,7 +2676,7 @@ const { stripAgentControlBlocks, stripStormbreakerContinueMarker, STORMBREAKER_C
       if (row.trim().startsWith("> ")) {
         flushParagraph();
         flushList();
-        output.push(`<blockquote>${inlineManuscriptMarkdown(row.trim().slice(2))}</blockquote>`);
+        output.push(`<blockquote>${inline(row.trim().slice(2))}</blockquote>`);
         continue;
       }
       paragraph.push(row.trim());
@@ -5632,6 +5632,20 @@ const { stripAgentControlBlocks, stripStormbreakerContinueMarker, STORMBREAKER_C
     } catch { return null; }
   }
 
+  function scienceChatMarkdown(text) {
+    if (!String(text || "").trim()) return "";
+    // Reuse the extension's escaped block renderer, never raw model HTML.
+    // Protect inline code before interpreting emphasis inside ordinary prose.
+    const inline = (value) => String(value).split(/(`+[^`]+`+)/g).map((part) => {
+      const code = /^(`+)([^`]+)\1$/.exec(part);
+      if (code) return `<code>${escapeHtml(code[2])}</code>`;
+      return escapeHtml(part)
+        .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
+        .replace(/\*([^*]+)\*/g, "<em>$1</em>");
+    }).join("");
+    return manuscriptPreview(text, inline);
+  }
+
   function compactChatMessage(message) {
     const blocks = state.blocksByMessage.get(message.id) || [];
     const rawText = blocks.length ? blocks.map((block) => block.content).join("\n\n") : message.content;
@@ -5642,7 +5656,7 @@ const { stripAgentControlBlocks, stripStormbreakerContinueMarker, STORMBREAKER_C
     const artifactContexts = state.artifactContextsByMessage.get(message.id) || [];
     const artifacts = artifactContexts.map((context) => `<button class="chatArtifactLink" data-chat-artifact-id="${escapeHtml(context.artifact.id)}" data-chat-artifact-version="${escapeHtml(context.selectedVersion.version)}" data-chat-conversation-id="${escapeHtml(message.conversationId)}" data-chat-message-id="${escapeHtml(message.id)}" title="${escapeHtml(`Open exact v${context.selectedVersion.version} in ${labLabel(context.linkage.labId)}`)}"><strong>${escapeHtml(context.artifact.title)}</strong><span>${escapeHtml(labLabel(context.linkage.labId))} · open v${escapeHtml(context.selectedVersion.version)} →</span></button>`).join("");
     const user = message.role === "user";
-    return `<article class="chatMessage ${user ? "isUser" : "isAssistant"}" data-chat-message-id="${escapeHtml(message.id)}"><div class="chatMessageRole">${user ? "You" : "Agentlas Science"}</div><div class="chatMessageContent">${escapeHtml(text)}</div>${instructions}${artifacts}${paleontologyCatalogReceiptMarkup(message)}</article>`;
+    return `<article class="chatMessage ${user ? "isUser" : "isAssistant"}" data-chat-message-id="${escapeHtml(message.id)}"><div class="chatMessageRole">${user ? "You" : "Agentlas Science"}</div><div class="chatMessageContent${user ? "" : " scienceChatMarkdown"}">${user ? escapeHtml(text) : scienceChatMarkdown(text)}</div>${instructions}${artifacts}${paleontologyCatalogReceiptMarkup(message)}</article>`;
   }
 
   function manuscriptProposalCardsMarkup() {
@@ -5702,7 +5716,7 @@ const { stripAgentControlBlocks, stripStormbreakerContinueMarker, STORMBREAKER_C
     if (turn.assistantMessageId && state.messages.some((message) => message.id === turn.assistantMessageId)) return "";
     const visible = scienceLiveResponseText(turn.partialText);
     if (!visible) return "";
-    return `<article class="chatMessage isAssistant" data-chat-turn-id="${escapeHtml(turn.id)}"><div class="chatMessageRole">Agentlas Science · ${uiCopy("응답 작성 중", "Response in progress")}</div><div class="chatMessageContent">${escapeHtml(visible)}</div></article>`;
+    return `<article class="chatMessage isAssistant" data-chat-turn-id="${escapeHtml(turn.id)}"><div class="chatMessageRole">Agentlas Science · ${uiCopy("응답 작성 중", "Response in progress")}</div><div class="chatMessageContent scienceChatMarkdown">${scienceChatMarkdown(visible)}</div></article>`;
   }
 
   function chatThreadMarkup() {

@@ -374,6 +374,17 @@ button { cursor: pointer; color: inherit; }
 .chatMessage.isUser { max-width: 100%; margin-left: 0; border: 0; border-left: 2px solid var(--grey-300); border-radius: 0; background: transparent; box-shadow: none; padding: 10px 0 10px 12px; }
 .chatMessageRole { margin-bottom: 6px; color: var(--grey-500); font-size: 11px; font-weight: 620; }
 .chatMessageContent { font-size: 13px; line-height: 1.55; white-space: pre-wrap; overflow-wrap: anywhere; }
+.chatMessageContent.scienceChatMarkdown { white-space: normal; min-width: 0; }
+.scienceChatMarkdown > :first-child { margin-top: 0; }
+.scienceChatMarkdown > :last-child { margin-bottom: 0; }
+.scienceChatMarkdown p, .scienceChatMarkdown ul, .scienceChatMarkdown blockquote { margin: 0 0 12px; }
+.scienceChatMarkdown ul { padding-left: 20px; }
+.scienceChatMarkdown li + li { margin-top: 4px; }
+.scienceChatMarkdown h1, .scienceChatMarkdown h2, .scienceChatMarkdown h3 { font-size: 14px; line-height: 1.5; margin: 16px 0 8px; }
+.scienceChatMarkdown code { font-size: .92em; overflow-wrap: anywhere; }
+.scienceChatMarkdown pre { max-width: 100%; overflow-x: auto; white-space: pre; padding: 10px; border: 1px solid #DDDDDD; border-radius: 12px; }
+.scienceChatMarkdown pre code { overflow-wrap: normal; }
+.scienceChatMarkdown blockquote { border-left: 2px solid #DDDDDD; padding-left: 12px; }
 .chatMessageInstructions { margin-top: 10px; min-width: 0; color: var(--grey-700); }
 .chatMessageInstructions > summary { cursor: pointer; font-size: 12px; line-height: 1.6; }
 .chatMessageInstructions > .chatMessageContent { margin-top: 8px; }

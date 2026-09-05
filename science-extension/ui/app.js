@@ -364,7 +364,7 @@ function createComposerEventSync({
   const state = {
     locale: "en",
     projects: [], selectedId: null, lifecycle: null, researchLoopInspection: null, conversations: [], selectedConversationId: null, messages: [], sources: [], sourceFigures: [], runs: [], artifacts: [], labs: [], workspaceLabBindings: [], labCatalog: [], labDecisionProjections: [], rendererPacks: [], manuscripts: [], claimLedger: null, journalProfiles: [], submissionExports: [], analysisSpecs: [], decisions: [],
-    artifactContextsByMessage: new Map(), labContextsById: new Map(), artifactHistoryById: new Map(), selectedLabId: null, selectedArtifactOriginVersion: null, inspectedArtifactVersion: null, inspectedArtifactContext: null, artifactComparison: null, draftHistoryGuard: null, labsExpanded: true, expandedLabGroups: new Set(["chemistry"]), expandedLabDecisions: new Set(), projectMenuOpen: false, projectFolderOpen: false, projectLibrarySummaries: new Map(), projectLibrarySummaryState: "loading", librarySearch: "", librarySelectedProjectId: null, projectFolderSelectedKey: null, newProjectStep: "field", selectedResearchTemplateId: null, newProjectDraft: { title: "", question: "" }, historyOpen: false, railCollapsed: readRailCollapsed(),
+    artifactContextsByMessage: new Map(), labContextsById: new Map(), artifactHistoryById: new Map(), selectedLabId: null, selectedArtifactOriginVersion: null, inspectedArtifactVersion: null, inspectedArtifactContext: null, artifactComparison: null, draftHistoryGuard: null, labsExpanded: true, expandedLabGroups: new Set(["chemistry"]), expandedLabDecisions: new Set(), projectMenuOpen: false, projectFolderOpen: false, projectLibrarySummaries: new Map(), projectLibrarySummaryState: "loading", librarySearch: "", librarySelectedProjectId: null, projectFolderSelectedKey: null, newProjectStep: "details", selectedResearchTemplateId: null, newProjectDraft: { title: "", question: "" }, newProjectRequestId: null, newProjectRequestSignature: "", labManagerOpen: false, labManagerBusyId: null, labManagerError: "", historyOpen: false, railCollapsed: readRailCollapsed(),
     blocksByMessage: new Map(), citationsByMessage: new Map(), evidenceById: new Map(), selectedSourceId: null, selectedArtifactId: null,
     evidenceGraph: null, evidenceGraphReviews: [], evidenceGraphLoading: false, evidenceGraphError: "", selectedEvidenceGraphNodeId: null, selectedEvidenceGraphCandidateId: null, evidenceGraphReviewSheet: false, evidenceGraphReviewDecision: "accepted", evidenceGraphReviewBusy: false, evidenceGraphReviewError: "", evidenceGraphPathAnchorId: null, evidenceGraphPath: null,
     mode: "session", drawer: null, modal: false, manuscriptModal: false, saving: false, loadingProject: false, projectError: "", activeVegaView: null, activeCytoscape: null, activeNumericSurface: null, activeJBrowseTarget: null, scrollByMode: { session: 0, lab: 0, manuscript: 0 }, returnMessageId: null,
@@ -506,7 +506,7 @@ function createComposerEventSync({
     if (!compiled || typeof compiled !== "object" || Array.isArray(compiled)) throw new Error("science-vega-lite-compile-failed");
     return compiled;
   }
-  function fitArtifactVegaCanvas(host, { capture = false, gutter = 10 } = {}) {
+  function fitArtifactVegaCanvas(host, { capture = false, gutter = 10, maxHeight = Infinity } = {}) {
     const canvas = host?.querySelector?.("canvas");
     if (!canvas) throw new Error("science-vega-canvas-missing");
     const initial = canvas.getBoundingClientRect();
@@ -519,10 +519,15 @@ function createComposerEventSync({
     canvas.style.height = `${naturalHeight}px`;
     const naturalRect = canvas.getBoundingClientRect();
     const hostRect = host.getBoundingClientRect();
-    const rightEdge = Math.min(window.innerWidth - gutter, hostRect.right - gutter);
-    const bottomEdge = window.innerHeight - gutter;
-    const availableWidth = Math.max(1, rightEdge - naturalRect.left);
-    const availableHeight = Math.max(1, bottomEdge - naturalRect.top);
+    // Inline previews live in scrollable articles: being outside the viewport
+    // is normal and must not turn a valid chart into a permanent render error.
+    // Only an actual viewport capture requires viewport containment.
+    const availableWidth = capture
+      ? Math.max(1, Math.min(window.innerWidth - gutter, hostRect.right - gutter) - naturalRect.left)
+      : Math.max(1, hostRect.width - gutter * 2);
+    const availableHeight = capture
+      ? Math.max(1, window.innerHeight - gutter - naturalRect.top)
+      : Math.min(naturalHeight, maxHeight);
     const scale = Math.min(1, availableWidth / naturalWidth, availableHeight / naturalHeight);
     const fittedWidth = Math.max(1, Math.floor(naturalWidth * scale));
     const fittedHeight = Math.max(1, Math.floor(naturalHeight * scale));
@@ -535,7 +540,7 @@ function createComposerEventSync({
     host.dataset.vegaCaptureScale = scale.toFixed(6);
     host.dataset.vegaCaptureFits = String(fits);
     host.dataset.vegaCaptureRect = JSON.stringify({ x: fitted.x, y: fitted.y, width: fitted.width, height: fitted.height, viewportWidth: window.innerWidth, viewportHeight: window.innerHeight });
-    if (!fits) throw new Error("science-vega-capture-layout-out-of-bounds");
+    if (capture && !fits) throw new Error("science-vega-capture-layout-out-of-bounds");
     return { canvas, scale, rect: fitted, availableWidth, availableHeight };
   }
   const formatDate = (value) => {
@@ -1317,6 +1322,9 @@ function createComposerEventSync({
     state.drawer = null;
     state.projectError = "";
     state.workspaceSyncError = "";
+    state.labManagerOpen = false;
+    state.labManagerBusyId = null;
+    state.labManagerError = "";
     state.activeTurn = null;
     state.researchLoopInspection = null;
     state.composerSending = false;
@@ -1563,13 +1571,13 @@ function createComposerEventSync({
       : "");
     const destinations = projectDestinationGroups.map((group) => `<section class="projectNavGroup"><div class="projectNavLabel">${escapeHtml(group.label)}</div>${group.items.map((item) => `<button data-project-destination="${escapeHtml(item.id)}" aria-current="${state.currentDestination === item.id}" aria-label="${escapeHtml(item.label)}" title="${escapeHtml(item.label)}" ${item.id === "hypotheses" && pendingHypotheses ? `data-pending-decisions="${escapeHtml(String(pendingHypotheses))}"` : ""}>${heroIcon(item.icon)}<span>${escapeHtml(item.label)}</span>${destinationBadge(item.id)}</button>`).join("")}</section>`).join("");
     return `<aside class="rail" data-rail-mode="${escapeHtml(state.mode)}">
-      <div class="railBrand"><span class="railBrandLockup"><img class="railBrandMark" src="./assets/agentlas-mark.png" alt="" aria-hidden="true"><span class="railBrandWordmark"><strong><span class="brandAgentlas">Agentlas</span><span class="brandScience">Science<span class="brandStar">*</span></span></strong></span></span><button class="railCollapseButton" data-action="collapse-rail" aria-label="사이드바 접기" title="사이드바 접기">${heroIcon("chevron-right", "uiIcon isReverse")}</button></div>
-      <button class="railBackButton" data-action="back-to-work" aria-label="Agentlas Work로 돌아가기" title="Agentlas Work로 돌아가기">${heroIcon("chevron-right", "uiIcon isReverse")}<strong>Agentlas Work</strong></button>
+      <div class="railBrand"><span class="railBrandLockup"><img class="railBrandMark" src="./assets/agentlas-mark.png" alt="" aria-hidden="true"><span class="railBrandWordmark"><strong><span class="brandAgentlas">Agentlas</span><span class="brandScience">Science<span class="brandStar">*</span></span></strong></span></span></div>
+      <button class="railBackButton" data-action="back-to-work" aria-label="${uiCopy("Agentlas Work로 돌아가기", "Back to Agentlas Work")}" title="${uiCopy("Agentlas Work로 돌아가기", "Back to Agentlas Work")}">${heroIcon("chevron-right", "uiIcon isReverse")}<strong>${uiCopy("Agentlas Work로 돌아가기", "Back to Agentlas Work")}</strong></button>
       <button class="projectLibraryBack" data-action="back-to-projects" aria-label="${uiCopy("프로젝트로 돌아가기", "Back to projects")}" title="${uiCopy("프로젝트로 돌아가기", "Back to projects")}">${heroIcon("chevron-right", "uiIcon isReverse")}<span>${uiCopy("프로젝트로 돌아가기", "Back to projects")}</span></button>
       <section class="railProjectIdentity"><strong title="${escapeHtml(project.title)}">${escapeHtml(project.title)}</strong><span>${escapeHtml(domainLabel(project.domain))}</span></section>
       <button class="newButton" data-action="new" aria-label="새 연구 시작" title="새 연구">${heroIcon("plus")}<strong>새 연구</strong></button>
       <div class="railScrollable"><nav class="projectDestinations projectWorkflowNav" aria-label="현재 프로젝트 연구 흐름">${destinations}</nav>
-      <div class="railSection labSection"><button class="railDisclosure" data-action="toggle-labs" aria-expanded="${state.labsExpanded}"><span>Labs</span>${heroIcon("chevron-down", state.labsExpanded ? "uiIcon isReverse" : "uiIcon")}</button><nav class="labList ${state.labsExpanded ? "isOpen" : ""}" aria-label="현재 프로젝트에 활성화된 Lab 도구와 아티팩트 보관소">${labs || `<span class="railEmpty">이 프로젝트에는 아직 Lab이 없습니다.<em>연구 채팅에서 필요한 분석을 말하면 그 Lab이 여기에 열립니다. 예: “이 표로 생존곡선을 그려줘”</em></span>`}</nav></div></div>
+      <div class="railSection labSection"><div class="railDisclosureRow"><button class="railDisclosure" data-action="toggle-labs" aria-expanded="${state.labsExpanded}"><span>Labs</span>${heroIcon("chevron-down", state.labsExpanded ? "uiIcon isReverse" : "uiIcon")}</button><button class="manageLabsButton" data-action="manage-project-labs" aria-label="${uiCopy("프로젝트 Lab 편집", "Edit project Labs")}" title="${uiCopy("프로젝트 Lab 편집", "Edit project Labs")}">${heroIcon("plus")}</button></div><nav class="labList ${state.labsExpanded ? "isOpen" : ""}" aria-label="현재 프로젝트에 활성화된 Lab 도구와 아티팩트 보관소">${labs || `<span class="railEmpty">${uiCopy("이 프로젝트에는 아직 Lab 북마크가 없습니다.", "This project has no Lab bookmarks yet.")}<em>${uiCopy("필요한 Lab을 추가해 두거나 연구 채팅에서 분석을 요청하세요.", "Add the Labs you want available, or request an analysis in Research chat.")}</em></span>`}</nav></div></div>
       <footer class="researcherCard"><span class="researcherAvatar" aria-hidden="true">MJ</span><span><strong>Researcher</strong><em>Local workspace</em></span><button data-action="toggle-drawer" aria-label="설정과 세부 정보">${heroIcon("ellipsis")}</button></footer>
     </aside>`;
   }
@@ -1583,13 +1591,80 @@ function createComposerEventSync({
     }).join("")}</span>`;
   }
 
+  function safeScienceSourceHref(value) {
+    const raw = String(value || "").trim();
+    if (!raw || raw.length > 2048 || !/^https?:\/\//i.test(raw)) return "";
+    try {
+      const url = new URL(raw);
+      return ["http:", "https:"].includes(url.protocol) && !url.username && !url.password ? url.href : "";
+    } catch {
+      return "";
+    }
+  }
+
+  function scienceInlineMarkdown(value) {
+    // Private-use sentinels keep already escaped code, math, and links out of
+    // later emphasis replacements. Escape matching input first so model text
+    // can never manufacture a renderer token.
+    const tokens = [];
+    const stash = (html) => `\uE000${tokens.push(html) - 1}\uE001`;
+    let source = String(value || "")
+      .replace(/\uE000/g, "&#57344;")
+      .replace(/\uE001/g, "&#57345;");
+
+    source = source.replace(/(`+)([^`\n]+?)\1/g, (_match, _ticks, code) => (
+      stash(`<code>${escapeHtml(code)}</code>`)
+    ));
+    source = source.replace(/\\\([^\n]+?\\\)|\\\[[^\n]+?\\\]|\$\$[^$\n]+?\$\$|\$[^$\n]+?\$/g, (math) => (
+      stash(`<code class="scienceInlineMath">${escapeHtml(math)}</code>`)
+    ));
+    source = source.replace(/\[([^\]\n]+)\]\(((?:[^()\s]+|\([^()\s]*\))+)\)/g, (_syntax, label, rawHref) => {
+      const href = safeScienceSourceHref(rawHref);
+      if (!href) return stash(`<span class="scienceBlockedSourceLink">${escapeHtml(label)}</span>`);
+      return stash(`<a class="scienceSourceLink" href="${escapeHtml(href)}" target="_blank" rel="noopener noreferrer" referrerpolicy="no-referrer">${escapeHtml(label)}</a>`);
+    });
+    source = source.replace(/<(https?:\/\/[^<>\s]+)>/gi, (syntax, rawHref) => {
+      const href = safeScienceSourceHref(rawHref);
+      return href ? stash(`<a class="scienceSourceLink" href="${escapeHtml(href)}" target="_blank" rel="noopener noreferrer" referrerpolicy="no-referrer">${escapeHtml(rawHref)}</a>`) : escapeHtml(syntax);
+    });
+
+    return escapeHtml(source)
+      .replace(/\*\*([^*\n]+)\*\*/g, "<strong>$1</strong>")
+      .replace(/\*([^*\n]+)\*/g, "<em>$1</em>")
+      .replace(/\uE000(\d+)\uE001/g, (_match, index) => tokens[Number(index)] || "");
+  }
+
+  function scienceArticleMarkdown(text) {
+    // Overview owns the page-level heading. Shift model headings below it,
+    // but preserve every byte inside fenced code.
+    let fenced = false;
+    const landmarkSafe = String(text || "").split(/\r?\n/).map((row) => {
+      if (row.trim().startsWith("```")) {
+        fenced = !fenced;
+        return row;
+      }
+      if (fenced) return row;
+      return row.replace(/^(#{1,3})(?=\s)/, (_match, marks) => "#".repeat(Math.min(3, marks.length + 1)));
+    }).join("\n");
+    return scienceChatMarkdown(landmarkSafe);
+  }
+
   function messageMarkup(message) {
     const blocks = state.blocksByMessage.get(message.id) || [];
     const artifactContexts = state.artifactContextsByMessage.get(message.id) || [];
-    const artifactCards = artifactContexts.length ? `<div class="inlineArtifacts" aria-label="이 응답에서 Lab 도구로 생성된 아티팩트">${artifactContexts.map((context) => `<button class="inlineArtifact" data-inline-artifact-id="${escapeHtml(context.artifact.id)}" data-inline-artifact-version="${escapeHtml(context.selectedVersion.version)}" data-inline-conversation-id="${escapeHtml(message.conversationId)}" data-inline-message-id="${escapeHtml(message.id)}"><span class="artifactPreviewType">LAB ARTIFACT · ${escapeHtml(context.artifact.kind)}</span><div class="artifactConnection"><span>${escapeHtml(labLabel(context.linkage.labId))} Lab</span><span>이 응답에서 생성 · 보관소에 저장됨</span></div>${context.selectedVersion.rendererId === "agentlas.vega" ? `<span class="inlineArtifactPreview" data-inline-vega-artifact="${escapeHtml(context.artifact.id)}" data-inline-vega-version="${escapeHtml(context.selectedVersion.version)}" aria-label="${escapeHtml(context.artifact.title)} 미리보기"></span>` : `<span class="inlineArtifactPreview" data-inline-capture-artifact="${escapeHtml(context.artifact.id)}" data-inline-capture-version="${escapeHtml(context.selectedVersion.version)}" aria-label="${escapeHtml(context.artifact.title)} 검증 캡처"></span>`}<strong>${escapeHtml(context.artifact.title)}</strong><span>아티팩트 v${escapeHtml(context.selectedVersion.version)}${context.isCurrent ? " · 현재 버전" : ` · 현재 v${escapeHtml(context.artifact.currentVersion)}`}</span><em>${escapeHtml(labLabel(context.linkage.labId))} 보관소에서 열고 조작하기 →</em></button>`).join("")}</div>` : "";
+    const artifactCards = artifactContexts.length ? `<div class="inlineArtifacts" aria-label="${uiCopy("이 응답에서 생성된 Lab 아티팩트", "Lab artifacts created in this response")}">${artifactContexts.map((context) => {
+      const title = context.artifact.title;
+      const version = context.selectedVersion.version;
+      const versionLabel = `${uiCopy("아티팩트", "Artifact")} v${version}${context.isCurrent ? uiCopy(" · 현재 버전", " · Current version") : uiCopy(` · 현재 v${context.artifact.currentVersion}`, ` · Current v${context.artifact.currentVersion}`)}`;
+      const previewLabel = uiCopy(`${title} 미리보기`, `${title} preview`);
+      const preview = context.selectedVersion.rendererId === "agentlas.vega"
+        ? `<span class="inlineArtifactPreview" data-inline-vega-artifact="${escapeHtml(context.artifact.id)}" data-inline-vega-version="${escapeHtml(version)}" aria-label="${escapeHtml(previewLabel)}"></span>`
+        : `<span class="inlineArtifactPreview" data-inline-capture-artifact="${escapeHtml(context.artifact.id)}" data-inline-capture-version="${escapeHtml(version)}" aria-label="${escapeHtml(previewLabel)}"></span>`;
+      return `<button class="inlineArtifact" data-inline-artifact-id="${escapeHtml(context.artifact.id)}" data-inline-artifact-version="${escapeHtml(version)}" data-inline-conversation-id="${escapeHtml(message.conversationId)}" data-inline-message-id="${escapeHtml(message.id)}" aria-label="${escapeHtml(uiCopy(`${title} 아티팩트 v${version} 열기`, `Open ${title}, artifact version ${version}`))}">${preview}<strong>${escapeHtml(title)}</strong><span>${escapeHtml(versionLabel)}</span></button>`;
+    }).join("")}</div>` : "";
     if (message.role === "user") return `<article class="questionBubble"><div>${escapeHtml(message.content)}</div><span>${escapeHtml(formatDate(message.createdAt))}</span></article>`;
-    if (!blocks.length) return `<article class="answer" id="message-${escapeHtml(message.id)}" data-message-id="${escapeHtml(message.id)}" tabindex="-1"><div class="answerMeta">${message.role === "assistant" ? "Agentlas Science" : escapeHtml(message.role)}</div><p>${escapeHtml(message.content)}</p>${artifactCards}</article>`;
-    return `<article class="answer" id="message-${escapeHtml(message.id)}" data-message-id="${escapeHtml(message.id)}" tabindex="-1"><div class="answerMeta">Agentlas Science · evidence-linked response</div>${blocks.map((block) => `<div class="answerBlock" data-block-kind="${escapeHtml(block.kind)}"><p>${escapeHtml(block.content)}</p>${citationButtons(message.id, block.id)}</div>`).join("")}${artifactCards}</article>`;
+    if (!blocks.length) return `<article class="answer" id="message-${escapeHtml(message.id)}" data-message-id="${escapeHtml(message.id)}" tabindex="-1"><div class="answerMeta">${message.role === "assistant" ? "Agentlas Science" : escapeHtml(message.role)}</div><div class="scienceArticleMarkdown">${scienceArticleMarkdown(message.content)}</div>${artifactCards}</article>`;
+    return `<article class="answer" id="message-${escapeHtml(message.id)}" data-message-id="${escapeHtml(message.id)}" tabindex="-1"><div class="answerMeta">Agentlas Science · evidence-linked response</div>${blocks.map((block) => `<section class="answerBlock" data-block-kind="${escapeHtml(block.kind)}"><div class="scienceArticleMarkdown">${scienceArticleMarkdown(block.content)}</div>${citationButtons(message.id, block.id)}</section>`).join("")}${artifactCards}</article>`;
   }
 
   function evidenceGraphContextMarkup(context) {
@@ -6132,13 +6207,7 @@ function createComposerEventSync({
     if (!String(text || "").trim()) return "";
     // Reuse the extension's escaped block renderer, never raw model HTML.
     // Protect inline code before interpreting emphasis inside ordinary prose.
-    const inline = (value) => String(value).split(/(`+[^`]+`+)/g).map((part) => {
-      const code = /^(`+)([^`]+)\1$/.exec(part);
-      if (code) return `<code>${escapeHtml(code[2])}</code>`;
-      return escapeHtml(part)
-        .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
-        .replace(/\*([^*]+)\*/g, "<em>$1</em>");
-    }).join("");
+    const inline = scienceInlineMarkdown;
     // Keep list structure and source order in chat. The manuscript fallback's
     // flat-list buffer cannot represent indented children or ordered lists.
     const output = [], prose = [], lists = [];
@@ -6581,16 +6650,66 @@ function createComposerEventSync({
 
   function modal() {
     if (!state.modal) return "";
-    if (state.newProjectStep === "field") {
-      const cards = researchTemplates.map((template) => `<button class="researchTemplateCard" type="button" data-research-template="${escapeHtml(template.id)}" aria-pressed="${state.selectedResearchTemplateId === template.id}"><img src="./assets/research-templates/${escapeHtml(template.id)}.png" alt=""><span><strong>${escapeHtml(researchTemplateLabel(template))}</strong><em>${escapeHtml(researchTemplateDescription(template))}</em></span><i aria-hidden="true">✓</i></button>`).join("");
-      return `<div class="modalBackdrop projectCreationBackdrop" role="presentation"><section class="modal newProjectModal researchTemplateModal" role="dialog" aria-modal="true" aria-labelledby="new-project-title"><header><div><span>${uiCopy("1단계 · 연구 분야", "Step 1 · Research field")}</span><h2 id="new-project-title">${uiCopy("어떤 연구를 시작할까요?", "What would you like to research?")}</h2></div><button class="newProjectClose" type="button" data-action="cancel" aria-label="${uiCopy("새 연구 닫기", "Close new research")}">×</button></header><p class="modalLead">${uiCopy("분야를 골라 프로젝트 폴더를 만드세요. 작업공간을 열면 해당 분야의 Lab에서 시작합니다.", "Choose a field to create a project folder. Open its workspace to start in the matching Lab.")}</p><div class="researchTemplateGrid" aria-label="${uiCopy("15개 연구 분야", "15 research fields")}">${cards}</div></section></div>`;
-    }
     const template = researchTemplateById(state.selectedResearchTemplateId);
-    if (!template) {
-      state.newProjectStep = "field";
-      return modal();
+    const classification = template ? `<div class="projectClassificationHint"><img src="./assets/research-templates/${escapeHtml(template.id)}.png" alt=""><span><small>${uiCopy("바로가기에서 선택한 분류", "Classification from shortcut")}</small><strong>${escapeHtml(researchTemplateLabel(template))}</strong></span><button type="button" data-action="clear-project-classification">${uiCopy("분류 지우기", "Clear")}</button></div>` : "";
+    return `<div class="modalBackdrop projectCreationBackdrop" role="presentation"><form class="modal newProjectModal projectDetailsModal" id="new-project-form" role="dialog" aria-modal="true" aria-labelledby="new-project-title"><header><div><span>${uiCopy("새 연구", "New research")}</span><h2 id="new-project-title">${uiCopy("이름과 연구 질문을 적어 주세요", "Name the project and set its question")}</h2></div><button class="newProjectClose" type="button" data-action="cancel" aria-label="${uiCopy("새 연구 닫기", "Close new research")}">×</button></header><p class="modalLead">${uiCopy("프로젝트를 만들면 중간 폴더 화면 없이 연구 작업공간이 바로 열립니다.", "Your research workspace opens immediately after the project is created.")}</p>${classification}<label class="field"><span>${uiCopy("프로젝트 이름", "Project name")}</span><input name="title" required maxlength="80" autocomplete="off" value="${escapeHtml(state.newProjectDraft.title)}" placeholder="${uiCopy("연구를 구분하기 쉬운 짧은 이름", "A short name to identify your research")}" /></label><label class="field"><span>${uiCopy("연구 질문", "Research question")}</span><textarea name="question" required maxlength="20000" placeholder="${uiCopy("무엇을 발견하거나 검증하고 싶나요?", "What do you want to discover or test?")}">${escapeHtml(state.newProjectDraft.question)}</textarea></label><div class="formError" id="form-error" role="alert"></div><div class="modalActions"><button class="primaryButton" type="submit" ${state.saving ? "disabled" : ""}>${state.saving ? uiCopy("저장 중…", "Saving…") : uiCopy("프로젝트 만들기", "Create project")}</button></div></form></div>`;
+  }
+
+  function labManagerModal() {
+    if (!state.labManagerOpen || !state.selectedId) return "";
+    const bindings = new Map(state.workspaceLabBindings.map((binding) => [binding.labId, binding]));
+    const candidates = state.labCatalog.length ? state.labCatalog : researchTemplates.map((template) => ({ id: template.id, label: researchTemplateLabel(template) }));
+    const rows = candidates.map((lab) => {
+      const binding = bindings.get(lab.id);
+      const enabled = binding?.enabled === true;
+      const busy = state.labManagerBusyId === lab.id;
+      const template = researchTemplateById(lab.id);
+      return `<button type="button" class="labManagerRow" data-action="toggle-project-lab" data-lab-id="${escapeHtml(lab.id)}" data-lab-enabled="${enabled}" aria-pressed="${enabled}" ${state.labManagerBusyId ? "disabled" : ""}><span class="labManagerCheck" aria-hidden="true">${busy ? "…" : enabled ? "✓" : "+"}</span><span><strong>${escapeHtml(lab.label || labLabel(lab.id))}</strong><em>${escapeHtml(template ? researchTemplateDescription(template) : uiCopy("프로젝트에서 필요할 때 사용할 수 있도록 북마크합니다.", "Bookmark this Lab so it is available when the project needs it."))}</em></span><small>${enabled ? uiCopy("추가됨", "Added") : uiCopy("추가", "Add")}</small></button>`;
+    }).join("");
+    return `<div class="modalBackdrop labManagerBackdrop" role="presentation"><section class="modal labManagerModal" role="dialog" aria-modal="true" aria-labelledby="lab-manager-title"><header><div><span>Labs</span><h2 id="lab-manager-title">${uiCopy("프로젝트 Lab 편집", "Edit project Labs")}</h2><p>${uiCopy("여기서 추가한 Lab은 북마크입니다. Science는 연구에 필요할 때만 해당 Lab을 실행합니다.", "Added Labs are bookmarks. Science runs a Lab only when the research needs it.")}</p></div><button type="button" data-action="close-project-labs" aria-label="${uiCopy("Lab 편집 닫기", "Close Lab editor")}">×</button></header><div class="labManagerList">${rows}</div>${state.labManagerError ? `<p class="formError" role="alert">${escapeHtml(state.labManagerError)}</p>` : ""}<footer><span>${uiCopy("Lab을 제거해도 기존 아티팩트와 기록은 삭제되지 않습니다.", "Removing a Lab does not delete its existing artifacts or records.")}</span><button class="primaryButton" type="button" data-action="close-project-labs">${uiCopy("완료", "Done")}</button></footer></section></div>`;
+  }
+
+  async function toggleProjectLabBookmark(labId, enabled) {
+    const projectId = state.selectedId;
+    if (!projectId || state.labManagerBusyId) return;
+    const existing = state.workspaceLabBindings.find((binding) => binding.labId === labId) || null;
+    state.labManagerBusyId = labId;
+    state.labManagerError = "";
+    render();
+    try {
+      await science.labs.upsertBinding({
+        requestId: crypto.randomUUID(),
+        projectId,
+        labId,
+        enabled,
+        pinned: existing?.pinned === true,
+        ...(Number.isSafeInteger(existing?.displayOrder) ? { displayOrder: existing.displayOrder } : {}),
+        activatedBy: existing?.activatedBy || "user",
+        config: existing?.config && typeof existing.config === "object" ? existing.config : {},
+      });
+      if (state.selectedId !== projectId) return;
+      const [workspaceState, labs] = await Promise.all([science.workspace.get(projectId), science.labs.list(projectId)]);
+      if (state.selectedId !== projectId) return;
+      state.workspaceLabBindings = Array.isArray(workspaceState?.labs) ? workspaceState.labs.filter((binding) => binding?.projectId === projectId) : [];
+      state.labs = Array.isArray(labs) ? labs : [];
+      if (!enabled) {
+        state.workspaceTabs = state.workspaceTabs.filter((tab) => tab.kind !== "lab" || tab.labId !== labId);
+        if (!state.workspaceTabs.some((tab) => tab.kind === "research")) state.workspaceTabs.unshift({ id: RESEARCH_TAB_ID, kind: "research", dirty: false });
+        if (state.selectedLabId === labId || !state.workspaceTabs.some((tab) => tab.id === state.activeWorkspaceTabId)) {
+          state.selectedLabId = null;
+          state.selectedArtifactId = null;
+          state.mode = "session";
+          state.activeWorkspaceTabId = RESEARCH_TAB_ID;
+        }
+      }
+      state.labManagerBusyId = null;
+      render();
+    } catch (error) {
+      if (state.selectedId !== projectId) return;
+      state.labManagerBusyId = null;
+      state.labManagerError = error instanceof Error ? error.message : String(error);
+      render();
     }
-    return `<div class="modalBackdrop projectCreationBackdrop" role="presentation"><form class="modal newProjectModal projectDetailsModal" id="new-project-form" role="dialog" aria-modal="true" aria-labelledby="new-project-title"><header><div><span>${uiCopy("2단계 · 프로젝트 설정", "Step 2 · Project details")}</span><h2 id="new-project-title">${uiCopy("이름과 연구 질문을 적어 주세요", "Name the project and set its question")}</h2></div><button class="newProjectClose" type="button" data-action="cancel" aria-label="${uiCopy("새 연구 닫기", "Close new research")}">×</button></header><button class="selectedResearchTemplate" type="button" data-action="project-template-back"><img src="./assets/research-templates/${escapeHtml(template.id)}.png" alt=""><span><strong>${escapeHtml(researchTemplateLabel(template))}</strong><em>${escapeHtml(researchTemplateDescription(template))}</em></span><small>${uiCopy("분야 바꾸기", "Change field")}</small></button><input type="hidden" name="researchTemplateId" value="${escapeHtml(template.id)}"><label class="field"><span>${uiCopy("프로젝트 이름", "Project name")}</span><input name="title" required maxlength="80" autocomplete="off" value="${escapeHtml(state.newProjectDraft.title)}" placeholder="${uiCopy("연구를 구분하기 쉬운 짧은 이름", "A short name to identify your research")}" /></label><label class="field"><span>${uiCopy("연구 질문", "Research question")}</span><textarea name="question" required maxlength="20000" placeholder="${uiCopy("무엇을 발견하거나 검증하고 싶나요?", "What do you want to discover or test?")}">${escapeHtml(state.newProjectDraft.question)}</textarea></label><div class="formError" id="form-error" role="alert"></div><div class="modalActions"><button class="secondaryButton" type="button" data-action="project-template-back">${uiCopy("이전", "Back")}</button><button class="primaryButton" type="submit" ${state.saving ? "disabled" : ""}>${state.saving ? uiCopy("저장 중…", "Saving…") : uiCopy("프로젝트 만들기", "Create project")}</button></div></form></div>`;
   }
 
   function manuscriptModal() {
@@ -7045,7 +7164,10 @@ function createComposerEventSync({
     const statusTitle = loopPresentation?.attention
       ? `${loopPresentation.detail} · ${lifecycleLabel()} · ${state.lifecycle?.stateSha256 || ""}`
       : `${lifecycleLabel()} · ${state.lifecycle?.stateSha256 || ""}`;
-    return `<section class="workspace ${state.drawer ? "drawerOpen" : ""}" data-workspace-mode="${escapeHtml(state.mode)}" data-project-destination="${escapeHtml(state.currentDestination)}" data-rail-collapsed="${state.railCollapsed}">${projectRail(project)}<button class="railScrim" data-action="collapse-rail" aria-label="사이드바 닫기"></button><main class="mainPane"><header class="topbar"><div class="topLocation workspaceLocation"><button class="workspaceSidebarReveal" data-action="expand-rail" aria-label="사이드바 열기" title="사이드바 열기">${heroIcon("chevron-right")}</button><div class="workspaceTabGroup" role="tablist" aria-label="연구, 열린 Lab 아티팩트와 원고">${researchWorkspaceTabButton()}<div class="workspaceTabsShell" data-workspace-tabs-shell><button class="workspaceTabOverflow workspaceTabOverflowPrevious" type="button" data-action="scroll-workspace-tabs" data-direction="previous" aria-label="이전 열린 탭 보기" hidden>${heroIcon("chevron-right", "uiIcon isReverse")}</button><nav class="workspaceTabs" data-workspace-tabs role="presentation">${workspaceTabButtons()}</nav><button class="workspaceTabOverflow workspaceTabOverflowNext" type="button" data-action="scroll-workspace-tabs" data-direction="next" aria-label="다음 열린 탭 보기" hidden>${heroIcon("chevron-right")}</button></div></div><button class="workspaceTabAdd" data-action="new" aria-label="새 연구 시작" title="새 연구">${heroIcon("plus")}</button></div><div class="topActions">${state.workspaceSyncError ? `<span class="workspaceSyncWarning" role="status" title="${escapeHtml(state.workspaceSyncError)}">저장 실패</span>` : ""}<span class="statusPill" data-tone="${loopPresentation?.attention ? "manual" : "pass"}" title="${escapeHtml(statusTitle)}">${escapeHtml(lifecycleCompactLabel())}</span><button data-action="toggle-drawer">${state.mode === "session" ? "근거" : "세부"}</button></div></header><div class="workspaceBody"><div class="contentPane workspaceCenter"><div class="workspaceSurface" id="science-workspace-panel" role="tabpanel" aria-labelledby="${escapeHtml(workspaceTabDomId(state.activeWorkspaceTabId))}" data-workspace-surface>${main}</div></div>${chatDock()}</div></main>${contextDrawer()}${modal()}${manuscriptModal()}${journalTargetSheet()}${submissionExportSheet()}${evidenceGraphInferenceReviewSheet()}${episodeResultReviewSheet()}${researchContractApprovalSheet()}${researchDecisionSheet()}${analysisPlanReviewSheet()}</section>`;
+    const sidebarToggleLabel = state.railCollapsed ? uiCopy("사이드바 열기", "Open sidebar") : uiCopy("사이드바 닫기", "Close sidebar");
+    const sidebarToggleAction = state.railCollapsed ? "expand-rail" : "collapse-rail";
+    const sidebarToggleIcon = heroIcon("chevron-right", state.railCollapsed ? "uiIcon" : "uiIcon isReverse");
+    return `<section class="workspace ${state.drawer ? "drawerOpen" : ""}" data-workspace-mode="${escapeHtml(state.mode)}" data-project-destination="${escapeHtml(state.currentDestination)}" data-rail-collapsed="${state.railCollapsed}">${projectRail(project)}<button class="railScrim" data-action="collapse-rail" aria-label="사이드바 닫기"></button><main class="mainPane"><header class="topbar"><div class="topLocation workspaceLocation"><button class="workspaceSidebarReveal" data-action="${sidebarToggleAction}" aria-label="${sidebarToggleLabel}" title="${sidebarToggleLabel}">${sidebarToggleIcon}</button><div class="workspaceTabGroup" role="tablist" aria-label="연구, 열린 Lab 아티팩트와 원고">${researchWorkspaceTabButton()}<div class="workspaceTabsShell" data-workspace-tabs-shell><button class="workspaceTabOverflow workspaceTabOverflowPrevious" type="button" data-action="scroll-workspace-tabs" data-direction="previous" aria-label="이전 열린 탭 보기" hidden>${heroIcon("chevron-right", "uiIcon isReverse")}</button><nav class="workspaceTabs" data-workspace-tabs role="presentation">${workspaceTabButtons()}</nav><button class="workspaceTabOverflow workspaceTabOverflowNext" type="button" data-action="scroll-workspace-tabs" data-direction="next" aria-label="다음 열린 탭 보기" hidden>${heroIcon("chevron-right")}</button></div></div><button class="workspaceTabAdd" data-action="new" aria-label="새 연구 시작" title="새 연구">${heroIcon("plus")}</button></div><div class="topActions">${state.workspaceSyncError ? `<span class="workspaceSyncWarning" role="status" title="${escapeHtml(state.workspaceSyncError)}">저장 실패</span>` : ""}<span class="statusPill" data-tone="${loopPresentation?.attention ? "manual" : "pass"}" title="${escapeHtml(statusTitle)}">${escapeHtml(lifecycleCompactLabel())}</span><button data-action="toggle-drawer">${state.mode === "session" ? "근거" : "세부"}</button></div></header><div class="workspaceBody"><div class="contentPane workspaceCenter"><div class="workspaceSurface" id="science-workspace-panel" role="tabpanel" aria-labelledby="${escapeHtml(workspaceTabDomId(state.activeWorkspaceTabId))}" data-workspace-surface>${main}</div></div>${chatDock()}</div></main>${contextDrawer()}${modal()}${labManagerModal()}${manuscriptModal()}${journalTargetSheet()}${submissionExportSheet()}${evidenceGraphInferenceReviewSheet()}${episodeResultReviewSheet()}${researchContractApprovalSheet()}${researchDecisionSheet()}${analysisPlanReviewSheet()}</section>`;
   }
 
   function rememberScroll(mode = state.mode) {
@@ -7073,7 +7195,7 @@ function createComposerEventSync({
     restoreChatScroll();
     const contentPane = document.querySelector(".contentPane");
     if (contentPane) contentPane.scrollTop = state.scrollByMode[state.mode] || 0;
-    if (state.modal) document.querySelector(state.newProjectStep === "field" ? "[data-research-template]" : 'input[name="title"]')?.focus();
+    if (state.modal) document.querySelector('input[name="title"]')?.focus();
     if (state.researchContractSheet) requestAnimationFrame(() => document.querySelector(".researchContractSheet")?.focus({ preventScroll: true }));
     if (state.analysisPlanReviewSheet) requestAnimationFrame(() => document.querySelector(".analysisPlanReviewSheet textarea")?.focus({ preventScroll: true }));
     if (!state.resultReviewSheet && state.mode === "lab" && state.selectedArtifactId && state.artifactHistoryById.has(state.selectedArtifactId)) {
@@ -7098,6 +7220,14 @@ function createComposerEventSync({
     const main = workspaceNode?.querySelector(".mainPane");
     if (!workspaceNode || !main) return;
     workspaceNode.dataset.railCollapsed = String(state.railCollapsed);
+    const sidebarToggle = workspaceNode.querySelector('.workspaceSidebarReveal');
+    if (sidebarToggle) {
+      const label = state.railCollapsed ? uiCopy("사이드바 열기", "Open sidebar") : uiCopy("사이드바 닫기", "Close sidebar");
+      sidebarToggle.dataset.action = state.railCollapsed ? "expand-rail" : "collapse-rail";
+      sidebarToggle.setAttribute("aria-label", label);
+      sidebarToggle.setAttribute("title", label);
+      sidebarToggle.setAttribute("aria-expanded", String(!state.railCollapsed));
+    }
     const overlayOpen = !state.railCollapsed && window.matchMedia("(max-width: 680px)").matches;
     if (overlayOpen || state.resultReviewSheet) main.setAttribute("inert", "");
     else main.removeAttribute("inert");
@@ -7109,8 +7239,7 @@ function createComposerEventSync({
     syncRailPresentation();
     requestAnimationFrame(syncWorkspaceTabOverflow);
     window.setTimeout(syncWorkspaceTabOverflow, 220);
-    if (state.railCollapsed) document.querySelector('.workspaceSidebarReveal')?.focus();
-    else document.querySelector('.railCollapseButton')?.focus();
+    document.querySelector('.workspaceSidebarReveal')?.focus();
   }
 
   function teardownArtifactRenderer(preserveNativeRenderer = false) {
@@ -7138,37 +7267,60 @@ function createComposerEventSync({
     }
   }
 
-  async function hydrateInlineArtifactRenderers() {
-    if (!window.vega || !window.vegaExpressionInterpreter) return;
-    const hosts = [...document.querySelectorAll("[data-inline-vega-artifact]")];
-    for (const host of hosts) {
-      const artifactId = host.dataset.inlineVegaArtifact;
-      const artifactVersion = Number(host.dataset.inlineVegaVersion);
-      const context = [...state.artifactContextsByMessage.values()].flat().find((item) => item.artifact.id === artifactId && item.selectedVersion.version === artifactVersion);
-      const spec = context?.selectedVersion?.payload?.spec;
-      if (!spec || typeof spec !== "object" || Array.isArray(spec) || !host.isConnected) continue;
-      try {
+  function setInlineArtifactPreviewState(host, stateName) {
+    if (!host?.isConnected) return;
+    const card = host.closest(".inlineArtifact");
+    host.dataset.renderFailed = "true";
+    host.dataset.previewMissing = "true";
+    const status = document.createElement("span");
+    status.className = "inlineArtifactPreviewStatus";
+    status.textContent = stateName === "loading"
+      ? uiCopy("미리보기를 다시 불러오는 중…", "Reloading preview…")
+      : uiCopy("미리보기를 불러오지 못했습니다 · 다시 시도", "Preview unavailable · Retry");
+    host.replaceChildren(status);
+    if (card) {
+      card.dataset.previewRetry = stateName === "loading" ? "loading" : "true";
+      card.setAttribute("aria-busy", String(stateName === "loading"));
+    }
+  }
+
+  function clearInlineArtifactPreviewState(host) {
+    delete host.dataset.renderFailed;
+    delete host.dataset.previewMissing;
+    const card = host.closest(".inlineArtifact");
+    if (!card) return;
+    delete card.dataset.previewRetry;
+    card.removeAttribute("aria-busy");
+  }
+
+  async function hydrateInlineArtifactPreview(host) {
+    if (!host?.isConnected || host.dataset.previewLoading === "true") return;
+    const isVega = host.matches("[data-inline-vega-artifact]");
+    host.dataset.previewLoading = "true";
+    setInlineArtifactPreviewState(host, "loading");
+    let view = null;
+    try {
+      if (isVega) {
+        if (!window.vega || !window.vegaExpressionInterpreter) throw new Error("science-vega-runtime-unavailable");
+        const artifactId = host.dataset.inlineVegaArtifact;
+        const artifactVersion = Number(host.dataset.inlineVegaVersion);
+        const context = [...state.artifactContextsByMessage.values()].flat().find((item) => item.artifact.id === artifactId && item.selectedVersion.version === artifactVersion);
+        const spec = context?.selectedVersion?.payload?.spec;
+        if (!spec || typeof spec !== "object" || Array.isArray(spec)) throw new Error("science-vega-spec-invalid");
+        host.replaceChildren();
         const runtime = window.vega.parse(compileArtifactVegaSpec(spec), undefined, { ast: true });
-        const view = new window.vega.View(runtime, { expr: window.vegaExpressionInterpreter }).renderer("canvas").initialize(host).hover();
+        view = new window.vega.View(runtime, { expr: window.vegaExpressionInterpreter }).renderer("canvas").initialize(host).hover();
         const width = Math.max(220, Math.floor(host.getBoundingClientRect().width) - 110);
         view.width(width).height(230);
-        state.inlineVegaViews.push(view);
         await view.runAsync();
-        fitArtifactVegaCanvas(host, { gutter: 8 });
-      } catch (error) {
-        host.textContent = error instanceof Error ? error.message : String(error);
-        host.dataset.renderFailed = "true";
-      }
-    }
-    const captureHosts = [...document.querySelectorAll("[data-inline-capture-artifact]")];
-    for (const host of captureHosts) {
-      try {
+        if (!host.isConnected) { try { view.finalize(); } catch {} return; }
+        fitArtifactVegaCanvas(host, { gutter: 8, maxHeight: 230 });
+        state.inlineVegaViews.push(view);
+        view = null;
+      } else {
         const preview = await science.artifacts.preview(state.selectedId, host.dataset.inlineCaptureArtifact, Number(host.dataset.inlineCaptureVersion));
-        if (!preview?.bytes || !host.isConnected) {
-          host.innerHTML = refusalMarkup("absent", "검증된 시각 캡처가 아직 없습니다.", "실행이 캡처를 만들면 이 자리에 그대로 표시됩니다.");
-          host.dataset.previewMissing = "true";
-          continue;
-        }
+        if (!preview?.bytes) throw new Error("science-artifact-preview-unavailable");
+        if (!host.isConnected) return;
         const bytes = preview.bytes instanceof Uint8Array ? preview.bytes : new Uint8Array(preview.bytes);
         const url = URL.createObjectURL(new Blob([bytes], { type: preview.mimeType || "image/png" }));
         state.inlinePreviewUrls.push(url);
@@ -7178,10 +7330,20 @@ function createComposerEventSync({
         image.width = preview.width;
         image.height = preview.height;
         host.replaceChildren(image);
-      } catch (error) {
-        host.textContent = error instanceof Error ? error.message : String(error);
-        host.dataset.renderFailed = "true";
       }
+      clearInlineArtifactPreviewState(host);
+    } catch {
+      try { view?.finalize(); } catch {}
+      setInlineArtifactPreviewState(host, "failed");
+    } finally {
+      delete host.dataset.previewLoading;
+    }
+  }
+
+  async function hydrateInlineArtifactRenderers() {
+    const hosts = [...document.querySelectorAll("[data-inline-vega-artifact], [data-inline-capture-artifact]")];
+    for (const host of hosts) {
+      await hydrateInlineArtifactPreview(host);
     }
   }
 
@@ -9233,6 +9395,13 @@ function createComposerEventSync({
   root.addEventListener("click", (event) => {
     const target = event.target.closest("button");
     if (!target) return;
+    if (target.dataset.inlineArtifactId && target.dataset.previewRetry) {
+      if (target.dataset.previewRetry !== "loading") {
+        const host = target.querySelector("[data-inline-vega-artifact], [data-inline-capture-artifact]");
+        if (host) void hydrateInlineArtifactPreview(host);
+      }
+      return;
+    }
     if (target.dataset.action === "answer-runtime-question") { void answerRuntimeQuestion(target.dataset.runtimeQuestionAnswer || ""); return; }
     if (target.dataset.action === "dismiss-runtime-question") { void answerRuntimeQuestion(null); return; }
     if (target.dataset.tablePage !== undefined) {
@@ -9419,7 +9588,28 @@ function createComposerEventSync({
       state.modal = true;
       state.selectedResearchTemplateId = template.id;
       state.newProjectStep = "details";
+      state.newProjectRequestId = null;
+      state.newProjectRequestSignature = "";
       render();
+      return;
+    }
+    if (target.dataset.action === "manage-project-labs") {
+      state.labManagerOpen = true;
+      state.labManagerError = "";
+      render();
+      requestAnimationFrame(() => document.querySelector(".labManagerRow")?.focus());
+      return;
+    }
+    if (target.dataset.action === "close-project-labs") {
+      if (state.labManagerBusyId) return;
+      state.labManagerOpen = false;
+      state.labManagerError = "";
+      render();
+      requestAnimationFrame(() => document.querySelector(".manageLabsButton")?.focus());
+      return;
+    }
+    if (target.dataset.action === "toggle-project-lab") {
+      void toggleProjectLabBookmark(target.dataset.labId || "", target.dataset.labEnabled !== "true");
       return;
     }
     if (target.dataset.action === "collapse-rail") { setRailCollapsed(true); return; }
@@ -9436,17 +9626,20 @@ function createComposerEventSync({
       const action = () => {
         state.modal = true;
         state.saving = false;
-        state.newProjectStep = "field";
+        state.newProjectStep = "details";
         state.selectedResearchTemplateId = null;
         state.newProjectDraft = { title: "", question: "" };
+        state.newProjectRequestId = null;
+        state.newProjectRequestSignature = "";
         render();
       };
       if (!guardArtifactDraftNavigation(action)) action();
       return;
     }
-    if (target.dataset.action === "project-template-back") {
-      state.newProjectStep = "field";
-      state.saving = false;
+    if (target.dataset.action === "clear-project-classification") {
+      state.selectedResearchTemplateId = null;
+      state.newProjectRequestId = null;
+      state.newProjectRequestSignature = "";
       render();
       return;
     }
@@ -9658,9 +9851,11 @@ function createComposerEventSync({
     if (target.dataset.action === "cancel") {
       state.modal = false;
       state.saving = false;
-      state.newProjectStep = "field";
+      state.newProjectStep = "details";
       state.selectedResearchTemplateId = null;
       state.newProjectDraft = { title: "", question: "" };
+      state.newProjectRequestId = null;
+      state.newProjectRequestSignature = "";
       render();
       return;
     }
@@ -10596,33 +10791,39 @@ function createComposerEventSync({
     if (event.target.id !== "new-project-form") return;
     event.preventDefault();
     const form = new FormData(event.target);
-    const template = researchTemplateById(String(form.get("researchTemplateId") || ""));
+    const template = researchTemplateById(state.selectedResearchTemplateId);
     const title = String(form.get("title") || "").trim();
     const question = String(form.get("question") || "").trim();
-    if (!template || !title || !question) {
+    if (!title || !question) {
       const errorNode = document.getElementById("form-error");
       if (errorNode) errorNode.textContent = uiCopy("프로젝트 이름과 연구 질문을 모두 입력해 주세요.", "Enter both a project name and a research question.");
       return;
+    }
+    const domain = template?.domain || "general";
+    const requestSignature = JSON.stringify({ title, question, domain });
+    if (!state.newProjectRequestId || state.newProjectRequestSignature !== requestSignature) {
+      state.newProjectRequestId = crypto.randomUUID();
+      state.newProjectRequestSignature = requestSignature;
     }
     state.saving = true;
     render();
     try {
       const result = await science.projects.create({
-        requestId: crypto.randomUUID(),
+        requestId: state.newProjectRequestId,
         question,
         title,
-        domain: template.domain,
-        researchTemplateId: template.id,
-        initialLabId: template.id,
+        domain,
       });
       state.projects = [result.project, ...state.projects.filter((item) => item.id !== result.project.id)];
       state.projectLibrarySummaries.set(result.project.id, { projectId: result.project.id, fileCount: 0, dataCount: 0, analysisCount: 0, manuscriptCount: 0, pdfCount: 0 });
       state.modal = false;
       state.saving = false;
-      state.newProjectStep = "field";
+      state.newProjectStep = "details";
       state.selectedResearchTemplateId = null;
       state.newProjectDraft = { title: "", question: "" };
-      await selectProject(result.project.id, { openFolder: true });
+      state.newProjectRequestId = null;
+      state.newProjectRequestSignature = "";
+      await selectProject(result.project.id, { openFolder: false });
       // project.create persists the first question as a user message. Start that
       // exact message immediately so a new project opens on a live Research
       // Director turn instead of looking like an empty shell that needs a second

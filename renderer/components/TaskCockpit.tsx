@@ -1194,6 +1194,14 @@ function restoreAnsweredQuestions(
         pendingContinuationAutoResume: Boolean(committed?.continuationRunId),
       } : msg;
     }
+    if (committedReply) {
+      // An accepted receipt proves the batch was answered, not how arbitrary
+      // free text should be split back into questions. Preserve that boundary.
+      return {
+        ...msg,
+        questions: msg.questions.map((q) => q.answer?.length ? q : { ...q, answer: ["✓"] }),
+      };
+    }
     const nextUser = i >= messages.length - 1
       ? undefined
       : messages.slice(i + 1).find((m) => m.role === "user");
@@ -3980,31 +3988,27 @@ function ChatPage() {
     return null;
   }, [messages]);
 
-  // A committed answer is a durable intent, not a renderer-local button
-  // state. After remount, resume it once through Main's exact run binding.
-  useEffect(() => {
-    const reply = pendingQuestionSheet?.initialReply?.trim();
-    const continuationRunId = pendingQuestionSheet?.continuationRunId;
-    if (!reply || !continuationRunId || pendingQuestionSheet?.autoResume === false || busy || questionCommitPending) return;
-    const key = `${chatId}\0${pendingQuestionSheet.sourceMessageId}\0${continuationRunId}`;
-    if (continuationResumeAttemptsRef.current.has(key)) return;
+  // Both automatic reconciliation and explicit Retry use the accepted bytes
+  // and Main-owned run. Neither path commits or parses a new answer.
+  const resumeCommittedQuestion = useCallback(async () => {
+    const sheet = pendingQuestionSheet;
+    const reply = sheet?.initialReply;
+    const continuationRunId = sheet?.continuationRunId;
+    if (!reply?.trim() || !continuationRunId || busy || questionCommitPendingRef.current) return;
+    questionCommitPendingRef.current = sheet.messageId;
+    setQuestionCommitPending(true);
+    const key = `${chatId}\0${sheet.sourceMessageId}\0${continuationRunId}`;
     continuationResumeAttemptsRef.current.add(key);
-    const parsed = parseQuestionBatchReply(reply);
-    const permissions = inferPermissionFromAnswer(parsed?.flatMap((item) => item.answers) ?? [reply])
-      ?? DEFAULT_PERMISSION;
-    void (async () => {
-      const api = ipc();
-      if (!api) return;
+    try {
       const resumed = await send(reply, {
-        permissions,
         decisionContinuation: {
-          sourceMessageId: pendingQuestionSheet.sourceMessageId,
+          sourceMessageId: sheet.sourceMessageId,
           runId: continuationRunId,
         },
       }).catch(() => false);
       if (!resumed) {
         const retryable = continuationTransportRetryableRef.current.has(continuationRunId);
-        setMessages((messages) => messages.map((message) => message.id === pendingQuestionSheet.messageId
+        setMessages((messages) => messages.map((message) => message.id === sheet.messageId
           ? { ...message, pendingContinuationAutoResume: retryable }
           : message));
         setSessionNotice(retryable
@@ -4017,20 +4021,31 @@ function ChatPage() {
         return;
       }
       setMessages((messages) => messages.map((message) => {
-        if (message.id !== pendingQuestionSheet.messageId) return message;
+        if (message.id !== sheet.messageId) return message;
         return {
           ...message,
           pendingCommittedReply: undefined,
           pendingContinuationRunId: undefined,
           pendingContinuationAutoResume: undefined,
-          questions: message.questions?.map((question) => {
-            const answers = parsed?.find((item) => item.question === question.question.trim())?.answers;
-            return { ...question, answer: answers?.length ? answers : ["✓"] };
-          }),
+          questions: message.questions?.map((question) => question.answer?.length
+            ? question : { ...question, answer: ["✓"] }),
         };
       }));
-    })();
-  }, [busy, chatId, continuationReconnectEpoch, pendingQuestionSheet, questionCommitPending, send]);
+    } finally {
+      if (questionCommitPendingRef.current === sheet.messageId) {
+        questionCommitPendingRef.current = null;
+        setQuestionCommitPending(false);
+      }
+    }
+  }, [busy, chatId, pendingQuestionSheet, send]);
+
+  useEffect(() => {
+    const sheet = pendingQuestionSheet;
+    if (!sheet?.initialReply?.trim() || !sheet.continuationRunId || sheet.autoResume === false || busy || questionCommitPending) return;
+    const key = `${chatId}\0${sheet.sourceMessageId}\0${sheet.continuationRunId}`;
+    if (continuationResumeAttemptsRef.current.has(key)) return;
+    void resumeCommittedQuestion();
+  }, [busy, chatId, continuationReconnectEpoch, pendingQuestionSheet, questionCommitPending, resumeCommittedQuestion]);
 
   const handleSurfaceAction = useCallback(
     async (activeSurface: WorkbenchSurface, action: AgentlasSurfaceAction) => {
@@ -5184,6 +5199,7 @@ function ChatPage() {
         <ChatQuestionSheet
           questions={pendingQuestionSheet.questions}
           initialReply={pendingQuestionSheet.initialReply}
+          onRetryCommitted={pendingQuestionSheet.continuationRunId ? () => { void resumeCommittedQuestion(); } : undefined}
           busy={busy || questionCommitPending}
           onConfirm={(reply, perQuestion) =>
             answerQuestionBatch(

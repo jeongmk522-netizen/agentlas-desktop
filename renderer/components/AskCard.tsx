@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import styles from "./AskCard.module.css";
 
 /**
@@ -30,6 +30,7 @@ export function AskCard({
   onChoose,
   onClose,
   footer,
+  children,
   locale = "ko",
   "data-testid": testId,
 }: {
@@ -43,6 +44,7 @@ export function AskCard({
    * 언제나 빠져나갈 길이 있어야 한다는 규칙을 이 줄이 지킨다.
    */
   footer?: { placeholder: string; skipLabel: string; onSkip: (freeText: string) => void };
+  children?: ReactNode;
   locale?: "ko" | "en";
   "data-testid"?: string;
 }) {
@@ -64,6 +66,7 @@ export function AskCard({
         )}
       </div>
 
+      {children}
       <div className={styles.options}>
         {options.map((option, index) => (
           <button

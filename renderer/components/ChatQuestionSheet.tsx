@@ -44,6 +44,7 @@ export function ChatQuestionSheet({
   initialReply,
   busy,
   onConfirm,
+  onRetryCommitted,
   onDismiss,
 }: {
   /** 현재 답변 대기 중인(unanswered) 질문들 — 최신 어시스턴트 메시지 기준. */
@@ -53,46 +54,15 @@ export function ChatQuestionSheet({
   /** 실행 중이면 최종 전송만 잠근다(선택은 허용). */
   busy: boolean;
   onConfirm: (reply: string, perQuestion: QuestionSheetAnswer[]) => void;
+  /** Retry only the existing Main-owned continuation; never create a new answer. */
+  onRetryCommitted?: () => void;
   /** ×로 닫기 — 이 배치를 답하지 않고 접는다(전송 없음). */
   onDismiss: () => void;
 }) {
   const { locale } = useT();
   const ko = locale === "ko";
-  const hydrateReply = () => {
-    const selected: Record<string, string[]> = {};
-    const notes: Record<string, string> = {};
-    if (!initialReply?.trim()) return { selected, notes };
-    const saved = initialReply.trim();
-    const boundaries: Array<{ start: number; body: number; target: ChatQuestion }> = [];
-    let previousQuestionIndex = -1;
-    // Blank lines and scaffold words may be part of a free answer. A new
-    // block must identify a later question in this exact batch, not merely
-    // look like a paragraph or an Answer line.
-    for (const match of saved.matchAll(/(?:^|\n\n)(?:질문|Question): ([^\n]+)\n/g)) {
-      const questionIndex = questions.findIndex((item, index) =>
-        index > previousQuestionIndex && item.question.trim() === match[1].trim());
-      if (questionIndex < 0) continue;
-      boundaries.push({ start: match.index!, body: match.index! + match[0].length, target: questions[questionIndex] });
-      previousQuestionIndex = questionIndex;
-    }
-    for (let index = 0; index < boundaries.length; index += 1) {
-      const { body, target } = boundaries[index];
-      let content = saved.slice(body, boundaries[index + 1]?.start ?? saved.length);
-      const selection = content.match(/^(?:선택|Selected): ([^\n]*)(?:\n|$)/);
-      const selectedLine = selection?.[1].trim();
-      if (selectedLine) {
-        const allowed = new Set(target.options.map((option) => option.label));
-        selected[target.id] = selectedLine.split(",").map((item) => item.trim()).filter((item) => allowed.has(item));
-      }
-      if (selection) content = content.slice(selection[0].length);
-      const note = content.match(/^(?:답변|Answer): ([\s\S]*)$/)?.[1].trim();
-      if (note) notes[target.id] = note;
-    }
-    return { selected, notes };
-  };
-  const hydrated = hydrateReply();
-  const [selected, setSelected] = useState<Record<string, string[]>>(hydrated.selected);
-  const [notes, setNotes] = useState<Record<string, string>>(hydrated.notes);
+  const [selected, setSelected] = useState<Record<string, string[]>>({});
+  const [notes, setNotes] = useState<Record<string, string>>({});
   const [active, setActive] = useState(0);
   const [collapsed, setCollapsed] = useState(false);
   // 실행 중에 낸 답 — 실행이 정리되는 순간 그대로 보낸다(푸터 문구 "실행이 정리되면 전송"의 실체).
@@ -105,9 +75,8 @@ export function ChatQuestionSheet({
 
   // 새 질문 묶음이 오면 로컬 상태 초기화.
   useEffect(() => {
-    const next = hydrateReply();
-    setSelected(next.selected);
-    setNotes(next.notes);
+    setSelected({});
+    setNotes({});
     setActive(0);
     setCollapsed(false);
     setPendingSubmit(false);
@@ -132,7 +101,7 @@ export function ChatQuestionSheet({
   // 실행 중에 제출한 답은 busy 가 풀리는 즉시 보낸다. 안 보내면 사용자는 Enter 를 두 번 쳐야 하고,
   // 그 사이 시트에는 "건너뛰기"만 보인다(2026-09-02 실측).
   useEffect(() => {
-    if (!pendingSubmit || busy) return;
+    if (initialReply?.trim() || !pendingSubmit || busy) return;
     if (!hasAnyAnswer) {
       setPendingSubmit(false);
       return;
@@ -140,7 +109,41 @@ export function ChatQuestionSheet({
     setPendingSubmit(false);
     onConfirm(composed.reply, composed.perQuestion);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pendingSubmit, busy, hasAnyAnswer, composed]);
+  }, [initialReply, pendingSubmit, busy, hasAnyAnswer, composed]);
+
+  if (initialReply?.trim()) {
+    // This is an immutable accepted answer, not an editable draft. Its text
+    // format cannot unambiguously recover question boundaries from quoted
+    // headings, so display the canonical bytes and retry its original run.
+    keyHandlerRef.current = () => {};
+    return (
+      <div className="titlebar-nodrag" ref={rootRef}>
+        <AskCard
+          title={ko ? "이미 저장된 답변" : "Previously saved answer"}
+          locale={ko ? "ko" : "en"}
+          onClose={onDismiss}
+          options={[{
+            id: "retry-committed",
+            title: busy ? (ko ? "재개 중" : "Resuming") : (ko ? "기존 실행 다시 시도" : "Retry the existing run"),
+            disabled: busy || !onRetryCommitted,
+          }]}
+          onChoose={() => { if (!busy) onRetryCommitted?.(); }}
+        >
+          <p style={{ margin: "0 0 12px" }}>
+            {onRetryCommitted
+              ? (ko ? "저장된 원문으로만 재시도합니다. 답변을 바꾸려면 닫은 뒤 새 메시지로 보내 주세요."
+                : "Retry uses the saved text unchanged. To change your answer, close this card and send a new message.")
+              : (ko ? "기존 실행 정보를 찾지 못해 여기서 재개할 수 없습니다. 닫은 뒤 새 메시지로 요청해 주세요."
+                : "The original run is unavailable. Close this card and send a new message to make a new request.")}
+          </p>
+          <pre data-committed-question-reply="true" tabIndex={0} style={{
+            margin: "0 0 12px", whiteSpace: "pre-wrap", overflowWrap: "anywhere",
+            maxHeight: "min(320px, 35vh)", overflow: "auto", font: "inherit",
+          }}>{initialReply}</pre>
+        </AskCard>
+      </div>
+    );
+  }
 
   if (questions.length === 0 || !q) {
     keyHandlerRef.current = () => {};

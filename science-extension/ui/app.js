@@ -388,7 +388,7 @@ function createComposerEventSync({
     scopeLoading: false, scopeError: "",
     logbookRevisions: [], logbookLoading: false, logbookError: "",
     submissionArchiveProfiles: [], submissionArchiveExports: [], submissionArchiveLoading: false, submissionArchiveError: "",
-    datasetImportBusy: false, datasetImportError: "", tablePageByArtifact: new Map(), statisticsViewByArtifact: new Map(), paleontologyViewByArtifact: new Map(),
+    datasetImportBusy: false, datasetImportError: "", tablePageByArtifact: new Map(), statisticsViewByArtifact: new Map(), paleontologyViewByArtifact: new Map(), visualViewportByArtifact: new Map(),
     spatialViewByArtifact: new Map(), materialsStructureIndexByArtifact: new Map(),
     statisticsLaunchSourceArtifactId: null, statisticsLaunchTimeColumn: "", statisticsLaunchEventColumn: "", statisticsLaunchBusy: false, statisticsLaunchError: "", statisticsLaunchOpen: false,
     // The launch screen used to offer one analysis, because one analysis was written into it. These
@@ -585,13 +585,36 @@ function createComposerEventSync({
     const frame = host.closest(".artifactCanvasFrame");
     const toolbar = frame?.querySelector("[data-artifact-view-toolbar]");
     const status = toolbar?.querySelector("[data-artifact-view-status]");
-    let scale = kind === "image" ? 1 : 1;
+    const visualViewportKey = [
+      state.selectedId || "unknown-project",
+      host.dataset.artifactHost || "unknown-artifact",
+      host.dataset.artifactVersion || "unknown-version",
+      host.dataset.contentSha256 || "unknown-content",
+    ].join(":");
+    const rememberedViewport = state.visualViewportByArtifact.get(visualViewportKey) || null;
+    let scale = 1;
     let fitLocked = false;
     let persistentPan = kind === "image";
     let temporarySpacePan = false;
     let panMode = persistentPan;
     let pointer = null;
     const buttonListeners = [];
+    const rememberViewport = () => {
+      const memory = state.visualViewportByArtifact;
+      memory.delete(visualViewportKey);
+      memory.set(visualViewportKey, {
+        scale,
+        fitLocked,
+        scrollLeft: viewport.scrollLeft,
+        scrollTop: viewport.scrollTop,
+        persistentPan,
+      });
+      while (memory.size > 64) {
+        const oldestKey = memory.keys().next().value;
+        if (oldestKey === undefined) break;
+        memory.delete(oldestKey);
+      }
+    };
     const clampScale = (value, minimum = 0.05) => Math.max(minimum, Math.min(4, value));
     const fitScale = () => {
       const styles = getComputedStyle(viewport);
@@ -626,6 +649,7 @@ function createComposerEventSync({
       viewport.scrollLeft = Math.max(0, contentX * (scale / previousScale) - anchorX);
       viewport.scrollTop = Math.max(0, contentY * (scale / previousScale) - anchorY);
       updateStatus();
+      rememberViewport();
     };
     const applyFit = () => {
       fitLocked = true;
@@ -635,6 +659,7 @@ function createComposerEventSync({
       applyScale(next, center, 0.001);
       viewport.scrollLeft = 0;
       viewport.scrollTop = 0;
+      rememberViewport();
     };
     const applyReset = () => { fitLocked = false; applyScale(1); };
     const action = (name) => {
@@ -664,9 +689,13 @@ function createComposerEventSync({
       applyScale(scale * direction, event);
     };
     viewport.addEventListener("wheel", onWheel, { passive: false });
+    const onScroll = () => { if (!fitLocked) rememberViewport(); };
+    viewport.addEventListener("scroll", onScroll, { passive: true });
     const onPointerDown = (event) => {
       if (!surface.contains(event.target) || !(panMode || event.button === 1 || event.shiftKey || event.altKey)) return;
       event.preventDefault();
+      fitLocked = false;
+      rememberViewport();
       pointer = { id: event.pointerId, x: event.clientX, y: event.clientY };
       try { surface.setPointerCapture(event.pointerId); } catch {}
       surface.dataset.visualPanning = "true";
@@ -677,6 +706,7 @@ function createComposerEventSync({
       viewport.scrollLeft -= event.clientX - pointer.x;
       viewport.scrollTop -= event.clientY - pointer.y;
       pointer.x = event.clientX; pointer.y = event.clientY;
+      rememberViewport();
     };
     const clearPointer = () => {
       const pointerId = pointer?.id;
@@ -716,10 +746,13 @@ function createComposerEventSync({
       if (event.key === "0") { event.preventDefault(); action("fit"); return; }
       if (event.key === "Home" || event.key.toLowerCase() === "r") { event.preventDefault(); action("reset"); return; }
       const delta = event.shiftKey ? 96 : 48;
+      const scrollsViewport = ["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(event.key);
+      if (scrollsViewport) fitLocked = false;
       if (event.key === "ArrowLeft") { event.preventDefault(); viewport.scrollLeft -= delta; }
       if (event.key === "ArrowRight") { event.preventDefault(); viewport.scrollLeft += delta; }
       if (event.key === "ArrowUp") { event.preventDefault(); viewport.scrollTop -= delta; }
       if (event.key === "ArrowDown") { event.preventDefault(); viewport.scrollTop += delta; }
+      if (scrollsViewport) rememberViewport();
       if (event.key === " ") { event.preventDefault(); temporarySpacePan = true; panMode = true; updateStatus(); }
     };
     const onKeyUp = (event) => {
@@ -733,6 +766,7 @@ function createComposerEventSync({
       observer?.disconnect();
       buttonListeners.forEach(([button, listener]) => button.removeEventListener("click", listener));
       viewport.removeEventListener("wheel", onWheel);
+      viewport.removeEventListener("scroll", onScroll);
       surface.removeEventListener("pointerdown", onPointerDown);
       surface.removeEventListener("pointermove", onPointerMove);
       surface.removeEventListener("pointerup", onPointerUp);
@@ -747,7 +781,24 @@ function createComposerEventSync({
       if (host.__scienceVisualViewerCleanup === cleanup) delete host.__scienceVisualViewerCleanup;
     };
     host.__scienceVisualViewerCleanup = cleanup;
-    if (kind === "image") applyFit(); else { applyScale(1); }
+    const restoreRememberedViewport = () => {
+      if (!rememberedViewport || !Number.isFinite(Number(rememberedViewport.scale))) return false;
+      persistentPan = rememberedViewport.persistentPan === true;
+      panMode = persistentPan;
+      if (rememberedViewport.fitLocked === true) {
+        applyFit();
+        return true;
+      }
+      fitLocked = false;
+      applyScale(Number(rememberedViewport.scale), null, 0.001);
+      const maxScrollLeft = Math.max(0, viewport.scrollWidth - viewport.clientWidth);
+      const maxScrollTop = Math.max(0, viewport.scrollHeight - viewport.clientHeight);
+      viewport.scrollLeft = Math.max(0, Math.min(maxScrollLeft, Number(rememberedViewport.scrollLeft) || 0));
+      viewport.scrollTop = Math.max(0, Math.min(maxScrollTop, Number(rememberedViewport.scrollTop) || 0));
+      rememberViewport();
+      return true;
+    };
+    if (!restoreRememberedViewport()) applyFit();
     updateStatus();
   }
   const formatByteSize = (value) => {
@@ -1504,6 +1555,7 @@ function createComposerEventSync({
     state.vegaSaveError = "";
     state.pendingDraftNavigation = null;
     state.paleontologyViewByArtifact = new Map();
+    if (switchingProject) state.visualViewportByArtifact = new Map();
     state.blocksByMessage = new Map();
     state.citationsByMessage = new Map();
     state.evidenceById = new Map();
@@ -9766,6 +9818,7 @@ function createComposerEventSync({
         rememberScroll();
         if (state.selectedId) state.librarySelectedProjectId = state.selectedId;
         state.selectedId = null;
+        state.visualViewportByArtifact = new Map();
         state.projectFolderOpen = false;
         state.selectedConversationId = null;
         state.drawer = null;

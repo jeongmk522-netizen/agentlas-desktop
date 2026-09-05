@@ -44,8 +44,8 @@ export const RESEARCH_DIRECTOR_PLUGIN_VERSION = "1.24.2";
 // Hash of the canonical prompt assembled from agent/soul.md, agent/agent.md,
 // skills/direct-study/SKILL.md and skills/write-manuscript/SKILL.md (persona -> contract -> workflows).
 // The Science runtime refuses to dispatch when the installed package differs.
-// Regenerate: node plugins/agentlas-science-research-director/tests/validate-package.mjs --print-hash
-export const RESEARCH_DIRECTOR_SYSTEM_PROMPT_SHA256 = "81bc2d82ef20abaee0702afc3c0943d58d1bc5373cdd6eeb922c179f220f9858";
+// Regenerate from composeResearchDirectorSystemPrompt and the four prompt assets declared in plugin.json.
+export const RESEARCH_DIRECTOR_SYSTEM_PROMPT_SHA256 = "29610a884a38489594e03950b0b6dc620f03e08d45eff0f4b4391aebdc1264ce";
 
 // ── Memory contract ────────────────────────────────────────────────────────
 // Mirrors agent_memory_curator_agent/docs/integration-contract.md + memory-taxonomy.md.

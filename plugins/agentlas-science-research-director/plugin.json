@@ -34,7 +34,7 @@
     "agentContract": "agent/agent.md",
     "workflowContract": "skills/direct-study/SKILL.md",
     "manuscriptContract": "skills/write-manuscript/SKILL.md",
-    "promptSha256": "81bc2d82ef20abaee0702afc3c0943d58d1bc5373cdd6eeb922c179f220f9858",
+    "promptSha256": "29610a884a38489594e03950b0b6dc620f03e08d45eff0f4b4391aebdc1264ce",
     "failClosed": true
   },
   "provides": {

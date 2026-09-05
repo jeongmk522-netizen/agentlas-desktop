@@ -37,6 +37,7 @@ import {
 import { AcpRpcError } from "./acp-protocol";
 import {
   CODEX_APP_SERVER_ARGS,
+  CodexSessionContinuityError,
   answerCodexApproval,
   codexApprovalCapability,
   codexAppServerSupported,
@@ -49,6 +50,7 @@ import {
   looksLikeMissingAppServer,
   markCodexAppServerUnsupported,
   openCodexResidentSession,
+  prepareCodexThreadResume,
   type CodexResidentSession,
   type CodexTurnSink,
 } from "./codex-session";
@@ -1423,7 +1425,9 @@ async function runCodexResidentTurn(input: {
       };
       let resumed = false;
       if (resumeThreadId) {
+        let releaseResume: (() => void) | undefined;
         try {
+          releaseResume = await prepareCodexThreadResume(session, resumeThreadId, req.signal);
           await session.conn.request(
             "thread/resume",
             { threadId: resumeThreadId, ...startParams },
@@ -1434,12 +1438,11 @@ async function runCodexResidentTurn(input: {
         } catch (err) {
           if (req.signal?.aborted) throw abortReasonError(req);
           events.onStatus(`[runtime-session] resume_failed kind=${KIND}`);
-          if (req.unattended) {
-            // 무인 실행은 조용히 새 대화를 만들지 않는다(exec 경로와 같은 규칙).
-            broken = true;
-            throw new Error(`Automation runtime session resume failed for ${KIND}; refusing to create a fresh CLI session.`);
-          }
-          clearRuntimeSession(chatId, KIND, runtimeSessionOwnerId, { isolateOwner: isolateRuntimeSessionOwner });
+          throw err instanceof CodexSessionContinuityError ? err : new CodexSessionContinuityError(
+            "resume_failed", `Codex thread resume failed: ${err instanceof Error ? err.message : String(err)}`,
+          );
+        } finally {
+          releaseResume?.();
         }
       }
       if (!resumed) {
@@ -1571,9 +1574,7 @@ async function runCodexResidentTurn(input: {
   } catch (err) {
     broken = true;
     if (req.signal?.aborted) throw err;
-    if (req.unattended && /refusing to create a fresh CLI session/.test(err instanceof Error ? err.message : "")) {
-      throw err;
-    }
+    if (err instanceof CodexSessionContinuityError) throw err;
     if (looksLikeMissingAppServer(session.conn?.lastStderr ?? "", err)) {
       markCodexAppServerUnsupported(err instanceof Error ? err.message : String(err));
       events.onStatus(`[residency] disabled kind=${KIND} reason=app-server-unsupported`);

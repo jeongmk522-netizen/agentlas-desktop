@@ -219,6 +219,16 @@ export function codexResidentSessionAlive(session: CodexResidentSession): boolea
 
 /** 세션을 놓는 유일한 경로 — 생존 신호 정지 + 전송 close + 프로세스 트리 종료. */
 export function closeCodexResidentSession(session: CodexResidentSession): void {
+  if (session.threadId && !childExited(session.child)) {
+    const key = codexThreadOwnerKey(session, session.threadId);
+    const pending = pendingCodexWriterExits.get(key) ?? [];
+    if (!pending.includes(session.child)) {
+      pendingCodexWriterExits.set(key, [...pending, session.child]);
+      session.child.once("exit", () => {
+        if (pendingCodexWriterExits.get(key)?.every(childExited)) pendingCodexWriterExits.delete(key);
+      });
+    }
+  }
   session.closed = true;
   session.active = null;
   try { session.stopHeartbeat(); } catch { /* 이미 멈췄다 */ }
@@ -280,6 +290,75 @@ export function disposeCodexSessionPool(): void {
   sessionPool?.disposeAll();
   sessionPool = null;
   appServerSupported = true;
+}
+
+export class CodexSessionContinuityError extends Error {
+  constructor(readonly code: "writer_busy" | "writer_close_timeout" | "resume_failed", message: string) {
+    super(message);
+    this.name = "CodexSessionContinuityError";
+  }
+}
+
+const codexResumeClaims = new Set<string>();
+const pendingCodexWriterExits = new Map<string, ChildProcess[]>();
+const childExited = (child: ChildProcess): boolean => child.exitCode !== null || child.signalCode !== null;
+const codexThreadOwnerKey = (session: CodexResidentSession, threadId: string): string =>
+  `${String(session.init?.codexHome ?? "")}\0${threadId}`;
+
+/** Transfer one persisted thread only after its previous idle writer has exited. */
+export async function prepareCodexThreadResume(
+  session: CodexResidentSession,
+  threadId: string,
+  signal?: AbortSignal,
+): Promise<() => void> {
+  const key = codexThreadOwnerKey(session, threadId);
+  if (codexResumeClaims.has(key)) {
+    throw new CodexSessionContinuityError("writer_busy", "Codex thread resume is already in progress.");
+  }
+  codexResumeClaims.add(key);
+  let released = false;
+  const release = (): void => {
+    if (released) return;
+    released = true;
+    codexResumeClaims.delete(key);
+  };
+  try {
+    if (signal?.aborted) throw signal.reason ?? new Error("Codex thread resume cancelled");
+    const ownership = codexSessionPool().retireIdleMatching((candidate) =>
+      candidate !== session && candidate.threadId === threadId
+      && candidate.init?.codexHome === session.init?.codexHome,
+    );
+    if (ownership.busy) {
+      throw new CodexSessionContinuityError("writer_busy", "Codex thread still belongs to an active turn.");
+    }
+    const children = [...new Set([...(pendingCodexWriterExits.get(key) ?? []), ...ownership.retired.map((item) => item.child)])]
+      .filter((child) => !childExited(child));
+    // Keep unfinished exits across cancellation/timeouts; a retry must not
+    // mistake removal from the pool for release of the CLI's writer lock.
+    if (children.length) pendingCodexWriterExits.set(key, children);
+    await Promise.all(children.map((child) => new Promise<void>((resolve, reject) => {
+      const finish = (error?: Error): void => {
+        clearTimeout(timer);
+        child.removeListener("exit", onExit);
+        signal?.removeEventListener("abort", onAbort);
+        if (error) reject(error); else resolve();
+      };
+      const onExit = (): void => finish();
+      const onAbort = (): void => finish(signal?.reason instanceof Error ? signal.reason : new Error("Codex thread resume cancelled"));
+      const timer = setTimeout(() => finish(new CodexSessionContinuityError(
+        "writer_close_timeout", "Codex's previous thread writer did not exit; resume was stopped.",
+      )), 2_000);
+      child.once("exit", onExit);
+      signal?.addEventListener("abort", onAbort, { once: true });
+      if (childExited(child)) finish();
+      else if (signal?.aborted) onAbort();
+    })));
+    pendingCodexWriterExits.delete(key);
+    return release;
+  } catch (error) {
+    release();
+    throw error;
+  }
 }
 
 /* ──────────────────────────── 강등(구형 CLI) ──────────────────────────── */

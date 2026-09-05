@@ -202,6 +202,15 @@ export class AcpSessionPool<S> {
     this.remove(entry, { close: true, reason: "error" });
   }
 
+  /** Retire matching idle owners atomically; never interrupt a checked-out owner. */
+  retireIdleMatching(matches: (session: S) => boolean): { busy: boolean; retired: S[] } {
+    this.reapDead();
+    const matched = this.entries.filter((entry) => matches(entry.session));
+    if (matched.some((entry) => entry.inUse)) return { busy: true, retired: [] };
+    for (const entry of matched) this.remove(entry, { close: true, reason: "shutdown" });
+    return { busy: false, retired: matched.map((entry) => entry.session) };
+  }
+
   /** 12h 무입력 리퍼. 사용 중·면제(One)는 건드리지 않는다. 반환: 닫은 수. */
   sweepIdle(maxIdleMs: number): number {
     const cutoff = this.now() - Math.max(1_000, maxIdleMs);

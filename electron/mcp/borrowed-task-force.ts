@@ -2977,7 +2977,7 @@ function buildPlannerPrompt(
  * any hard package deny deliberately removes every external authority. Unsupported runtimes reject
  * `untrustedNoTools`; Codex uses the measured ephemeral/read-only no-authority sandbox.
  */
-function packageToolBoundary(
+export function packageToolBoundary(
   spec: BorrowedAgentSpec,
   workforceGrant?: WorkforcePairRuntimeGrant,
 ): Partial<RunnerRequest> {
@@ -3008,7 +3008,7 @@ function packageToolBoundary(
 /** What the package itself declared, stated to the model. Prompt text is not enforcement —
  *  narrowToolsByPackagePermissions does the actual removal — but a runtime's built-in shell
  *  cannot be revoked through MCP config, so the model must also be told the ceiling. */
-function packagePermissionLine(spec: BorrowedAgentSpec): string | null {
+export function packagePermissionLine(spec: BorrowedAgentSpec): string | null {
   if (spec.permissionPolicy) {
     if (isHostAuthorityPolicy(spec.permissionPolicy)) {
       return "Tools and authority follow the host run mode for this turn; anything beyond it is approved at action time. The package declares no ceiling of its own.";
@@ -3021,7 +3021,7 @@ function packagePermissionLine(spec: BorrowedAgentSpec): string | null {
   return null;
 }
 
-function buildBorrowedAgentSystemPrompt(spec: BorrowedAgentSpec, permission: RunnerRequest["permission"]): string {
+export function buildBorrowedAgentSystemPrompt(spec: BorrowedAgentSpec, permission: RunnerRequest["permission"]): string {
   // Fail closed on unknown provenance: only an explicitly local origin is treated as first-party.
   // This used to compute `isHub = hub || cloud || !spec.source`, which handed the reassuring
   // "Hub-Reviewed" framing to any spec whose source we could not establish.

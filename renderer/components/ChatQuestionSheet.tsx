@@ -62,20 +62,30 @@ export function ChatQuestionSheet({
     const selected: Record<string, string[]> = {};
     const notes: Record<string, string> = {};
     if (!initialReply?.trim()) return { selected, notes };
-    for (const chunk of initialReply.trim().split(/\n\n+/)) {
-      const lines = chunk.split("\n");
-      const question = lines.find((line) => /^(?:질문|Question): /.test(line))
-        ?.replace(/^(?:질문|Question): /, "").trim();
-      const target = questions.find((item) => item.question.trim() === question);
-      if (!target) continue;
-      const selectedLine = lines.find((line) => /^(?:선택|Selected): /.test(line))
-        ?.replace(/^(?:선택|Selected): /, "").trim();
+    const saved = initialReply.trim();
+    const boundaries: Array<{ start: number; body: number; target: ChatQuestion }> = [];
+    let previousQuestionIndex = -1;
+    // Blank lines and scaffold words may be part of a free answer. A new
+    // block must identify a later question in this exact batch, not merely
+    // look like a paragraph or an Answer line.
+    for (const match of saved.matchAll(/(?:^|\n\n)(?:질문|Question): ([^\n]+)\n/g)) {
+      const questionIndex = questions.findIndex((item, index) =>
+        index > previousQuestionIndex && item.question.trim() === match[1].trim());
+      if (questionIndex < 0) continue;
+      boundaries.push({ start: match.index!, body: match.index! + match[0].length, target: questions[questionIndex] });
+      previousQuestionIndex = questionIndex;
+    }
+    for (let index = 0; index < boundaries.length; index += 1) {
+      const { body, target } = boundaries[index];
+      let content = saved.slice(body, boundaries[index + 1]?.start ?? saved.length);
+      const selection = content.match(/^(?:선택|Selected): ([^\n]*)(?:\n|$)/);
+      const selectedLine = selection?.[1].trim();
       if (selectedLine) {
         const allowed = new Set(target.options.map((option) => option.label));
         selected[target.id] = selectedLine.split(",").map((item) => item.trim()).filter((item) => allowed.has(item));
       }
-      const note = lines.find((line) => /^(?:답변|Answer): /.test(line))
-        ?.replace(/^(?:답변|Answer): /, "").trim();
+      if (selection) content = content.slice(selection[0].length);
+      const note = content.match(/^(?:답변|Answer): ([\s\S]*)$/)?.[1].trim();
       if (note) notes[target.id] = note;
     }
     return { selected, notes };

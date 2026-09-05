@@ -74,6 +74,7 @@ export function AskUserSheet() {
     <div className={`aus ${oneRoute ? "aus-one" : ""}`} role="dialog" aria-modal="false">
       <div className="aus-card">
         <AskCard
+          key={req.requestId}
           title={req.askedBy ? `${req.askedBy} · ${req.question}` : req.question}
           locale={ko ? "ko" : "en"}
           options={req.options.map((option, index) => ({
@@ -83,6 +84,7 @@ export function AskUserSheet() {
             active: index === 0,
           }))}
           onChoose={(id) => answer(id)}
+          onClose={() => answer(null)}
           footer={req.allowFreeText
             ? {
               placeholder: ko ? "직접 답하기" : "Answer in your own words",

@@ -97,9 +97,10 @@ export function AskCard({
             placeholder={footer.placeholder}
             onChange={(event) => setFreeText(event.target.value)}
             onKeyDown={(event) => {
-              if (event.key === "Enter" && !event.nativeEvent.isComposing) {
+              if (event.key === "Enter" && !event.nativeEvent.isComposing && event.nativeEvent.keyCode !== 229) {
                 event.preventDefault();
-                footer.onSkip(freeText.trim());
+                const answer = freeText.trim();
+                if (answer) footer.onSkip(answer);
               }
             }}
           />

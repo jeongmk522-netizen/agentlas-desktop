@@ -2660,15 +2660,41 @@ function respond(response: http.ServerResponse, status: number, value: unknown):
 /** Column names and types for a Data Table artifact version, or null when it is not one. */
 export function dataTableShape(payload: unknown): { columns: Array<{ name: string; logicalType: string; nullable: boolean }>; rowCount: number } | null {
   const record = payload && typeof payload === "object" ? payload as Record<string, unknown> : null;
-  if (!record || record.schema !== "agentlas.science-table/v1" || !Array.isArray(record.columns)) return null;
+  if (!record || record.schema !== "agentlas.science-table/v1" || !Array.isArray(record.columns)
+    || record.columns.length < 1 || record.columns.length > 512 || !Array.isArray(record.rows)) return null;
+  const columns = record.columns as Array<Record<string, unknown>>;
+  const rows = record.rows as unknown[];
+  const domainShape = columns.some((column) => column?.id !== undefined) || rows.some(Array.isArray);
+  if (domainShape) {
+    const normalized = columns.map((column, index) => {
+      const name = typeof column?.id === "string" ? column.id.trim() : "";
+      const logicalType = String(column?.type ?? "").toLowerCase();
+      if (!name || !["integer", "number", "boolean", "string"].includes(logicalType)) return null;
+      const nullable = rows.some((row) => Array.isArray(row) && (row[index] === null || row[index] === undefined));
+      return { name, logicalType, nullable };
+    });
+    if (normalized.some((column) => !column)
+      || new Set(normalized.map((column) => column!.name.toLocaleLowerCase("en-US"))).size !== normalized.length
+      || rows.some((row) => !Array.isArray(row) || row.length !== normalized.length
+        || row.some((value, index) => value !== null && value !== undefined
+          && ((normalized[index]!.logicalType === "integer" && (typeof value !== "number" || !Number.isSafeInteger(value)))
+            || (normalized[index]!.logicalType === "number" && (typeof value !== "number" || !Number.isFinite(value)))
+            || (normalized[index]!.logicalType === "boolean" && typeof value !== "boolean")
+            || (normalized[index]!.logicalType === "string" && typeof value !== "string"))))) return null;
+    return { columns: normalized as Array<{ name: string; logicalType: string; nullable: boolean }>, rowCount: rows.length };
+  }
   const profile = record.profile && typeof record.profile === "object" ? record.profile as Record<string, unknown> : null;
+  const normalized = columns.map((column) => ({
+    name: String(column.name ?? "").trim(),
+    logicalType: String(column.logicalType ?? "").toLowerCase(),
+    nullable: Boolean(column.nullable),
+  }));
+  if (!profile || !Number.isSafeInteger(profile.rowCount) || profile.rowCount !== rows.length
+    || normalized.some((column) => !column.name || !["integer", "number", "boolean", "string"].includes(column.logicalType))
+    || rows.some((row) => !row || typeof row !== "object" || Array.isArray(row))) return null;
   return {
-    columns: (record.columns as Array<Record<string, unknown>>).slice(0, 512).map((column) => ({
-      name: String(column.name ?? ""),
-      logicalType: String(column.logicalType ?? ""),
-      nullable: Boolean(column.nullable),
-    })),
-    rowCount: Number(profile?.rowCount ?? (Array.isArray(record.rows) ? record.rows.length : 0)),
+    columns: normalized,
+    rowCount: Number(profile.rowCount ?? rows.length),
   };
 }
 

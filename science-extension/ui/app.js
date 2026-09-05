@@ -768,6 +768,20 @@ function createComposerEventSync({
   };
   const artifactForLab = (labId, artifactId) => (state.labContextsById.get(labId) || []).map((context) => context.artifact).find((artifact) => artifact.id === artifactId) || null;
   const labForArtifact = (artifactId) => [...state.labContextsById.entries()].find(([, contexts]) => contexts.some((context) => context.artifact.id === artifactId))?.[0] || null;
+
+  // RESULT_ARTIFACT_ROUTE_HELPER_START
+  function mergePreferredLabContext(latestContexts, preferredContext, projectId, labId) {
+    const latest = Array.isArray(latestContexts) ? latestContexts : [];
+    if (!preferredContext
+      || preferredContext.artifact?.projectId !== projectId
+      || preferredContext.linkage?.labId !== labId
+      || !preferredContext.artifact?.id) {
+      return latest;
+    }
+    return [preferredContext, ...latest.filter((item) => item?.artifact?.id !== preferredContext.artifact.id)];
+  }
+  // RESULT_ARTIFACT_ROUTE_HELPER_END
+
   const statisticsSourceTables = () => (state.labContextsById.get("data-table") || [])
     .map((context) => context.artifact)
     .filter((artifact) => artifact?.kind === "table" && artifact.version?.payload?.schema === "agentlas.science-table/v1");
@@ -3178,13 +3192,103 @@ function createComposerEventSync({
     return state.manuscriptEditorModel?.manuscript?.version?.bindings?.find((binding) => binding.locator === locator && binding.target?.kind === "artifact") || null;
   }
 
-  function manuscriptTablePreviewMarkup(payload, { compact = false } = {}) {
-    if (payload?.schema !== "agentlas.science-table/v1" || !Array.isArray(payload.columns) || !Array.isArray(payload.rows)) {
-      return `<div class="manuscriptTableUnavailable">Validated table data is unavailable.</div>`;
+  // TABLE_PAYLOAD_ADAPTER_START
+  function actualTablePayload(versionOrPayload) {
+    const version = versionOrPayload?.payload ? versionOrPayload : null;
+    const payload = version ? version.payload : versionOrPayload;
+    const failure = (cause) => ({ payload: null, cause, sourceShape: null, contentSha256: "" });
+    if (!payload || payload.schema !== "agentlas.science-table/v1") return failure("science-data-table-schema-invalid");
+    if (!Array.isArray(payload.columns) || !payload.columns.length || !Array.isArray(payload.rows)) return failure("science-data-table-shape-invalid");
+
+    const domainShape = payload.columns.some((column) => column?.id !== undefined) || payload.rows.some(Array.isArray);
+    if (domainShape) {
+      if (!payload.rows.length || payload.columns.length > 64 || payload.rows.length > 1_000 || payload.columns.length * payload.rows.length > 20_000) {
+        return failure("science-data-table-domain-limit-invalid");
+      }
+      const columns = [];
+      const ids = new Set();
+      for (const declared of payload.columns) {
+        const name = typeof declared?.id === "string" ? declared.id.trim() : "";
+        const label = typeof declared?.label === "string" ? declared.label.trim() : name;
+        const logicalType = String(declared?.type ?? "string").toLowerCase();
+        const unit = declared?.unit === null || declared?.unit === undefined || declared?.unit === "" ? null
+          : typeof declared.unit === "string" ? declared.unit.trim() : null;
+        const key = name.toLocaleLowerCase("en-US");
+        if (!name || !label || /[\u0000-\u001f\u007f]/u.test(name + label) || ids.has(key)
+          || !["integer", "number", "boolean", "string"].includes(logicalType)
+          || (declared?.unit !== null && declared?.unit !== undefined && declared?.unit !== "" && !unit)) {
+          return failure("science-data-table-domain-column-invalid");
+        }
+        ids.add(key);
+        columns.push({ name, label, logicalType, nullable: false, unit });
+      }
+      const rows = [];
+      let nullCount = 0;
+      let formulaLikeCellCount = 0;
+      for (const sourceRow of payload.rows) {
+        if (!Array.isArray(sourceRow) || sourceRow.length !== columns.length) return failure("science-data-table-domain-row-invalid");
+        const row = {};
+        for (let index = 0; index < columns.length; index += 1) {
+          const column = columns[index];
+          const value = sourceRow[index];
+          if (value === null || value === undefined) {
+            column.nullable = true;
+            row[column.name] = null;
+            nullCount += 1;
+          } else if ((column.logicalType === "integer" && (typeof value !== "number" || !Number.isSafeInteger(value)))
+            || (column.logicalType === "number" && (typeof value !== "number" || !Number.isFinite(value)))
+            || (column.logicalType === "boolean" && typeof value !== "boolean")
+            || (column.logicalType === "string" && (typeof value !== "string" || /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/u.test(value)))) {
+            return failure("science-data-table-domain-cell-invalid");
+          } else {
+            row[column.name] = value;
+            if (typeof value === "string" && /^[\s]*[=+@-]/u.test(value)) formulaLikeCellCount += 1;
+          }
+        }
+        rows.push(row);
+      }
+      return {
+        payload: {
+          schema: payload.schema,
+          title: typeof payload.title === "string" ? payload.title : "",
+          columns,
+          rows,
+          notes: Array.isArray(payload.notes) ? payload.notes.filter((note) => typeof note === "string") : [],
+          profile: { rowCount: rows.length, columnCount: columns.length, nullCount, formulaLikeCellCount },
+          receipts: null,
+        },
+        cause: null,
+        sourceShape: "domain-publication-table",
+        contentSha256: typeof version?.contentSha256 === "string" ? version.contentSha256 : "",
+      };
     }
+
+    if (!payload.profile || payload.profile.rowCount !== payload.rows.length || payload.profile.columnCount !== payload.columns.length
+      || !Number.isSafeInteger(payload.profile.nullCount) || payload.profile.nullCount < 0
+      || !Number.isSafeInteger(payload.profile.formulaLikeCellCount) || payload.profile.formulaLikeCellCount < 0
+      || payload.columns.some((column) => !column || typeof column.name !== "string" || !column.name
+        || !["integer", "number", "boolean", "string"].includes(column.logicalType))
+      || payload.rows.some((row) => !row || typeof row !== "object" || Array.isArray(row))) {
+      return failure("science-data-table-dataset-shape-invalid");
+    }
+    return {
+      payload,
+      cause: null,
+      sourceShape: "dataset-table",
+      contentSha256: typeof version?.contentSha256 === "string" ? version.contentSha256 : "",
+    };
+  }
+  // TABLE_PAYLOAD_ADAPTER_END
+
+  function manuscriptTablePreviewMarkup(payload, { compact = false } = {}) {
+    const actual = actualTablePayload(payload);
+    if (!actual.payload) {
+      return `<div class="manuscriptTableUnavailable" data-table-payload-cause="${escapeHtml(actual.cause)}">Validated table data is unavailable.</div>`;
+    }
+    payload = actual.payload;
     const columns = payload.columns.slice(0, compact ? 4 : 6);
     const rows = payload.rows.slice(0, compact ? 3 : 5);
-    const header = columns.map((column) => `<th>${escapeHtml(column.name || column.label || column.key || "Column")}</th>`).join("");
+    const header = columns.map((column) => `<th>${escapeHtml(column.label || column.name || column.key || "Column")}</th>`).join("");
     const body = rows.map((row) => `<tr>${columns.map((column) => {
       const key = column.name || column.key;
       const value = row?.[key];
@@ -4185,7 +4289,7 @@ function createComposerEventSync({
     }
   }
 
-  async function openLab(labId, artifactId, originVersion = null, returnMessageId = null, exactVersion = null) {
+  async function openLab(labId, artifactId, originVersion = null, returnMessageId = null, exactVersion = null, preferredContext = null) {
     rememberScroll();
     state.labDecisionActionError = "";
     // Lab context is a snapshot. Acquisition can materialize an artifact after that snapshot was
@@ -4195,7 +4299,12 @@ function createComposerEventSync({
       try {
         const latestContexts = await science.artifacts.forLab(projectId, labId);
         if (projectId !== state.selectedId) return;
-        if (Array.isArray(latestContexts)) state.labContextsById.set(labId, latestContexts);
+        if (Array.isArray(latestContexts)) {
+          // A result card resolves an exact artifact version before opening its Lab. forLab can
+          // legitimately omit that artifact when the Lab repository has not indexed it yet; do
+          // not discard the exact context we just verified while refreshing the surrounding list.
+          state.labContextsById.set(labId, mergePreferredLabContext(latestContexts, preferredContext, projectId, labId));
+        }
       } catch {
         // Keep the last verified snapshot. An explicit result open still resolves its exact
         // project/Lab context first and fails closed rather than inventing a route.
@@ -4261,7 +4370,7 @@ function createComposerEventSync({
       }
       const known = state.labContextsById.get(context.linkage.labId) || [];
       state.labContextsById.set(context.linkage.labId, [context, ...known.filter((item) => item?.artifact?.id !== artifactId)]);
-      await openLab(context.linkage.labId, artifactId, null, null, artifactVersion);
+      await openLab(context.linkage.labId, artifactId, null, null, artifactVersion, context);
     } catch (error) {
       state.resultsError = error instanceof Error ? error.message : String(error);
       render();
@@ -7696,8 +7805,10 @@ function createComposerEventSync({
   }
 
   function renderDataTable(version, host, artifactId, interactive = true) {
-    const payload = version?.payload;
-    if (!payload || payload.schema !== "agentlas.science-table/v1" || !Array.isArray(payload.columns) || !Array.isArray(payload.rows) || !payload.profile) {
+    const actual = actualTablePayload(version);
+    const payload = actual.payload;
+    if (!payload) {
+      host.dataset.tablePayloadCause = actual.cause;
       throw new Error("검증된 Data Table payload가 없습니다.");
     }
     const pageSize = 100;
@@ -7711,6 +7822,7 @@ function createComposerEventSync({
     surface.dataset.scienceCapture = "";
     surface.dataset.tableRows = String(payload.profile.rowCount);
     surface.dataset.tableColumns = String(payload.profile.columnCount);
+    surface.dataset.tablePayloadShape = actual.sourceShape;
     const summary = document.createElement("header");
     summary.className = "dataTableSummary";
     const title = document.createElement("div");
@@ -7720,7 +7832,9 @@ function createComposerEventSync({
     const receipts = document.createElement("div");
     const missing = document.createElement("span"); missing.textContent = `Missing ${payload.profile.nullCount.toLocaleString()}`;
     const formulas = document.createElement("span"); formulas.textContent = `Formula-like text ${payload.profile.formulaLikeCellCount.toLocaleString()}`;
-    const hash = document.createElement("code"); hash.textContent = `${String(payload.receipts?.tableSha256 || "").slice(0, 12)}…`;
+    const hash = document.createElement("code");
+    const exactHash = String(payload.receipts?.tableSha256 || actual.contentSha256 || "");
+    hash.textContent = exactHash ? `${exactHash.slice(0, 12)}…` : "Hash unavailable";
     receipts.append(missing, formulas, hash);
     summary.append(title, receipts);
     const viewport = document.createElement("div");
@@ -7730,8 +7844,8 @@ function createComposerEventSync({
     const headRow = document.createElement("tr");
     for (const column of payload.columns) {
       const cell = document.createElement("th");
-      const label = document.createElement("span"); label.textContent = column.name;
-      const type = document.createElement("em"); type.textContent = `${column.logicalType}${column.nullable ? " · nullable" : ""}`;
+      const label = document.createElement("span"); label.textContent = column.label || column.name;
+      const type = document.createElement("em"); type.textContent = `${column.logicalType}${column.unit ? ` · ${column.unit}` : ""}${column.nullable ? " · nullable" : ""}`;
       cell.append(label, type);
       headRow.append(cell);
     }

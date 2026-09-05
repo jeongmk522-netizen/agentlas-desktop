@@ -3553,21 +3553,38 @@ button.manuscriptBinding:hover { border-color: var(--line-strong); background: v
 
 /* ---- acquisition ---------------------------------------------------------- */
 .acquisitionRun { display: grid; gap: 8px; border: 1px solid var(--grey-200); border-radius: 10px; background: var(--surface); padding: 14px 16px; margin-bottom: 10px; }
-.acquisitionOutput { color: var(--grey-600); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; line-height: 1.6; }
+.acquisitionOutput { min-width: 0; display: grid; gap: 6px; border: 1px solid var(--grey-200); border-radius: 8px; background: var(--grey-50); padding: 10px 12px; color: var(--grey-600); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; line-height: 1.6; }
 /* Recorded as successful but with nothing to show is an audit fact, not a crash.
    It reads as inconclusive — the run happened, the claim about it does not hold. */
 .acquisitionRunFailure { border-left: 2px solid var(--grey-400); border-radius: 0 10px 10px 0; background: var(--grey-50); }
-.acquisitionRunFailure::before, .analysisRun[data-run-unbound="true"]::before {
+.acquisitionRunFailure::before, .analysisRun[data-run-outputless="true"]::before {
   content: ""; width: 12px; height: 12px; box-sizing: border-box; border: 2px dashed var(--grey-600); border-radius: 50%;
   background: linear-gradient(var(--grey-600), var(--grey-600)) center/5.6px 1.6px no-repeat;
 }
 .acquisitionBoundary, .analysisRunsSummary, .resultsSummary { color: var(--grey-600); font-size: 12px; line-height: 1.6; }
+.analysisRunsSummary { display: flex; flex-wrap: wrap; gap: 7px 18px; margin: 14px 0 18px; }
+.analysisRunsSummary > span { display: inline-flex; align-items: baseline; gap: 5px; white-space: nowrap; }
+.analysisRunsSummary strong { color: var(--ink); font-variant-numeric: tabular-nums; }
+.analysisRunsSummary [data-alert="true"] { color: var(--notice-ink); }
 .acquisitionBoundary { margin-top: 16px; border-left: 2px solid var(--grey-300); padding: 2px 0 2px 12px; font-size: 13px; color: var(--grey-700); }
 
 /* ---- analysis runs -------------------------------------------------------- */
 .analysisRun { display: grid; gap: 8px; border: 1px solid var(--grey-200); border-radius: 10px; background: var(--surface); padding: 14px 16px; margin-bottom: 10px; }
-.analysisRun[data-run-unbound="true"] { border-style: dashed; border-color: var(--grey-400); background: var(--grey-50); }
+.analysisRun[data-run-outputless="true"] { border-style: dashed; border-color: var(--grey-400); background: var(--grey-50); }
 .analysisRunOutput { color: var(--grey-600); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; line-height: 1.6; }
+.analysisRunManifest { display: grid; gap: 8px; border-left: 2px solid var(--grey-300); padding: 4px 0 4px 12px; }
+.analysisRunManifest > strong { color: var(--ink); font-size: 12px; font-weight: 650; }
+.analysisRunManifest > ul { display: grid; gap: 6px; margin: 0; padding: 0; list-style: none; }
+.analysisRunManifestOutput { min-width: 0; display: grid; grid-template-columns: minmax(120px, auto) minmax(0, 1fr) auto auto; gap: 6px 12px; align-items: baseline; color: var(--grey-600); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; }
+.analysisRunManifestOutput strong { color: var(--ink); font-family: inherit; font-size: 11px; }
+.analysisRunManifestOutput span:first-of-type { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.analysisRunManifest > p { margin: 0; color: var(--grey-600); font-size: 12px; line-height: 1.55; }
+.manuscriptLandingEmpty .primaryButton { min-height: 42px; margin-top: 16px; padding-right: 20px; padding-left: 20px; }
+
+@media (max-width: 640px) {
+  .acquisitionOutputMeta, .analysisRunManifestOutput { grid-template-columns: minmax(0, 1fr); gap: 3px; }
+  .acquisitionOutputMime, .analysisRunManifestOutput span:first-of-type { overflow: visible; text-overflow: clip; white-space: normal; overflow-wrap: anywhere; }
+}
 
 /* ---- results -------------------------------------------------------------- */
 .resultArtifact { display: grid; gap: 8px; border: 1px solid var(--grey-200); border-radius: 10px; background: var(--surface); padding: 14px 16px; margin-bottom: 10px; }
@@ -3929,6 +3946,10 @@ button.manuscriptBinding:hover { border-color: var(--line-strong); background: v
 .acquisitionOutputMeta, .literatureSpanMeta, .acquisitionRunFacts, .analysisRunFacts, .literatureSourceFacts {
   color: var(--grey-600); font-size: 11px; line-height: 1.6; font-variant-numeric: tabular-nums;
 }
+.acquisitionOutputMeta { min-width: 0; display: grid; grid-template-columns: minmax(120px, auto) minmax(0, 1fr) auto; gap: 6px 14px; align-items: baseline; }
+.acquisitionOutputMeta strong { color: var(--ink); font-size: 12px; }
+.acquisitionOutputMime { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.acquisitionOutputSize { white-space: nowrap; }
 
 .acquisitionRunUnresolved, .analysisRunUnbound, .analysisRunNoOutput {
   display: flex; align-items: flex-start; gap: 8px; border-left: 2px solid var(--grey-400); background: var(--grey-50);

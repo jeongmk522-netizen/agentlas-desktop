@@ -1741,7 +1741,7 @@ const { stripAgentControlBlocks, stripStormbreakerContinueMarker, STORMBREAKER_C
             ? "실행이 끝나기 전에 중단되어 검증할 바이트가 남지 않았습니다."
             : "이 실행은 성공으로 기록됐지만 바이트를 하나도 남기지 않았습니다. 산출물이 있어야 할 실행이라면 도구 쪽을 확인하세요."}</p></div>`
       : `<ul class="acquisitionOutputList">${outputs.map((output) => `<li class="acquisitionOutput" data-output-role="${escapeHtml(output.role || "")}">
-          <div class="acquisitionOutputMeta"><strong>${escapeHtml(output.role || "역할 미기록")}</strong><span>${escapeHtml(output.mimeType || "형식 미기록")}</span><span>${escapeHtml(acquisitionBytes(output.byteSize))}</span></div>
+          <div class="acquisitionOutputMeta"><strong>${escapeHtml(output.role || "역할 미기록")}</strong><span class="acquisitionOutputMime" title="${escapeHtml(output.mimeType || "형식 미기록")}">${escapeHtml(output.mimeType || "형식 미기록")}</span><span class="acquisitionOutputSize">${escapeHtml(acquisitionBytes(output.byteSize))}</span></div>
           <code title="${escapeHtml(output.sha256 || "")}">${escapeHtml(acquisitionShortHash(output.sha256))}</code>
           ${output.artifactId ? `<span class="acquisitionOutputArtifact">아티팩트 ${escapeHtml(output.artifactId)} v${escapeHtml(output.artifactVersion)}</span>` : ""}
         </li>`).join("")}</ul>`;
@@ -2091,14 +2091,16 @@ const { stripAgentControlBlocks, stripStormbreakerContinueMarker, STORMBREAKER_C
 
   // Analysis & Runs answers what a reviewer asks first: which analyses actually ran, under which
   // frozen plan, and whether the result on screen is still the exact thing that run computed. A run
-  // recorded as succeeded that bound no artifact is the failure worth showing, because nothing else
-  // in the product ever says it out loud. Unstyled on purpose; the Science UI session owns styling.
+  // recorded as succeeded that produced no output is the failure worth showing. A valid output can
+  // remain a run manifest without being projected into a scientific artifact; that boundary is
+  // shown explicitly instead of turning a successful search into a false rerun warning.
   const ANALYSIS_RUN_EXACT_RECHECK_LIMIT = 20;
   const RESULTS_VALIDATION_LOOKUP_LIMIT = 60;
   const runResultShortHash = (value) => (value ? `${String(value).slice(0, 12)}…` : "—");
   const analysisRunStatusLabels = { running: "실행 중", succeeded: "성공", failed: "실패", cancelled: "취소됨" };
+  const analysisRunOutputs = (run) => (Array.isArray(run?.outputs) ? run.outputs : []);
   const analysisRunBoundOutputs = (run) => (Array.isArray(run?.outputs) ? run.outputs : []).filter((output) => output?.artifactId);
-  const analysisRunSucceededWithoutArtifact = (run) => run?.status === "succeeded" && analysisRunBoundOutputs(run).length === 0;
+  const analysisRunSucceededWithoutOutput = (run) => run?.status === "succeeded" && analysisRunOutputs(run).length === 0;
 
   async function loadAnalysisRuns(projectId) {
     if (!projectId) return;
@@ -2108,7 +2110,7 @@ const { stripAgentControlBlocks, stripStormbreakerContinueMarker, STORMBREAKER_C
       const rows = Array.isArray(runs) ? runs : [];
       // The "succeeded but produced nothing" claim is re-read from the exact run record rather than
       // trusted from a list snapshot, so the accusation is against the store's current truth.
-      const suspect = rows.filter(analysisRunSucceededWithoutArtifact).slice(0, ANALYSIS_RUN_EXACT_RECHECK_LIMIT);
+      const suspect = rows.filter(analysisRunSucceededWithoutOutput).slice(0, ANALYSIS_RUN_EXACT_RECHECK_LIMIT);
       const exact = await Promise.all(suspect.map(async (run) => {
         try { return await science.runs.get(projectId, run.id); } catch { return null; }
       }));
@@ -2136,8 +2138,9 @@ const { stripAgentControlBlocks, stripStormbreakerContinueMarker, STORMBREAKER_C
       ? `${planSpec?.title || plan.analysisSpecId} · v${plan.version} · ${runResultShortHash(plan.contentSha256)}`
       : "고정된 분석계획 없음 — 이 실행은 사전 등록된 계획 아래에서 돌지 않았습니다.";
     const inputCount = (Array.isArray(run?.inputs) ? run.inputs : []).length;
-    const outputs = analysisRunBoundOutputs(run);
-    const outputRows = outputs.map((output) => {
+    const outputs = analysisRunOutputs(run);
+    const boundOutputs = analysisRunBoundOutputs(run);
+    const outputRows = boundOutputs.map((output) => {
       const artifact = artifactsById.get(output.artifactId) || null;
       const boundVersion = Number(output.artifactVersion);
       const binding = !artifact
@@ -2151,8 +2154,14 @@ const { stripAgentControlBlocks, stripStormbreakerContinueMarker, STORMBREAKER_C
         <em>${escapeHtml(binding)}</em>
       </li>`;
     }).join("");
-    const unbound = analysisRunSucceededWithoutArtifact(run);
-    return `<article class="analysisRun" data-run-id="${escapeHtml(run.id)}" data-run-status="${escapeHtml(status)}" data-run-unbound="${Boolean(unbound)}">
+    const manifestRows = outputs.filter((output) => !output?.artifactId).map((output) => `<li class="analysisRunManifestOutput" data-output-role="${escapeHtml(output?.role || "")}">
+      <strong>${escapeHtml(output?.role || "저장 결과")}</strong>
+      <span title="${escapeHtml(output?.mimeType || "형식 미기록")}">${escapeHtml(output?.mimeType || "형식 미기록")}</span>
+      <span>${escapeHtml(acquisitionBytes(output?.byteSize))}</span>
+      <code title="${escapeHtml(output?.sha256 || "")}">${escapeHtml(runResultShortHash(output?.sha256))}</code>
+    </li>`).join("");
+    const outputless = analysisRunSucceededWithoutOutput(run);
+    return `<article class="analysisRun" data-run-id="${escapeHtml(run.id)}" data-run-status="${escapeHtml(status)}" data-run-outputless="${Boolean(outputless)}">
       <header>
         <strong>${escapeHtml(`${run.toolId ?? "unknown"} ${run.toolVersion ?? ""}`.trim())}</strong>
         <span>${escapeHtml(analysisRunStatusLabels[status] || status)} · ${escapeHtml(run.runtime ?? "unknown")}</span>
@@ -2165,10 +2174,11 @@ const { stripAgentControlBlocks, stripStormbreakerContinueMarker, STORMBREAKER_C
         <div><dt>시작 · 종료</dt><dd>${escapeHtml(`${run.startedAt ?? "—"} · ${run.finishedAt || "진행 중"}`)}</dd></div>
       </dl>
       ${run.summary ? `<p class="analysisRunSummary">${escapeHtml(run.summary)}</p>` : ""}
-      ${outputs.length
+      ${boundOutputs.length
         ? `<ul class="analysisRunOutputs">${outputRows}</ul>`
-        : `<p class="analysisRunNoOutput">이 실행에 묶인 아티팩트가 없습니다.</p>`}
-      ${unbound ? `<p class="analysisRunUnbound" role="alert"><strong>성공으로 기록됐지만 결과물을 남기지 않았습니다.</strong><span>정확한 실행 기록을 다시 읽어 확인했습니다. 묶인 아티팩트가 없으므로 이 실행은 그림·표·해석 어디에도 연결할 수 없고, 성공으로 세어서도 안 됩니다. 다시 실행해야 합니다.</span></p>` : ""}
+        : ""}
+      ${manifestRows ? `<div class="analysisRunManifest"><strong>저장된 결과 매니페스트 ${escapeHtml(outputs.length - boundOutputs.length)}개</strong><ul>${manifestRows}</ul><p>실행 결과는 보존됐지만 과학 아티팩트로 투영되지는 않았습니다. 그림·표·원고에는 아직 연결할 수 없습니다.</p></div>` : ""}
+      ${outputless ? `<p class="analysisRunUnbound" role="alert"><strong>성공으로 기록됐지만 출력이 없습니다.</strong><span>정확한 실행 기록을 다시 읽어 확인했습니다. 출력 매니페스트 항목이 하나도 없어 이 실행은 결과로 셀 수 없습니다. 출력이 필요한 실행이었다면 다시 실행해야 합니다.</span></p>` : ""}
     </article>`;
   }
 
@@ -2178,19 +2188,19 @@ const { stripAgentControlBlocks, stripStormbreakerContinueMarker, STORMBREAKER_C
     const loaded = state.analysisRunsProjectId === state.selectedId;
     const runs = loaded && Array.isArray(state.analysisRuns) ? state.analysisRuns : [];
     const artifactsById = new Map((Array.isArray(state.analysisRunArtifacts) ? state.analysisRunArtifacts : []).map((artifact) => [artifact.id, artifact]));
-    const unboundCount = runs.filter(analysisRunSucceededWithoutArtifact).length;
+    const outputlessCount = runs.filter(analysisRunSucceededWithoutOutput).length;
     const body = !loaded
       ? `<div class="loadingState" aria-live="polite">실행 기록을 불러오는 중…</div>`
       : state.analysisRunsError
         ? ""
         : runs.length === 0
-          ? `<div class="emptyCopy pageEmpty"><strong>아직 실행된 분석이 없습니다.</strong><p>Plan &amp; Protocols 에서 분석계획을 고정한 뒤 연구 채팅에서 실행을 요청하면, 어떤 계획 아래 무엇이 돌았고 무엇을 만들었는지가 여기에 기록됩니다.</p></div>`
+          ? `<div class="emptyCopy pageEmpty"><strong>아직 실행된 분석이 없습니다.</strong><p>분석계획 화면에서 계획을 고정한 뒤 연구 채팅에서 실행을 요청하면, 어떤 계획 아래 무엇이 돌았고 무엇을 만들었는지가 여기에 기록됩니다.</p></div>`
           : runs.map((run) => analysisRunRow(run, artifactsById)).join("");
     return `<section class="researchView analysisRunsView" data-research-destination="analysis-runs"><div class="answerColumn">
       <div class="researchKicker"><span>${escapeHtml(domainLabel(project.domain))}</span> · <span>분석 실행</span></div>
       <h1>${escapeHtml(project.title)}</h1>
       ${state.analysisRunsError ? `<div class="errorCopy" role="alert">${escapeHtml(`실행 기록을 불러오지 못했습니다. ${state.analysisRunsError}`)}</div>` : ""}
-      ${loaded && runs.length ? `<div class="analysisRunsSummary"><span>총 ${escapeHtml(runs.length)}회</span><span>성공 ${escapeHtml(runs.filter((run) => run.status === "succeeded").length)}</span><span>실패·취소 ${escapeHtml(runs.filter((run) => run.status === "failed" || run.status === "cancelled").length)}</span><span data-alert="${unboundCount > 0}">결과 없는 성공 ${escapeHtml(unboundCount)}</span></div>` : ""}
+      ${loaded && runs.length ? `<div class="analysisRunsSummary"><span>전체 <strong>${escapeHtml(runs.length)}</strong></span><span>성공 <strong>${escapeHtml(runs.filter((run) => run.status === "succeeded").length)}</strong></span><span>실패·취소 <strong>${escapeHtml(runs.filter((run) => run.status === "failed" || run.status === "cancelled").length)}</strong></span><span data-alert="${outputlessCount > 0}">출력 없는 성공 <strong>${escapeHtml(outputlessCount)}</strong></span></div>` : ""}
       ${body}
     </div></section>`;
   }
@@ -2334,6 +2344,7 @@ const { stripAgentControlBlocks, stripStormbreakerContinueMarker, STORMBREAKER_C
     if (state.currentDestination === "scope") return scopeView(project);
     if (state.currentDestination === "logbook") return logbookView(project);
     if (state.currentDestination === "submission-archive") return submissionArchiveView(project);
+    if (state.currentDestination === "manuscript") return manuscriptLandingView(project);
     if (state.currentDestination === "interpretation") return evidenceGraphView(project);
     if (state.currentDestination === "plan-protocols") return analysisPlanView(project);
     if (state.currentDestination === "hypotheses") return hypothesesView(project);
@@ -2374,6 +2385,18 @@ const { stripAgentControlBlocks, stripStormbreakerContinueMarker, STORMBREAKER_C
         }
         return `<strong>아직 생성된 연구 응답이 없습니다.</strong><p>첫 질문은 저장되었습니다. 연구 계약 승인과 Agent runtime 실행이 연결되면 답변 블록, 주장, 정확한 출처 인용이 이 기록에 추가됩니다.</p>`;
       })()}</div><div class="principledRefusal"><p>고정 답변이나 가짜 인용은 표시하지 않습니다.</p></div>` : ""}
+    </div></section>`;
+  }
+
+  function manuscriptLandingView(project) {
+    return `<section class="researchView manuscriptLandingView" data-research-destination="manuscript"><div class="answerColumn">
+      <div class="researchKicker"><span>${escapeHtml(domainLabel(project.domain))}</span> · <span>${uiCopy("원고", "Manuscript")}</span></div>
+      <h1>${escapeHtml(project.title)}</h1>
+      <div class="emptyCopy pageEmpty manuscriptLandingEmpty">
+        <strong>${uiCopy("아직 작성된 원고가 없습니다.", "No manuscript has been created yet.")}</strong>
+        <p>${uiCopy("연구 결과와 검증된 그림·표가 준비되면 새 원고를 시작할 수 있습니다. 이 화면을 여는 것만으로 원고를 만들거나 연구 대화를 복사하지 않습니다.", "Start a manuscript when the research results and verified figures are ready. Opening this page does not create a draft or copy the research conversation.")}</p>
+        <button class="primaryButton" data-action="new-manuscript">${uiCopy("새 원고 시작", "Start a new manuscript")}</button>
+      </div>
     </div></section>`;
   }
 
@@ -4949,8 +4972,13 @@ const { stripAgentControlBlocks, stripStormbreakerContinueMarker, STORMBREAKER_C
       const manuscript = manuscriptById(state.selectedManuscriptId) || state.manuscripts[0] || null;
       if (destination === "submission-archive") void loadSubmissionArchive(state.selectedId);
       if (!manuscript) {
+        rememberScroll();
+        state.mode = "session";
         state.currentDestination = destination;
-        state.manuscriptModal = true;
+        state.activeWorkspaceTabId = RESEARCH_TAB_ID;
+        state.drawer = null;
+        state.manuscriptModal = false;
+        state.manuscriptInspectorOpen = false;
         render();
         void queueWorkspacePersistence({ navigation: true, tabs: false });
         return;

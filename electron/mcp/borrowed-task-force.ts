@@ -599,19 +599,56 @@ function runtimesAssignedToRole(list: RuntimeStatus[], role: RuntimeRole): Runti
   return assigned.length > 0 ? assigned : list;
 }
 
+/**
+ * Codex may join a prepared Workforce only after Main has established that the
+ * entire roster is the exact host-authority preparation: each slot/release is
+ * present once and its policy digest still matches. The native adapter then
+ * supplies the observed host-authority receipt for worker tool calls.
+ *
+ * This deliberately does not relax Agent Apps, restricted-read runs, or any
+ * legacy/package-ceiling roster. Ordinary non-Workforce task forces retain
+ * their pre-existing runtime behavior.
+ */
+function taskForceCodexRuntimeAllowed(p: BorrowedTaskForceParams): boolean {
+  const inheritedBoundary = p.req as McpInvocationRequest & {
+    restrictedReadBoundary?: boolean;
+    untrustedNoTools?: boolean;
+  };
+  if (
+    p.req.agentAppMode ||
+    p.restrictedReadBoundary ||
+    inheritedBoundary.restrictedReadBoundary === true ||
+    inheritedBoundary.untrustedNoTools === true
+  ) return false;
+  if (!p.workforceSelectionReceipt) return true;
+  const specs = uniqSpecs(p.taskForceSpecs);
+  return specs.length > 0 && !taskForceControlPlaneNeedsZeroAuthority({
+    agentAppMode: p.req.agentAppMode,
+    restrictedReadBoundary: p.restrictedReadBoundary || inheritedBoundary.restrictedReadBoundary,
+    untrustedNoTools: inheritedBoundary.untrustedNoTools,
+    workforceSelectionReceipt: p.workforceSelectionReceipt,
+    specs,
+  });
+}
+
 function taskForceCandidateRuntimes(p: BorrowedTaskForceParams): RuntimeStatus[] {
+  // Do not let the historical active-runtime fallback re-admit a Codex model
+  // after it was excluded by an Agent App, restricted-read, no-tools, or
+  // non-host-authority Workforce boundary.
+  if (p.active.kind === "codex" && !taskForceCodexRuntimeAllowed(p)) {
+    throw new Error("workforce_runtime_isolation_unverified:codex-collaboration-authority");
+  }
   // Architecture benchmarks compare the same pipeline under one selected
   // model. Letting workload allocation switch worker providers would confound
   // model quality with orchestration quality.
   const supplied = p.req.agentAppMode || p.benchmarkMode ? [p.active] : [...(p.runtimes ?? [p.active])];
   if (!supplied.some((runtime) => sameRuntimeModel(runtime, p.active))) supplied.unshift(p.active);
-  // Actual Codex 0.144.4 probing exposed collaboration authority after
-  // `--disable multi_agent`. Do not advertise a runtime that the Workforce
-  // worker boundary will necessarily reject; the host LLM must choose only
-  // executable inventory. Ordinary trusted task-force routing is unchanged.
-  const authorityEligible = p.workforceSelectionReceipt
-    ? supplied.filter((runtime) => runtime.kind !== "codex")
-    : supplied;
+  // The native Codex adapter is eligible only for the exact prepared
+  // host-authority roster above. It remains excluded for Agent Apps,
+  // restricted-read, and legacy/package-ceiling Workforce rows.
+  const authorityEligible = supplied.filter((runtime) => (
+    runtime.kind !== "codex" || taskForceCodexRuntimeAllowed(p)
+  ));
   const runnable = authorityEligible.filter((runtime, index, list) => (
     list.findIndex((candidate) => sameRuntimeModel(candidate, runtime)) === index && Boolean(pickRunner(runtime))
   ));
@@ -1276,10 +1313,11 @@ function taskForceRunnerBase(
 export function taskForceControlPlaneNeedsZeroAuthority(input: {
   agentAppMode?: boolean;
   restrictedReadBoundary?: boolean;
+  untrustedNoTools?: boolean;
   workforceSelectionReceipt?: WorkforceSelectionReceipt;
   specs: BorrowedAgentSpec[];
 }): boolean {
-  if (input.agentAppMode || input.restrictedReadBoundary) return true;
+  if (input.agentAppMode || input.restrictedReadBoundary || input.untrustedNoTools) return true;
   if (input.workforceSelectionReceipt) {
     const prepared = input.workforceSelectionReceipt.preparedReleases;
     if (!input.specs.length || !Array.isArray(prepared) || prepared.length !== input.specs.length) return true;
@@ -1330,9 +1368,14 @@ function taskForceOrchestratorBoundary(
   | "untrustedAllowedMcpTools"
   | "onAgentAppMcpRuntimeUnavailable"
 > {
+  const inheritedBoundary = p.req as McpInvocationRequest & {
+    restrictedReadBoundary?: boolean;
+    untrustedNoTools?: boolean;
+  };
   const untrustedNoTools = taskForceControlPlaneNeedsZeroAuthority({
     agentAppMode: p.req.agentAppMode,
-    restrictedReadBoundary: p.restrictedReadBoundary,
+    restrictedReadBoundary: p.restrictedReadBoundary || inheritedBoundary.restrictedReadBoundary,
+    untrustedNoTools: inheritedBoundary.untrustedNoTools,
     workforceSelectionReceipt: p.workforceSelectionReceipt,
     specs,
   });
@@ -5172,9 +5215,6 @@ async function runBorrowedTaskForceInvocationInternal(p: BorrowedTaskForceParams
   if (!p.req.runId) {
     p = { ...p, req: { ...p.req, runId: `task-force-direct-${randomUUID()}` } };
   }
-  if (p.workforceSelectionReceipt && p.active.kind === "codex") {
-    throw new Error("workforce_runtime_isolation_unverified:codex-collaboration-authority");
-  }
   p = await prepareTaskForceMemoryBoundary(p);
   const observedOneArtifacts = new Map<string, NonNullable<McpInvocationEvent["oneArtifacts"]>[number]>();
   const upstreamArtifactBinder = p.bindOneRuntimeToolArtifacts;
@@ -5236,6 +5276,13 @@ async function runBorrowedTaskForceInvocationInternal(p: BorrowedTaskForceParams
         p.signal,
         p.req.borrowVersions,
       );
+  // Candidate selection runs after roster resolution, so Codex admission can
+  // verify the exact prepared slot/release/policy-digest pairing rather than
+  // treating the active runtime as a blanket Workforce exception.
+  p = { ...p, taskForceSpecs: specs };
+  if (p.active.kind === "codex" && !taskForceCodexRuntimeAllowed(p)) {
+    throw new Error("workforce_runtime_isolation_unverified:codex-collaboration-authority");
+  }
   const plan = await runPlanner(p, specs, history);
   // If planner had to leave One's selected model, keep that successful
   // controller runtime for synthesis instead of retrying the failed model.

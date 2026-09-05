@@ -212,18 +212,29 @@ function exactRoster(
   });
 }
 
-function claudeRuntimeInventory(runtimes: RuntimeStatus[]): {
-  runtimeIds: string[];
+function workforceRuntimeInventory(runtimes: RuntimeStatus[]): {
+  /** Legacy exact-tool rows remain Claude-only. */
+  legacyRuntimeIds: string[];
+  /** Host-authority rows may use the observed native Codex adapter. */
+  hostNativeRuntimeIds: string[];
   runtimeVersions: Record<string, string | null>;
 } {
-  const runtimeIds: string[] = [];
+  const legacyRuntimeIds: string[] = [];
+  const hostNativeRuntimeIds: string[] = [];
   const runtimeVersions: Record<string, string | null> = {};
   runtimes.forEach((runtime, index) => {
+    // Keep the planner's runtime-N coordinates tied to its original candidate
+    // list. Filtering eligibility must never renumber model-selection slots.
     const runtimeId = `runtime-${index + 1}`;
     runtimeVersions[runtimeId] = runtime.version ?? null;
-    if (runtime.kind === "claude-code") runtimeIds.push(runtimeId);
+    if (runtime.kind === "claude-code") {
+      legacyRuntimeIds.push(runtimeId);
+      hostNativeRuntimeIds.push(runtimeId);
+    } else if (runtime.kind === "codex") {
+      hostNativeRuntimeIds.push(runtimeId);
+    }
   });
-  return { runtimeIds, runtimeVersions };
+  return { legacyRuntimeIds, hostNativeRuntimeIds, runtimeVersions };
 }
 
 async function probeWithAbort(
@@ -258,17 +269,17 @@ export async function prepareWorkforceToolMenu(input: {
 }): Promise<PreparedWorkforceToolMenu> {
   if (!HASH_RE.test(input.executionContextDigest)) throw new Error("workforce_tool_inventory_context_digest_invalid");
   const roster = exactRoster(input.executionContext, input.specs);
-  const runtimeInventory = claudeRuntimeInventory(input.runtimes);
+  const runtimeInventory = workforceRuntimeInventory(input.runtimes);
   const observedAt = utcSeconds(input.deps?.now?.() ?? new Date());
   const toolRows = roster.filter((row) => row.requiredCapabilities.length > 0 && (
     isHostAuthorityPolicy(row.policy)
       ? ["read", "write", "full"].includes(input.hostPermission ?? "")
       : row.policy.mcp.mode === "allowlist" && (input.hostPermission === "write" || input.hostPermission === "full")
+  ) && (isHostAuthorityPolicy(row.policy)
+    ? runtimeInventory.hostNativeRuntimeIds.length > 0
+    : runtimeInventory.legacyRuntimeIds.length > 0
   ));
-  if (
-    runtimeInventory.runtimeIds.length === 0 ||
-    toolRows.length === 0
-  ) {
+  if (toolRows.length === 0) {
     return {
       schemaVersion: MENU_SCHEMA,
       executionContextDigest: input.executionContextDigest,
@@ -326,6 +337,13 @@ export async function prepareWorkforceToolMenu(input: {
   const entries: WorkforceToolMenuEntry[] = [];
   for (const row of toolRows) {
     const hostAuthority = isHostAuthorityPolicy(row.policy);
+    // A package-ceiling row never acquires Codex eligibility merely because a
+    // host row exists elsewhere in the roster. The choice is per exact
+    // slot/release/policy row and remains visible to planner validation.
+    const runtimeIds = hostAuthority
+      ? runtimeInventory.hostNativeRuntimeIds
+      : runtimeInventory.legacyRuntimeIds;
+    if (runtimeIds.length === 0) continue;
     const candidateTools = hostAuthority
       ? [...new Set([...statuses].flatMap(([key, status]) => status.tools.map((tool) => `mcp__${key}__${tool.name}`)))].sort()
       : row.policy.mcp.allowedTools;
@@ -350,7 +368,7 @@ export async function prepareWorkforceToolMenu(input: {
         serverConfigKey: key,
         description: boundedDescription(tool.description),
         inputSchemaDigest: workforcePortableDigest(tool.inputSchema ?? {}),
-        runtimeIds: [...runtimeInventory.runtimeIds],
+        runtimeIds: [...runtimeIds],
         selectiveEnforcement: hostAuthority ? "host-native" : "exact-tool-allowlist",
         status: "ready",
       });

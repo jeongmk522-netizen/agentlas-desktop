@@ -547,6 +547,209 @@ function createComposerEventSync({
     const date = new Date(value);
     return Number.isNaN(date.getTime()) ? "" : new Intl.DateTimeFormat(state.locale === "ko" ? "ko-KR" : "en-US", { year: "numeric", month: "short", day: "numeric" }).format(date);
   };
+  function restoreArtifactVegaCanvas(host) {
+    const canvas = host?.querySelector?.("canvas");
+    if (!canvas) return null;
+    const width = Number(canvas.dataset.vegaNaturalCssWidth) || canvas.width;
+    const height = Number(canvas.dataset.vegaNaturalCssHeight) || canvas.height;
+    if (!(width > 0) || !(height > 0)) return null;
+    canvas.style.width = `${width}px`;
+    canvas.style.height = `${height}px`;
+    canvas.style.maxWidth = "none";
+    canvas.style.maxHeight = "none";
+    canvas.style.marginInline = "0";
+    return { canvas, width, height };
+  }
+  function artifactViewToolbarMarkup() {
+    const fitLabel = uiCopy("맞춤", "Fit to view");
+    const zoomOutLabel = uiCopy("축소", "Zoom out");
+    const zoomInLabel = uiCopy("확대", "Zoom in");
+    const resetLabel = uiCopy("확대 배율 초기화", "Reset zoom");
+    const panLabel = uiCopy("그림 이동 모드", "Pan figure");
+    return `<section class="artifactViewToolbar" data-artifact-view-toolbar aria-label="${escapeHtml(uiCopy("그림 보기 도구", "Figure view controls"))}"><div class="artifactViewToolbarTitle"><strong>${escapeHtml(uiCopy("그림 보기", "Figure view"))}</strong><span data-artifact-view-status aria-live="polite">100%</span></div><div class="artifactViewToolbarActions"><button type="button" data-artifact-view-action="fit" aria-label="${escapeHtml(fitLabel)}" title="${escapeHtml(fitLabel)}">${escapeHtml(uiCopy("맞춤", "Fit"))}</button><button type="button" data-artifact-view-action="zoom-out" aria-label="${escapeHtml(zoomOutLabel)}" title="${escapeHtml(zoomOutLabel)}">−</button><button type="button" data-artifact-view-action="zoom-in" aria-label="${escapeHtml(zoomInLabel)}" title="${escapeHtml(zoomInLabel)}">+</button><button type="button" data-artifact-view-action="reset" aria-label="${escapeHtml(resetLabel)}" title="${escapeHtml(resetLabel)}">${escapeHtml(uiCopy("초기화", "Reset"))}</button><button type="button" data-artifact-view-action="toggle-pan" aria-pressed="false" aria-label="${escapeHtml(panLabel)}" title="${escapeHtml(panLabel)}">${escapeHtml(uiCopy("이동", "Pan"))}</button></div></section>`;
+  }
+  function bindArtifactVisualViewport(host, { kind = "chart" } = {}) {
+    if (!host) return;
+    if (typeof host.__scienceVisualViewerCleanup === "function") host.__scienceVisualViewerCleanup();
+    if (host.dataset.visualViewerBound === "true") return;
+    const viewport = host.querySelector(".statisticsChartHost") || host;
+    const surface = viewport.querySelector("img, canvas");
+    if (!surface) return;
+    const baseWidth = Number(surface.dataset.vegaNaturalCssWidth) || Number(surface.naturalWidth) || Number(surface.width) || surface.getBoundingClientRect().width;
+    const baseHeight = Number(surface.dataset.vegaNaturalCssHeight) || Number(surface.naturalHeight) || Number(surface.height) || surface.getBoundingClientRect().height;
+    if (!(baseWidth > 0) || !(baseHeight > 0)) return;
+    host.dataset.visualViewerBound = "true";
+    viewport.classList.add("artifactVisualViewport");
+    surface.classList.add("artifactVisualSurface");
+    surface.draggable = false;
+    const frame = host.closest(".artifactCanvasFrame");
+    const toolbar = frame?.querySelector("[data-artifact-view-toolbar]");
+    const status = toolbar?.querySelector("[data-artifact-view-status]");
+    let scale = kind === "image" ? 1 : 1;
+    let fitLocked = false;
+    let persistentPan = kind === "image";
+    let temporarySpacePan = false;
+    let panMode = persistentPan;
+    let pointer = null;
+    const buttonListeners = [];
+    const clampScale = (value, minimum = 0.05) => Math.max(minimum, Math.min(4, value));
+    const fitScale = () => {
+      const styles = getComputedStyle(viewport);
+      const horizontalPadding = (parseFloat(styles.paddingLeft) || 0) + (parseFloat(styles.paddingRight) || 0);
+      const verticalPadding = (parseFloat(styles.paddingTop) || 0) + (parseFloat(styles.paddingBottom) || 0);
+      return Math.max(0.001, Math.min(1, (viewport.clientWidth - horizontalPadding) / baseWidth, (viewport.clientHeight - verticalPadding) / baseHeight));
+    };
+    const visualMinimumScale = () => Math.min(0.05, fitScale());
+    const updateStatus = () => {
+      if (status) status.textContent = `${Math.round(scale * 100)}%`;
+      if (toolbar) toolbar.querySelector('[data-artifact-view-action="toggle-pan"]')?.setAttribute("aria-pressed", String(panMode));
+      viewport.dataset.visualScale = scale.toFixed(4);
+      viewport.dataset.visualFit = String(fitLocked);
+    };
+    const applyScale = (nextScale, anchor = null, minimumScale = visualMinimumScale()) => {
+      const next = clampScale(nextScale, minimumScale);
+      const previousScale = scale;
+      const rect = viewport.getBoundingClientRect();
+      const styles = getComputedStyle(viewport);
+      const originX = viewport.clientLeft + (parseFloat(styles.paddingLeft) || 0);
+      const originY = viewport.clientTop + (parseFloat(styles.paddingTop) || 0);
+      const anchorX = anchor ? anchor.clientX - rect.left - originX : viewport.clientWidth / 2 - originX;
+      const anchorY = anchor ? anchor.clientY - rect.top - originY : viewport.clientHeight / 2 - originY;
+      const contentX = viewport.scrollLeft + anchorX;
+      const contentY = viewport.scrollTop + anchorY;
+      scale = next;
+      surface.style.width = `${Math.max(1, Math.round(baseWidth * scale))}px`;
+      surface.style.height = `${Math.max(1, Math.round(baseHeight * scale))}px`;
+      surface.style.maxWidth = "none";
+      surface.style.maxHeight = "none";
+      surface.style.marginInline = "0";
+      viewport.scrollLeft = Math.max(0, contentX * (scale / previousScale) - anchorX);
+      viewport.scrollTop = Math.max(0, contentY * (scale / previousScale) - anchorY);
+      updateStatus();
+    };
+    const applyFit = () => {
+      fitLocked = true;
+      const next = fitScale();
+      const rect = viewport.getBoundingClientRect();
+      const center = { clientX: rect.left + viewport.clientWidth / 2, clientY: rect.top + viewport.clientHeight / 2 };
+      applyScale(next, center, 0.001);
+      viewport.scrollLeft = 0;
+      viewport.scrollTop = 0;
+    };
+    const applyReset = () => { fitLocked = false; applyScale(1); };
+    const action = (name) => {
+      if (name === "fit") { applyFit(); return; }
+      if (name === "reset") { applyReset(); return; }
+      if (name === "zoom-in") { fitLocked = false; applyScale(scale * 1.2); return; }
+      if (name === "zoom-out") { fitLocked = false; applyScale(scale / 1.2); return; }
+      if (name === "toggle-pan") { persistentPan = !persistentPan; panMode = persistentPan || temporarySpacePan; updateStatus(); }
+    };
+    toolbar?.querySelectorAll("[data-artifact-view-action]").forEach((button) => {
+      const listener = () => action(button.dataset.artifactViewAction);
+      button.addEventListener("click", listener);
+      buttonListeners.push([button, listener]);
+    });
+    const onWheel = (event) => {
+      if (!surface.contains(event.target)) return;
+      const rawDeltaY = Number(event.deltaY);
+      if (!Number.isFinite(rawDeltaY) || rawDeltaY === 0) return;
+      const rawDeltaX = Number(event.deltaX) || 0;
+      if (Math.abs(rawDeltaY) < 0.5 || Math.abs(rawDeltaX) > Math.abs(rawDeltaY) * 1.2) return;
+      event.preventDefault();
+      event.stopPropagation();
+      fitLocked = false;
+      const deltaModeScale = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? Math.max(1, viewport.clientHeight) : 1;
+      const normalizedDeltaY = Math.max(-120, Math.min(120, rawDeltaY * deltaModeScale));
+      const direction = Math.exp(-normalizedDeltaY * 0.0012);
+      applyScale(scale * direction, event);
+    };
+    viewport.addEventListener("wheel", onWheel, { passive: false });
+    const onPointerDown = (event) => {
+      if (!surface.contains(event.target) || !(panMode || event.button === 1 || event.shiftKey || event.altKey)) return;
+      event.preventDefault();
+      pointer = { id: event.pointerId, x: event.clientX, y: event.clientY };
+      try { surface.setPointerCapture(event.pointerId); } catch {}
+      surface.dataset.visualPanning = "true";
+    };
+    const onPointerMove = (event) => {
+      if (!pointer || pointer.id !== event.pointerId) return;
+      event.preventDefault();
+      viewport.scrollLeft -= event.clientX - pointer.x;
+      viewport.scrollTop -= event.clientY - pointer.y;
+      pointer.x = event.clientX; pointer.y = event.clientY;
+    };
+    const clearPointer = () => {
+      const pointerId = pointer?.id;
+      pointer = null;
+      delete surface.dataset.visualPanning;
+      if (pointerId !== undefined) {
+        try { surface.releasePointerCapture(pointerId); } catch {}
+      }
+    };
+    const onPointerUp = (event) => { if (pointer?.id === event.pointerId) clearPointer(); };
+    const onLostPointerCapture = (event) => { if (pointer?.id === event.pointerId) clearPointer(); };
+    const resetTemporaryPan = () => {
+      if (!temporarySpacePan) return;
+      temporarySpacePan = false;
+      panMode = persistentPan;
+      updateStatus();
+    };
+    const onWindowBlur = () => { clearPointer(); resetTemporaryPan(); };
+    const onVisibilityChange = () => { if (document.hidden) { clearPointer(); resetTemporaryPan(); } };
+    surface.addEventListener("pointerdown", onPointerDown);
+    surface.addEventListener("pointermove", onPointerMove);
+    surface.addEventListener("pointerup", onPointerUp);
+    surface.addEventListener("pointercancel", onPointerUp);
+    surface.addEventListener("lostpointercapture", onLostPointerCapture);
+    window.addEventListener("blur", onWindowBlur);
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    const isEditingTarget = (target) => {
+      if (!target || typeof target.closest !== "function") return false;
+      return Boolean(target.isContentEditable || target.closest("input, textarea, select, button, a, [contenteditable=\"true\"], [contenteditable=\"\"], [role=\"textbox\"]"));
+    };
+    const canHandleKey = (event) => !event.defaultPrevented && !event.isComposing && event.keyCode !== 229 && !event.ctrlKey && !event.metaKey && !event.altKey && !isEditingTarget(event.target);
+    host.tabIndex = 0;
+    const onKeyDown = (event) => {
+      if (!canHandleKey(event)) return;
+      if (event.key === "+" || event.key === "=") { event.preventDefault(); action("zoom-in"); return; }
+      if (event.key === "-") { event.preventDefault(); action("zoom-out"); return; }
+      if (event.key === "0") { event.preventDefault(); action("fit"); return; }
+      if (event.key === "Home" || event.key.toLowerCase() === "r") { event.preventDefault(); action("reset"); return; }
+      const delta = event.shiftKey ? 96 : 48;
+      if (event.key === "ArrowLeft") { event.preventDefault(); viewport.scrollLeft -= delta; }
+      if (event.key === "ArrowRight") { event.preventDefault(); viewport.scrollLeft += delta; }
+      if (event.key === "ArrowUp") { event.preventDefault(); viewport.scrollTop -= delta; }
+      if (event.key === "ArrowDown") { event.preventDefault(); viewport.scrollTop += delta; }
+      if (event.key === " ") { event.preventDefault(); temporarySpacePan = true; panMode = true; updateStatus(); }
+    };
+    const onKeyUp = (event) => {
+      if (event.key === " " && !event.isComposing && !isEditingTarget(event.target)) { temporarySpacePan = false; panMode = persistentPan; updateStatus(); }
+    };
+    host.addEventListener("keydown", onKeyDown);
+    host.addEventListener("keyup", onKeyUp);
+    const observer = typeof ResizeObserver === "function" ? new ResizeObserver(() => { if (fitLocked) applyFit(); }) : null;
+    observer?.observe(viewport);
+    const cleanup = () => {
+      observer?.disconnect();
+      buttonListeners.forEach(([button, listener]) => button.removeEventListener("click", listener));
+      viewport.removeEventListener("wheel", onWheel);
+      surface.removeEventListener("pointerdown", onPointerDown);
+      surface.removeEventListener("pointermove", onPointerMove);
+      surface.removeEventListener("pointerup", onPointerUp);
+      surface.removeEventListener("pointercancel", onPointerUp);
+      surface.removeEventListener("lostpointercapture", onLostPointerCapture);
+      window.removeEventListener("blur", onWindowBlur);
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+      host.removeEventListener("keydown", onKeyDown);
+      host.removeEventListener("keyup", onKeyUp);
+      clearPointer();
+      delete host.dataset.visualViewerBound;
+      if (host.__scienceVisualViewerCleanup === cleanup) delete host.__scienceVisualViewerCleanup;
+    };
+    host.__scienceVisualViewerCleanup = cleanup;
+    if (kind === "image") applyFit(); else { applyScale(1); }
+    updateStatus();
+  }
   const formatByteSize = (value) => {
     if (value === null || value === undefined || value === "") return "—";
     const bytes = Number(value);
@@ -785,7 +988,7 @@ function createComposerEventSync({
     if (!isStatisticsProjectionReceipt(receipt)) return "";
     const method = receipt.schema.endsWith("/v2") ? statisticsMethodLabel(receipt.method) : "Kaplan–Meier survival";
     const mapping = statisticsProjectionMappingLabel(receipt);
-    return `<section class="statisticsLineage" data-statistics-lineage data-projection-schema="${escapeHtml(receipt.schema)}" data-source-artifact-id="${escapeHtml(receipt.sourceArtifact.artifactId)}" data-source-artifact-version="${escapeHtml(receipt.sourceArtifact.artifactVersion)}" data-source-artifact-sha256="${escapeHtml(receipt.sourceArtifact.contentSha256)}" data-projection-receipt-sha256="${escapeHtml(receipt.receiptSha256)}" data-run-id="${escapeHtml(runId)}" data-output-artifact-id="${escapeHtml(artifactId)}" data-output-artifact-version="${escapeHtml(artifactVersion)}" data-output-artifact-sha256="${escapeHtml(artifactSha256)}"><span>Source table <code title="${escapeHtml(receipt.sourceArtifact.artifactId)}">${escapeHtml(statisticsShortHash(receipt.sourceArtifact.artifactId))}</code> · v${escapeHtml(receipt.sourceArtifact.artifactVersion)}</span><i aria-hidden="true">→</i><span>${escapeHtml(method)} · ${escapeHtml(mapping)} · ${escapeHtml(receipt.includedRowCount)} rows</span><i aria-hidden="true">→</i><span>Projection <code title="${escapeHtml(receipt.receiptSha256)}">${escapeHtml(statisticsShortHash(receipt.receiptSha256))}</code></span><i aria-hidden="true">→</i><span>Run <code title="${escapeHtml(runId)}">${escapeHtml(statisticsShortHash(runId))}</code></span></section>`;
+    return `<details class="statisticsLineage provenanceDisclosure" data-statistics-lineage data-projection-schema="${escapeHtml(receipt.schema)}" data-source-artifact-id="${escapeHtml(receipt.sourceArtifact.artifactId)}" data-source-artifact-version="${escapeHtml(receipt.sourceArtifact.artifactVersion)}" data-source-artifact-sha256="${escapeHtml(receipt.sourceArtifact.contentSha256)}" data-projection-receipt-sha256="${escapeHtml(receipt.receiptSha256)}" data-run-id="${escapeHtml(runId)}" data-output-artifact-id="${escapeHtml(artifactId)}" data-output-artifact-version="${escapeHtml(artifactVersion)}" data-output-artifact-sha256="${escapeHtml(artifactSha256)}"><summary><strong>${escapeHtml(uiCopy("근거 연결", "Evidence chain"))}</strong><span>${escapeHtml(method)} · ${escapeHtml(mapping)} · ${escapeHtml(receipt.includedRowCount)} rows</span></summary><div class="provenanceTrail"><span>Source table <code title="${escapeHtml(receipt.sourceArtifact.artifactId)}">${escapeHtml(statisticsShortHash(receipt.sourceArtifact.artifactId))}</code> · v${escapeHtml(receipt.sourceArtifact.artifactVersion)}</span><i aria-hidden="true">→</i><span>${escapeHtml(method)} · ${escapeHtml(mapping)} · ${escapeHtml(receipt.includedRowCount)} rows</span><i aria-hidden="true">→</i><span>Projection <code title="${escapeHtml(receipt.receiptSha256)}">${escapeHtml(statisticsShortHash(receipt.receiptSha256))}</code></span><i aria-hidden="true">→</i><span>Run <code title="${escapeHtml(runId)}">${escapeHtml(statisticsShortHash(runId))}</code></span></div></details>`;
   }
   const labIdForArtifact = (artifactId) => {
     for (const [labId, contexts] of state.labContextsById) {
@@ -6009,8 +6212,8 @@ function createComposerEventSync({
       validator ? `${validator} validation` : artifact.version.rendererId,
       `artifact v${artifact.currentVersion}`,
     ];
-    const originStrip = `<section class="originStrip"><div class="provenanceTrail">${provenanceSteps.map((step) => `<span>${escapeHtml(step)}</span>`).join('<i aria-hidden="true">→</i>')}<em>${escapeHtml(capability)}</em></div><div><button data-action="toggle-history" aria-expanded="${state.historyOpen}">버전 ${escapeHtml(artifact.currentVersion)}</button>${originVersion ? `<button data-artifact-history-version="${escapeHtml(originVersion)}">응답 원본 v${escapeHtml(originVersion)}</button>` : ""}<button data-action="toggle-drawer">세부 정보</button>${state.selectedLabId === "statistics-analysis" ? `<button data-action="open-statistics-launch">새 분석</button>` : ""}</div></section>`;
-    const paleontologyLineage = paleontologyPayload ? `<section class="statisticsLineage" data-paleontology-lineage data-catalog-run-id="${escapeHtml(paleontologyPayload.source.parentRunId)}" data-analysis-run-id="${escapeHtml(paleontologyPayload.source.analysisRunId)}" data-analysis-sha256="${escapeHtml(paleontologyPayload.analysis.analysisSha256)}"><span>${escapeHtml(PALEONTOLOGY_BOUNDARY)}</span><i aria-hidden="true">→</i><span>${escapeHtml(paleontologyPayload.analysis.estimates.occurrenceCount)} exact rows · ${escapeHtml(paleontologyPayload.analysis.estimates.oldestBoundMa)}–${escapeHtml(paleontologyPayload.analysis.estimates.youngestBoundMa)} Ma</span><i aria-hidden="true">→</i><span>${paleontologyPayload.analysis.source.parentTruncated ? "Bounded retrieval · descriptive counts" : "Complete retrieved set"}</span></section>` : "";
+    const originStrip = `<section class="originStrip"><div class="originStripMain"><strong>${escapeHtml(selectedLabTitle)}</strong><span>${escapeHtml(capability)}</span></div><div class="originStripActions"><button data-action="toggle-history" aria-expanded="${state.historyOpen}">${escapeHtml(uiCopy(`버전 ${artifact.currentVersion}`, `Version ${artifact.currentVersion}`))}</button>${originVersion ? `<button data-artifact-history-version="${escapeHtml(originVersion)}">${escapeHtml(uiCopy(`응답 원본 v${originVersion}`, `Response source v${originVersion}`))}</button>` : ""}<button data-action="toggle-drawer">${escapeHtml(uiCopy("세부 정보", "Details"))}</button>${state.selectedLabId === "statistics-analysis" ? `<button data-action="open-statistics-launch">${escapeHtml(uiCopy("새 분석", "New analysis"))}</button>` : ""}</div><details class="provenanceDisclosure originProvenance"><summary>${escapeHtml(uiCopy("출처와 버전", "Source and version"))}</summary><div class="provenanceTrail">${provenanceSteps.map((step) => `<span>${escapeHtml(step)}</span>`).join('<i aria-hidden="true">→</i>')}<em>${escapeHtml(capability)}</em></div></details></section>`;
+    const paleontologyLineage = paleontologyPayload ? `<details class="statisticsLineage provenanceDisclosure" data-paleontology-lineage data-catalog-run-id="${escapeHtml(paleontologyPayload.source.parentRunId)}" data-analysis-run-id="${escapeHtml(paleontologyPayload.source.analysisRunId)}" data-analysis-sha256="${escapeHtml(paleontologyPayload.analysis.analysisSha256)}"><summary><strong>${escapeHtml(uiCopy("근거 연결", "Evidence chain"))}</strong><span>${escapeHtml(paleontologyPayload.analysis.source.taxonName)} · ${escapeHtml(paleontologyPayload.analysis.estimates.occurrenceCount)} exact rows</span></summary><div class="provenanceTrail"><span>${escapeHtml(PALEONTOLOGY_BOUNDARY)}</span><i aria-hidden="true">→</i><span>${escapeHtml(paleontologyPayload.analysis.estimates.occurrenceCount)} exact rows · ${escapeHtml(paleontologyPayload.analysis.estimates.oldestBoundMa)}–${escapeHtml(paleontologyPayload.analysis.estimates.youngestBoundMa)} Ma</span><i aria-hidden="true">→</i><span>${paleontologyPayload.analysis.source.parentTruncated ? "Bounded retrieval · descriptive counts" : "Complete retrieved set"}</span></div></details>` : "";
     const statisticsLineage = statisticsProjectionLineageMarkup(statisticsProjectionReceipt, statisticsRunId, artifact.id, activeVersion?.version || artifact.currentVersion, activeVersion?.contentSha256 || "");
     const timeline = historyEntries.length ? historyEntries.map((entry) => {
       const selected = inspectingHistory ? entry.version === state.inspectedArtifactVersion : entry.isCurrent;
@@ -6040,6 +6243,14 @@ function createComposerEventSync({
     const statisticsRasterToolbar = statisticsRasterPayload ? `<section class="statisticsRasterToolbar" data-statistics-raster-toolbar data-export-receipt-sha256="${escapeHtml(statisticsRasterPayload.exportSha256)}"><div><span>PUBLICATION RASTER · EXACT EXPORT</span><strong>${escapeHtml(`${statisticsRasterPayload.export.dpi} DPI · ${statisticsRasterPayload.export.colorSpace.toUpperCase()} · ${statisticsRasterPayload.export.widthMm}×${statisticsRasterPayload.export.heightMm} mm`)}</strong><code title="${escapeHtml(statisticsRasterPayload.figureArtifact.contentSha256)}">Figure v${escapeHtml(statisticsRasterPayload.figureArtifact.artifactVersion)} · ${escapeHtml(statisticsShortHash(statisticsRasterPayload.figureArtifact.contentSha256))}</code></div><div><em>원고 연결 가능</em><span>이 image 아티팩트가 journal raster 검증 대상입니다.</span></div></section>` : "";
     const numericSurfaceToolbar = numericSurfacePayload ? `<section class="statisticsFigureToolbar" data-numeric-surface-export-toolbar><div><span>3D RESPONSE SURFACE · EXACT VIEW</span><strong>${escapeHtml(numericSurfacePayload.title)}</strong><code title="${escapeHtml(activeVersion.contentSha256)}">surface v${escapeHtml(activeVersion.version)} · ${escapeHtml(statisticsShortHash(activeVersion.contentSha256))} · view는 SQLite 저장 상태 사용</code></div><div class="statisticsFigureExport"><div><button type="button" data-action="open-compare" ${historyEntries.length < 2 ? "disabled" : ""}>버전 비교</button><button type="button" data-action="export-numeric-surface-png" ${state.figureActionBusy ? "disabled" : ""}>${state.figureActionBusy ? "생성 중…" : "PNG 2008×1506 · 600dpi"}</button></div><span class="supportBoundary">Three.js offscreen WebGL 재렌더 · sRGB · white background · vector/PDF/EPS/TIFF/CMYK 미지원.</span></div>${state.figureActionError ? `<p role="alert">${escapeHtml(state.figureActionError)}</p>` : state.figureActionNotice ? `<p role="status">${escapeHtml(state.figureActionNotice)}</p>` : ""}</section>` : "";
     const numericSurfaceRasterToolbar = numericSurfaceRasterPayload ? `<section class="statisticsRasterToolbar" data-numeric-surface-raster-toolbar data-export-receipt-sha256="${escapeHtml(numericSurfaceRasterPayload.exportSha256)}"><div><span>3D PUBLICATION RASTER · EXACT EXPORT</span><strong>${escapeHtml(`${numericSurfaceRasterPayload.export.width}×${numericSurfaceRasterPayload.export.height}px · ${numericSurfaceRasterPayload.export.dpi} DPI · ${numericSurfaceRasterPayload.export.colorSpace.toUpperCase()}`)}</strong><code title="${escapeHtml(numericSurfaceRasterPayload.surfaceArtifact.contentSha256)}">Surface v${escapeHtml(numericSurfaceRasterPayload.surfaceArtifact.artifactVersion)} · ${escapeHtml(statisticsShortHash(numericSurfaceRasterPayload.surfaceArtifact.contentSha256))} · camera ${escapeHtml(statisticsShortHash(numericSurfaceRasterPayload.viewStateReceipt.viewStateSha256))}</code></div><div><em>원고 연결 가능</em><span>PNG pixels · persisted camera · renderer · parent lineage가 하나의 receipt에 고정됩니다.</span></div></section>` : "";
+    const imageArtifact = activeVersion?.rendererId === "agentlas.image";
+    const statisticsAnalysisPayload = activeVersion?.payload?.schema === "agentlas.science.statistics-analysis-artifact/v1" ? activeVersion.payload : null;
+    const statisticsAnalysisRequestedView = statisticsAnalysisPayload ? state.statisticsViewByArtifact.get(artifact.id) || `table:${statisticsAnalysisPayload.selectedTableIndex}` : "";
+    const statisticsAnalysisVisual = Boolean(statisticsAnalysisPayload && String(statisticsAnalysisRequestedView).startsWith("chart:"));
+    const paleontologyVisual = Boolean(paleontologyPayload && state.paleontologyViewByArtifact.get(artifact.id) !== "table");
+    const visualViewerKind = !inspectingHistory && (imageArtifact || paleontologyVisual || activeVersion?.rendererId === "agentlas.vega" && earthquakeView !== "earthquake-depth" || statisticsAnalysisVisual)
+      ? (imageArtifact ? "image" : "chart") : null;
+    const artifactViewToolbar = visualViewerKind ? artifactViewToolbarMarkup() : "";
     const canvasClass = artifact.version.rendererId === "agentlas.cytoscape"
       ? "artifactCanvas citationNetworkCanvas"
       : artifact.version.rendererId === NUMERIC_SURFACE_RENDERER
@@ -6059,10 +6270,10 @@ function createComposerEventSync({
     const economicChartSettings = !inspectingHistory && economicPayload && activeToolbar
       ? `<details class="vegaEditorDisclosure"><summary><span>${uiCopy("차트 설정", "Chart settings")}</span><small>${uiCopy("제목·크기·표시 옵션과 게재용 그림 준비", "Title, sizing, display options, and publication-figure preparation")}</small></summary>${activeToolbar}</details>`
       : "";
-    const toolbarBeforeCanvas = economicChartSettings ? "" : activeToolbar;
+    const toolbarBeforeCanvas = economicChartSettings ? artifactViewToolbar : `${artifactViewToolbar}${activeToolbar}`;
     const canvas = inspectingHistory
       ? `<div class="artifactCanvasFrame historicalFrame"><div class="historicalStatus"><span>기록 보기 · v${escapeHtml(state.inspectedArtifactVersion)} · 읽기 전용</span><button data-artifact-history-version="${escapeHtml(artifact.currentVersion)}">현재 v${escapeHtml(artifact.currentVersion)}으로 돌아가기</button></div><div class="artifactCanvas historicalArtifactCanvas"><div class="historicalCaptureNotice"><strong>검증된 캡처</strong><span>이 화면은 기록 보존용이며 조작할 수 없습니다.</span></div><div class="historicalPreviewSurface" data-historical-artifact-host="${escapeHtml(artifact.id)}" data-historical-artifact-version="${escapeHtml(state.inspectedArtifactVersion)}" aria-label="${escapeHtml(artifact.title)} v${escapeHtml(state.inspectedArtifactVersion)} 기록">${historyError ? `<span class="historicalError">${escapeHtml(historyError)}</span>` : inspectedContext ? "" : `<span class="historicalLoading">검증된 과거 버전을 불러오는 중…</span>`}</div></div></div>`
-      : `<div class="artifactCanvasFrame"><div class="rendererStatus"><span>${escapeHtml(artifact.kind)}</span><span>${escapeHtml(artifact.version.rendererId)} · ${escapeHtml(artifact.version.rendererVersion)}${earthquakeView === "earthquake-depth" || skyView === "astronomy-distance" ? " + Three.js 0.173.0" : ""} <em data-runtime-status></em></span></div>${toolbarBeforeCanvas}<div class="${canvasClass}" data-artifact-host="${escapeHtml(artifact.id)}" data-artifact-version="${escapeHtml(artifact.version.version)}" data-content-sha256="${escapeHtml(artifact.version.contentSha256)}" aria-label="${escapeHtml(artifact.title)}"></div><div class="renderError" data-render-error role="alert"></div>${economicChartSettings}</div>`;
+      : `<div class="artifactCanvasFrame ${visualViewerKind ? "visualArtifactFrame" : ""}"><div class="rendererStatus"><span>${escapeHtml(artifact.kind)}</span><span>${escapeHtml(artifact.version.rendererId)} · ${escapeHtml(artifact.version.rendererVersion)}${earthquakeView === "earthquake-depth" || skyView === "astronomy-distance" ? " + Three.js 0.173.0" : ""} <em data-runtime-status></em></span></div>${toolbarBeforeCanvas}<div class="${canvasClass}${visualViewerKind ? " artifactVisualViewport" : ""}" data-artifact-host="${escapeHtml(artifact.id)}" data-artifact-version="${escapeHtml(artifact.version.version)}" data-content-sha256="${escapeHtml(artifact.version.contentSha256)}" tabindex="${visualViewerKind ? "0" : "-1"}" aria-label="${escapeHtml(artifact.title)}"></div><div class="renderError" data-render-error role="alert"></div>${economicChartSettings}</div>`;
     const loopObservation = semanticObservations[0] || null;
     const loopEvidence = loopObservation ? `${loopObservation.label}: ${loopObservation.value}${loopObservation.unit ? ` ${loopObservation.unit}` : ""}` : (activeVersion?.semantic?.summary || "현재 아티팩트의 다음 검증 단계를 연구 채팅에서 함께 결정합니다.");
     const spatialArtifact = (artifact.version.rendererId === "agentlas.table" && artifact.version.payload?.schema === "agentlas.science.materials-catalog-artifact/v1")
@@ -7245,6 +7456,7 @@ function createComposerEventSync({
   }
 
   function teardownArtifactRenderer(preserveNativeRenderer = false) {
+    document.querySelectorAll("[data-artifact-host]").forEach((host) => host.__scienceVisualViewerCleanup?.());
     for (const view of state.inlineVegaViews) { try { view.finalize(); } catch {} }
     state.inlineVegaViews = [];
     for (const url of state.inlinePreviewUrls) { try { URL.revokeObjectURL(url); } catch {} }
@@ -9089,6 +9301,7 @@ function createComposerEventSync({
         if (!host.isConnected) return;
         host.dataset.imageReady = "true";
         host.dataset.imageSha256 = String(preview.sha256 || expectedSha256 || "");
+        bindArtifactVisualViewport(host, { kind: "image" });
       } catch (error) {
         host.textContent = error instanceof Error ? error.message : String(error);
         host.dataset.renderFailed = "true";
@@ -9113,6 +9326,7 @@ function createComposerEventSync({
             if (errorNode) errorNode.textContent = error instanceof Error ? error.message : String(error);
           } finally {
             rendered.restoreInteractiveView?.();
+            if (rendered.view === "figure") bindArtifactVisualViewport(host, { kind: "chart" });
           }
         }
       } catch (error) {
@@ -9212,6 +9426,7 @@ function createComposerEventSync({
         else if (artifact.version.payload?.schema === "agentlas.science.physics-data-artifact/v1") renderPhysicsDataset(artifact.version, host, artifact.id, true);
         else if (artifact.version.payload?.schema === "agentlas.science.materials-catalog-artifact/v1") renderMaterialsDataset(artifact.version, host, artifact.id, true);
         else renderDataTable(artifact.version, host, artifact.id, true);
+        if (artifact.version.payload?.schema === "agentlas.science.statistics-analysis-artifact/v1") bindArtifactVisualViewport(host, { kind: "chart" });
         const bundle = await science.artifacts.capture({ projectId: artifact.projectId, artifactId: artifact.id, artifactVersion: artifact.version.version, contentSha256: artifact.version.contentSha256 });
         const status = document.querySelector(".rendererStatus");
         if (status && bundle?.visualReviewEligible) status.dataset.visualCapture = "verified";
@@ -9304,6 +9519,10 @@ function createComposerEventSync({
       const status = document.querySelector(".rendererStatus");
       if (status && bundle?.visualReviewEligible) status.dataset.visualCapture = "verified";
     } catch (error) { if (errorNode) errorNode.textContent = error instanceof Error ? error.message : String(error); }
+    finally {
+      restoreArtifactVegaCanvas(host);
+      bindArtifactVisualViewport(host, { kind: "chart" });
+    }
   }
 
   function fatal(error) {
@@ -9875,13 +10094,17 @@ function createComposerEventSync({
     if (target.dataset.statisticsView && state.selectedArtifactId) {
       state.figureActionError = "";
       state.figureActionNotice = "";
-      state.statisticsViewByArtifact.set(state.selectedArtifactId, target.dataset.statisticsView);
-      void hydrateArtifactRenderer();
+      const requestedView = target.dataset.statisticsView;
+      state.statisticsViewByArtifact.set(state.selectedArtifactId, requestedView);
+      render();
+      requestAnimationFrame(() => document.querySelector(`[data-statistics-view="${CSS.escape(requestedView)}"]`)?.focus({ preventScroll: true }));
       return;
     }
     if (target.dataset.paleontologyView && state.selectedArtifactId) {
-      state.paleontologyViewByArtifact.set(state.selectedArtifactId, target.dataset.paleontologyView === "table" ? "table" : "figure");
-      void hydrateArtifactRenderer();
+      const requestedView = target.dataset.paleontologyView === "table" ? "table" : "figure";
+      state.paleontologyViewByArtifact.set(state.selectedArtifactId, requestedView);
+      render();
+      requestAnimationFrame(() => document.querySelector(`[data-paleontology-view="${CSS.escape(requestedView)}"]`)?.focus({ preventScroll: true }));
       return;
     }
     if (target.dataset.action === "suggest-publication-figure") {

@@ -5016,6 +5016,143 @@ button:has(> span:only-child > .uiIcon:only-child) {
   }
 }
 
+/* Science visual artifacts are evidence surfaces, not paper cards. The manuscript keeps its
+   A4 treatment above; charts, rasters, and interactive figures stay flat and can be inspected at
+   their source dimensions without a second frame or decorative shadow. */
+.visualArtifactFrame {
+  border: 0;
+  border-radius: 0;
+  background: var(--surface);
+  box-shadow: none;
+}
+.visualArtifactFrame > .artifactViewToolbar {
+  position: relative;
+  z-index: 2;
+}
+.artifactViewToolbar {
+  min-height: 52px;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 8px 16px;
+  border-bottom: 1px solid var(--line);
+  background: var(--surface);
+  padding: 8px 12px;
+}
+.artifactViewToolbarTitle {
+  min-width: 0;
+  display: inline-flex;
+  align-items: baseline;
+  gap: 7px;
+}
+.artifactViewToolbarTitle strong { font-size: 14px; font-weight: 720; }
+.artifactViewToolbarTitle span { color: var(--muted); font: 11px ui-monospace, SFMono-Regular, Menlo, monospace; }
+.artifactViewToolbarActions { min-width: 0; display: flex; align-items: center; justify-content: flex-start; flex-wrap: wrap; gap: 8px; }
+.artifactViewToolbarActions button {
+  min-width: 0;
+  min-height: var(--science-button-s-height);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--science-radius-button-s);
+  background: var(--surface);
+  color: var(--ink);
+  padding: 0 12px;
+  font-size: 14px;
+  font-weight: 680;
+  line-height: 20px;
+}
+.artifactViewToolbarActions button[data-artifact-view-action="zoom-out"],
+.artifactViewToolbarActions button[data-artifact-view-action="zoom-in"] {
+  width: var(--science-icon-button-size);
+  min-width: var(--science-icon-button-size);
+  height: var(--science-icon-button-size);
+  min-height: var(--science-icon-button-size);
+  padding: 0;
+  border-radius: var(--science-radius-button-s);
+  font-size: 18px;
+  line-height: 1;
+}
+.artifactViewToolbarActions button:hover { background: var(--surface-subtle); }
+.artifactViewToolbarActions button:focus-visible { outline: 2px solid var(--brand-coral); outline-offset: 2px; }
+.artifactViewToolbarActions button[aria-pressed="true"] { border-color: var(--ink); background: var(--ink); color: #fff; }
+.artifactVisualViewport,
+.artifactVisualViewport.artifactCanvasExternal,
+.artifactVisualViewport.artifactCanvas {
+  display: block !important;
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+  overflow: auto;
+  overscroll-behavior: contain;
+  padding: 16px;
+  background: var(--surface);
+  scrollbar-width: thin;
+  scrollbar-gutter: stable both-edges;
+}
+.artifactVisualViewport .artifactVisualSurface {
+  display: block;
+  max-width: none !important;
+  max-height: none !important;
+  margin: 0;
+  background: transparent;
+  box-shadow: none !important;
+  border: 0;
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+}
+.artifactVisualViewport .artifactVisualSurface:active,
+.artifactVisualViewport .artifactVisualSurface[data-visual-panning="true"] { cursor: grabbing; }
+.artifactVisualViewport:focus-visible { outline: 2px solid var(--brand-coral); outline-offset: -3px; }
+.artifactVisualViewport .statisticsAnalysisSurface {
+  width: 100%;
+  min-width: 0;
+  min-height: 0;
+  height: auto;
+  background: var(--surface);
+}
+.artifactVisualViewport .statisticsChartHost {
+  display: block;
+  min-width: 0;
+  min-height: 100%;
+  overflow: auto;
+  place-items: start;
+  background: var(--surface);
+  padding: 16px;
+}
+.artifactVisualViewport .statisticsChartHost canvas { max-width: none !important; }
+.visualArtifactFrame .statisticsFigureToolbar,
+.visualArtifactFrame .statisticsRasterToolbar { box-shadow: none; }
+.visualArtifactFrame .statisticsRasterPreview { background: transparent; box-shadow: none; }
+.artifactWorkspace > .labWorkGrid { min-height: 0; }
+.artifactWorkspace > .labDecisionPanel { position: relative; z-index: 3; max-height: min(42%, 240px); overflow-y: auto; }
+.originStrip { flex-wrap: wrap; align-items: center; }
+.originStripMain { min-width: 0; flex: 1 1 auto; }
+.originStripMain strong { color: var(--ink); }
+.originStripMain span { color: var(--muted); }
+.originStripActions { flex: 0 0 auto; display: flex; flex-wrap: wrap; gap: 6px; }
+.originProvenance { flex: 1 0 100%; min-width: 0; border-top: 1px solid var(--line); padding-top: 6px; }
+.provenanceDisclosure > summary { min-height: 26px; display: flex; align-items: center; justify-content: space-between; gap: 10px; cursor: pointer; list-style: none; color: var(--muted-deep); font-size: 11px; }
+.provenanceDisclosure > summary::-webkit-details-marker { display: none; }
+.provenanceDisclosure > summary::after { content: "+"; flex: 0 0 auto; color: var(--muted); font-size: 15px; line-height: 1; }
+.provenanceDisclosure[open] > summary::after { content: "−"; }
+.provenanceDisclosure > summary strong { font-size: 11px; font-weight: 700; }
+.provenanceDisclosure > summary span { min-width: 0; overflow: hidden; color: var(--muted); text-overflow: ellipsis; white-space: nowrap; }
+.provenanceDisclosure > .provenanceTrail { display: flex; align-items: center; gap: 8px; min-width: 0; overflow-x: auto; padding: 5px 0 2px; white-space: nowrap; }
+.statisticsLineage.provenanceDisclosure { min-height: 34px; display: block; overflow: hidden; border-bottom: 1px solid var(--line); background: var(--surface-subtle); padding: 0 20px; color: var(--muted-deep); }
+.statisticsLineage.provenanceDisclosure > summary { min-height: 34px; }
+.statisticsLineage.provenanceDisclosure > .provenanceTrail { padding: 0 0 8px; }
+
+@container science-center (max-width: 559px) {
+  .artifactViewToolbar { grid-template-columns: minmax(0, 1fr); gap: 8px; padding: 8px 10px; }
+  .artifactViewToolbarActions { width: 100%; }
+  .artifactVisualViewport,
+  .artifactVisualViewport.artifactCanvasExternal,
+  .artifactVisualViewport.artifactCanvas { padding: 10px; }
+  .originStripActions { width: 100%; }
+  .originStripActions button { flex: 1 1 auto; }
+  .provenanceDisclosure > summary { align-items: flex-start; flex-direction: column; gap: 2px; padding: 4px 0; }
+}
+
 /* Overview research responses borrow the public Updates article's reading
    hierarchy without importing publication chrome or changing Science state. */
 .scienceArticleMarkdown { color: #292929; }

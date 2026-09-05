@@ -1090,6 +1090,13 @@ function stopQuitServices(): Promise<void> {
 }
 
 async function prepareAutomaticUpdateQuit(): Promise<void> {
+  // The native updater must not capture its install journal while Science can
+  // still accept or persist work. This is a no-op for users who never opened
+  // Science because the runtime has no active store in that case.
+  const scienceShutdown = await shutdownScienceRuntimeForAppClose();
+  if (scienceShutdown.timedOut) {
+    throw new Error("science-runtime-update-shutdown-timed-out");
+  }
   const report = await shutdownAppRuntimeCoordinator(15_000);
   if (report.failedParticipantNames.length > 0) {
     throw new Error(`App runtime shutdown failed: ${report.failedParticipantNames.join(", ")}`);

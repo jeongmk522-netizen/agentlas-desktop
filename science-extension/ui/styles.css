@@ -1914,6 +1914,7 @@ button.manuscriptBinding:hover { border-color: var(--line-strong); background: v
 .libraryProjects h2 { margin: 0; font-size: 15px; font-weight: 680; }
 .libraryProjects > header > span { color: var(--grey-500); font-size: 11px; }
 .libraryProjectGrid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+.libraryProjectGrid > .libraryProjectCard:only-child { grid-column: 1 / -1; }
 .libraryProjectCard { min-width: 0; min-height: 196px; display: grid; grid-template-columns: 108px minmax(0, 1fr) 16px; align-items: center; gap: 12px; margin: 0; border: 1px solid var(--grey-200); border-radius: var(--science-radius-card); background: var(--surface); padding: 14px; text-align: left; }
 .libraryProjectCard:hover { border-color: var(--grey-400); background: var(--grey-50); box-shadow: var(--elev-1); }
 .libraryProjectCard:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }

@@ -2373,8 +2373,23 @@ export function OneShell() {
         const next = toUiMessages(history);
         setMessages((current) => {
           if (next.length === 0 && current.length > 0) return current;
+          /*
+           * 방금 도착한 답이 아직 기록에 없을 수 있다(기록 쓰기가 이 읽기보다 늦는 경우).
+           * 그 상태에서 화면을 기록으로 통째 교체하면 사용자가 읽고 있던 답이 사라진다 —
+           * Work 에서 같은 계열을 이미 겪었고(라이브 final 뒤 낡은 durable tail), 규칙은
+           * "기록에 없는, 방금 정착한 답만 꼬리에 남긴다" 이다. 있는 답을 지우지 않고,
+           * 없는 답을 지어내지도 않는다.
+           */
+          const durableTexts = new Set(next.map((message) => (message.text ?? "").trim()).filter(Boolean));
+          const settledTail = current.filter((message) => (
+            message.role === "assistant"
+            && typeof message.id === "string"
+            && message.id.startsWith("one-answer:")
+            && (message.text ?? "").trim().length > 0
+            && !durableTexts.has((message.text ?? "").trim())
+          ));
           return hydrateCachedChatFiles(
-            next,
+            settledTail.length ? [...next, ...settledTail] : next,
             chatFileGroupsIncludingMessages(oneChatFileGroupsRef.current, current),
           );
         });

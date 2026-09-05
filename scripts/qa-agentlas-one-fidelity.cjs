@@ -472,6 +472,9 @@ async function capture(browser, baseUrl, fixture) {
     assert.match(metrics.text, /제품 사양과 실제 가격/);
   }
   if (fixture.mode === "progress") {
+    // TODO(2026-09-06): 이 두 단언은 화면이 더 이상 내지 않는 옛 문구를 찾는다. progress 화면이
+    // 무엇을 말해야 하는지 제품 쪽에서 정한 뒤 다시 묶어야 한다 — 지금 통과시키려고 문구만
+    // 바꾸면 계약이 아니라 메아리가 된다.
     assert.match(metrics.text, /가격·사실·출처를 확인하고 있어요/);
     assert.match(metrics.text, /제품 리서처 · 출처 검증자/);
     assert.doesNotMatch(metrics.text, /\d+%/);
@@ -592,15 +595,15 @@ async function main() {
     { name: "briefing-language-desktop", mode: "briefing-language", query: "?task=task_launch_comparison_001", viewport: { width: 1440, height: 920 } },
     { name: "conversation-desktop", mode: "conversation", query: "?chat=chat_one_conversation_001", viewport: { width: 1440, height: 920 } },
     { name: "team-desktop", mode: "team", query: "?task=task_launch_comparison_001", viewport: { width: 1440, height: 980 } },
-    { name: "team-mobile", mode: "team", query: "?task=task_launch_comparison_001", viewport: { width: 390, height: 844 } },
+    { name: "team-narrow", mode: "team", query: "?task=task_launch_comparison_001", viewport: { width: 960, height: 700 } /* electron/main.ts minWidth: 960 — 더 좁은 창은 제품에서 만날 수 없다 */ },
     { name: "progress-desktop", mode: "progress", query: "?task=task_launch_comparison_001", viewport: { width: 1440, height: 980 } },
     { name: "progress-mobile", mode: "progress", query: "?task=task_launch_comparison_001", viewport: { width: 390, height: 844 } },
     { name: "result-reference-viewport", mode: "result", query: "?task=task_launch_comparison_001", viewport: { width: 1680, height: 948 } },
     { name: "result-desktop", mode: "result", query: "?task=task_launch_comparison_001", viewport: { width: 1440, height: 1100 } },
-    { name: "result-mobile", mode: "result", query: "?task=task_launch_comparison_001", viewport: { width: 390, height: 844 } },
+    { name: "result-mobile", mode: "result", query: "?task=task_launch_comparison_001", viewport: { width: 960, height: 700 } /* electron/main.ts minWidth: 960 — 더 좁은 창은 제품에서 만날 수 없다 */ },
     { name: "memory-desktop", mode: "memory", query: "?task=task_launch_comparison_001", viewport: { width: 1440, height: 1100 } },
     { name: "followup-desktop", mode: "followup", query: "?task=task_launch_comparison_001", viewport: { width: 1440, height: 980 } },
-    { name: "followup-mobile", mode: "followup", query: "?task=task_launch_comparison_001", viewport: { width: 390, height: 844 } },
+    { name: "followup-mobile", mode: "followup", query: "?task=task_launch_comparison_001", viewport: { width: 960, height: 700 } /* electron/main.ts minWidth: 960 — 더 좁은 창은 제품에서 만날 수 없다 */ },
   ];
   const results = [];
   try {

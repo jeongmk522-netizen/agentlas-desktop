@@ -148,7 +148,15 @@
   display: flex;
   flex-direction: column;
   padding: 48px 12px 12px;
-  overflow: hidden;
+  /* overflow-y: auto (not hidden) — at the app's documented minimum size (960x700,
+     electron/main.ts:883) and at higher OS/browser zoom, the org rail's content (taskforces +
+     org chart rows) can be taller than the available height. With `overflow: hidden` the
+     bottom-pinned Settings/account menu (.railBottomMenu, margin-top: auto below) was silently
+     clipped off with no way to reach it — confirmed via scripts/qa-agentlas-one-grid.cjs at
+     960x700 zoom 1.0 and worse at zoom 1.25 across all three tested widths. Scrolling keeps it
+     reachable without changing any color/spacing token. */
+  overflow-y: auto;
+  overflow-x: hidden;
   border-right: 1px solid var(--one-line);
   background: #fafafa;
   opacity: 1;

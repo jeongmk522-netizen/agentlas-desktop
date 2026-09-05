@@ -23,6 +23,8 @@ import { prepareInvocationAutomaticGoal } from "./automatic-goal";
 import { DesktopLongRunInvocationProjection } from "../long-run/invocation-projection";
 import { resolveDesktopRuntimeAdapter } from "../long-run/runtime-adapters";
 import { runMcpInvocation, type InvocationExecutionContext } from "../mcp/client";
+import { applyFinalDisplayBackstop } from "../mcp/final-display-backstop";
+import { extractAskFences } from "../../shared/ask-fence-flatten";
 import { deriveGoalAcceptanceCriteria, ensureGoalLedgerGoal } from "../mcp/goal-ledger";
 import { resolveDesktopWorkforceGoalId } from "../mcp/workforce-goal-continuity";
 import {
@@ -147,6 +149,7 @@ import {
 import type {
   InvocationRunReceipt,
   InvocationSteerResult,
+  AgentlasUserDecisionRequest,
   McpInvocationEvent,
   McpInvocationRequest,
   RuntimeSelection,
@@ -188,6 +191,8 @@ export interface InvocationSettledEnvelope {
   oneMode: boolean;
   /** Host-owned approval/input wait discovered from the terminal response. */
   pendingQuestion?: boolean;
+  /** Semantic wait projection only; never an approval or execution grant. */
+  userDecisionRequest?: AgentlasUserDecisionRequest;
   /** Main-memory-only original goal; never projected as a wire receipt. */
   goal: string;
   workspaceBinding?: InvocationWorkspaceBinding;
@@ -210,6 +215,7 @@ interface RunRecord {
   oneMode: boolean;
   goal: string;
   pendingQuestion: boolean;
+  userDecisionRequest?: AgentlasUserDecisionRequest;
   settlementPublished: boolean;
   longRunProjection?: DesktopLongRunInvocationProjection;
   automaticGoalId?: string;
@@ -595,10 +601,14 @@ function recordManifestArtifactEvidence(
 
 export function invocationEventRequestsDecision(event: McpInvocationEvent): boolean {
   if (event.kind !== "final") return false;
-  // Display hygiene removes ask fences. The Main-only durable body retains
-  // them for state transitions and is stripped before publishing the event.
+  if (
+    event.userDecisionRequest?.schemaVersion === "agentlas.user-decision-request.v1"
+    && event.userDecisionRequest.questions.length > 0
+  ) return true;
+  // Display hygiene removes ask fences. Re-parse the Main-only durable body so
+  // malformed, incomplete, and zero/one-option templates never become waits.
   const body = event.durableTextForVerification ?? event.text;
-  return typeof body === "string" && body.includes("<<agentlas-ask");
+  return extractAskFences(body).questions.length > 0;
 }
 
 export function invocationEventPromotesTask(event: McpInvocationEvent): boolean {
@@ -1536,6 +1546,10 @@ export class InvocationService {
       runReq,
       (rawEvent) => {
         rawEvent = redactMcpInvocationEventSecrets(redactOneAttachmentEvent(runReq, rawEvent));
+        // One provider/run gets one terminal settlement. Late duplicate finals,
+        // EOF callbacks, and post-cancel deliveries cannot reopen a Decision.
+        if (terminalObserved && (rawEvent.kind === "final" || rawEvent.kind === "error")) return;
+        if (rawEvent.kind === "final" && controller.signal.aborted) return;
         // Agent App remains a separately isolated browser surface. A paired
         // Mobile client is a Desktop remote, so its live partial stream follows
         // the same chat behavior as the Desktop renderer.
@@ -1601,11 +1615,32 @@ export class InvocationService {
         if (event.kind === "final" && !(event.text ?? "").trim()) {
           const durableFinal = latestDurableAssistantMessage(runReq.chatId, startedAt);
           if (durableFinal?.text.trim()) {
-            event = { ...event, text: stripPermissionEscalationMarker(durableFinal.text) };
+            const durableText = stripPermissionEscalationMarker(durableFinal.text);
+            const hygiene = applyFinalDisplayBackstop(durableText, {
+              locale: pickLocale(runReq),
+              allowSurfaceRender: !runReq.agentAppMode,
+            });
+            event = {
+              ...event,
+              text: hygiene.text,
+              durableTextForVerification: durableText,
+              durableAssistantMessageIdForVerification: durableFinal.id,
+              ...(hygiene.userDecisionRequest
+                ? {
+                    userDecisionRequest: {
+                      ...hygiene.userDecisionRequest,
+                      sourceMessageId: durableFinal.id,
+                    },
+                  }
+                : {}),
+            };
           }
         }
         const terminalRequestsDecision = invocationEventRequestsDecision(event);
-        if (terminalRequestsDecision) record.pendingQuestion = true;
+        if (terminalRequestsDecision) {
+          record.pendingQuestion = true;
+          if (event.userDecisionRequest) record.userDecisionRequest = event.userDecisionRequest;
+        }
         if (!taskMaterialized && (invocationEventPromotesTask(event) || terminalRequestsDecision)) {
           tryRecordRunEvent({
             runId,
@@ -1786,8 +1821,15 @@ export class InvocationService {
         };
         const durableTextForVerification = event.durableTextForVerification;
         // Main-only persistence receipt: keep it out of renderer/mobile events.
-        if (durableTextForVerification !== undefined) {
-          event = { ...event, durableTextForVerification: undefined };
+        if (
+          durableTextForVerification !== undefined
+          || event.durableAssistantMessageIdForVerification !== undefined
+        ) {
+          event = {
+            ...event,
+            durableTextForVerification: undefined,
+            durableAssistantMessageIdForVerification: undefined,
+          };
         }
         if (goalInvocationProjection) {
           try {
@@ -2620,6 +2662,7 @@ export class InvocationService {
       receipt,
       oneMode: record.oneMode,
       pendingQuestion: record.pendingQuestion,
+      ...(record.userDecisionRequest ? { userDecisionRequest: record.userDecisionRequest } : {}),
       goal: record.goal,
       ...(record.workspaceBinding ? { workspaceBinding: record.workspaceBinding } : {}),
     };

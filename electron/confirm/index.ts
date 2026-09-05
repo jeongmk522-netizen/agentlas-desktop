@@ -5,8 +5,8 @@
 //   사용자가 챗에서 답하면 후속 user 메시지가 쌓여 마지막이 더 이상 assistant가 아니게 되므로 자동 해소된다.
 // fence 포맷은 renderer/lib/ask-question.ts와 동일: <<agentlas-ask>>{json}<</agentlas-ask>>.
 import { createHash } from "node:crypto";
-import { isUnfilledQuestionTemplate } from "../../shared/types";
 import type { CommittedQuestionAnswer, PendingConfirmation } from "../../shared/types";
+import { extractAskFences } from "../../shared/ask-fence-flatten";
 import { getLastChatMessage, listRecentChats } from "../store/chats";
 import { getDb } from "../store/db";
 import { recordRunEvent, tryRecordRunEvent } from "../store/run-events";
@@ -17,7 +17,6 @@ import { getAgentById } from "../mcp/registry";
 import { getFirm } from "../store/firms";
 
 const OPEN = "<<agentlas-ask>>";
-const CLOSE = "<</agentlas-ask>>";
 const claimedQuestionMessages = new Set<string>();
 
 // 답변 확정 영수증 — "마지막 메시지" 휴리스틱의 보완 정본. 답장 user 메시지 persist는
@@ -72,53 +71,15 @@ function firstQuestion(
   options: Array<{ label: string; description?: string }>;
   multiSelect: boolean;
 } | null {
-  const open = text.indexOf(OPEN);
-  if (open < 0) return null;
-  const after = text.slice(open + OPEN.length);
-  const close = after.indexOf(CLOSE);
-  if (close < 0) return null; // 닫는 fence 없음 = 스트리밍 중 미완성 → 대기 아님
-  let body = after.slice(0, close).trim();
-  body = body
-    .replace(/^```(?:json)?\s*/i, "")
-    .replace(/```$/i, "")
-    .trim();
-  try {
-    const parsed = JSON.parse(body) as Record<string, unknown>;
-    if (!parsed || typeof parsed !== "object") return null;
-    const question = typeof parsed.question === "string" ? parsed.question.trim() : "";
-    if (!question) return null;
-    const optionsRaw = Array.isArray(parsed.options) ? parsed.options : [];
-    const options = optionsRaw
-      .flatMap((option) => {
-        if (!option || typeof option !== "object") return [];
-        const raw = option as Record<string, unknown>;
-        const label = typeof raw.label === "string" ? raw.label.trim() : "";
-        if (!label) return [];
-        const description = typeof raw.description === "string" ? raw.description.trim() : "";
-        return [{
-          label: label.slice(0, 200),
-          ...(description ? { description: description.slice(0, 1_000) } : {}),
-        }];
-      })
-      .slice(0, 8);
-    if (options.length < 2) return null;
-    // 오너 규칙: 답할 수 없는 것은 보여주지 않는다. 봇이 질문 서식을 채우지 않고
-    // 그대로 낸 것은 사용자가 답할 수 있는 질문이 아니므로 대기 목록에 올리지 않는다.
-    if (isUnfilledQuestionTemplate({
-      question,
-      header: typeof parsed.header === "string" ? parsed.header : undefined,
-      options,
-    })) return null;
-    return {
-      question: question.slice(0, 4_000),
-      header: typeof parsed.header === "string" ? parsed.header.trim().slice(0, 200) || undefined : undefined,
-      optionCount: options.length,
-      options,
-      multiSelect: parsed.multiSelect === true,
-    };
-  } catch {
-    return null;
-  }
+  const parsed = extractAskFences(text).questions[0];
+  if (!parsed) return null;
+  return {
+    question: parsed.question,
+    header: parsed.header,
+    optionCount: parsed.options.length,
+    options: parsed.options,
+    multiSelect: parsed.multiSelect,
+  };
 }
 
 /** 채팅의 답변 확정 영수증들(오래된 순). 손상 행은 건너뛴다. */
@@ -181,17 +142,29 @@ export function commitPendingConfirmationAnswer(
   ) {
     throw new Error("Question is stale or no longer pending");
   }
-  // 이미 확정(영수증)됐거나 다른 표면(모바일)이 클레임한 답변의 중복 제출은 되돌릴 수
-  // 없는 선택을 두 번 실행시킬 수 있으므로 조용히 통과시키지 않는다.
-  if (
-    claimedQuestionMessages.has(`${chatId}\0${last.id}`) ||
-    listCommittedQuestionAnswers(chatId).some((r) => r.sourceMessageId === last.id)
-  ) {
-    throw new Error("This question answer was already accepted");
-  }
   const normalizedReply = reply.trim().slice(0, 4_000);
   if (!normalizedReply) throw new Error("Decision response is empty");
-  recordCommittedAnswerReceipt(chatId, last.id, normalizedReply);
+  const existing = listCommittedQuestionAnswers(chatId)
+    .filter((receipt) => receipt.sourceMessageId === last.id)
+    .at(-1);
+  if (existing) {
+    // The renderer can lose the IPC reply after Main committed it. Retrying the
+    // exact answer is acknowledgement recovery, not a second user decision.
+    if (existing.reply !== normalizedReply) throw new Error("This question answer was already accepted");
+    claimedQuestionMessages.add(`${chatId}\0${last.id}`);
+    return { chatId, sourceMessageId: last.id };
+  }
+  if (claimedQuestionMessages.has(`${chatId}\0${last.id}`)) {
+    throw new Error("This question answer was already accepted");
+  }
+  // Unlike the Mobile helper's best-effort diagnostic write, Desktop commit is
+  // an acknowledgement boundary: never close the sheet without durable bytes.
+  recordRunEvent({
+    runId: answerReceiptRunId(chatId),
+    kind: ANSWER_RECEIPT_KIND,
+    chatId,
+    payload: { sourceMessageId: last.id, reply: normalizedReply },
+  });
   claimedQuestionMessages.add(`${chatId}\0${last.id}`);
   invalidatePendingConfirmationsCache();
   // A committed user answer is the real approval-resolution boundary. This
@@ -290,9 +263,9 @@ export function listPendingConfirmations(): PendingConfirmation[] {
     if (!last.text.includes(OPEN)) continue;
     const q = firstQuestion(last.text);
     if (!q) continue;
-    // 답변 확정 영수증이 있으면 이미 답한 질문 — 후속 user 메시지가 아직(또는 영영)
-    // 안 쌓였어도 대기 목록/배지에 다시 올리지 않는다.
-    if (listCommittedQuestionAnswers(c.id).some((r) => r.sourceMessageId === last.id)) continue;
+    // A committed answer without a later user turn still needs a continuation
+    // path (IPC response loss / renderer reload). Keep it pending until the
+    // invocation durably appends that turn; exact retry is idempotent above.
     const snoozedUntil = latestDecisionSnooze(c.id, last.id);
     const firm = c.firmId ? getFirm(c.firmId) : null;
     const agent = getAgentById(c.agentId);

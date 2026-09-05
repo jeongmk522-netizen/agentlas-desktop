@@ -906,6 +906,7 @@ function historyEntryToStreamMessage(entry: { id: string; role: string; text: st
     imageDataUrls: entry.imageDataUrls,
     chatFileGroupIds: parsedFiles.groupIds,
     questions: parsed.questions.length > 0 ? parsed.questions : undefined,
+    questionSourceMessageId: parsed.questions.length > 0 ? entry.id : undefined,
     needsMultimodalSetup: setup.needsSetup || undefined,
   };
 }
@@ -1177,10 +1178,13 @@ function restoreAnsweredQuestions(
 ): StreamMessage[] {
   return messages.map((msg, i) => {
     if (!msg.questions || msg.questions.length === 0) return msg;
-    // 마지막 메시지 = 아직 답할 차례 — 단, 답변 확정 영수증이 있으면 이미 답한 질문이다.
-    // (후속 user 메시지 persist가 실행 분기에서 유실돼도 시트를 다시 열지 않는다.)
+    // Last assistant question + committed receipt means Main accepted the
+    // choice but no continuation user turn became durable. Reopen with the
+    // exact saved reply instead of losing it or inventing a second answer.
     const committedReply = committedReplies?.get(msg.id)?.trim() ?? "";
-    if (i >= messages.length - 1 && !committedReply) return msg;
+    if (i >= messages.length - 1) {
+      return committedReply ? { ...msg, pendingCommittedReply: committedReply } : msg;
+    }
     const nextUser = i >= messages.length - 1
       ? undefined
       : messages.slice(i + 1).find((m) => m.role === "user");
@@ -2410,8 +2414,15 @@ function ChatPage() {
           m.map((msg) => {
             if (msg.id !== placeholderId) return msg;
             const raw = ev.text ?? "";
-            const { text, questions } = extractQuestions(raw, msg.id);
-            const setup = stripMultimodalSetup(text);
+            const parsed = extractQuestions(raw, msg.id);
+            const projectedQuestions = ev.userDecisionRequest?.schemaVersion === "agentlas.user-decision-request.v1"
+              ? ev.userDecisionRequest.questions.map((question, index) => ({
+                  id: `${msg.id}-q${index}`,
+                  ...question,
+                }))
+              : [];
+            const questions = projectedQuestions.length > 0 ? projectedQuestions : parsed.questions;
+            const setup = stripMultimodalSetup(parsed.text);
             return {
               ...msg,
               text: setup.text,
@@ -2434,7 +2445,13 @@ function ChatPage() {
                   createdAt: Date.now(),
                 },
               ],
-              questions: questions.length > 0 ? questions : msg.questions,
+              // The terminal event is authoritative. A completed partial fence
+              // must not survive a divergent/malformed final or cancellation.
+              questions: questions.length > 0 ? questions : undefined,
+              questionSourceMessageId: questions.length > 0
+                ? ev.userDecisionRequest?.sourceMessageId ?? msg.questionSourceMessageId
+                : undefined,
+              pendingCommittedReply: undefined,
             };
           }),
         );
@@ -2527,6 +2544,11 @@ function ChatPage() {
               finishedAt: Date.now(),
               thinking: msg.thinking ? { ...msg.thinking, active: false } : msg.thinking,
               pipeline: completePipeline(msg.pipeline),
+              // A failed/cancelled run cannot leave a question extracted from
+              // an earlier partial chunk eligible for confirmation or reload.
+              questions: undefined,
+              questionSourceMessageId: undefined,
+              pendingCommittedReply: undefined,
             }];
           });
         setMessages((current) => {
@@ -3720,7 +3742,7 @@ function ChatPage() {
    * 시트에서 안 고른 질문도 잠금("—")해 시트가 다시 뜨지 않게 한다.
    */
   const answerQuestionBatch = useCallback(
-    async (messageId: string, reply: string, perQuestion: QuestionSheetAnswer[]) => {
+    async (messageId: string, sourceMessageId: string, reply: string, perQuestion: QuestionSheetAnswer[]) => {
       if (busy || questionCommitPendingRef.current) return;
       const api = ipc();
       if (!api?.confirm?.commitAnswer) {
@@ -3738,8 +3760,8 @@ function ChatPage() {
           // The exact current question must be durably accepted before either the
           // answered UI or the follow-up run changes. A stale/mismatched receipt
           // leaves the sheet and every typed answer intact.
-          const receipt = await api.confirm.commitAnswer({ chatId, reply, sourceMessageId: messageId });
-          if (!receipt || receipt.chatId !== chatId || receipt.sourceMessageId !== messageId) {
+          const receipt = await api.confirm.commitAnswer({ chatId, reply, sourceMessageId });
+          if (!receipt || receipt.chatId !== chatId || receipt.sourceMessageId !== sourceMessageId) {
             throw new Error("question_commit_receipt_mismatch");
           }
         } catch {
@@ -3748,11 +3770,23 @@ function ChatPage() {
             : "The answer was not saved for this exact question. The question and your input are unchanged; try again.");
           return;
         }
+        window.dispatchEvent(new Event("agentlas:attention-refresh"));
+        const sent = await send(reply, { permissions: perms ?? DEFAULT_PERMISSION }).catch(() => false);
+        if (!sent) {
+          setMessages((messages) => messages.map((message) => message.id === messageId
+            ? { ...message, pendingCommittedReply: reply }
+            : message));
+          setSessionNotice(locale === "ko"
+            ? "답변은 저장됐지만 후속 작업은 시작하지 못했습니다. 저장된 선택으로 다시 제출할 수 있습니다."
+            : "The answer was saved, but the follow-up did not start. You can resubmit the saved choice.");
+          return;
+        }
         setMessages((m) =>
           m.map((msg) =>
             msg.id === messageId
               ? {
                   ...msg,
+                  pendingCommittedReply: undefined,
                   questions: msg.questions?.map((q) => {
                     const hit = perQuestion.find((p) => p.questionId === q.id);
                     if (hit && hit.answers.length) return { ...q, answer: hit.answers };
@@ -3762,13 +3796,6 @@ function ChatPage() {
               : msg,
           ),
         );
-        window.dispatchEvent(new Event("agentlas:attention-refresh"));
-        const sent = await send(reply, { permissions: perms ?? DEFAULT_PERMISSION }).catch(() => false);
-        if (!sent) {
-          setSessionNotice(locale === "ko"
-            ? "답변은 저장됐지만 후속 작업은 시작하지 못했습니다. 같은 대화에서 다시 지시해 주세요."
-            : "The answer was saved, but the follow-up work did not start. Send the instruction again in this task.");
-        }
       } finally {
         if (questionCommitPendingRef.current === messageId) {
           questionCommitPendingRef.current = null;
@@ -3804,7 +3831,14 @@ function ChatPage() {
       const m = messages[i];
       if (m.role === "agent" && m.questions && m.questions.length > 0) {
         const unanswered = m.questions.filter((q) => !q.answer || q.answer.length === 0);
-        return unanswered.length > 0 ? { messageId: m.id, questions: unanswered } : null;
+        return unanswered.length > 0
+          ? {
+              messageId: m.id,
+              sourceMessageId: m.questionSourceMessageId ?? m.id,
+              questions: unanswered,
+              initialReply: m.pendingCommittedReply,
+            }
+          : null;
       }
     }
     return null;
@@ -4961,9 +4995,15 @@ function ChatPage() {
       {pendingQuestionSheet && (
         <ChatQuestionSheet
           questions={pendingQuestionSheet.questions}
+          initialReply={pendingQuestionSheet.initialReply}
           busy={busy || questionCommitPending}
           onConfirm={(reply, perQuestion) =>
-            answerQuestionBatch(pendingQuestionSheet.messageId, reply, perQuestion)
+            answerQuestionBatch(
+              pendingQuestionSheet.messageId,
+              pendingQuestionSheet.sourceMessageId,
+              reply,
+              perQuestion,
+            )
           }
           onDismiss={() => dismissQuestionBatch(pendingQuestionSheet.messageId)}
         />

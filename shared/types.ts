@@ -4433,6 +4433,25 @@ export interface AgentMessageEvent {
   handoffBlocked?: "depth" | "roundtrip" | "permission";
 }
 
+export interface AgentlasUserDecisionQuestion {
+  question: string;
+  header?: string;
+  multiSelect: boolean;
+  options: Array<{ label: string; description?: string }>;
+}
+
+/**
+ * Host-parsed projection of a model-authored ask fence. This means only that
+ * the run is waiting for an explicit user choice. It is never an approval,
+ * capability grant, or authority to execute the recommended option.
+ */
+export interface AgentlasUserDecisionRequest {
+  schemaVersion: "agentlas.user-decision-request.v1";
+  /** Main-owned durable assistant row when the exact chat/run binding exists. */
+  sourceMessageId?: string;
+  questions: AgentlasUserDecisionQuestion[];
+}
+
 export interface McpInvocationEvent {
   kind:
     | "lifecycle"
@@ -4478,6 +4497,8 @@ export interface McpInvocationEvent {
     code: "runtime_wait" | "queue_wait" | "recovery_retry" | "session_resume";
   };
   text?: string;
+  /** Validated semantic ask projection; raw control markers remain hidden. */
+  userDecisionRequest?: AgentlasUserDecisionRequest;
   /** Main-owned durable image attachment URLs for the completed assistant turn. */
   imageDataUrls?: string[];
   /**
@@ -4488,6 +4509,11 @@ export interface McpInvocationEvent {
    * publishing or recording the observable event.
    */
   durableTextForVerification?: string;
+  /**
+   * Main-internal owner of durableTextForVerification. InvocationService strips
+   * it before ledger or UI publication; model-authored ids are never accepted.
+   */
+  durableAssistantMessageIdForVerification?: string;
   /** partial 델타 스트리밍(무-agentId 메인 스트림 한정) — text(누적 전문) 대신 직전 partial
    *  이후 추가분만 담는다. IPC 페이로드를 O(전체)→O(증분)으로 줄인다. 리플레이/폴백 이벤트는
    *  여전히 text를 쓴다. */

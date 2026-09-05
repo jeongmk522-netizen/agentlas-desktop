@@ -1584,11 +1584,14 @@ export async function runMcpInvocation(
       // earlyResult 20여 곳)가 예외 없이 지나는 단 한 자리다. 갈래마다 정리를
       // 복붙하지 않고 이 지점에서 한 번만 판단한다(멱등 — 이미 정리된 텍스트는
       // 여는 울타리가 없어 그대로 통과).
-      const hygiene = applyFinalDisplayBackstop(ev.text, {
+      const hygiene = applyFinalDisplayBackstop(
+        ev.durableTextForVerification ?? ev.text,
+        {
         locale: pickLocale(req),
         // 미신뢰(Agent App) 실행은 모델이 쓴 매니페스트를 렌더하지 않는다.
         allowSurfaceRender: !req.agentAppMode,
-      });
+        },
+      );
       if (hygiene.changed) {
         // 값은 버리지 않는다: 유효 매니페스트는 원래 보여야 했던 화면으로 승격.
         for (const surface of hygiene.surfaces) {
@@ -1599,8 +1602,20 @@ export async function runMcpInvocation(
             surface,
           });
         }
-        ev = { ...ev, text: hygiene.text };
       }
+      ev = {
+        ...ev,
+        text: hygiene.text,
+        durableTextForVerification: ev.durableTextForVerification ?? hygiene.durableText,
+        userDecisionRequest: hygiene.userDecisionRequest
+          ? {
+              ...hygiene.userDecisionRequest,
+              ...(ev.durableAssistantMessageIdForVerification
+                ? { sourceMessageId: ev.durableAssistantMessageIdForVerification }
+                : {}),
+            }
+          : undefined,
+      };
     }
     if (ev.kind === "final" && ev.text?.trim()) {
       finalTextFromSink = ev.text.trim();
@@ -5773,7 +5788,7 @@ ${effectiveUserPrompt}`;
       locale: pickLocale(req),
       allowSurfaceRender: !req.agentAppMode,
     });
-    const persistedDisplay = stripPermissionEscalationMarker(finalDisplay.text);
+    const persistedDisplay = stripPermissionEscalationMarker(finalDisplay.durableText);
     const finalWorkImages = (!req.agentAppMode && !req.oneMode)
       ? pendingWorkToolImages.splice(0, pendingWorkToolImages.length).map((item) => item.image)
       : [];
@@ -5865,7 +5880,13 @@ ${effectiveUserPrompt}`;
     // 연속 패스에서 result.tokens는 마지막 패스만 반영 — 라이브 누적 최고치와 큰 쪽을 확정치로.
     sink({
       kind: "final",
+      // The universal sink wrapper below is the single trust boundary that
+      // derives the typed request and strips the wire markers before delivery.
       text: displayWithFloor,
+      durableTextForVerification: persistedDisplay,
+      ...(durableAssistantEntry
+        ? { durableAssistantMessageIdForVerification: durableAssistantEntry.id }
+        : {}),
       tokens: finalObservedTokens || undefined,
       model: active.model ?? active.kind,
       modelRole: invocationModelRole,

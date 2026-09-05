@@ -108,6 +108,10 @@ export interface StreamMessage {
   chatFileGroupIds?: string[];
   /** 본문에서 fence로 추출된 질문들 — UI는 본문 텍스트 아래에 카드로 렌더 */
   questions?: ChatQuestion[];
+  /** Main-owned durable assistant row that owns the current question batch. */
+  questionSourceMessageId?: string;
+  /** Durable answer accepted before its continuation run began; used only to retry. */
+  pendingCommittedReply?: string;
   /** 생성 토큰 수 — "N tokens" 표시 (Claude Code 스타일) */
   tokens?: number;
   /** 라이브 누적 토큰(usage 이벤트, 단조 증가) — final 전 실시간 "N tokens" 표시 */

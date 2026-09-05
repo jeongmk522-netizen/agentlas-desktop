@@ -41,12 +41,15 @@ export function composeQuestionReply(
 
 export function ChatQuestionSheet({
   questions,
+  initialReply,
   busy,
   onConfirm,
   onDismiss,
 }: {
   /** 현재 답변 대기 중인(unanswered) 질문들 — 최신 어시스턴트 메시지 기준. */
   questions: ChatQuestion[];
+  /** Main accepted this exact answer but its continuation did not start. */
+  initialReply?: string;
   /** 실행 중이면 최종 전송만 잠근다(선택은 허용). */
   busy: boolean;
   onConfirm: (reply: string, perQuestion: QuestionSheetAnswer[]) => void;
@@ -55,8 +58,31 @@ export function ChatQuestionSheet({
 }) {
   const { locale } = useT();
   const ko = locale === "ko";
-  const [selected, setSelected] = useState<Record<string, string[]>>({});
-  const [notes, setNotes] = useState<Record<string, string>>({});
+  const hydrateReply = () => {
+    const selected: Record<string, string[]> = {};
+    const notes: Record<string, string> = {};
+    if (!initialReply?.trim()) return { selected, notes };
+    for (const chunk of initialReply.trim().split(/\n\n+/)) {
+      const lines = chunk.split("\n");
+      const question = lines.find((line) => /^(?:질문|Question): /.test(line))
+        ?.replace(/^(?:질문|Question): /, "").trim();
+      const target = questions.find((item) => item.question.trim() === question);
+      if (!target) continue;
+      const selectedLine = lines.find((line) => /^(?:선택|Selected): /.test(line))
+        ?.replace(/^(?:선택|Selected): /, "").trim();
+      if (selectedLine) {
+        const allowed = new Set(target.options.map((option) => option.label));
+        selected[target.id] = selectedLine.split(",").map((item) => item.trim()).filter((item) => allowed.has(item));
+      }
+      const note = lines.find((line) => /^(?:답변|Answer): /.test(line))
+        ?.replace(/^(?:답변|Answer): /, "").trim();
+      if (note) notes[target.id] = note;
+    }
+    return { selected, notes };
+  };
+  const hydrated = hydrateReply();
+  const [selected, setSelected] = useState<Record<string, string[]>>(hydrated.selected);
+  const [notes, setNotes] = useState<Record<string, string>>(hydrated.notes);
   const [active, setActive] = useState(0);
   const [collapsed, setCollapsed] = useState(false);
   // 실행 중에 낸 답 — 실행이 정리되는 순간 그대로 보낸다(푸터 문구 "실행이 정리되면 전송"의 실체).
@@ -65,12 +91,13 @@ export function ChatQuestionSheet({
   // 키는 document 에서 받는다. 시트를 감싼 div 는 포커스를 받을 수 없어 onKeyDown 이
   // 한 번도 불리지 않았다 — 새로 뜬 시트에서 숫자 배지도 Enter 도 무반응이었다(2026-09-03 실측).
   const keyHandlerRef = useRef<(event: KeyboardEvent) => void>(() => {});
-  const key = questions.map((q) => q.id).join("|");
+  const key = `${questions.map((q) => q.id).join("|")}\0${initialReply ?? ""}`;
 
   // 새 질문 묶음이 오면 로컬 상태 초기화.
   useEffect(() => {
-    setSelected({});
-    setNotes({});
+    const next = hydrateReply();
+    setSelected(next.selected);
+    setNotes(next.notes);
     setActive(0);
     setCollapsed(false);
     setPendingSubmit(false);

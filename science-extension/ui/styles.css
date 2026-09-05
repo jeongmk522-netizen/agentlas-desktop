@@ -2062,7 +2062,7 @@ button.manuscriptBinding:hover { border-color: var(--line-strong); background: v
 .projectHubFacts dd { margin: 0; color: var(--ink); overflow-wrap: anywhere; }
 .projectHubDetailMetrics { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px 6px; margin-top: 14px; }
 .projectHubDetailActions { margin-top: 20px; }
-.projectHubDetailActions .primaryButton { width: 100%; min-height: 36px; display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.projectHubDetailActions .primaryButton { width: 100%; min-height: 36px; display: flex; align-items: center; justify-content: space-between; gap: 8px; white-space: nowrap; }
 .projectHubDetailActions .uiIcon { width: 14px; height: 14px; }
 .projectHubDetailEmpty { min-height: 240px; display: grid; place-items: center; align-content: center; gap: 7px; color: var(--grey-500); text-align: center; }
 .projectHubDetailEmpty .uiIcon { width: 24px; height: 24px; }
@@ -2071,9 +2071,10 @@ button.manuscriptBinding:hover { border-color: var(--line-strong); background: v
 
 .projectHubFolderHeading { align-items: start; }
 .projectHubFolderHeading h1 { max-width: 720px; font-size: clamp(24px, 2.5vw, 32px); letter-spacing: -.025em; }
-.projectHubInlineBack { min-height: 28px; display: inline-flex; align-items: center; gap: 5px; margin: 0 0 8px -8px; border: 0; border-radius: var(--science-radius-control); background: transparent; padding: 0 8px; color: var(--grey-600); font-size: 10px; }
+.projectHubInlineBack { min-height: 28px; display: inline-flex; align-items: center; gap: 5px; margin: 0 12px 8px -8px; border: 0; border-radius: var(--science-radius-control); background: transparent; padding: 0 8px; color: var(--grey-600); font-size: 10px; }
 .projectHubInlineBack:hover { background: var(--grey-50); color: var(--ink); }
 .projectHubInlineBack .uiIcon { width: 12px; height: 12px; }
+.projectHubInlineBack + span { display: inline-flex; border-left: 1px solid var(--grey-200); padding-left: 12px; }
 .projectHubFolderMetrics { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 8px; margin-top: 22px; border: 1px solid var(--grey-200); border-radius: var(--science-radius-card); background: var(--grey-50); padding: 12px; }
 .projectHubFiles { margin-top: 26px; }
 .projectHubFileGrid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
@@ -2086,7 +2087,7 @@ button.manuscriptBinding:hover { border-color: var(--line-strong); background: v
 .projectHubFileCard > span:nth-child(2) { min-width: 0; display: block; }
 .projectHubFileCard small, .projectHubFileCard strong, .projectHubFileCard em { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .projectHubFileCard small { color: var(--grey-500); font-size: 8px; font-weight: 700; }
-.projectHubFileCard strong { margin-top: 4px; font-size: 11px; }
+.projectHubFileCard strong { display: -webkit-box; margin-top: 4px; font-size: 11px; line-height: 1.35; white-space: normal; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow-wrap: anywhere; }
 .projectHubFileCard em { margin-top: 4px; color: var(--grey-500); font-size: 9px; font-style: normal; }
 .projectHubFileCard time { grid-column: 2; color: var(--grey-500); font-size: 8px; }
 .projectHubDetailKind { display: inline-flex; margin-top: 16px; border: 1px solid var(--grey-200); border-radius: 999px; padding: 4px 7px; color: var(--grey-600); font-size: 8px; font-weight: 700; }

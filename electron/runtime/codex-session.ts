@@ -29,6 +29,9 @@
 //   · 승인: tool-approval.ts 의 중재자 등록소(ACP answerPermission 과 같은 계약).
 import type { ChildProcess } from "node:child_process";
 import crypto from "node:crypto";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { AcpConnection, AcpRpcError } from "./acp-protocol";
 import { AcpSessionPool, type AcpSessionLease } from "./acp-session-pool";
 import { detachedSpawnOpts, killCliTree, spawnCli, trackRunChild } from "./exec";
@@ -311,6 +314,88 @@ export function looksLikeMissingAppServer(stderr: string, err?: unknown): boolea
 
 /* ──────────────────────────── 재사용 키 ──────────────────────────── */
 
+const codexLaunchGenerations = new Map<string, { state: string; generation: string }>();
+
+/** Local launch inputs can change without a path/argv change (CLI updates,
+ * config edits). Hash config bytes, never log them. This is conservative source
+ * invalidation, not a reimplementation of Codex's effective TOML/MDM policy.
+ * Auth refresh files are deliberately excluded: credential lifecycle is separate.
+ */
+function localLaunchState(input: {
+  cwd: string; bin: string; args: string[]; env?: NodeJS.ProcessEnv;
+  mcpConfigPath?: string; toolBrokerSettingsPath?: string;
+}): string {
+  const digest = crypto.createHash("sha256");
+  const childEnv = input.env ?? process.env;
+  const cwd = path.resolve(input.cwd);
+  const home = path.resolve(cwd, childEnv.HOME || os.homedir());
+  const codexHome = path.resolve(cwd, childEnv.CODEX_HOME || path.join(home, ".codex"));
+  const files = new Set([
+    path.join(codexHome, "config.toml"),
+    path.join(codexHome, "managed_config.toml"),
+    "/etc/codex/config.toml",
+    "/etc/codex/requirements.toml",
+  ]);
+  for (let dir = path.resolve(input.cwd); ; dir = path.dirname(dir)) {
+    files.add(path.join(dir, ".codex", "config.toml"));
+    if (path.dirname(dir) === dir) break;
+  }
+  for (let i = 0; i < input.args.length; i += 1) {
+    const arg = input.args[i];
+    const profile = arg === "--profile" || arg === "-p"
+      ? input.args[++i]
+      : arg.startsWith("--profile=") ? arg.slice("--profile=".length) : undefined;
+    if (profile) files.add(path.join(codexHome, `${profile}.config.toml`));
+  }
+  if (input.mcpConfigPath) files.add(path.resolve(cwd, input.mcpConfigPath));
+  if (input.toolBrokerSettingsPath) files.add(path.resolve(cwd, input.toolBrokerSettingsPath));
+  for (const file of [...files].sort()) {
+    digest.update(file).update("\0");
+    try {
+      const bytes = fs.readFileSync(file);
+      digest.update("file\0").update(bytes);
+    } catch (error) {
+      // An unreadable source must not accidentally reuse an older readable
+      // generation. Let the new CLI report its own configuration error.
+      const code = (error as NodeJS.ErrnoException).code;
+      digest.update(code === "ENOENT" || code === "ENOTDIR" ? "missing" : crypto.randomUUID());
+    }
+    digest.update("\0");
+  }
+  try {
+    const executable = input.bin.includes(path.sep)
+      ? path.resolve(cwd, input.bin)
+      : (childEnv.PATH ?? "/usr/bin:/bin").split(path.delimiter)
+        .map((dir) => path.resolve(cwd, dir, input.bin))
+        .find((file) => { try { fs.accessSync(file, fs.constants.X_OK); return true; } catch { return false; } });
+    const resolved = fs.realpathSync(executable ?? path.resolve(cwd, input.bin));
+    const stat = fs.statSync(resolved, { bigint: true });
+    // Include the symlink target and replacement metadata without rereading a
+    // large executable on every turn. This detects normal in-place/atomic CLI
+    // updates; it is not an executable integrity or same-UID tamper guarantee.
+    digest.update(resolved).update("\0");
+    for (const value of [stat.dev, stat.ino, stat.size, stat.mtimeNs, stat.ctimeNs]) {
+      digest.update(String(value)).update("\0");
+    }
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    digest.update(code === "ENOENT" || code === "ENOTDIR" ? "missing-executable" : crypto.randomUUID());
+  }
+  const state = digest.digest("hex");
+  const scope = crypto.createHash("sha256").update(JSON.stringify([
+    cwd, input.bin, input.args, input.mcpConfigPath, input.toolBrokerSettingsPath,
+    Object.entries(childEnv).sort(([a], [b]) => a.localeCompare(b)),
+  ])).digest("hex");
+  const previous = codexLaunchGenerations.get(scope);
+  const generation = previous?.state === state ? previous.generation : crypto.randomUUID();
+  codexLaunchGenerations.delete(scope);
+  codexLaunchGenerations.set(scope, { state, generation });
+  if (codexLaunchGenerations.size > 128) codexLaunchGenerations.delete(codexLaunchGenerations.keys().next().value!);
+  // A -> B -> A is a new launch generation too. Old idle processes remain under
+  // the pool's existing eviction policy, but cannot regain reuse after rollback.
+  return generation;
+}
+
 /**
  * 재사용 키 — claude·ACP 와 **같은 축**이다: 세션 지문(모델·시스템프롬프트·권한 —
  * 기존 계약 그대로) 위에 프로세스 정체성(cwd · MCP 설정 · 실행 파일 · 도구 관문 · argv)을
@@ -343,7 +428,7 @@ export function codexPoolKey(input: {
   for (const arg of input.args) argvDigest.update(arg).update("\0");
   return crypto
     .createHash("sha256")
-    .update("codex-pool-v1\0")
+    .update("codex-pool-v2\0")
     .update(input.chatId).update("\0")
     .update(input.fingerprint).update("\0")
     .update(input.cwd).update("\0")
@@ -352,6 +437,7 @@ export function codexPoolKey(input: {
     .update(input.toolBrokerSettingsPath ?? "").update("\0")
     .update(argvDigest.digest("hex")).update("\0")
     .update(envDigest.digest("hex"))
+    .update("\0").update(localLaunchState(input))
     .digest("hex");
 }
 

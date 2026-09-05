@@ -2,7 +2,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import type { ChildProcess } from "node:child_process";
-import { detachedSpawnOpts, firstExistingCli, killCliTree, probeCliVersion, spawnCli } from "../runtime/exec";
+import { detachedSpawnOpts, killCliTree, probeCliVersion, spawnCli, withCliPath } from "../runtime/exec";
 
 export const SCIENCE_MCP_SERVER_KEY = "agentlas-science";
 
@@ -30,23 +30,95 @@ export function scienceCodexExactToolApprovalConfigArgs(supported: boolean): str
 
 const capabilityByInstalledCli = new Map<string, Promise<boolean>>();
 
+export interface ScienceCodexExecutableIdentity {
+  realPath: string;
+  fingerprint: string;
+}
+
+function pathValue(env: NodeJS.ProcessEnv): string {
+  const key = Object.keys(env).find((name) => name.toLowerCase() === "path") ?? "PATH";
+  return env[key] ?? "";
+}
+
+function executableExtensions(command: string, env: NodeJS.ProcessEnv): string[] {
+  if (process.platform !== "win32" || path.extname(command)) return [""];
+  const key = Object.keys(env).find((name) => name.toLowerCase() === "pathext") ?? "PATHEXT";
+  return (env[key] ?? ".COM;.EXE;.BAT;.CMD").split(";").filter(Boolean);
+}
+
+/** Resolve the same PATH surface used by spawnCli and bind the cache to the actual file identity. */
+export function scienceCodexExecutableIdentity(command: string): ScienceCodexExecutableIdentity | null {
+  const env = withCliPath(process.env);
+  const hasSeparator = command.includes("/") || command.includes("\\");
+  const bases = path.isAbsolute(command) || hasSeparator
+    ? [path.resolve(command)]
+    : pathValue(env).split(path.delimiter).filter(Boolean).map((directory) => path.join(directory, command));
+  for (const base of bases) {
+    for (const extension of executableExtensions(command, env)) {
+      const candidate = `${base}${extension}`;
+      try {
+        if (process.platform !== "win32") fs.accessSync(candidate, fs.constants.X_OK);
+        const realPath = fs.realpathSync(candidate);
+        const stat = fs.statSync(realPath, { bigint: true });
+        if (!stat.isFile()) continue;
+        return {
+          realPath,
+          fingerprint: [realPath, stat.dev, stat.ino, stat.size, stat.mtimeNs, stat.ctimeNs, stat.mode].join(":").toString(),
+        };
+      } catch {
+        // Keep searching PATH. Missing, unreadable, and broken symlink candidates are not usable.
+      }
+    }
+  }
+  return null;
+}
+
 /**
  * Ask the installed CLI parser and app-server handshake, rather than guessing from a version.
  * Unknown CLI, strict-config rejection, startup failure, timeout, or malformed response all fail
  * closed: the caller receives no automatic-approval overrides and Codex keeps prompting normally.
  */
 export async function installedCodexSupportsExactMcpToolApproval(): Promise<boolean> {
-  const bin = await firstExistingCli(["codex"], { probeTimeoutMs: 3_000 });
-  if (!bin) return false;
-  const version = await probeCliVersion(bin, 3_000);
+  const commands = process.platform === "win32" ? ["codex.cmd", "codex.exe", "codex"] : ["codex"];
+  const identity = commands.map(scienceCodexExecutableIdentity).find((value) => value !== null) ?? null;
+  if (!identity) return false;
+  const version = await probeCliVersion(identity.realPath, 3_000);
   if (!version) return false;
-  const key = `${bin}\0${version}`;
+  const key = `${identity.fingerprint}\0${version}`;
   let probe = capabilityByInstalledCli.get(key);
   if (!probe) {
-    probe = probeExactMcpToolApproval(bin);
+    try {
+      probe = probeExactMcpToolApproval(identity.realPath);
+    } catch {
+      return false;
+    }
     capabilityByInstalledCli.set(key, probe);
   }
-  return probe;
+  try {
+    const supported = await probe;
+    // A transient spawn/startup/timeout failure must not become a process-lifetime capability fact.
+    if (!supported && capabilityByInstalledCli.get(key) === probe) capabilityByInstalledCli.delete(key);
+    return supported;
+  } catch {
+    if (capabilityByInstalledCli.get(key) === probe) capabilityByInstalledCli.delete(key);
+    return false;
+  }
+}
+
+function validInitializeResult(value: unknown, probeHome: string): boolean {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const result = value as Record<string, unknown>;
+  if (
+    typeof result.userAgent !== "string" || !result.userAgent.trim()
+    || typeof result.codexHome !== "string" || !result.codexHome.trim()
+    || typeof result.platformFamily !== "string" || !result.platformFamily.trim()
+    || typeof result.platformOs !== "string" || !result.platformOs.trim()
+  ) return false;
+  try {
+    return fs.realpathSync(result.codexHome) === fs.realpathSync(probeHome);
+  } catch {
+    return false;
+  }
 }
 
 function probeExactMcpToolApproval(bin: string): Promise<boolean> {
@@ -54,6 +126,7 @@ function probeExactMcpToolApproval(bin: string): Promise<boolean> {
   const args = [
     "app-server",
     "--strict-config",
+    "-c", "analytics.enabled=false",
     "-c", `mcp_servers.${SCIENCE_MCP_SERVER_KEY}.command=${JSON.stringify(process.execPath)}`,
     ...scienceCodexExactToolApprovalConfigArgs(true),
     "--listen", "stdio://",
@@ -79,7 +152,12 @@ function probeExactMcpToolApproval(bin: string): Promise<boolean> {
     try {
       child = spawnCli(bin, args, {
         ...detachedSpawnOpts(),
-        env: { ...process.env, CODEX_HOME: probeHome },
+        env: {
+          ...process.env,
+          CODEX_HOME: probeHome,
+          // The parser/handshake probe has no reason to contact analytics or persisted remote control.
+          CODEX_INTERNAL_APP_SERVER_REMOTE_CONTROL_DISABLED: "1",
+        },
         stdio: ["pipe", "pipe", "pipe"],
       });
     } catch {
@@ -105,7 +183,7 @@ function probeExactMcpToolApproval(bin: string): Promise<boolean> {
           try {
             const message = JSON.parse(line) as { id?: unknown; result?: unknown; error?: unknown };
             if (message.id === 1) {
-              finish(Boolean(message.result) && !message.error);
+              finish(!message.error && validInitializeResult(message.result, probeHome));
               return;
             }
           } catch {

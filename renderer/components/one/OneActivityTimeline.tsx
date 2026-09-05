@@ -48,7 +48,7 @@ import type { OnePermissionMode } from "./OneComposerControls";
 import { OneComputerHistory } from "./OneComputerHistory";
 import { McpResultPreview } from "../McpResultPreview";
 import { ChatFileTabs, nextFileTabSelection } from "../ChatFileExperience";
-import { CHAT_FILE_OPEN_EVENT, isChatFileItem, type ChatFileItem } from "@/lib/chat-files";
+import { CHAT_FILE_OPEN_EVENT, formatChatFileSize, isChatFileItem, type ChatFileItem } from "@/lib/chat-files";
 import styles from "./OneActivityTimeline.module.css";
 
 const ONE_OUTPUT_SECTIONS_STORAGE_KEY = "agentlas.one.output-sections.v1";
@@ -597,12 +597,23 @@ function ChatFileOpenViewer({ file, locale }: { file: ChatFileItem; locale: "ko"
   const preview = file.viewer;
   const liveKinds = new Set<LiveOutputKind>(["image", "video", "audio", "pdf", "document", "spreadsheet", "presentation", "archive"]);
   const liveKind = liveKinds.has(preview.viewerKind as LiveOutputKind) ? preview.viewerKind as LiveOutputKind : null;
+  const kindLabel = file.kind === "directory"
+    ? (locale === "ko" ? "폴더" : "Folder")
+    : (file.name.trim().match(/\.([a-z0-9]+)$/iu)?.[1]?.toUpperCase() ?? preview.viewerKind.toUpperCase());
   return <div data-chat-file-viewer="true" data-chat-file-tab-id={file.tabId} style={{ display: "flex", flexDirection: "column", minHeight: 0, height: "100%" }}>
-    <div style={{ display: "grid", gap: 2, padding: "8px 10px", borderBottom: "1px solid var(--paper-edge)", fontSize: 10.5, color: "var(--muted-deep)" }}>
+    <div data-chat-file-header="true" style={{ display: "grid", gap: 2, padding: "8px 10px", borderBottom: "1px solid var(--paper-edge)", fontSize: 10.5, color: "var(--muted-deep)" }}>
       <strong style={{ color: "var(--ink)", overflowWrap: "anywhere" }}>{file.name}</strong>
-      <span>{file.size} bytes · SHA-256 {file.sha256}</span>
-      <span>{locale === "ko" ? "바인딩" : "Binding"}: {file.chatId}/{file.groupId}/{file.id}</span>
-      <span>{locale === "ko" ? "탭 ID" : "Tab ID"}: {file.tabId}</span>
+      <span>{file.kind === "directory" ? kindLabel : `${formatChatFileSize(file.size)} · ${kindLabel}`}</span>
+      <details data-chat-file-info="true" style={{ marginTop: 2 }}>
+        <summary style={{ cursor: "pointer", width: "fit-content", color: "var(--muted-deep)", userSelect: "none" }}>
+          {locale === "ko" ? "파일 정보" : "File info"}
+        </summary>
+        <div style={{ display: "grid", gap: 2, marginTop: 4, paddingLeft: 10, overflowWrap: "anywhere" }}>
+          <span>SHA-256: {file.sha256}</span>
+          <span>{locale === "ko" ? "바인딩" : "Binding"}: {file.chatId}/{file.groupId}/{file.id}</span>
+          <span>{locale === "ko" ? "탭 ID" : "Tab ID"}: {file.tabId}</span>
+        </div>
+      </details>
     </div>
     <div style={{ minHeight: 0, flex: 1, overflow: "auto" }}>
       {file.kind === "directory" || ["markdown", "json", "text"].includes(preview.viewerKind) ? (

@@ -1,10 +1,11 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import FileViewer, { type ViewerOptions } from "@file-viewer/react";
 import officePreset from "@file-viewer/preset-office";
 import litePreset from "@file-viewer/preset-lite";
 import { archiveRenderer } from "@file-viewer/renderer-archive";
+import { installPresentationLayoutCompatibility, type PresentationLayoutCompatibility } from "@/lib/file-viewer-layout-compat";
 import styles from "./LiveOutputViewer.module.css";
 
 const FILE_VIEWER_ASSET_ROOT = "file-viewer/";
@@ -57,6 +58,17 @@ export function UniversalFileViewerEngine({
   fill?: boolean;
 }) {
   const [error, setError] = useState<string | null>(null);
+  const hostRef = useRef<HTMLDivElement>(null);
+  const layoutCompatibilityRef = useRef<PresentationLayoutCompatibility | null>(null);
+  useEffect(() => {
+    if (!hostRef.current) return undefined;
+    const compatibility = installPresentationLayoutCompatibility(hostRef.current);
+    layoutCompatibilityRef.current = compatibility;
+    return () => {
+      if (layoutCompatibilityRef.current === compatibility) layoutCompatibilityRef.current = null;
+      compatibility.dispose();
+    };
+  }, [source, name, mimeType]);
   const options = useMemo<ViewerOptions>(() => {
     const assetRoot = resolveFileViewerAssetRoot();
     return ({
@@ -140,7 +152,7 @@ export function UniversalFileViewerEngine({
   }, [locale]);
 
   return (
-    <div className={styles.documentEngine} data-compact={compact ? "true" : "false"} data-fill={fill ? "true" : "false"} data-testid="universal-file-viewer">
+    <div ref={hostRef} className={styles.documentEngine} data-compact={compact ? "true" : "false"} data-fill={fill ? "true" : "false"} data-testid="universal-file-viewer">
       <FileViewer
         key={`${source}:${name}:${mimeType ?? ""}`}
         url={source}
@@ -151,6 +163,7 @@ export function UniversalFileViewerEngine({
         options={options}
         className={styles.documentEngineRoot}
         onStateChange={(state) => {
+          if (state.ready) layoutCompatibilityRef.current?.refresh();
           if (state.error) setError(state.error instanceof Error ? state.error.message : String(state.error));
           else if (state.ready) setError(null);
         }}

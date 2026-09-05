@@ -498,7 +498,7 @@ export function ChatRightPanel({
           ) : showFilePreview ? (
             <div style={{ display: "flex", flexDirection: "column", minHeight: 0, height: "100%" }}>
               <ChatFileTabs tabs={fileTabs} activeId={activeFileTabId} locale={ko ? "ko" : "en"} onSelect={selectFileTab} onClose={closeFileTab} />
-              <div style={{ minHeight: 0, flex: 1 }}><FileViewer file={filePreview} /></div>
+              <div style={{ minWidth: 0, minHeight: 0, flex: 1, display: "flex", flexDirection: "column" }}><FileViewer file={filePreview} /></div>
             </div>
           ) : showWorkbench ? (
             <WorkbenchPanel

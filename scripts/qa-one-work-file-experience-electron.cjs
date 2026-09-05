@@ -354,8 +354,17 @@ if (process.env.AGENTLAS_CHAT_FILE_QA_SEED === "1") {
       assert.equal(await page.locator('[data-chat-file-tabs="true"] [role="tab"]').count(), 2, "same One file must reactivate instead of duplicating");
       const oneTabId = await page.locator('[data-chat-file-viewer="true"]').getAttribute("data-chat-file-tab-id");
       assert.ok(oneTabId && oneTabId.includes(seeded.one.snapshot.groupId), "One tab id must retain the exact group binding");
-      const oneViewerText = await page.locator('[data-chat-file-viewer="true"]').innerText();
-      assert.ok(seeded.one.snapshot.files.some((file) => oneViewerText.includes(file.sha256)), `One viewer must expose the exact SHA-256: ${oneViewerText.slice(0, 600)}`);
+      const oneFileHeader = page.locator('[data-chat-file-header="true"]');
+      const oneFileInfo = oneFileHeader.locator('[data-chat-file-info="true"]');
+      assert.equal(await oneFileInfo.getAttribute("open"), null, "One technical file metadata must be collapsed by default");
+      const compactHeaderText = await oneFileHeader.innerText();
+      assert.ok(!compactHeaderText.includes(seeded.one.chat.id), `One compact file header must not expose the chat binding by default: ${compactHeaderText.slice(0, 600)}`);
+      assert.ok(!compactHeaderText.includes(oneTabId), `One compact file header must not expose the tab id by default: ${compactHeaderText.slice(0, 600)}`);
+      await oneFileInfo.locator("summary").click();
+      const disclosedFileInfo = await oneFileInfo.innerText();
+      assert.ok(seeded.one.snapshot.files.some((file) => disclosedFileInfo.includes(file.sha256)), `One File info must disclose the exact SHA-256: ${disclosedFileInfo.slice(0, 600)}`);
+      assert.ok(disclosedFileInfo.includes(oneTabId), `One File info must disclose the stable tab id: ${disclosedFileInfo.slice(0, 600)}`);
+      await oneFileInfo.locator("summary").click();
       const tabs = page.locator('[data-chat-file-tabs="true"] [role="tab"]');
       await tabs.first().focus();
       await tabs.first().press("ArrowRight");
@@ -469,6 +478,16 @@ if (process.env.AGENTLAS_CHAT_FILE_QA_SEED === "1") {
       await workCards.nth(1).click();
       await page.waitForFunction((expected) => document.querySelectorAll('[data-chat-file-tabs="true"] [role="tab"]').length === expected, initialWorkTabCount + 2);
       assert.equal(await page.locator('[data-chat-file-tabs="true"] [role="tab"]').count(), initialWorkTabCount + 2, "Work must open two file tabs");
+      await workCards.filter({ hasText: "portfolio.xlsx" }).click();
+      const workSheet = page.locator('[data-file-viewer-spreadsheet-root="true"]');
+      await workSheet.waitFor({ state: "visible", timeout: 60_000 });
+      await workSheet.getByText("Agentlas", { exact: true }).waitFor({ state: "visible", timeout: 60_000 });
+      const [workSheetBox, workSheetCellBox] = await Promise.all([
+        workSheet.boundingBox(),
+        workSheet.getByText("Agentlas", { exact: true }).boundingBox(),
+      ]);
+      assert.ok(workSheetBox && workSheetBox.height > 120, `Work spreadsheet must receive a definite visible viewport: ${JSON.stringify(workSheetBox)}`);
+      assert.ok(workSheetCellBox && workSheetCellBox.width > 0 && workSheetCellBox.height > 0, `Work spreadsheet cells must paint inside the file rail: ${JSON.stringify(workSheetCellBox)}`);
       await workCards.nth(0).click();
       assert.equal(await page.locator('[data-chat-file-tabs="true"] [role="tab"]').count(), initialWorkTabCount + 2, "same Work file must reactivate instead of duplicating");
       await page.getByRole("link", { name: "Missing file" }).click();
@@ -529,7 +548,16 @@ if (process.env.AGENTLAS_CHAT_FILE_QA_SEED === "1") {
       assert.deepEqual(errors, [], `renderer errors: ${errors.join("\n")}`);
       const proof = {
         ok: true,
-        fixtures: [textPath, xlsxPath, folderPath].map((target) => ({ path: target, size: fs.statSync(target).size, sha256: fs.statSync(target).isFile() ? crypto.createHash("sha256").update(fs.readFileSync(target)).digest("hex") : seeded.one.snapshot.files.find((file) => file.kind === "directory")?.sha256 })),
+        fixtures: [textPath, xlsxPath, folderPath].map((target) => {
+          const stat = fs.statSync(target);
+          const snapshotFile = seeded.one.snapshot.files.find((file) => file.name === path.basename(target));
+          return {
+            path: target,
+            statSize: stat.size,
+            contentBytes: snapshotFile?.size,
+            sha256: stat.isFile() ? crypto.createHash("sha256").update(fs.readFileSync(target)).digest("hex") : snapshotFile?.sha256,
+          };
+        }),
         bindings: { one: seeded.one.snapshot, work: seeded.work.snapshot },
         stableTabId: oneTabId,
         folderClaim: seeded.folderClaim,

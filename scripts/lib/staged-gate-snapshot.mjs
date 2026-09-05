@@ -1,5 +1,6 @@
 // Export the immutable index to a private directory, never a Git worktree.
-// Only node_modules is shared; source, gate bodies and generated files are not.
+// Only explicitly hash-frozen dependencies are copied or shared; source, gate
+// bodies and generated files are not.
 import { execFileSync, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import fs from "node:fs";
@@ -11,6 +12,133 @@ const generic = new Set(["package.json", "package-lock.json", "tsconfig.json", "
 const marker = ".agentlas-index-gates.json";
 const blobHash = (data) => createHash("sha1").update(`blob ${data.length}\0`).update(data).digest("hex");
 const sha256 = (data) => createHash("sha256").update(data).digest("hex");
+const externalTargetPattern = /^\.\.\/(?:agentlas_terminal|docs)(?:\/[A-Za-z0-9_.-]+)+$/;
+
+function validateExternalTarget(target) {
+  const parts = typeof target === "string" ? target.split("/") : [];
+  if (typeof target !== "string" || !externalTargetPattern.test(target)
+    || path.posix.normalize(target) !== target || parts[0] !== ".." || parts.slice(1).includes("..")) {
+    throw new Error(`INVALID_PRIVATE_EXTERNAL_ENTRY: ${target}`);
+  }
+}
+
+function externalTargetPath(root, target) {
+  validateExternalTarget(target);
+  const parent = path.dirname(root);
+  const resolved = path.resolve(root, target);
+  if (resolved === root || !(resolved === parent || resolved.startsWith(`${parent}${path.sep}`))) {
+    throw new Error(`INVALID_PRIVATE_EXTERNAL_TARGET: ${target}`);
+  }
+  return resolved;
+}
+
+function externalFiles(source) {
+  const files = [];
+  const visit = (directory, relative = "") => {
+    for (const name of fs.readdirSync(directory).sort()) {
+      const absolute = path.join(directory, name);
+      const stat = fs.lstatSync(absolute);
+      if (stat.isSymbolicLink()) throw new Error(`PRIVATE_EXTERNAL_SYMLINK: ${absolute}`);
+      const next = relative ? path.join(relative, name) : name;
+      if (stat.isDirectory()) visit(absolute, next);
+      else if (stat.isFile()) files.push({ absolute, relative: next.split(path.sep).join("/"), mode: stat.mode & 0o777 });
+      else throw new Error(`PRIVATE_EXTERNAL_NOT_REGULAR: ${absolute}`);
+    }
+  };
+  visit(source);
+  return files;
+}
+
+function externalDigest(source) {
+  const rows = externalFiles(source).map(({ absolute, relative }) =>
+    `${relative}\0${sha256(fs.readFileSync(absolute))}\n`).join("");
+  return sha256(Buffer.from(rows));
+}
+
+function validateExternalSource(root, entry) {
+  const kind = entry?.kind || "file";
+  if (!entry || !["file", "directory"].includes(kind) || !path.isAbsolute(entry.source)) {
+    throw new Error(`INVALID_PRIVATE_EXTERNAL_ENTRY: ${entry?.target || "unknown"}`);
+  }
+  externalTargetPath(root, entry.target);
+  const source = path.resolve(entry.source);
+  if (source === root || source.startsWith(`${root}${path.sep}`)) {
+    throw new Error(`PRIVATE_EXTERNAL_SOURCE_IN_SNAPSHOT: ${entry.source}`);
+  }
+  const stat = fs.lstatSync(source);
+  if (fs.realpathSync(source) !== source || (kind === "file" ? !stat.isFile() : !stat.isDirectory())) {
+    throw new Error(`PRIVATE_EXTERNAL_NOT_REGULAR: ${entry.source}`);
+  }
+  if (kind === "file" && !/^[a-f0-9]{64}$/.test(entry.sha256)) {
+    throw new Error(`INVALID_PRIVATE_EXTERNAL_HASH: ${entry.target}`);
+  }
+  if (kind === "directory" && !/^[a-f0-9]{64}$/.test(entry.digest)) {
+    throw new Error(`INVALID_PRIVATE_EXTERNAL_DIGEST: ${entry.target}`);
+  }
+  const observed = kind === "file" ? sha256(fs.readFileSync(source)) : externalDigest(source);
+  const expected = kind === "file" ? entry.sha256 : entry.digest;
+  if (observed !== expected) throw new Error(`PRIVATE_EXTERNAL_HASH_MISMATCH: ${entry.source}`);
+}
+
+function readExternalAllowlist(root) {
+  const filename = process.env.AGENTLAS_PRIVATE_EXTERNAL_ALLOWLIST;
+  if (!filename) return [];
+  const absolute = path.resolve(filename);
+  const stat = fs.lstatSync(absolute);
+  if (!stat.isFile() || fs.realpathSync(absolute) !== absolute) throw new Error("INVALID_PRIVATE_EXTERNAL_ALLOWLIST");
+  const manifest = JSON.parse(fs.readFileSync(absolute, "utf8"));
+  const entries = manifest?.protocol === 1 && manifest?.scope === "private-frozen-external-dependencies"
+    ? manifest.dependencies : null;
+  if (!Array.isArray(entries) || entries.length > 128) throw new Error("INVALID_PRIVATE_EXTERNAL_ALLOWLIST");
+  const seen = new Set();
+  for (const entry of entries) {
+    validateExternalSource(root, entry);
+    if (seen.has(entry.target)) throw new Error(`INVALID_PRIVATE_EXTERNAL_ENTRY: ${entry.target}`);
+    seen.add(entry.target);
+  }
+  return entries;
+}
+
+function verifyExternalTarget(root, entry) {
+  const target = externalTargetPath(root, entry.target);
+  const stat = fs.lstatSync(target);
+  if (fs.realpathSync(target) !== target) throw new Error(`PRIVATE_EXTERNAL_TARGET_SYMLINK: ${entry.target}`);
+  if ((entry.kind || "file") === "file") {
+    if (!stat.isFile() || sha256(fs.readFileSync(target)) !== entry.sha256) {
+      throw new Error(`PRIVATE_EXTERNAL_CONTENT_MISMATCH: ${entry.target}`);
+    }
+  } else if (!stat.isDirectory() || externalDigest(target) !== entry.digest) {
+    throw new Error(`PRIVATE_EXTERNAL_CONTENT_MISMATCH: ${entry.target}`);
+  }
+}
+
+function copyExternal(root, entry, createdRoots) {
+  const target = externalTargetPath(root, entry.target);
+  const targetRoot = path.resolve(root, "..", entry.target.split("/")[1]);
+  if (!createdRoots.has(targetRoot)) {
+    if (fs.existsSync(targetRoot)) throw new Error(`PRIVATE_EXTERNAL_TARGET_EXISTS: ${targetRoot}`);
+    fs.mkdirSync(targetRoot, { mode: 0o700 });
+    createdRoots.add(targetRoot);
+  }
+  let existingParent = path.dirname(target);
+  while (!fs.existsSync(existingParent) && existingParent !== targetRoot) existingParent = path.dirname(existingParent);
+  if (fs.existsSync(target) || fs.lstatSync(existingParent).isSymbolicLink()) {
+    throw new Error(`PRIVATE_EXTERNAL_TARGET_EXISTS: ${entry.target}`);
+  }
+  if ((entry.kind || "file") === "file") {
+    fs.mkdirSync(path.dirname(target), { recursive: true, mode: 0o700 });
+    const sourceStat = fs.statSync(entry.source);
+    fs.writeFileSync(target, fs.readFileSync(entry.source), { mode: sourceStat.mode & 0o777 });
+    return;
+  }
+  fs.mkdirSync(path.dirname(target), { recursive: true, mode: 0o700 });
+  fs.mkdirSync(target, { mode: 0o700 });
+  for (const file of externalFiles(entry.source)) {
+    const destination = path.join(target, file.relative);
+    fs.mkdirSync(path.dirname(destination), { recursive: true, mode: 0o700 });
+    fs.writeFileSync(destination, fs.readFileSync(file.absolute), { mode: file.mode });
+  }
+}
 
 function git(root, args, options = {}) {
   return execFileSync("git", ["-C", root, ...args], {
@@ -36,6 +164,7 @@ export function verifySnapshot(root, receipt) {
       throw new Error(`PRIVATE_GATE_CONTENT_MISMATCH: ${file.path}`);
     }
   }
+  for (const dependency of receipt.externalDependencies || []) verifyExternalTarget(root, dependency);
   for (const name of fs.readdirSync(root).filter((name) => /^\.agentlas-index-build-\d+\.json$/.test(name))) {
     const build = JSON.parse(fs.readFileSync(path.join(root, name), "utf8"));
     if (build.tree !== receipt.tree) throw new Error("INDEX_BUILD_TREE_MISMATCH");
@@ -80,7 +209,13 @@ export function runIndexGates(root) {
   if (!Array.isArray(privateGates)) throw new Error("INVALID_PRIVATE_GATE_ALLOWLIST");
   const privateBytes = new Map();
   for (const entry of privateGates) {
-    if (!/^scripts\/(?:[A-Za-z0-9_-]+\/)*[A-Za-z0-9_.-]+\.(?:cjs|mjs|json)$/.test(entry.path)
+    // Hash-pinned text fixtures may be supplied only below scripts/fixtures;
+    // arbitrary text files are not executable verifier inputs.  Keep the
+    // verifier extensions unchanged and retain the regular-file/symlink check
+    // below for both classes of private dependency.
+    const validPrivatePath = /^scripts\/(?:[A-Za-z0-9_-]+\/)*[A-Za-z0-9_.-]+\.(?:cjs|mjs|json)$/.test(entry.path)
+      || /^scripts\/fixtures\/(?:[A-Za-z0-9_-]+\/)*[A-Za-z0-9_.-]+\.txt$/.test(entry.path);
+    if (!validPrivatePath
       || !/^[a-f0-9]{64}$/.test(entry.sha256) || names.has(entry.path) || privateBytes.has(entry.path)) {
       throw new Error(`INVALID_PRIVATE_GATE_ENTRY: ${entry.path}`);
     }
@@ -92,6 +227,7 @@ export function runIndexGates(root) {
     if (sha256(bytes) !== entry.sha256) throw new Error(`PRIVATE_GATE_HASH_MISMATCH: ${entry.path}`);
     privateBytes.set(entry.path, bytes);
   }
+  const externalDependencies = readExternalAllowlist(root);
   const missing = [];
   for (const entry of fs.readdirSync(path.join(root, "scripts"))) {
     if (!gateName.test(entry) || names.has(`scripts/${entry}`) || privateBytes.has(`scripts/${entry}`)) continue;
@@ -102,10 +238,14 @@ export function runIndexGates(root) {
   }
   if (missing.length) throw new Error(`INDEX_GATE_MISSING: ${missing.join(", ")}`);
   const temp = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "agentlas-index-gates-")));
+  const externalRoots = new Set();
   try {
     const archive = git(root, ["archive", "--format=tar", tree], { encoding: null });
     execFileSync("tar", ["-xf", "-", "-C", temp], { input: archive, stdio: ["pipe", "pipe", "pipe"] });
-    const receipt = { version: 1, root: fs.realpathSync(temp), sourceRoot: fs.realpathSync(root), tree, changed, files, privateGates: [], dependencies: [] };
+    const receipt = {
+      version: 1, root: fs.realpathSync(temp), sourceRoot: fs.realpathSync(root), tree, changed, files,
+      privateGates: [], dependencies: [], externalDependencies: [],
+    };
     // Verification also rejects export-ignore omissions/export-subst transformations.
     verifySnapshot(temp, receipt);
     for (const entry of privateGates) {
@@ -113,6 +253,9 @@ export function runIndexGates(root) {
       fs.writeFileSync(path.join(temp, entry.path), privateBytes.get(entry.path));
       receipt.privateGates.push(entry);
     }
+    for (const entry of externalDependencies) copyExternal(temp, entry, externalRoots);
+    receipt.externalDependencies = externalDependencies;
+    for (const entry of externalDependencies) verifyExternalTarget(temp, entry);
     if (!fs.readFileSync(path.join(temp, "scripts/run-bound-gates.mjs"), "utf8")
       .includes("// index-snapshot-protocol: 1")) throw new Error("INDEX_RUNNER_PROTOCOL_UNSUPPORTED");
     const gatePaths = fs.readdirSync(path.join(temp, "scripts"))
@@ -132,6 +275,7 @@ export function runIndexGates(root) {
       !key.startsWith("GIT_") && !["NODE_PATH", "NODE_OPTIONS", "INIT_CWD", "PWD"].includes(key)));
     console.log(`run-bound-gates: INDEX ${tree}; private non-Git snapshot; dependencies ${JSON.stringify(receipt.dependencies)}`);
     console.log(`run-bound-gates: frozen private verifier allowlist (NOT index source): ${JSON.stringify(privateGates)}`);
+    console.log(`run-bound-gates: frozen external dependency allowlist (NOT index source): ${JSON.stringify(externalDependencies)}`);
     const result = spawnSync(process.execPath, [path.join(temp, "scripts/run-bound-gates.mjs"), "--snapshot", path.join(temp, marker)], {
       cwd: temp, env, stdio: "inherit",
     });
@@ -147,6 +291,7 @@ export function runIndexGates(root) {
         throw new Error(`PRIVATE_GATE_CHANGED_DURING_RUN: ${entry.path}`);
       }
     }
+    for (const entry of externalDependencies) validateExternalSource(root, entry);
     if (process.env.AGENTLAS_GATE_EVIDENCE_DIR) {
       const evidence = path.resolve(process.env.AGENTLAS_GATE_EVIDENCE_DIR);
       if (evidence === root || evidence.startsWith(`${root}${path.sep}`)) throw new Error("EVIDENCE_MUST_BE_OUTSIDE_REPOSITORY");
@@ -160,6 +305,8 @@ export function runIndexGates(root) {
     return result.status ?? 1;
   } finally {
     // Only the exact directory created above; unlinking node_modules never follows it.
+    // External roots are sibling directories created exclusively for this snapshot.
+    for (const externalRoot of externalRoots || []) fs.rmSync(externalRoot, { recursive: true, force: true });
     fs.rmSync(temp, { recursive: true, force: true });
   }
 }

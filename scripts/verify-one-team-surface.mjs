@@ -24,6 +24,49 @@ const electronIpc = readFileSync(resolve(root, "electron/ipc.ts"), "utf8");
 const taskforceRuntime = readFileSync(resolve(root, "electron/mcp/borrowed-task-force.ts"), "utf8");
 const toolApproval = readFileSync(resolve(root, "renderer/components/ToolApprovalInline.tsx"), "utf8");
 const adaptiveResult = readFileSync(resolve(root, "renderer/components/one/OneAdaptiveResult.tsx"), "utf8");
+const globalsCss = readFileSync(resolve(root, "renderer/app/globals.css"), "utf8");
+
+function cssBlock(source, selector) {
+  const start = source.indexOf(selector);
+  assert.ok(start >= 0, `missing colour token block: ${selector}`);
+  const open = source.indexOf("{", start);
+  let depth = 0;
+  for (let i = open; i < source.length; i += 1) {
+    if (source[i] === "{") depth += 1;
+    if (source[i] === "}") {
+      depth -= 1;
+      if (depth === 0) return source.slice(open + 1, i);
+    }
+  }
+  throw new Error(`unterminated colour token block: ${selector}`);
+}
+
+const colourBlocks = {
+  light: cssBlock(globalsCss, ":root {"),
+  dark: cssBlock(globalsCss, ':root[data-theme="dark"] {'),
+};
+const colourDeclarations = Object.fromEntries(Object.entries(colourBlocks).map(([theme, block]) => [
+  theme,
+  Object.fromEntries([...block.matchAll(/(?:^|\n)\s*(--[\w-]+)\s*:\s*([^;]+);/g)].map((m) => [m[1], m[2].trim()])),
+]));
+
+function resolveColour(theme, token, stack = []) {
+  if (stack.includes(token)) throw new Error(`colour token cycle: ${[...stack, token].join(" -> ")}`);
+  const raw = colourDeclarations[theme][token] ?? colourDeclarations.light[token];
+  if (!raw) throw new Error(`undefined colour token: ${token}`);
+  const reference = raw.match(/^var\((--[\w-]+)\)$/);
+  if (reference) return resolveColour(theme, reference[1], [...stack, token]);
+  const rgba = raw.match(/^rgba?\([^,]+,[^,]+,[^,]+,\s*([0-9.]+)\)$/i);
+  if (rgba && Number(rgba[1]) < 1) throw new Error(`non-opaque colour token: ${token}`);
+  if (!/^#[0-9a-f]{6}$/i.test(raw) && !rgba) throw new Error(`unresolvable colour token: ${token}`);
+  return raw.toLowerCase();
+}
+
+function resolveOpaqueHex(theme, token, expected) {
+  const value = resolveColour(theme, token);
+  assert.match(value, /^#[0-9a-f]{6}$/, `${token} must resolve to an opaque hex colour`);
+  assert.equal(value, expected, `${token} ${theme} resolved colour`);
+}
 
 // Taskforces are compact Grok-style group emblems across the top of the left
 // rail, not another vertical project/session list. Their copy stays below the
@@ -91,10 +134,15 @@ assert.match(orgChartStyles, /\.oneRow:hover \.oneEditButton,\s*\.oneRow:focus-w
 assert.match(pluginPicker, /ko \? "도구 추가" : "Add tools"/);
 assert.match(pluginPicker, /role="tablist"/);
 assert.match(pluginPicker, /ko \? "플러그인" : "Plugins"/);
-assert.match(pluginPickerStyles, /\.primary\s*\{[\s\S]*?background:\s*#303532/);
+assert.match(pluginPickerStyles, /\.primary\s*\{[\s\S]*?background:\s*var\(--one-primary\)/);
+assert.match(pluginPickerStyles, /\.primary:hover:not\(:disabled\)\s*\{[\s\S]*?background:\s*var\(--one-primary-hover\)/);
+for (const theme of ["light", "dark"]) {
+  resolveOpaqueHex(theme, "--one-primary", "#303532");
+  resolveOpaqueHex(theme, "--one-primary-hover", "#202421");
+}
 assert.match(pluginPickerStyles, /\.typeTab\[data-active="true"\]/);
 assert.match(toolLibrary, /locale === "en" \? "Add tools" : "도구 추가"/);
-assert.match(toolLibrary, /background: "#303532"/);
+assert.match(toolLibrary, /background: "var\(--one-primary\)"/);
 assert.match(describeAutomation, /api\.automations\.interviewGraph\(next\)/);
 assert.match(describeAutomation, /api\.automations\.createFromBlueprint/);
 assert.match(describeAutomation, /자동화 초안을 저장했습니다\. 아직 꺼진 상태입니다/);

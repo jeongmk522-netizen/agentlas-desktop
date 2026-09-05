@@ -64,7 +64,11 @@ export function ToolApprovalCard({
     const timer = window.setTimeout(() => setClientExpired(true), Math.min(remaining, 2_147_000_000));
     return () => window.clearTimeout(timer);
   }, [expiryMs, request.id]);
-  const expired = clientExpired || (action?.phase === "terminal" && action.terminalStatus === "expired");
+  const durableFailure = action?.durableConsent && action.durableConsent.status !== "persisted";
+  // A durable-save failure is a resolved call that must remain visible until
+  // dismissal; the original live request's wall-clock expiry must not hide
+  // that receipt after the user has already answered.
+  const expired = !durableFailure && (clientExpired || (action?.phase === "terminal" && action.terminalStatus === "expired"));
   const locked = expired || action?.phase === "submitting" || action?.phase === "unknown" || action?.phase === "terminal";
   const runtimeName = RUNTIME_LABEL[request.runtime] ?? request.runtime;
   const imageTool = /(?:image|dall|flux|midjourney|imagen)/i.test(request.tool);
@@ -147,6 +151,11 @@ export function ToolApprovalCard({
               ? `이 요청은${decisionLabel ? ` '${decisionLabel}' 선택으로` : ""} 이미 처리되었습니다.`
               : `This request was already resolved${decisionLabel ? ` as '${decisionLabel}'` : ""}.`)
             : null;
+  const durableNotice = action?.durableConsent && action.durableConsent.status !== "persisted"
+    ? (ko
+      ? "이번 호출은 선택대로 처리됐지만 ‘항상 허용’ 저장에 실패했습니다. 이 세션이 끝나면 다시 확인이 필요합니다."
+      : "This call followed your choice, but the Always allow rule was not saved. A later session will ask again.")
+    : null;
 
   const feedbackNode = feedback ? (
     <div
@@ -162,6 +171,7 @@ export function ToolApprovalCard({
       }}
     >
       <span>{feedback}</span>
+      {durableNotice && <span style={{ display: "block", marginTop: 4 }}>{durableNotice}</span>}
       {action?.phase === "unknown" && (
         <button
           type="button"
@@ -180,6 +190,21 @@ export function ToolApprovalCard({
           {ko ? "확인" : "Dismiss"}
         </button>
       )}
+    </div>
+  ) : durableNotice ? (
+    <div
+      role="alert"
+      data-testid="tool-approval-durable-outcome"
+      style={{
+        marginTop: 8,
+        padding: "8px 10px",
+        borderRadius: 10,
+        border: "1px solid color-mix(in srgb, currentColor 18%, transparent)",
+        fontSize: 12,
+        lineHeight: 1.45,
+      }}
+    >
+      {durableNotice}
     </div>
   ) : null;
 

@@ -14,6 +14,7 @@
  *   node scripts/run-bound-gates.mjs <path> ...   # 명시한 파일 기준
  *   AGENTLAS_BOUND_GATES_MAX=12                   # 명시 실행 기본12; INDEX 기본 전부, cap 누락은 실패
  *   AGENTLAS_PRIVATE_GATE_ALLOWLIST=/private/.../gates.json # [{path,sha256}] 고정 비공개 검사기
+ *   AGENTLAS_PRIVATE_EXTERNAL_ALLOWLIST=/private/.../deps.json # protocol 1 hash-frozen sibling deps
  *   AGENTLAS_GATE_EVIDENCE_DIR=/private/.../receipts        # tree/검사/최소 TS emit 해시 영수증
  *
  * 원칙

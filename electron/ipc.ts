@@ -74,6 +74,7 @@ import {
   setEnvVar,
 } from "./secrets/vault";
 import { userDataPath, userDataDir } from "./runtime-paths";
+import { configuredIdentity } from "./install-identity";
 import {
   installAgent,
   installMyAgent,
@@ -276,6 +277,7 @@ import { unwatchFsPreviewFile, unwatchFsPreviewFilesForOwner, watchFsPreviewFile
 import { connectGithubProject } from "./project-sources/github";
 import {
   getAuthSession,
+  getAuthenticatedActorIds,
   getSessionCookieHeader,
   signInWithBrowser,
   signInWithGoogle,
@@ -815,6 +817,8 @@ import {
 } from "./runtime/tool-approval";
 import {
   getCapabilityDecision,
+  capabilityConsentScope,
+  capabilityResourceIdentity,
   grantChatAlwaysApproval,
   listAlwaysApprovedChatIds,
   listCapabilityGrants,
@@ -823,6 +827,7 @@ import {
   revokeChatAlwaysApproval,
 } from "./store/capability-grants";
 import type { ToolApprovalDecision } from "../shared/types";
+import type { ToolApprovalConsentBinding } from "../shared/types";
 
 // DESKTOP_MOBILE_BRIDGE: live invocation authority moved to invocation/service.ts.
 // Hephaestus 빌더(hep-build) 진행 중 실행 — 취소용 AbortController 레지스트리.
@@ -3739,19 +3744,77 @@ export function registerIpcHandlers(): void {
   const recentUserDenials = new Map<string, number>();
   const USER_DENIAL_TTL_MS = 5 * 60_000;
   const denialKey = (ask: { sessionKey: string; tool: string; detail?: string }) => `${ask.sessionKey}\u0000${ask.tool}\u0000${ask.detail ?? ""}`;
+
+  const opaqueConsentIdentity = (label: string, value: string): string => {
+    // Account ids, workspace paths, and agent names are Main-only material.
+    // Approval events may cross into a renderer, so keep the binding exact but
+    // value-free at that boundary and in the capability ledger.
+    if (!value || value.length > 16 * 1024 || /[\u0000-\u001f\u007f]/.test(value)) {
+      throw new Error(`invalid capability consent ${label}`);
+    }
+    return `consent-id:v1:${label}:${createHash("sha256")
+      .update(`agentlas-tool-consent-${label}-v1\u0000${value}`, "utf8")
+      .digest("hex")}`;
+  };
+
+  /**
+   * Main is the only authority that can mint a durable consent identity.  The
+   * account id comes from the authenticated session when available; unsigned
+   * local work is isolated to this install's user-data namespace.  Workspace
+   * includes the exact working folder (or chat fallback), while requester is
+   * stable across runtime restarts and excludes the ephemeral session key.
+   */
+  const consentBindingForAsk = (ask: {
+    runtime: string;
+    tool: string;
+    detail?: string;
+    cwd?: string;
+    chatId?: string;
+    agentId?: string;
+    permission: "read" | "write" | "full" | undefined;
+  }): ToolApprovalConsentBinding => {
+    const actor = getAuthenticatedActorIds();
+    const install = configuredIdentity();
+    const rawWorkspace = ask.cwd?.trim()
+      ? path.resolve(ask.cwd.trim())
+      : ask.chatId
+        ? `chat:${ask.chatId}`
+        : `desktop:${install?.userDataNamespace ?? "Agentlas"}`;
+    const rawUser = actor
+      ? `account:${actor.userId}`
+      : `install:${install?.channel ?? "official"}:${install?.userDataNamespace ?? "Agentlas"}`;
+    const rawWorkspaceIdentity = actor
+      ? `account-workspace:${actor.workspaceId}|${rawWorkspace}`
+      : rawWorkspace;
+    const rawRequester = `runtime:${ask.runtime}|agent:${ask.agentId?.trim() || "default"}`;
+    return {
+      userIdentity: opaqueConsentIdentity("user", rawUser),
+      workspaceIdentity: opaqueConsentIdentity("workspace", rawWorkspaceIdentity),
+      requesterIdentity: opaqueConsentIdentity("requester", rawRequester),
+      credentialResourceIdentity: capabilityResourceIdentity(ask.tool, ask.detail),
+      permissionScope: ask.permission ?? "read",
+    };
+  };
   // ★한 벌뿐이다 — ACP 의 session/request_permission 과 우리 in-process 도구 루프
   // (ollama/lmstudio/mlx)가 **같은** 이 함수를 지난다. 정책을 두 벌 쓰면 갈라지고,
   // 갈라진 쪽은 반드시 "묻지 않고 실행"으로 기운다(local-tool-loop 이 실제로 그랬다).
   // "항상 허용" 칩의 영구 기록(capability_grants) — tool-approval.ts 는 store 를 모르므로
   // 여기서 주입한다(오너 결정 2026-08-20: 항상 허용은 다시는 묻지 않는다).
   setCapabilityGrantPersister((grant) => {
-    recordCapabilityGrant({
+    if (!grant.consentBinding) return { ok: false, code: "missing-binding" };
+    const result = recordCapabilityGrant({
       capability: grant.capability,
       pattern: grant.pattern,
       decision: "allow",
-      scope: grant.scope,
+      // The store derives the full scope digest from all binding fields.  The
+      // marker supplied by the runtime is intentionally not trusted here.
+      scope: capabilityConsentScope(grant.consentBinding),
       source: "chip",
+      tool: grant.tool,
+      consentBinding: grant.consentBinding,
     });
+    if (!result.ok) return { ok: false, code: result.code };
+    return { ok: true, id: result.id };
   });
   setRuntimeToolPermissionArbiter(async (ask) => {
     /*
@@ -3760,12 +3823,20 @@ export function registerIpcHandlers(): void {
      * 영구 거부된 행동은 full 권한으로도 뚫리지 않는다.
      */
     const capability = capabilityClassFor(ask.kind, ask.tool);
+    let consentBinding: ToolApprovalConsentBinding;
+    try {
+      consentBinding = consentBindingForAsk(ask);
+    } catch {
+      // An invalid Main-owned identity must not turn into a broad legacy rule.
+      return "deny";
+    }
     const ruled = getCapabilityDecision({
       capability,
       tool: ask.tool,
       detail: ask.detail,
       agentId: ask.agentId,
       chatId: ask.chatId,
+      consentBinding,
     });
     if (ruled === "deny") return "deny";
     if (ruled === "allow") return "allow_session";
@@ -3789,6 +3860,7 @@ export function registerIpcHandlers(): void {
         detail: ask.detail,
         cwd: ask.cwd,
         deniedBy: "runtime-headless",
+        consentBinding,
       });
       return "deny";
     }
@@ -3801,6 +3873,7 @@ export function registerIpcHandlers(): void {
       chatId: ask.chatId,
       capability,
       agentId: ask.agentId,
+      consentBinding,
     });
     if (outcome.decision === "deny") recentUserDenials.set(denialKey(ask), Date.now());
     // allow_always 는 tool-approval 이 이미 영속했다 — 러너 계약에는 세션 허용으로 답한다.

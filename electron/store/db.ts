@@ -17,7 +17,7 @@ import { reconcileTaskParticipantsFromRunEventsInDb } from "./task-participant-p
 let _db: Database.Database | null = null;
 let _postContinuityRepairsDeferred = false;
 
-const SCHEMA_VERSION = 111;
+const SCHEMA_VERSION = 112;
 
 /**
  * The schema version this binary's migration ladder produces.
@@ -4789,6 +4789,18 @@ export function initStore(options: StoreInitOptions = {}): void {
       ["base_core_hash", "base_core_hash TEXT"],
       ["module_set_hash", "module_set_hash TEXT"],
     ],
+    // Durable tool consent identity columns are additive: existing global,
+    // agent, and chat grants remain legacy rows instead of being rewritten or
+    // silently widened. New exact rows set binding_version=1 and all fields.
+    capability_grants: [
+      ["binding_version", "binding_version INTEGER NOT NULL DEFAULT 0"],
+      ["user_identity", "user_identity TEXT"],
+      ["workspace_identity", "workspace_identity TEXT"],
+      ["requester_identity", "requester_identity TEXT"],
+      ["resource_identity", "resource_identity TEXT"],
+      ["permission_scope", "permission_scope TEXT"],
+      ["tool_identity", "tool_identity TEXT"],
+    ],
   };
   /*
    * ★잔존 금지 트리거 — 버전 무관으로 매 부팅 제거한다.
@@ -4810,6 +4822,25 @@ export function initStore(options: StoreInitOptions = {}): void {
     );
     for (const [name, ddl] of columns) {
       if (!present.has(name)) _db.exec(`ALTER TABLE ${table} ADD COLUMN ${ddl}`);
+    }
+  }
+  if (tableExists(_db, "capability_grants")) {
+    const grantColumns = new Set(schemaColumns(_db, "capability_grants").map((column) => column.name));
+    if ([
+      "binding_version",
+      "user_identity",
+      "workspace_identity",
+      "requester_identity",
+      "resource_identity",
+      "permission_scope",
+    ].every((column) => grantColumns.has(column))) {
+      _db.exec(`
+        CREATE INDEX IF NOT EXISTS idx_capability_grants_exact_binding
+          ON capability_grants(
+            binding_version, user_identity, workspace_identity,
+            requester_identity, resource_identity, permission_scope
+          );
+      `);
     }
   }
 
@@ -4961,9 +4992,11 @@ export function initStore(options: StoreInitOptions = {}): void {
    *
    * capability — 능력 클래스(execute|edit|delete|network|other), 도구 규칙(tool:<name>),
    *              또는 '*'(그 스코프의 모든 승인 채널 통과 — 기존 대화 단위 "항상 승인"의 이관처).
-   * pattern    — 선택적 인자 프리픽스(Claude Code 스타일: "git push *"). NULL = 인자 무관.
-   * scope      — 'global' | 'agent:<id>' | 'chat:<id>'. 구체성 chat > agent > global,
-   *              같은 구체성에서 deny > allow.
+   * pattern/scope — 레거시 행은 선택적 인자 프리픽스와 global/agent/chat 의미를 유지한다.
+   *                 binding_version=1 행은 Main이 만든 exact consent digest scope를 쓴다.
+   *                 user/workspace/requester/resource/permission 칸이 모두 맞아야 매치된다.
+   *                 새 행은 토큰 wildcard를 만들지 않는다.
+   * 레거시 우선순위는 구체성 chat > agent > global, 같은 스코프 deny > allow.
    * 결제·브라우저 위험코드는 이 표로 뚫리지 않는다(각 채널이 매번 확인 — 기존 예외 유지).
    * 사다리 끝 append — 이미 지나간 단계에 끼우면 기존 설치가 못 받는다.
    */
@@ -4976,9 +5009,24 @@ export function initStore(options: StoreInitOptions = {}): void {
       scope TEXT NOT NULL DEFAULT 'global',
       source TEXT NOT NULL DEFAULT 'chip',
       created_at TEXT NOT NULL,
+      -- v1 exact durable-consent binding. Legacy rows stay NULL/0 and keep
+      -- their historical scope semantics; new allow-always rows must carry
+      -- every identity component so an old grant cannot broaden a new one.
+      binding_version INTEGER NOT NULL DEFAULT 0,
+      user_identity TEXT,
+      workspace_identity TEXT,
+      requester_identity TEXT,
+      resource_identity TEXT,
+      permission_scope TEXT CHECK(permission_scope IS NULL OR permission_scope IN ('read','write','full')),
+      tool_identity TEXT,
       UNIQUE(capability, pattern, scope)
     );
     CREATE INDEX IF NOT EXISTS idx_capability_grants_scope ON capability_grants(scope);
+    CREATE INDEX IF NOT EXISTS idx_capability_grants_exact_binding
+      ON capability_grants(
+        binding_version, user_identity, workspace_identity,
+        requester_identity, resource_identity, permission_scope
+      );
   `);
 
   /*
@@ -6064,6 +6112,14 @@ export function initStore(options: StoreInitOptions = {}): void {
         );
       `);
     })();
+  }
+
+  // v112: exact durable tool-consent identity columns.  The columns are also
+  // checked in the version-independent REQUIRED_COLUMNS backstop above so a
+  // partially upgraded v111 store cannot be queried without them.
+  if (userVersion < 112 && tableExists(_db, "capability_grants")) {
+    // No additional DDL is needed here; the backstop has already added every
+    // column before this ladder reaches the version marker.
   }
 
   } catch (error) {

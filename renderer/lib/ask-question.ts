@@ -17,6 +17,7 @@
 // 질문이 여러 개 필요하면 fence를 여러 개 연속으로 emit할 수 있다.
 // 스트리밍 중 부분적으로 도착할 수 있어, 닫는 fence가 없으면 추출하지 않고 그대로 둔다.
 import { extractAskFences } from "@shared/ask-fence-flatten";
+import { isUnfilledQuestionTemplate } from "@shared/types";
 import type { ChatQuestion } from "@/components/ChatStream";
 
 /** 메시지 본문에서 모든 ask fence를 추출. closed인 fence만 가져가고, 본문에서는 제거. */
@@ -27,7 +28,7 @@ export function extractQuestions(
   const extracted = extractAskFences(text);
   return {
     text: extracted.text,
-    questions: extracted.questions.map((question, index) => ({
+    questions: extracted.questions.filter((question) => !isUnfilledQuestionTemplate(question)).map((question, index) => ({
       // IDs are always message-scoped. Model-authored JSON can never claim a
       // reserved product-consent identity; main-owned supplemental questions use
       // a separate typed event field instead of this parser.

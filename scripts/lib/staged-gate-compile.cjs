@@ -3,6 +3,7 @@
 const fs = require("node:fs");
 const path = require("node:path");
 const Module = require("node:module");
+const childProcess = require("node:child_process");
 const { fileURLToPath } = require("node:url");
 const { createHash } = require("node:crypto");
 const root = path.resolve(__dirname, "../..");
@@ -89,9 +90,67 @@ function compile(target) {
   artifacts.push({ source, sourceBlob: indexed.get(source).oid, sourceSha256: hash(bytes), output: path.relative(root, destination), outputSha256: hash(output) });
   return true;
 }
+
+// Gate contracts frequently fork a fresh Node/Electron worker.  The preload
+// hook is process-local, so without propagation those workers fall back to the
+// live checkout or see an empty snapshot dist.  Carry the same adapter only to
+// Node-like children whose cwd remains inside this private snapshot; external
+// tools and dependencies keep their original environment.
+function childOptions(options, command, args = []) {
+  const cwd = path.resolve(options?.cwd || process.cwd());
+  if (!(cwd === root || cwd.startsWith(`${root}${path.sep}`))) return options;
+  const executable = typeof command === "string" ? path.basename(command).toLowerCase() : "";
+  const nodeLike = command === process.execPath || executable === "node" || executable.startsWith("node-")
+    || executable === "electron" || executable.startsWith("electron-");
+  if (!nodeLike) return options;
+  const firstArg = Array.isArray(args) && typeof args[0] === "string" ? args[0] : "";
+  const childScript = firstArg && !firstArg.startsWith("-") ? path.resolve(cwd, firstArg) : null;
+  // Gate workers are often created in os.tmpdir() and point at an external
+  // Terminal shim.  They already use compiled snapshot paths; injecting this
+  // resolver into them would make their own relative imports look like index
+  // misses.  Propagate only to workers whose entrypoint is in this snapshot
+  // (or eval workers, which have no file path to classify).
+  if (childScript && !(childScript === root || childScript.startsWith(`${root}${path.sep}`))) return options;
+  const env = { ...process.env, ...(options?.env || {}) };
+  const flag = `--require=${__filename}`;
+  const existing = typeof env.NODE_OPTIONS === "string" ? env.NODE_OPTIONS : "";
+  if (!existing.split(/\s+/).includes(flag) && !existing.includes(__filename)) {
+    env.NODE_OPTIONS = existing ? `${existing} ${flag}` : flag;
+  }
+  return { ...(options || {}), env };
+}
+
+const originalSpawnSync = childProcess.spawnSync;
+childProcess.spawnSync = function stagedSnapshotSpawnSync(command, args, options) {
+  return originalSpawnSync.call(this, command, args, childOptions(options, command, args));
+};
+const originalSpawn = childProcess.spawn;
+childProcess.spawn = function stagedSnapshotSpawn(command, args, options) {
+  return originalSpawn.call(this, command, args, childOptions(options, command, args));
+};
+const originalExecFileSync = childProcess.execFileSync;
+childProcess.execFileSync = function stagedSnapshotExecFileSync(command, args, options) {
+  return originalExecFileSync.call(this, command, args, childOptions(options, command, args));
+};
+const originalExecFile = childProcess.execFile;
+childProcess.execFile = function stagedSnapshotExecFile(command, args, options, callback) {
+  if (typeof args === "function") return originalExecFile.call(this, command, args);
+  if (typeof options === "function") return originalExecFile.call(this, command, args, options);
+  return originalExecFile.call(this, command, args, childOptions(options, command, args), callback);
+};
+const originalFork = childProcess.fork;
+childProcess.fork = function stagedSnapshotFork(modulePath, args, options) {
+  return originalFork.call(this, modulePath, args, childOptions(options, process.execPath, [modulePath]));
+};
+const originalExecSync = childProcess.execSync;
+childProcess.execSync = function stagedSnapshotExecSync(command, options) {
+  return originalExecSync.call(this, command, childOptions(options, process.execPath));
+};
 // Gates that test existsSync before require need their explicit roots up front.
 // Unknown/dynamic roots are not silently skipped: unresolved dependencies fail.
 const earlyRoots = {
+  "scripts/test-core-call-liveness-and-auth.cjs": ["electron/hephaestus/commands.js"],
+  "scripts/test-refusal-not-output-contract.cjs": ["electron/mcp/client.js", "electron/mcp/final-display-backstop.js", "electron/runtime/runtime-refusal.js"],
   "scripts/test-final-display-hygiene.cjs": ["electron/mcp/final-display-backstop.js", "electron/runtime/runtime-refusal.js"],
 };
 const gate = path.relative(root, path.resolve(process.argv[1])).split(path.sep).join("/");

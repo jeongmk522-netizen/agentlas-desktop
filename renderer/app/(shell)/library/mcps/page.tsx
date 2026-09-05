@@ -243,7 +243,7 @@ export default function LibraryMcpsPage() {
             borderRadius: 999,
             fontSize: 12.5,
             fontWeight: 600,
-            background: "var(--black)",
+            background: "var(--one-primary)",
             color: "var(--white)",
             border: "1px solid transparent",
             display: "inline-flex",

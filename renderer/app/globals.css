@@ -295,6 +295,10 @@
   --white-faint: rgba(255, 255, 255, 0.5);  /* 어두운 물체 위 흐린 글자·선 */
   --black: #171719;          /* 테마와 무관한 어두운 물체(사용자 말풍선·주 버튼) */
   --black-soft: #2a2f33;     /* 어두운 물체 hover */
+  /* Existing MCP/One primary actions use this product charcoal. Keep it
+     invariant while migrating component literals to named tokens. */
+  --one-primary: #303532;
+  --one-primary-hover: #202421;
   --one-toast-bg: #fffdf9;    /* One 에이전트 토스트 카드 — 테마 무관 웜 크림(브랜드 아이덴티티 고정) */
   --one-toast-ink: #20251f;   /* One 에이전트 토스트 카드 텍스트 — 테마 무관 다크 올리브 */
   --danger: #9a5a4c;         /* 파괴적 동작·오류(팔레트의 red-deep) */

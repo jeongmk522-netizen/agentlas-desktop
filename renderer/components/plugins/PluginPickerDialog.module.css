@@ -446,12 +446,12 @@
 
 .primary {
   border: 1px solid transparent;
-  background: var(--black);
+  background: var(--one-primary);
   color: var(--white);
 }
 
 .primary:hover:not(:disabled) {
-  background: var(--black);
+  background: var(--one-primary-hover);
 }
 
 .ghost:disabled,
@@ -500,7 +500,7 @@
 }
 
 .inlineStage .primary {
-  background: var(--black);
+  background: var(--one-primary);
 }
 
 .inlineStage .footer {

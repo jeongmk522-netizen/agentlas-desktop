@@ -6,6 +6,7 @@
 // fence 포맷은 renderer/lib/ask-question.ts와 동일: <<agentlas-ask>>{json}<</agentlas-ask>>.
 import { createHash } from "node:crypto";
 import {
+  isUnfilledQuestionTemplate,
   QUESTION_CONTINUATION_REPLY_MAX_BYTES,
   QUESTION_CONTINUATION_REPLY_MAX_LENGTH,
   type CommittedQuestionAnswer,
@@ -201,6 +202,7 @@ function firstQuestion(
 } | null {
   const parsed = extractAskFences(text).questions[0];
   if (!parsed) return null;
+  if (isUnfilledQuestionTemplate(parsed)) return null;
   return {
     question: parsed.question,
     header: parsed.header,
@@ -482,9 +484,13 @@ export function listPendingConfirmations(): PendingConfirmation[] {
     if (!last.text.includes(OPEN)) continue;
     const q = firstQuestion(last.text);
     if (!q) continue;
-    // A committed answer without a later user turn still needs a continuation
-    // path (IPC response loss / renderer reload). Keep it pending until the
-    // invocation durably appends that turn; exact retry is idempotent above.
+    // A committed answer is no longer an unanswered confirmation.  Continuation
+    // recovery reads the exact receipt through `committedAnswers` and must not
+    // reuse this pending-question projection as a second question surface.
+    if (listCommittedQuestionAnswers(c.id).some((answer) => answer.sourceMessageId === last.id)) continue;
+    // A committed answer without a later user turn is handled by the separate
+    // committedAnswers/continuation-recovery projection above; this list stays
+    // limited to questions that still need a user decision.
     const snoozedUntil = latestDecisionSnooze(c.id, last.id);
     const firm = c.firmId ? getFirm(c.firmId) : null;
     const agent = getAgentById(c.agentId);

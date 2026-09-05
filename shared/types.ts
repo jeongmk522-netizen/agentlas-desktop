@@ -6398,6 +6398,7 @@ export interface AgentlasIpc {
   listCapabilityGrants: (scope?: string) => Promise<Array<{
     id: number; capability: string; pattern: string | null;
     decision: "allow" | "deny"; scope: string; source: string; createdAt: string;
+    binding?: ToolApprovalConsentBinding;
   }>>;
   revokeCapabilityGrant: (id: number) => Promise<boolean>;
   /** 대화 단위 "항상 승인" — renderer localStorage 에서 공유 DB 로 이관됐다. */
@@ -8037,6 +8038,39 @@ export interface ToolApprovalRequestEvent {
   capability?: string;
   /** 실행 중인 에이전트 — 에이전트 스코프 규칙의 대상. */
   agentId?: string;
+  /**
+   * Main-owned durable-consent identity.  This is deliberately opaque to the
+   * renderer: it binds an allow-always decision to one user, workspace,
+   * requester, exact credential/resource, and exact permission level.
+   */
+  consentBinding?: ToolApprovalConsentBinding;
+}
+
+/**
+ * Exact identity required for a durable tool consent.  Resource identity is
+ * value-free (normally a Main-computed digest), so raw credentials never cross
+ * the approval IPC or enter the SQLite row.
+ */
+export interface ToolApprovalConsentBinding {
+  userIdentity: string;
+  workspaceIdentity: string;
+  requesterIdentity: string;
+  credentialResourceIdentity: string;
+  permissionScope: "read" | "write" | "full";
+}
+
+export type ToolApprovalDurableConsentStatus = "persisted" | "failed" | "unavailable";
+
+/** Separate from the runtime decision: allow-once/session may still succeed
+ * when an allow-always write was unavailable, but the UI must not call it
+ * durable until this receipt says `persisted`. */
+export interface ToolApprovalDurableConsentReceipt {
+  status: ToolApprovalDurableConsentStatus;
+  code?:
+    | "missing-binding"
+    | "missing-persister"
+    | "storage-failure"
+    | "storage-receipt-missing";
 }
 
 /**
@@ -8060,6 +8094,7 @@ export interface ToolApprovalResolutionReceipt {
   status: "resolved" | "replayed" | "pending" | "expired" | "conflict" | "not_found" | "invalid_action";
   pending: boolean;
   decidedAt: string | null;
+  durableConsent?: ToolApprovalDurableConsentReceipt;
 }
 
 /** One's durable memory row as the renderer may see it: bounded content, project slug only, never a local path. */

@@ -17,7 +17,8 @@ import {
   type WorkbenchSurface,
 } from "./WorkbenchPanel";
 import type { InstalledAgent, InstalledFirm, InvocationRunReceipt, Project, ProjectTimelineSnapshot, ResolvedOrg } from "@/lib/types";
-import { IconClose, IconFileUp, IconFilm, IconFolder, IconImage, IconLayers, IconNetwork, IconPanelRight, IconSparkles } from "./Icon";
+import { IconClose, IconFileUp, IconFilm, IconFolder, IconImage, IconLayers, IconNetwork, IconPanelRight, IconPlus, IconSparkles } from "./Icon";
+import railStyles from "./one/OneActivityTimeline.module.css";
 import { useT } from "@/lib/i18n";
 import { ipc } from "@/lib/ipc";
 import { receiptAutoExpanded } from "@/lib/run-receipt-state";
@@ -127,6 +128,38 @@ export function ChatRightPanel({
 }: Props) {
   const { locale } = useT();
   const ko = locale === "ko";
+  const [openViews, setOpenViews] = useState<ChatRightPanelTab[]>([activeTab]);
+  const [addViewOpen, setAddViewOpen] = useState(false);
+  const viewMenuRef = useRef<HTMLSpanElement | null>(null);
+  const viewLabels: Record<ChatRightPanelTab, string> = {
+    agent: ko ? "작업" : "Activity", file: ko ? "파일" : "Files",
+    panel: ko ? "미리보기" : "Preview", memory: ko ? "기억" : "Memory",
+  };
+  useEffect(() => {
+    setOpenViews([activeTab]);
+    setAddViewOpen(false);
+  }, [chatId]);
+  useEffect(() => {
+    setOpenViews((views) => views.includes(activeTab) ? views : [...views, activeTab]);
+  }, [activeTab]);
+  useEffect(() => {
+    if (!addViewOpen) return;
+    const dismiss = (event: PointerEvent) => {
+      if (event.target instanceof Node && !viewMenuRef.current?.contains(event.target)) setAddViewOpen(false);
+    };
+    const escape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") { event.stopPropagation(); setAddViewOpen(false); }
+    };
+    document.addEventListener("pointerdown", dismiss);
+    document.addEventListener("keydown", escape, true);
+    return () => { document.removeEventListener("pointerdown", dismiss); document.removeEventListener("keydown", escape, true); };
+  }, [addViewOpen]);
+  const closeView = (view: ChatRightPanelTab) => {
+    const remaining = openViews.filter((item) => item !== view);
+    if (!remaining.length) { onClose(); return; }
+    setOpenViews(remaining);
+    if (activeTab === view) onTabChange(remaining[remaining.length - 1]);
+  };
   const [filePreview, setFilePreview] = useState<WorkspaceFilePreview | null>(null);
   const [fileTabs, setFileTabs] = useState<Array<ChatFileTab & { preview: WorkspaceFilePreview }>>([]);
   const [activeFileTabId, setActiveFileTabId] = useState<string | null>(null);
@@ -379,18 +412,29 @@ export function ChatRightPanel({
           style={resizeHeightHandleStyle}
         />
       )}
-      <header style={headerStyle}>
-      <nav style={tabsStyle} aria-label={ko ? "우측 패널 탭" : "Right panel tabs"}>
-        {/* ★도는 중이라는 사실은 탭을 눌러야 알 수 있으면 안 된다 — 눌러 보기 전에 보여야 한다. */}
-        <TabButton tab="agent" activeTab={activeTab} onClick={onTabChange} label={ko ? "에이전트" : "Agents"} icon={<IconNetwork size={13} />} badge={busy || Object.values(liveAgents).some((entry) => entry.active)} />
-        <TabButton tab="file" activeTab={activeTab} onClick={onTabChange} label={ko ? "파일" : "Files"} icon={<IconFolder size={13} />} />
-        <TabButton tab="panel" activeTab={activeTab} onClick={onTabChange} label={ko ? "미리보기" : "Preview"} icon={<IconPanelRight size={13} />} badge={hasPanelContent} />
-        <TabButton tab="memory" activeTab={activeTab} onClick={onTabChange} label={ko ? "기억" : "Memory"} icon={<IconSparkles size={13} />} />
+      <nav className={railStyles.artifactTabs} aria-label={ko ? "출력 보기" : "Output views"} role="tablist">
+        <div className={railStyles.artifactTabList}>
+          {openViews.map((view) => (
+            <span key={view} className={railStyles.artifactTab} data-active={activeTab === view ? "true" : "false"}>
+              <button type="button" role="tab" data-right-panel-tab={view} aria-selected={activeTab === view} onClick={() => onTabChange(view)}>
+                {view === "agent" ? <IconNetwork size={13} /> : view === "file" ? <IconFolder size={13} /> : view === "memory" ? <IconSparkles size={13} /> : <IconPanelRight size={13} />}
+                {viewLabels[view]}
+                {view === "agent" && (busy || Object.values(liveAgents).some((entry) => entry.active)) && <span aria-label={ko ? "실행 중" : "Running"}>·</span>}
+              </button>
+              <button type="button" className={railStyles.artifactTabClose} aria-label={ko ? `${viewLabels[view]} 닫기` : `Close ${viewLabels[view]}`} onClick={() => closeView(view)}><IconClose size={11} /></button>
+            </span>
+          ))}
+          <span ref={viewMenuRef} className={railStyles.artifactAddWrap}>
+            <button type="button" aria-label={ko ? "보기 추가" : "Add view"} aria-haspopup="menu" aria-expanded={addViewOpen} onClick={() => setAddViewOpen(!addViewOpen)}><IconPlus size={15} /></button>
+            {addViewOpen && <div className={railStyles.artifactAddMenu} role="menu">
+              {(["agent", "file", "panel", "memory"] as const).map((view) => <button key={view} type="button" role="menuitem" disabled={openViews.includes(view)} onClick={() => { setAddViewOpen(false); onTabChange(view); }}>{viewLabels[view]}</button>)}
+            </div>}
+          </span>
+        </div>
+        <div className={railStyles.artifactHeaderActions}>
+          <button type="button" onClick={onClose} aria-label={ko ? "출력 패널 접기" : "Collapse output panel"}><IconClose size={15} /></button>
+        </div>
       </nav>
-        <button type="button" onClick={onClose} aria-label={ko ? "우측 패널 닫기" : "Close right panel"} title={ko ? "닫기" : "Close"} style={iconButtonStyle}>
-          <IconClose size={14} />
-        </button>
-      </header>
 
       <div style={bodyStyle} data-right-panel-body={activeTab}>
         {activeTab === "file" && (

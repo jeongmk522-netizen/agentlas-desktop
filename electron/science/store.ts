@@ -9899,9 +9899,19 @@ export class ScienceStore {
     const researchTemplateId = hasResearchTemplate ? safeResearchTemplateId(input.researchTemplateId) : null;
     const initialLabId = hasResearchTemplate ? safeResearchTemplateId(input.initialLabId) : null;
     if (researchTemplateId !== initialLabId) throw new Error("science-research-template-binding-invalid");
-    const inputSha256 = researchTemplateId
-      ? sha256Json({ question, title, domain, relatedDomains, researchTemplateId, initialLabId })
-      : sha256Json({ question, title, domain, relatedDomains });
+    if (input.initialLabIds !== undefined && (!Array.isArray(input.initialLabIds)
+      || input.initialLabIds.some((labId) => typeof labId !== "string" || !(SCIENCE_RESEARCH_TEMPLATE_IDS as readonly string[]).includes(labId)))) {
+      throw new Error("science-initial-lab-ids-invalid");
+    }
+    const initialLabIds = [...new Set<ScienceResearchTemplateId>([
+      ...(initialLabId ? [initialLabId] : []),
+      ...(input.initialLabIds ?? []),
+    ])];
+    // Keep pre-multi-Lab request digests byte-for-byte compatible when the field is omitted.
+    const hashInput = researchTemplateId
+      ? { question, title, domain, relatedDomains, researchTemplateId, initialLabId }
+      : { question, title, domain, relatedDomains };
+    const inputSha256 = sha256Json(input.initialLabIds === undefined ? hashInput : { ...hashInput, initialLabIds });
     const result = this.db.transaction(() => {
       const prior = this.replay<CreateScienceProjectResult>(input.requestId, "project.create", inputSha256);
       if (prior) {
@@ -9923,12 +9933,14 @@ export class ScienceStore {
         .run(message.id, message.projectId, message.conversationId, message.role, message.visibility, message.content, now);
       const insertRelatedDomain = this.db.prepare("INSERT INTO project_related_domains (project_id,domain,display_order,created_at) VALUES (?,?,?,?)");
       relatedDomains.forEach((relatedDomain, index) => insertRelatedDomain.run(project.id, relatedDomain, index, now));
-      if (project.initialLabId) {
-        this.db.prepare(`INSERT INTO project_lab_bindings
-          (id,project_id,lab_id,enabled,pinned,display_order,activated_by,config_json,created_at,updated_at)
-          VALUES (?,?,?,1,1,0,'template',?,?,?)`)
-          .run(randomUUID(), project.id, project.initialLabId, JSON.stringify({ researchTemplateId: project.researchTemplateId }), now, now);
-      }
+      const insertLabBinding = this.db.prepare(`INSERT INTO project_lab_bindings
+        (id,project_id,lab_id,enabled,pinned,display_order,activated_by,config_json,created_at,updated_at)
+        VALUES (?,?,?,1,?,?,?,?,?,?)`);
+      initialLabIds.forEach((labId, index) => {
+        const isInitialLab = labId === project.initialLabId;
+        insertLabBinding.run(randomUUID(), project.id, labId, isInitialLab ? 1 : 0, index,
+          isInitialLab ? "template" : "user", JSON.stringify(isInitialLab ? { researchTemplateId: project.researchTemplateId } : {}), now, now);
+      });
       this.db.prepare(`INSERT INTO project_navigation_states
         (project_id,destination,selected_conversation_id,selected_lab_id,updated_at) VALUES (?,'overview',?,?,?)`)
         .run(project.id, conversation.id, project.initialLabId, now);

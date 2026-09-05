@@ -742,6 +742,8 @@ export interface CreateScienceProjectInput {
   relatedDomains?: ScienceDomain[];
   researchTemplateId?: ScienceResearchTemplateId;
   initialLabId?: ScienceResearchTemplateId;
+  /** Labs to bind at creation, deduplicated in selection order after the active initialLabId. */
+  initialLabIds?: ScienceResearchTemplateId[];
 }
 
 export interface CreateScienceProjectResult {

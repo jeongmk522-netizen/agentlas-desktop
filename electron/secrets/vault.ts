@@ -11,8 +11,6 @@ import keytar from "keytar";
 import { createHash, randomUUID } from "node:crypto";
 import type { RuntimeBackend } from "../../shared/types";
 import {
-  OFFICIAL_INSTALL_IDENTITY,
-  configuredIdentity,
   requireConfiguredInstallIdentity,
 } from "../install-identity";
 import {
@@ -20,6 +18,7 @@ import {
   keychainGet,
   keychainListAccounts,
   keychainSet,
+  retryKeychainReadFromUser,
 } from "./keychain-host";
 
 const BYOK_PREFIX = "byok:";
@@ -29,20 +28,33 @@ const SECRET_PREFIX = "secret:";
 const USE_MEMORY_VAULT = process.env.AGENTLAS_E2E === "1" && process.env.AGENTLAS_E2E_KEYCHAIN !== "1";
 const memoryVault = new Map<string, string>();
 const keychainCache = new Map<string, string | null>();
+const passwordReads = new Map<string, Promise<string | null>>();
+const passwordOperations = new Map<string, Promise<unknown>>();
+const userPasswordRetries = new Map<string, Promise<void>>();
 let envKeyCache: string[] | null = null;
+let envKeyCacheService: string | null = null;
+let envKeyRead: Promise<string[]> | null = null;
 
 function keychainService(): string {
-  const identity = configuredIdentity();
-  if (identity) return identity.keychainService;
-
-  // Direct `electron scripts/test-*.cjs` and Node-only contract tests do not
-  // execute main.ts. Preserve their historical official namespace without
-  // giving a packaged app an implicit identity.
-  const electronDefaultApp = (process as NodeJS.Process & { defaultApp?: boolean }).defaultApp === true;
-  if (electronDefaultApp || !process.versions.electron) {
-    return OFFICIAL_INSTALL_IDENTITY.keychainService;
-  }
+  // An unconfigured test, plugin, or temporary Electron host must never inherit
+  // the official application's credential namespace merely by importing vault.
   return requireConfiguredInstallIdentity().keychainService;
+}
+
+function passwordKey(service: string, account: string): string {
+  return JSON.stringify([service, account]);
+}
+
+function queuePasswordOperation<T>(key: string, run: () => Promise<T>): Promise<T> {
+  const previous = passwordOperations.get(key) ?? Promise.resolve();
+  const next = previous.then(run, run);
+  passwordOperations.set(key, next);
+  void next.then(() => {
+    if (passwordOperations.get(key) === next) passwordOperations.delete(key);
+  }, () => {
+    if (passwordOperations.get(key) === next) passwordOperations.delete(key);
+  });
+  return next;
 }
 
 /*
@@ -54,31 +66,80 @@ function keychainService(): string {
  */
 async function getPassword(account: string): Promise<string | null> {
   if (USE_MEMORY_VAULT) return memoryVault.get(account) ?? null;
-  if (keychainCache.has(account)) return keychainCache.get(account) ?? null;
   const service = keychainService();
-  const value = await keychainGet(service, account, () => keytar.getPassword(service, account));
-  keychainCache.set(account, value);
-  return value;
+  const key = passwordKey(service, account);
+  const pending = passwordReads.get(key);
+  if (pending) return pending;
+  if (!passwordOperations.has(key) && keychainCache.has(key)) return keychainCache.get(key) ?? null;
+  const started = queuePasswordOperation(key, async () => {
+    if (keychainCache.has(key)) return keychainCache.get(key) ?? null;
+    const value = await keychainGet(service, account, () => keytar.getPassword(service, account));
+    keychainCache.set(key, value);
+    return value;
+  });
+  passwordReads.set(key, started);
+  void started.then(() => {
+    if (passwordReads.get(key) === started) passwordReads.delete(key);
+  }, () => {
+    if (passwordReads.get(key) === started) passwordReads.delete(key);
+  });
+  return started;
 }
 
 async function setPassword(account: string, value: string): Promise<void> {
   if (USE_MEMORY_VAULT) {
     memoryVault.set(account, value);
+    return;
   } else {
     const service = keychainService();
-    await keychainSet(service, account, value, () => keytar.setPassword(service, account, value));
+    const key = passwordKey(service, account);
+    passwordReads.delete(key);
+    await queuePasswordOperation(key, async () => {
+      await keychainSet(service, account, value, () => keytar.setPassword(service, account, value));
+      keychainCache.set(key, value);
+    });
   }
-  keychainCache.set(account, value);
 }
 
 async function deletePassword(account: string): Promise<void> {
   if (USE_MEMORY_VAULT) {
     memoryVault.delete(account);
+    return;
   } else {
     const service = keychainService();
-    await keychainDelete(service, account, async () => { await keytar.deletePassword(service, account); });
+    const key = passwordKey(service, account);
+    passwordReads.delete(key);
+    await queuePasswordOperation(key, async () => {
+      await keychainDelete(service, account, async () => { await keytar.deletePassword(service, account); });
+      keychainCache.set(key, null);
+    });
   }
-  keychainCache.delete(account);
+}
+
+/** Main-only entrypoint for a deliberate retry of one existing credential.
+ * Returns no secret. The IPC caller must bind its user action to this exact
+ * resource; never call this from presence probes or automatic retry loops.
+ */
+export function retryCredentialReadFromUser(kind: "api" | "env" | "secret", name: string): Promise<void> {
+  if (!["api", "env", "secret"].includes(kind) || !name || name !== name.trim() || name.length > 256) {
+    return Promise.reject(new Error("credential_retry_resource_invalid"));
+  }
+  if (USE_MEMORY_VAULT) return Promise.resolve();
+  const account = `${kind === "api" ? BYOK_PREFIX : kind === "env" ? ENV_PREFIX : SECRET_PREFIX}${name}`;
+  const service = keychainService();
+  const key = passwordKey(service, account);
+  const current = userPasswordRetries.get(key);
+  if (current) return current;
+  passwordReads.delete(key);
+  const started = queuePasswordOperation(key, async () => {
+    keychainCache.delete(key);
+    const value = await retryKeychainReadFromUser(service, account, () => keytar.getPassword(service, account));
+    keychainCache.set(key, value);
+  });
+  userPasswordRetries.set(key, started);
+  void started.then(() => { if (userPasswordRetries.get(key) === started) userPasswordRetries.delete(key); },
+    () => { if (userPasswordRetries.get(key) === started) userPasswordRetries.delete(key); });
+  return started;
 }
 
 // ── BYOK LLM API ────────────────────────────────────────────
@@ -233,16 +294,27 @@ export async function previewEnvVar(key: string): Promise<string | null> {
 
 /** keychain에 저장된 env 키 전체 — keytar.findCredentials로 prefix filter */
 export async function listEnvKeys(): Promise<string[]> {
+  const service = USE_MEMORY_VAULT ? "memory" : keychainService();
+  if (envKeyCacheService !== service) {
+    envKeyCacheService = service;
+    envKeyCache = null;
+    envKeyRead = null;
+  }
   if (envKeyCache) return envKeyCache;
-  const service = keychainService();
-  const accounts = USE_MEMORY_VAULT
-    ? [...memoryVault.keys()]
-    : await keychainListAccounts(service, async () =>
-        (await keytar.findCredentials(service)).map((c) => c.account));
-  envKeyCache = accounts
-    .filter((a) => a.startsWith(ENV_PREFIX))
-    .map((a) => a.slice(ENV_PREFIX.length));
-  return envKeyCache;
+  if (envKeyRead) return envKeyRead;
+  const started = Promise.resolve().then(async () => {
+    const accounts = USE_MEMORY_VAULT
+      ? [...memoryVault.keys()]
+      : await keychainListAccounts(service, async () =>
+          (await keytar.findCredentials(service)).map((c) => c.account));
+    const keys = accounts.filter((a) => a.startsWith(ENV_PREFIX)).map((a) => a.slice(ENV_PREFIX.length));
+    if (envKeyCacheService === service) envKeyCache = keys;
+    return keys;
+  });
+  envKeyRead = started;
+  void started.then(() => { if (envKeyRead === started) envKeyRead = null; },
+    () => { if (envKeyRead === started) envKeyRead = null; });
+  return started;
 }
 
 function secretAccount(key: string): string {

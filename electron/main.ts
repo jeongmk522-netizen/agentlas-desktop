@@ -68,6 +68,7 @@ import {
   getAuthenticatedActorIds,
   getAuthSession,
   onAuthSessionInvalidated,
+  onAuthSessionRestored,
   retryTemporaryAuthRestore,
   type AuthRestoreResult,
 } from "./auth";
@@ -255,6 +256,7 @@ export { currentUiLocale } from "./ui-locale";
 const isDev = process.env.NODE_ENV === "development";
 const AUTH_SESSION_CHANGED_CHANNEL = "auth:sessionChanged";
 let disposeAuthSessionInvalidation: (() => void) | null = null;
+let disposeAuthSessionRestoration: (() => void) | null = null;
 let disposeMobileBridgeStateChange: (() => void) | null = null;
 let disposeOneTeamNotificationBridge: (() => void) | null = null;
 let deferredAuthRestorePromise: Promise<AuthRestoreResult> | null = null;
@@ -1071,6 +1073,8 @@ function stopQuitServices(): Promise<void> {
   try { disposeSiteAgentAppRuntimes(); } catch {}
   try { disposeAuthSessionInvalidation?.(); } catch {}
   disposeAuthSessionInvalidation = null;
+  try { disposeAuthSessionRestoration?.(); } catch {}
+  disposeAuthSessionRestoration = null;
   try { disposeMobileBridgeStateChange?.(); } catch {}
   disposeMobileBridgeStateChange = null;
 
@@ -1410,6 +1414,7 @@ app.whenReady().then(async () => {
   traceUpdaterStartup(`auth-restore-complete:${initialAuthRestore.status}`);
   traceStartup(`auth-${initialAuthRestore.status}`);
   const initialAuthRestoreWasTemporary = initialAuthRestore.status === "temporarily-unavailable";
+  const initialAuthRestoreWasUnavailable = initialAuthRestoreWasTemporary || initialAuthRestore.status === "native-unavailable";
   // Stage 2 (post-migration, pre-bootstrap-writers): compare the live DB and
   // managed assets against the recovery copies before deferred repairs resume.
   if (installIdentity.updatesEnabled) {
@@ -3160,12 +3165,12 @@ app.whenReady().then(async () => {
   // Start only after update continuity and store bootstrap have passed. A
   // bridge failure must not make Desktop unusable; Settings exposes the exact
   // failure and can retry on the next launch.
-  const startMobileBridgeAfterAuth = async () => {
-    if (!shellReadyForWindows) return;
+  const startMobileBridgeAfterAuth = async (requireSignedIn = false) => {
+    if (!shellReadyForWindows || (requireSignedIn && !getAuthSession().signedIn)) return;
     const daemon = await daemonStartupPromise;
     let claimed = false;
     try {
-      if (!shellReadyForWindows) return;
+      if (!shellReadyForWindows || (requireSignedIn && !getAuthSession().signedIn)) return;
       if (daemon && daemon.outcome.status !== "disabled" && daemon.outcome.status !== "failed") {
         claimed = await daemon.module.claimDaemonMobileBridge(userDataDir(), process.pid);
         if (!claimed) {
@@ -3176,7 +3181,7 @@ app.whenReady().then(async () => {
         }
         daemonMobileBridgeClaimed = true;
       }
-      if (!shellReadyForWindows) {
+      if (!shellReadyForWindows || (requireSignedIn && !getAuthSession().signedIn)) {
         if (claimed && daemon) {
           daemonMobileBridgeClaimed = false;
           await daemon.module.releaseDaemonMobileBridge(userDataDir(), process.pid);
@@ -3195,14 +3200,28 @@ app.whenReady().then(async () => {
       console.error("[mobile-bridge] start failed:", err);
     }
   };
-  if (initialAuthRestoreWasTemporary && !deferredAuthRestorePromise) {
+  let explicitBridgeRestore: Promise<void> | null = null;
+  disposeAuthSessionRestoration = onAuthSessionRestored((sessionSnapshot) => {
+    if (!shellReadyForWindows || !sessionSnapshot.signedIn || !getAuthSession().signedIn) return;
+    reconcileMobileBridgeDevicesForAccount(userDataDir());
+    failCloseActiveHubBookmarks();
+    broadcastAuthSession(sessionSnapshot);
+    broadcastHubBookmarkSnapshot();
+    void syncHubBookmarks({ rerunIfBusy: true });
+    if (mobileBridgeRuntimeStatus().running || explicitBridgeRestore) return;
+    const started = startMobileBridgeAfterAuth(true);
+    explicitBridgeRestore = started;
+    void started.then(() => { if (explicitBridgeRestore === started) explicitBridgeRestore = null; },
+      () => { if (explicitBridgeRestore === started) explicitBridgeRestore = null; });
+  });
+  if (initialAuthRestoreWasUnavailable && !deferredAuthRestorePromise) {
     // Temporary authentication recovery intentionally owns the next action.
     // Never let an unknown initial Keychain state start the bridge, which would treat it
     // as a logout and revoke every stored device pairing.
-    console.warn("[mobile-bridge] start skipped; initial account restore is temporarily unavailable");
+    console.warn("[mobile-bridge] start skipped; initial account restore is unavailable");
   } else if (deferredAuthRestorePromise) {
     void deferredAuthRestorePromise.then((result) => {
-      if (result.status === "temporarily-unavailable") {
+      if (result.status === "temporarily-unavailable" || result.status === "native-unavailable") {
         // Starting while auth is unknown would make Mobile Bridge interpret a
         // temporary Keychain miss as logout and revoke every paired device.
         console.warn("[mobile-bridge] start deferred; account restore is still temporarily unavailable");

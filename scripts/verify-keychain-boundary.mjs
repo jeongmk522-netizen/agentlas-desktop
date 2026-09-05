@@ -26,8 +26,10 @@
 //     keychain_unavailable 로 말한다 — 원시 MODULE_NOT_FOUND 는 새어 나가지 않는다.
 import fs from "node:fs";
 import path from "node:path";
-import { execFileSync } from "node:child_process";
+import assert from "node:assert/strict";
+import vm from "node:vm";
 import { fileURLToPath } from "node:url";
+import ts from "typescript";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const failures = [];
@@ -134,51 +136,194 @@ if (!host) {
   );
 }
 
-// ── 5) keytar 가 닿지 않는 트리에서도 그래프를 죽이지 않는다 ────────────────────
-// 텍스트로 보지 않고 **실제로 그 상황을 만들어** 부른다: keychain-host.js 만 빈 곳으로
-// 복사해 keytar 가 어느 상위에도 없게 하고, 봉투도 비운 채 읽기를 시킨다.
-// 통과 조건은 "성공"이 아니라 **정직한 실패** — 원시 MODULE_NOT_FOUND 가 나오면 안 된다.
-{
-  const built = path.join(root, "dist", "electron", "secrets", "keychain-host.js");
-  if (!fs.existsSync(built)) {
-    check(
-      "unreachable-keytar-does-not-kill-the-node",
-      false,
-      "dist 가 없어 확인하지 못했습니다 — `npm run build:electron` 뒤에 다시 도세요(못 잰 것을 통과로 적지 않습니다).",
-    );
-  } else {
-    const sandbox = fs.mkdtempSync(path.join(fs.realpathSync(process.env.TMPDIR || "/tmp"), "keychain-gate-"));
-    fs.copyFileSync(built, path.join(sandbox, "keychain-host.js"));
-    let out = "";
-    try {
-      out = execFileSync(
-        process.execPath,
-        ["-e", `const h=require("${path.join(sandbox, "keychain-host.js").replace(/\\/g, "\\\\")}");`
-          + `if(typeof h.keychainGet!=="function"){console.log("THREW:이 게이트가 부르는 이름이 "`
-          + `+"없습니다(keychainGet). API 가 바뀌었으면 게이트를 같이 고치세요.");process.exit(0);}`
-          + `h.keychainGet("agentlas-gate-probe","no-such-account")`
-          + `.then((v)=>console.log("RESOLVED:"+JSON.stringify(v)))`
-          + `.catch((e)=>console.log("THREW:"+(e&&e.message?e.message:String(e))));`],
-        { env: { ...process.env, AGENTLAS_KEYTAR_PATH: "", AGENTLAS_KEYCHAIN_TIMEOUT_MS: "4000" },
-          encoding: "utf8", timeout: 30_000 },
-      );
-    } catch (error) {
-      out = `THREW:${error?.stdout || ""}${error?.stderr || error?.message || ""}`;
-    }
-    // 통과하려면 **부른 흔적**이 있어야 한다 — 아무 말도 없는 출력은 통과가 아니라
-    // 못 잰 것이다(없는 이름을 불러 조용히 초록이 되는 사고를 여기서 막는다).
-    const reached = /RESOLVED:|keychain_unavailable|찾을 수 없습니다/.test(out);
-    check(
-      "unreachable-keytar-does-not-kill-the-node",
-      reached && !/Cannot find module ['"]keytar['"]/.test(out),
-      "keytar 를 못 찾은 사실이 원시 MODULE_NOT_FOUND 로 새어 나가거나, 이 게이트가 실제로 부르지 "
-      + `못했습니다 — 내려받은 엔진으로 도는 사용자의 그래프 노드가 여기서 죽습니다. 관측: ${out.trim().slice(0, 200)}`,
-    );
-    try { fs.rmSync(sandbox, { recursive: true, force: true }); } catch { /* 임시 폴더 — 남아도 무해 */ }
+// ── 5) 스테이지된 실제 소스를 격리 VM 안에서 실행한다 ───────────────────────────
+// pre-commit bound runner 안에서 hostPath 는 INDEX snapshot의 정확한 blob이다. 이 검증기가
+// 직접 읽어 transpile하면 낡은 dist 산출물이 아니라 실제 커밋 대상을 실행하게 된다.
+// require/process/execFile은 전부 주입한다. 실제 keytar, 자식 프로세스, Electron, OS 키체인에
+// 닿을 길은 없고, 예상 밖 모듈 import는 즉시 실패한다.
+const transpiled = host
+  ? ts.transpileModule(host, {
+      compilerOptions: {
+        target: ts.ScriptTarget.ES2022,
+        module: ts.ModuleKind.CommonJS,
+        esModuleInterop: true,
+      },
+      fileName: hostPath,
+      reportDiagnostics: true,
+    })
+  : null;
+
+const transpileErrors = transpiled?.diagnostics?.filter(
+  (diagnostic) => diagnostic.category === ts.DiagnosticCategory.Error,
+) ?? [];
+check(
+  "staged-keychain-host-transpiles",
+  Boolean(transpiled) && transpileErrors.length === 0,
+  `실제 keychain-host.ts 소스를 격리 실행용으로 transpile하지 못했습니다: ${transpileErrors.map((d) => `TS${d.code}`).join(", ")}`,
+);
+
+function loadIsolatedKeychainHost({ keytarAvailable, responses = [] }) {
+  if (!transpiled || transpileErrors.length > 0) throw new Error("keychain-host transpile unavailable");
+  const execCalls = [];
+  const responseQueue = [...responses];
+  const fakeExecFile = (command, args, options, callback) => {
+    const call = { command, args: [...args], options: { ...options }, stdin: null };
+    execCalls.push(call);
+    const child = {
+      stdin: {
+        end(value) {
+          call.stdin = String(value ?? "");
+        },
+      },
+    };
+    queueMicrotask(() => {
+      const response = responseQueue.shift();
+      if (!response) {
+        callback(new Error("isolated verifier has no response for unexpected execFile call"), "", "");
+        return;
+      }
+      callback(response.error ?? null, JSON.stringify(response.payload ?? {}), "");
+    });
+    return child;
+  };
+  const fakeCreateRequire = () => {
+    const unavailable = () => {
+      throw new Error("isolated verifier never loads a native module");
+    };
+    unavailable.resolve = (specifier) => {
+      if (keytarAvailable && specifier === "keytar") return "/isolated/keytar.node";
+      const error = new Error(`Cannot find module '${specifier}'`);
+      error.code = "MODULE_NOT_FOUND";
+      throw error;
+    };
+    return unavailable;
+  };
+  const module = { exports: {} };
+  const context = vm.createContext({
+    module,
+    exports: module.exports,
+    __filename: hostPath,
+    __dirname: path.dirname(hostPath),
+    process: {
+      env: { AGENTLAS_KEYTAR_PATH: "", AGENTLAS_KEYCHAIN_TIMEOUT_MS: "17" },
+      execPath: "/isolated/node",
+      type: undefined,
+    },
+    require(specifier) {
+      if (specifier === "node:child_process") return { execFile: fakeExecFile };
+      if (specifier === "node:module") return { createRequire: fakeCreateRequire };
+      throw new Error(`isolated verifier refused unexpected module: ${specifier}`);
+    },
+  });
+  new vm.Script(transpiled.outputText, { filename: hostPath }).runInContext(context, { timeout: 1_000 });
+  return { api: module.exports, execCalls, responseQueue };
+}
+
+async function verifyIsolatedRuntimeContract() {
+  const missing = loadIsolatedKeychainHost({ keytarAvailable: false });
+  let missingDirectCalls = 0;
+  const missingFailure = await missing.api.keychainGet("svc-missing", "account-a", async () => {
+    missingDirectCalls += 1;
+    return "must-not-run";
+  }).then(() => null, (error) => error);
+  assert.ok(missingFailure instanceof missing.api.KeychainUnavailableError);
+  assert.equal(missingFailure.code, "keychain_unavailable");
+  assert.equal(missingFailure.operation, "read");
+  assert.equal(missingFailure.account, "account-a");
+  assert.equal(missingFailure.automaticRetrySuppressed, false);
+  assert.doesNotMatch(missingFailure.message, /Cannot find module ['"]keytar['"]/);
+  assert.equal(missing.execCalls.length, 0);
+  assert.equal(missingDirectCalls, 0);
+  check("missing-keytar-is-typed-without-native-load", true, "");
+
+  const isolated = loadIsolatedKeychainHost({
+    keytarAvailable: true,
+    responses: [
+      { payload: { value: "first-value" } },
+      { payload: { accounts: ["account-a", "account-b"] } },
+      { payload: { error: "native request rejected" } },
+      { payload: { error: "other service rejected" } },
+      { payload: { value: "other-scope-value" } },
+      { payload: { value: "retry-value" } },
+    ],
+  });
+  const direct = async () => { throw new Error("headless VM called the direct native path"); };
+
+  const readPair = await Promise.all([
+    isolated.api.keychainGet("svc", "same", direct),
+    isolated.api.keychainGet("svc", "same", direct),
+  ]);
+  assert.deepEqual(readPair, ["first-value", "first-value"]);
+  assert.equal(isolated.execCalls.length, 1, "same read must share one native request");
+  check("same-read-is-deduplicated", true, "");
+
+  const listPair = await Promise.all([
+    isolated.api.keychainListAccounts("svc", direct),
+    isolated.api.keychainListAccounts("svc", direct),
+  ]);
+  assert.deepEqual(JSON.parse(JSON.stringify(listPair)), [
+    ["account-a", "account-b"],
+    ["account-a", "account-b"],
+  ]);
+  assert.equal(isolated.execCalls.length, 2, "same list must share one native request");
+  check("same-list-is-deduplicated", true, "");
+
+  const firstFailure = await isolated.api.keychainGet("svc", "failed", direct)
+    .then(() => null, (error) => error);
+  assert.equal(firstFailure?.code, "keychain_unavailable");
+  assert.equal(firstFailure?.automaticRetrySuppressed, false);
+  assert.equal(isolated.execCalls.length, 3);
+
+  const otherServiceFailure = await isolated.api.keychainGet("svc-other", "failed", direct)
+    .then(() => null, (error) => error);
+  assert.equal(otherServiceFailure?.code, "keychain_unavailable");
+  assert.equal(isolated.execCalls.length, 4, "failure latch must include the service in its scope");
+
+  const suppressedFailure = await isolated.api.keychainGet("svc", "failed", direct)
+    .then(() => null, (error) => error);
+  assert.equal(suppressedFailure?.code, "keychain_unavailable");
+  assert.equal(suppressedFailure?.automaticRetrySuppressed, true);
+  assert.equal(isolated.execCalls.length, 4, "passive retry must not start another native request");
+
+  const otherServiceSuppressed = await isolated.api.keychainGet("svc-other", "failed", direct)
+    .then(() => null, (error) => error);
+  assert.equal(otherServiceSuppressed?.automaticRetrySuppressed, true);
+  assert.equal(isolated.execCalls.length, 4);
+
+  const otherScope = await isolated.api.keychainGet("svc", "other", direct);
+  assert.equal(otherScope, "other-scope-value");
+  assert.equal(isolated.execCalls.length, 5, "failure suppression must be exact to service/account/operation");
+
+  const retried = await isolated.api.retryKeychainReadFromUser("svc", "failed", direct);
+  assert.equal(retried, "retry-value");
+  assert.equal(isolated.execCalls.length, 6, "explicit retry must reopen only the failed exact read scope");
+  const stillSuppressed = await isolated.api.keychainGet("svc-other", "failed", direct)
+    .then(() => null, (error) => error);
+  assert.equal(stillSuppressed?.automaticRetrySuppressed, true);
+  assert.equal(isolated.execCalls.length, 6, "retrying one service/account must not clear another failed scope");
+  assert.equal(isolated.responseQueue.length, 0);
+  check("failure-is-latched-until-explicit-exact-retry", true, "");
+
+  for (const call of isolated.execCalls) {
+    assert.equal(call.command, "/isolated/node");
+    assert.equal(call.args[0], "-e");
+    assert.equal(call.args[2], "/isolated/keytar.node");
+    assert.equal(call.options.timeout, 17);
+    assert.equal(call.options.killSignal, "SIGKILL");
+  }
+  check("isolated-exec-envelope-is-bounded", true, "");
+}
+
+if (transpiled && transpileErrors.length === 0) {
+  try {
+    await verifyIsolatedRuntimeContract();
+  } catch (error) {
+    check("isolated-keychain-runtime-contract", false, error?.stack || error?.message || String(error));
   }
 }
 
 for (const c of checks) console.log(`${c.ok ? "PASS" : "FAIL"} ${c.name}`);
+console.log("NATIVE KEYCHAIN: NOT VERIFIED — isolated VM stubs prevented keytar, child-process, Electron, and OS credential access.");
 if (failures.length > 0) {
   console.error("\nkeychain-boundary 게이트 실패:");
   for (const f of failures) console.error(` - ${f}`);

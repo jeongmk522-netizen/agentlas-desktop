@@ -1,7 +1,7 @@
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
-import type { RunnerRequest, WorkforceHostObservation, WorkforceRuntimeToolGrant } from "./runner";
+import type { RunnerRequest, WorkforceHostObservation, WorkforceHostInventorySnapshot, WorkforceRuntimeToolGrant } from "./runner";
 import { workforceHostObservationDigest } from "./runner";
 
 const HASH = /^sha256:[0-9a-f]{64}$/;
@@ -72,47 +72,104 @@ export function inspectCodexWorkforceGrant(req: RunnerRequest, args: string[]): 
 interface McpSnapshot {
   toolIds: string[];
   connectedServers: string[];
+  serverStates: WorkforceHostInventorySnapshot["serverStates"];
+  observedBindings: WorkforceHostInventorySnapshot["selectedBindings"];
   digest: string;
 }
 type Request = (method: string, params: Record<string, unknown>, options: { timeoutMs: number; signal?: AbortSignal }) => Promise<any>;
+const CONNECTION_STATES = new Set(["notStarted", "starting", "connected", "authenticationRequired", "failed", "cancelled", "disabled"]);
+function checkAbort(signal?: AbortSignal): void { if (signal?.aborted) fail("aborted"); }
 
-/** Thread-scoped native inventory. No builtin/shell/collaboration enumeration is claimed. */
-export async function readCodexWorkforceInventory(request: Request, threadId: string, signal?: AbortSignal): Promise<McpSnapshot> {
-  const rows: Record<string, unknown>[] = [];
+/** Thread-scoped native inventory. Cached descriptors never prove connected authority. */
+export async function readCodexWorkforceInventory(request: Request, threadId: string, signal?: AbortSignal, timeoutMs = 30_000): Promise<McpSnapshot> {
+  const deadline = Date.now() + Math.min(30_000, Math.max(1, timeoutMs));
+  const serverStates: McpSnapshot["serverStates"] = [];
+  const observedBindings: McpSnapshot["observedBindings"] = [];
   const names = new Set<string>();
   const tools = new Set<string>();
   const servers = new Set<string>();
   const cursors = new Set<string>();
+  let descriptorCount = 0;
   let cursor: string | undefined;
   do {
+    checkAbort(signal);
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) fail("inventory_timeout");
     const response = await request("mcpServerStatus/list", {
       threadId, detail: "toolsAndAuthOnly", limit: 100, ...(cursor ? { cursor } : {}),
-    }, { timeoutMs: 30_000, signal });
+    }, { timeoutMs: remaining, signal });
+    checkAbort(signal);
+    if (Date.now() > deadline) fail("inventory_timeout");
     if (!record(response) || !Array.isArray(response.data) || !(response.nextCursor === null || typeof response.nextCursor === "string")) fail("inventory_response_invalid");
     for (const row of response.data) {
-      if (!record(row) || typeof row.name !== "string" || !row.name || names.has(row.name) || !record(row.tools)) fail("inventory_server_invalid");
+      if (!record(row) || typeof row.name !== "string" || !TOOL.test(row.name) || names.has(row.name) || !record(row.tools)) fail("inventory_server_invalid");
       names.add(row.name);
-      if (names.size > 256) fail("inventory_limit");
-      if (row.toolsError != null || row.runtimeStatus == null) fail("inventory_unavailable");
-      if (row.runtimeStatus === "connected") {
+      descriptorCount += Object.keys(row.tools).length;
+      if (names.size > 256 || descriptorCount > 4096) fail("inventory_limit");
+      if (!CONNECTION_STATES.has(row.runtimeStatus)) fail("inventory_unavailable");
+      const toolsError = row.toolsError != null;
+      serverStates.push({ name: row.name, runtimeStatus: row.runtimeStatus, toolsDigest: digest(row.tools), serverInfoDigest: digest(row.serverInfo ?? null), toolsError });
+      if (row.runtimeStatus === "connected" && !toolsError) {
         servers.add(row.name);
         for (const tool of Object.values(row.tools)) {
           if (!record(tool) || typeof tool.name !== "string" || !tool.name || !record(tool.inputSchema)) fail("inventory_tool_invalid");
           const id = `mcp__${row.name}__${tool.name}`;
+          if (!TOOL.test(id)) fail("inventory_tool_invalid");
           if (tools.has(id)) fail("inventory_tool_duplicate");
           tools.add(id);
-          if (tools.size > 4096) fail("inventory_limit");
+          observedBindings.push({ toolId: id, serverName: row.name, descriptorDigest: digest(tool) });
         }
-      } else if (Object.keys(row.tools).length) fail("inventory_disconnected_tools");
-      // Include descriptors/serverInfo in stability verification but never
-      // export their arbitrary content (or authentication material) as proof.
-      rows.push({ name: row.name, runtimeStatus: row.runtimeStatus, serverInfo: row.serverInfo ?? null, tools: row.tools });
+      }
+      // All known nonconnected states and failed tool reads remain in the
+      // evidence; their cached descriptors grant no usable capability.
     }
     cursor = response.nextCursor ?? undefined;
     if (cursor !== undefined && (!cursor || cursors.has(cursor) || cursors.size >= 32)) fail("inventory_cursor_invalid");
     if (cursor) cursors.add(cursor);
   } while (cursor);
-  return { toolIds: [...tools].sort(), connectedServers: [...servers].sort(), digest: digest(rows.sort((a, b) => String(a.name).localeCompare(String(b.name)))) };
+  const projection = { toolIds: [...tools].sort(), connectedServers: [...servers].sort(), serverStates: serverStates.sort((a, b) => a.name < b.name ? -1 : a.name > b.name ? 1 : 0) };
+  return { ...projection, observedBindings: observedBindings.sort((a, b) => a.toolId < b.toolId ? -1 : a.toolId > b.toolId ? 1 : 0), digest: digest(projection) };
+}
+
+function grantConnected(snapshot: McpSnapshot, grant: WorkforceRuntimeToolGrant): boolean {
+  return grant.grantedToolIds.every((id) => snapshot.toolIds.includes(id))
+    && grant.expectedServerConfigKeys.every((name) => snapshot.connectedServers.includes(name));
+}
+
+/** Readiness belongs before the model turn and never replays a completed invocation. */
+export async function waitForCodexWorkforceInventory(request: Request, threadId: string, grant: WorkforceRuntimeToolGrant, signal?: AbortSignal, options: { timeoutMs?: number; pollIntervalMs?: number } = {}): Promise<McpSnapshot> {
+  const deadline = Date.now() + Math.min(30_000, Math.max(1, options.timeoutMs ?? 30_000));
+  const interval = Math.min(1_000, Math.max(1, options.pollIntervalMs ?? 250));
+  for (;;) {
+    checkAbort(signal);
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) fail("grant_readiness_timeout");
+    const snapshot = await readCodexWorkforceInventory(request, threadId, signal, remaining);
+    if (grantConnected(snapshot, grant)) return snapshot;
+    const required = new Set(grant.expectedServerConfigKeys);
+    // Expected config keys are authoritative; do not infer server ownership
+    // by splitting tool IDs whose server names can contain underscores.
+    for (const state of snapshot.serverStates) {
+      if (required.has(state.name) && (state.toolsError || ["authenticationRequired", "failed", "cancelled", "disabled"].includes(state.runtimeStatus))) fail("grant_not_connected");
+    }
+    const delay = Math.min(interval, deadline - Date.now());
+    if (delay <= 0) fail("grant_readiness_timeout");
+    await new Promise<void>((resolve, reject) => {
+      const abort = () => { clearTimeout(timer); signal?.removeEventListener("abort", abort); reject(new Error("workforce_codex_observation_aborted")); };
+      const timer = setTimeout(() => { signal?.removeEventListener("abort", abort); resolve(); }, delay);
+      signal?.addEventListener("abort", abort, { once: true });
+      if (signal?.aborted) abort();
+    });
+  }
+}
+
+function grantSnapshot(snapshot: McpSnapshot, grant: WorkforceRuntimeToolGrant): WorkforceHostInventorySnapshot {
+  if (!grantConnected(snapshot, grant)) fail("grant_not_connected");
+  const selectedBindings = snapshot.observedBindings.filter((binding) => grant.grantedToolIds.includes(binding.toolId));
+  const selectedNames = new Set([...grant.expectedServerConfigKeys, ...selectedBindings.map((binding) => binding.serverName)]);
+  const selectedServers = snapshot.serverStates.filter((state) => selectedNames.has(state.name)).map(({ name, serverInfoDigest }) => ({ name, serverInfoDigest }));
+  return structuredClone({ toolIds: snapshot.toolIds, connectedServers: snapshot.connectedServers, serverStates: snapshot.serverStates,
+    selectedBindings, selectedServers, inventoryDigest: snapshot.digest, selectedBindingDigest: digest({ selectedBindings, selectedServers }) });
 }
 
 /** One invocation, independent of whether its native process/thread was reused. */
@@ -123,7 +180,8 @@ export class CodexWorkforceObservation {
   private threadId = "";
   private startedTurnId = "";
   private completedTurnId = "";
-  private inventory: McpSnapshot | null = null;
+  private inventoryBefore: WorkforceHostInventorySnapshot | null = null;
+  private inventoryAfter: WorkforceHostInventorySnapshot | null = null;
   private problem: string | null = null;
   private approvals: Array<{ requestId: string; decision: string }> = [];
 
@@ -173,11 +231,15 @@ export class CodexWorkforceObservation {
   }
 
   observeInventory(snapshot: McpSnapshot): void {
-    const grant = this.grant;
-    if (grant.grantedToolIds.some((id) => !snapshot.toolIds.includes(id))
-      || grant.expectedServerConfigKeys.some((key) => !snapshot.connectedServers.includes(key))) fail("grant_not_connected");
-    if (this.inventory && this.inventory.digest !== snapshot.digest) fail("inventory_drift");
-    this.inventory = snapshot;
+    const observed = grantSnapshot(snapshot, this.grant);
+    if (!this.inventoryBefore) {
+      if (this.startedTurnId) fail("inventory_before_missing");
+      this.inventoryBefore = observed;
+      return;
+    }
+    if (!this.startedTurnId || this.startedTurnId !== this.completedTurnId || this.inventoryAfter) fail("inventory_phase_invalid");
+    if (this.inventoryBefore.selectedBindingDigest !== observed.selectedBindingDigest) fail("selected_inventory_drift");
+    this.inventoryAfter = observed;
   }
 
   startTurn(response: any): void {
@@ -217,7 +279,7 @@ export class CodexWorkforceObservation {
   finish(): WorkforceHostObservation {
     if (this.problem) fail(this.problem);
     if (canonical(this.grant) !== canonical(this.req.workforceRuntimeToolGrant)) fail("grant_drift");
-    if (!this.policy || !this.inventory || !this.startedTurnId || this.startedTurnId !== this.completedTurnId) fail("completion_missing");
+    if (!this.policy || !this.inventoryBefore || !this.inventoryAfter || !this.startedTurnId || this.startedTurnId !== this.completedTurnId) fail("completion_missing");
     if (this.approvals.some((entry) => !entry.requestId.startsWith(`${this.startedTurnId}:`))) fail("approval_turn_mismatch");
     const grant = this.grant;
     const observation: Omit<WorkforceHostObservation, "observationDigest"> = {
@@ -226,8 +288,9 @@ export class CodexWorkforceObservation {
       toolInventoryDigest: grant.toolInventoryDigest,
       runtimeKind: "codex", runtimeVersion: this.runtimeVersion,
       sessionId: this.threadId, turnId: this.startedTurnId,
-      nativePolicy: this.policy!, toolIds: this.inventory!.toolIds,
-      connectedServers: this.inventory!.connectedServers,
+      nativePolicy: this.policy!, toolIds: this.inventoryAfter!.toolIds,
+      connectedServers: this.inventoryAfter!.connectedServers,
+      inventoryEvidence: { schemaVersion: "agentlas.workforce-host-inventory-observation.v1", stability: "selected-grant-bindings", before: this.inventoryBefore!, after: this.inventoryAfter! },
       inventoryScope: "connected-mcp-tools", nativeToolsEnumerated: false,
       requestedConfigDigest: this.configDigest,
       approvalEvents: this.approvals, completed: true,

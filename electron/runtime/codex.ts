@@ -54,7 +54,7 @@ import {
   type CodexResidentSession,
   type CodexTurnSink,
 } from "./codex-session";
-import { CodexWorkforceObservation, inspectCodexWorkforceGrant, readCodexWorkforceInventory } from "./codex-workforce";
+import { CodexWorkforceObservation, inspectCodexWorkforceGrant, readCodexWorkforceInventory, waitForCodexWorkforceInventory } from "./codex-workforce";
 import { answerCodexMcpElicitation } from "./codex-elicitation";
 import { residencyDisabledFor } from "./claude-session";
 import { isResidencyExemptAgent, resolveAgentResidencySource } from "./agent-residency";
@@ -1479,8 +1479,8 @@ async function runCodexResidentTurn(input: {
     }
     if (!session.threadId) throw new Error("codex app-server session has no thread");
     if (workforceObservation) {
-      workforceObservation.observeInventory(await readCodexWorkforceInventory(
-        session.conn.request.bind(session.conn), session.threadId, req.signal,
+      workforceObservation.observeInventory(await waitForCodexWorkforceInventory(
+        session.conn.request.bind(session.conn), session.threadId, req.workforceRuntimeToolGrant!, req.signal,
       ));
     }
 
@@ -1560,8 +1560,8 @@ async function runCodexResidentTurn(input: {
       throw abortReasonError(req);
     }
 
-    // Re-read the actual connected inventory after the completed turn. Any
-    // drift invalidates this invocation and must never replay a paid turn.
+    // Record both native inventories. Selected capability changes invalidate
+    // the invocation; unrelated host changes are evidence, never a replay.
     if (workforceObservation) {
       if (inspectCodexWorkforceGrant(req, mcpArgs) !== requestedConfigDigest) throw new Error("workforce_codex_observation_config_drift");
       workforceObservation.observeInventory(await readCodexWorkforceInventory(

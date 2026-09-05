@@ -237,12 +237,43 @@ export interface WorkforceHostObservation {
   inventoryScope: "connected-mcp-tools" | "native-init-tools";
   nativeToolsEnumerated: boolean;
   requestedConfigDigest: string | null;
+  inventoryEvidence?: WorkforceHostInventoryEvidence;
   observationDigest: string;
+}
+
+/** Descriptor fingerprints are native observations, not endpoint attestations.
+ * Only connected tools count as available; cached descriptors remain fingerprints.
+ */
+export interface WorkforceHostInventorySnapshot {
+  toolIds: string[];
+  connectedServers: string[];
+  serverStates: Array<{
+    name: string;
+    runtimeStatus: string;
+    toolsDigest: string;
+    serverInfoDigest: string;
+    toolsError: boolean;
+  }>;
+  selectedBindings: Array<{ toolId: string; serverName: string; descriptorDigest: string }>;
+  selectedServers: Array<{ name: string; serverInfoDigest: string }>;
+  inventoryDigest: string;
+  selectedBindingDigest: string;
+}
+
+export interface WorkforceHostInventoryEvidence {
+  schemaVersion: "agentlas.workforce-host-inventory-observation.v1";
+  stability: "selected-grant-bindings";
+  before: WorkforceHostInventorySnapshot;
+  after: WorkforceHostInventorySnapshot;
 }
 
 export function workforceHostObservationDigest(
   value: Omit<WorkforceHostObservation, "observationDigest">,
 ): string {
+  return workforceObservationValueDigest(value);
+}
+
+function workforceObservationValueDigest(value: unknown): string {
   const canonical = (row: unknown): unknown => {
     if (Array.isArray(row)) return row.map(canonical);
     if (!row || typeof row !== "object") return row;
@@ -255,6 +286,73 @@ export function workforceHostObservationDigest(
 
 const WORKFORCE_SHA256_RE = /^sha256:[0-9a-f]{64}$/;
 const WORKFORCE_TOOL_ID_RE = /^[A-Za-z0-9][A-Za-z0-9_.$:/@+~-]{0,127}$/;
+
+/** Check the measured inventory window separately from the native policy.
+ * Host authority permits unrelated tools to connect; selected bindings must
+ * be available with identical fingerprints at both observation boundaries.
+ */
+function validWorkforceInventoryEvidence(
+  observation: WorkforceHostObservation,
+  grant: WorkforceRuntimeToolGrant,
+): boolean {
+  const window = observation.inventoryEvidence;
+  if (window === undefined) return true;
+  const object = (value: unknown): value is Record<string, any> =>
+    value !== null && typeof value === "object" && !Array.isArray(value);
+  const keys = (value: unknown, expected: string[]) => object(value) &&
+    JSON.stringify(Object.keys(value).sort()) === JSON.stringify([...expected].sort());
+  const ordered = (values: unknown, max: number): values is string[] =>
+    Array.isArray(values) && values.length <= max && values.every((value, index) =>
+      typeof value === "string" && WORKFORCE_TOOL_ID_RE.test(value) &&
+      (index === 0 || values[index - 1] < value));
+  const same = (a: unknown, b: unknown) => workforceObservationValueDigest(a) === workforceObservationValueDigest(b);
+  if (observation.runtimeKind !== "codex" || observation.inventoryScope !== "connected-mcp-tools" ||
+    !keys(window, ["schemaVersion", "stability", "before", "after"]) ||
+    window.schemaVersion !== "agentlas.workforce-host-inventory-observation.v1" ||
+    window.stability !== "selected-grant-bindings") return false;
+  for (const snapshot of [window.before, window.after]) {
+    if (!keys(snapshot, ["toolIds", "connectedServers", "serverStates", "selectedBindings", "selectedServers", "inventoryDigest", "selectedBindingDigest"]) ||
+      !ordered(snapshot.toolIds, 4096) || !ordered(snapshot.connectedServers, 256) ||
+      !Array.isArray(snapshot.serverStates) || !Array.isArray(snapshot.selectedBindings) || !Array.isArray(snapshot.selectedServers) ||
+      !ordered(snapshot.serverStates.map((row) => row?.name), 256) ||
+      !ordered(snapshot.selectedBindings.map((row) => row?.toolId), 128) ||
+      !ordered(snapshot.selectedServers.map((row) => row?.name), 64)) return false;
+    const states = new Map<string, WorkforceHostInventorySnapshot["serverStates"][number]>();
+    for (const state of snapshot.serverStates) {
+      if (!keys(state, ["name", "runtimeStatus", "toolsDigest", "serverInfoDigest", "toolsError"]) ||
+        !["notStarted", "starting", "connected", "authenticationRequired", "failed", "cancelled", "disabled"].includes(state.runtimeStatus) ||
+        !WORKFORCE_SHA256_RE.test(state.toolsDigest) || !WORKFORCE_SHA256_RE.test(state.serverInfoDigest) ||
+        typeof state.toolsError !== "boolean") return false;
+      states.set(state.name, state);
+    }
+    const connected = snapshot.serverStates.filter((row) => row.runtimeStatus === "connected" && !row.toolsError).map((row) => row.name);
+    if (!same(snapshot.connectedServers, connected)) return false;
+    for (const toolId of snapshot.toolIds) {
+      if (!snapshot.connectedServers.some((name) => toolId.startsWith(`mcp__${name}__`) && toolId.length > name.length + 7)) return false;
+    }
+    for (const binding of snapshot.selectedBindings) {
+      if (!keys(binding, ["toolId", "serverName", "descriptorDigest"]) ||
+        !WORKFORCE_SHA256_RE.test(binding.descriptorDigest) ||
+        !snapshot.toolIds.includes(binding.toolId) || !snapshot.connectedServers.includes(binding.serverName) ||
+        !binding.toolId.startsWith(`mcp__${binding.serverName}__`) ||
+        binding.toolId.length <= binding.serverName.length + 7) return false;
+    }
+    if (!same(snapshot.selectedBindings.map((row) => row.toolId), [...grant.grantedToolIds].sort())) return false;
+    const expectedServers = [...new Set([...grant.expectedServerConfigKeys, ...snapshot.selectedBindings.map((row) => row.serverName)])].sort();
+    if (!same(snapshot.selectedServers.map((row) => row.name), expectedServers)) return false;
+    for (const server of snapshot.selectedServers) {
+      if (!keys(server, ["name", "serverInfoDigest"]) || !snapshot.connectedServers.includes(server.name) ||
+        server.serverInfoDigest !== states.get(server.name)?.serverInfoDigest) return false;
+    }
+    if (snapshot.inventoryDigest !== workforceObservationValueDigest({
+      toolIds: snapshot.toolIds, connectedServers: snapshot.connectedServers, serverStates: snapshot.serverStates,
+    }) || snapshot.selectedBindingDigest !== workforceObservationValueDigest({
+      selectedBindings: snapshot.selectedBindings, selectedServers: snapshot.selectedServers,
+    })) return false;
+  }
+  return window.before.selectedBindingDigest === window.after.selectedBindingDigest &&
+    same(observation.toolIds, window.after.toolIds) && same(observation.connectedServers, window.after.connectedServers);
+}
 
 function validatedWorkforceGrant(req: RunnerRequest): WorkforceRuntimeToolGrant | null {
   const grant = req.workforceRuntimeToolGrant;
@@ -377,6 +475,7 @@ export function workforceObservedHostAuthorityEnforcement(
       event.requestId.length > 256 || !event.decision?.trim() || event.decision.length > 128) ||
     grant.grantedToolIds.some((id) => !observation.toolIds.includes(id)) ||
     grant.expectedServerConfigKeys.some((name) => !observation.connectedServers.includes(name)) ||
+    !validWorkforceInventoryEvidence(observation, grant) ||
     !WORKFORCE_SHA256_RE.test(observationDigest) ||
     observationDigest !== workforceHostObservationDigest(payload)
   ) throw new Error("workforce_host_observation_invalid");

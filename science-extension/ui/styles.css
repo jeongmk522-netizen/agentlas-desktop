@@ -5025,6 +5025,21 @@ button:has(> span:only-child > .uiIcon:only-child) {
   background: var(--surface);
   box-shadow: none;
 }
+.visualArtifactFrame.paleontologyVisualFrame {
+  height: fit-content;
+  max-height: 100%;
+  align-self: flex-start;
+}
+.visualArtifactFrame.paleontologyVisualFrame > .artifactVisualViewport {
+  height: auto;
+  max-height: 100%;
+  flex: 0 1 auto;
+}
+.visualArtifactFrame.paleontologyVisualFrame > .artifactVisualViewport > .statisticsAnalysisSurface,
+.visualArtifactFrame.paleontologyVisualFrame .statisticsChartHost {
+  height: auto;
+  max-height: 100%;
+}
 .visualArtifactFrame > .artifactViewToolbar {
   position: relative;
   z-index: 2;

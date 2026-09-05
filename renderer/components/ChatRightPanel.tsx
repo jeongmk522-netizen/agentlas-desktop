@@ -1044,6 +1044,24 @@ function FileTab({
   );
 }
 
+function FileUnavailableState({ ko, explicit = false }: { ko: boolean; explicit?: boolean }) {
+  return (
+    <div data-file-unavailable-state="true" style={unsupportedViewerStyle}>
+      <IconFileUp size={28} style={{ color: "var(--muted)" }} />
+      <strong>{ko ? "이 파일의 내용을 읽지 못했습니다" : "Could not read this file"}</strong>
+      <p style={unavailableMessageStyle}>
+        {explicit
+          ? ko
+            ? "파일이 없거나 옮겨졌거나, 이 대화에 읽기 권한이 없습니다. 경로를 확인한 뒤 다시 첨부하세요."
+            : "The file is missing, moved, or not readable by this conversation. Check the path and attach it again."
+          : ko
+            ? "파일이 옮겨졌거나 이 대화의 작업 폴더 밖에 있을 수 있습니다. 채팅에서 다시 생성하거나 경로를 확인하세요."
+            : "It may have moved, or it sits outside this chat's working folder. Recreate it in chat or check the path."}
+      </p>
+    </div>
+  );
+}
+
 function FileViewer({ file }: { file: WorkspaceFilePreview }) {
   const { locale } = useT();
   const ko = locale === "ko";
@@ -1063,22 +1081,15 @@ function FileViewer({ file }: { file: WorkspaceFilePreview }) {
           </div>
         </header>
       )}
-      {file.available === false && <div role="alert" data-file-unavailable="true" style={fileNoticeStyle}>{ko ? "파일이 없거나 옮겨졌거나, 이 대화에 읽기 권한이 없습니다. 경로를 확인한 뒤 다시 첨부하세요." : "The file is missing, moved, or not readable by this conversation. Check the path and attach it again."}</div>}
       <div style={fileViewerBodyStyle}>
-        {codePreview && !file.content ? (
+        {file.available === false ? (
+          <FileUnavailableState ko={ko} explicit />
+        ) : codePreview && !file.content ? (
           /* ★코드·HTML 도 **백지 대신 이유를 말한다.** 마크다운·JSON·텍스트에는 이미 이
              안내가 있었는데 코드류에는 없어서, 지워지거나 못 읽은 파일이 "빈 편집기"로
              열렸다 — 사람은 그것을 "파일이 비었다"로 읽는다(2026-09-03 실측: 지운 .html 을
              열면 경로와 '읽기 전용'만 뜨고 본문이 백지). */
-          <div style={unsupportedViewerStyle}>
-            <IconFileUp size={28} style={{ color: "var(--muted)" }} />
-            <strong>{ko ? "이 파일의 내용을 읽지 못했습니다" : "Could not read this file"}</strong>
-            <p>
-              {ko
-                ? "파일이 옮겨졌거나 이 대화의 작업 폴더 밖에 있을 수 있습니다. 채팅에서 다시 생성하거나 경로를 확인하세요."
-                : "It may have moved, or it sits outside this chat's working folder. Recreate it in chat or check the path."}
-            </p>
-          </div>
+          <FileUnavailableState ko={ko} />
         ) : codePreview ? (
           <CodeIdeViewer path={file.path} name={file.name} locale={ko ? "ko" : "en"} initialContent={file.viewerKind === "json" ? prettyJson(file.content || "") : file.content || ""} fill />
         ) : file.viewerKind === "browser" ? (
@@ -1098,15 +1109,7 @@ function FileViewer({ file }: { file: WorkspaceFilePreview }) {
         ) : isTextualViewerKind(file.viewerKind) && !file.content ? (
           /* ★내용이 없으면 **백지 대신 이유를 말한다.** 헤더만 뜨고 본문이 비어 있는
              화면은 "미리보기가 고장났다"로 읽힌다 — 실제로 그렇게 보고됐다. */
-          <div style={unsupportedViewerStyle}>
-            <IconFileUp size={28} style={{ color: "var(--muted)" }} />
-            <strong>{ko ? "이 파일의 내용을 읽지 못했습니다" : "Could not read this file"}</strong>
-            <p>
-              {ko
-                ? "파일이 옮겨졌거나 이 대화의 작업 폴더 밖에 있을 수 있습니다. 채팅에서 다시 생성하거나 경로를 확인하세요."
-                : "It may have moved, or it sits outside this chat's working folder. Recreate it in chat or check the path."}
-            </p>
-          </div>
+          <FileUnavailableState ko={ko} />
         ) : file.viewerKind === "markdown" ? (
           <MarkdownFileViewer file={file} />
         ) : file.viewerKind === "json" || file.viewerKind === "text" ? (
@@ -1858,6 +1861,15 @@ const unsupportedViewerStyle: CSSProperties = {
   gap: 10,
   padding: 24,
   color: "var(--ink-soft)",
+};
+
+const unavailableMessageStyle: CSSProperties = {
+  width: "100%",
+  maxWidth: 520,
+  minWidth: 0,
+  margin: 0,
+  lineHeight: 1.55,
+  overflowWrap: "anywhere",
 };
 
 const fileViewerPrimaryButtonStyle: CSSProperties = {

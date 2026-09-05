@@ -205,6 +205,7 @@ if (process.env.AGENTLAS_CHAT_FILE_QA_SEED === "1") {
     let desktop;
     const errors = [];
     const measurements = [];
+    const workPanelStages = [];
     try {
       desktop = await electron.launch({
         args: [root, `--user-data-dir=${userData}`],
@@ -242,6 +243,37 @@ if (process.env.AGENTLAS_CHAT_FILE_QA_SEED === "1") {
         const value = await page.evaluate(() => ({ width: innerWidth, scrollWidth: document.documentElement.scrollWidth, height: innerHeight }));
         assert.ok(value.scrollWidth <= value.width + 1, `${surface} overflows at ${width}px: ${JSON.stringify(value)}`);
         measurements.push({ surface, requestedWidth: width, ...value });
+      };
+      const measureWorkPanelStage = async (stage) => {
+        const value = await page.evaluate((label) => {
+          const metric = (element) => {
+            if (!(element instanceof HTMLElement)) return null;
+            const rect = element.getBoundingClientRect();
+            return {
+              left: rect.left,
+              right: rect.right,
+              width: rect.width,
+              clientWidth: element.clientWidth,
+              scrollWidth: element.scrollWidth,
+            };
+          };
+          const rail = document.querySelector(".chat-right-panel");
+          const notice = document.querySelector('[data-file-unavailable="true"]');
+          const state = document.querySelector('[data-file-unavailable-state="true"]')
+            ?? notice?.nextElementSibling?.firstElementChild
+            ?? null;
+          const message = state?.querySelector("p") ?? null;
+          return {
+            stage: label,
+            viewportWidth: innerWidth,
+            rail: metric(rail),
+            unavailableNotice: metric(notice),
+            unavailableState: metric(state),
+            unavailableMessage: metric(message),
+          };
+        }, stage);
+        workPanelStages.push(value);
+        return value;
       };
 
       const waitForAppLocation = async (pathname, paramName, paramValue, timeout = 60_000) => {
@@ -393,6 +425,7 @@ if (process.env.AGENTLAS_CHAT_FILE_QA_SEED === "1") {
       const workReadable320 = await workRail.boundingBox();
       assert.ok(workReadable320 && workReadable320.width >= 440, `Work file view must temporarily widen a saved 320px rail: ${JSON.stringify(workReadable320)}`);
       assert.equal(await page.evaluate(() => localStorage.getItem("agentlas.chat.right_panel_width")), "320", "Work temporary file width must not overwrite a 320px preference");
+      await measureWorkPanelStage("file-readable-from-320");
       const workComposerAlignment = await page.evaluate(() => {
         const folderRow = document.querySelector('[data-chat-folder-row="true"]');
         const folderControl = document.querySelector('[data-project-folder-trigger="true"]');
@@ -428,6 +461,8 @@ if (process.env.AGENTLAS_CHAT_FILE_QA_SEED === "1") {
         const rail = document.querySelector(".chat-right-panel");
         return rail instanceof HTMLElement && rail.getBoundingClientRect().width <= 322;
       });
+      const workRestored320 = await measureWorkPanelStage("tabs-empty-restored");
+      assert.ok(workRestored320.rail && workRestored320.rail.width <= 322, `Work must restore the saved 320px width after the final file tab closes: ${JSON.stringify(workRestored320)}`);
       const initialWorkTabCount = await page.locator('[data-chat-file-tabs="true"] [role="tab"]').count();
       await workCards.nth(0).click();
       await page.waitForFunction((expected) => document.querySelectorAll('[data-chat-file-tabs="true"] [role="tab"]').length === expected, initialWorkTabCount + 1);
@@ -437,8 +472,30 @@ if (process.env.AGENTLAS_CHAT_FILE_QA_SEED === "1") {
       await workCards.nth(0).click();
       assert.equal(await page.locator('[data-chat-file-tabs="true"] [role="tab"]').count(), initialWorkTabCount + 2, "same Work file must reactivate instead of duplicating");
       await page.getByRole("link", { name: "Missing file" }).click();
-      await page.locator('[data-file-unavailable="true"]').waitFor({ state: "visible", timeout: 10_000 });
-      for (const width of [390, 768, 1024, 1240]) await measure("work", width);
+      await page.locator('[data-file-unavailable-state="true"]').waitFor({ state: "visible", timeout: 10_000 });
+      await page.waitForFunction(() => {
+        const rail = document.querySelector(".chat-right-panel");
+        return rail instanceof HTMLElement && rail.getBoundingClientRect().width >= 440;
+      });
+      const missingBeforeResponsive = await measureWorkPanelStage("missing-before-responsive");
+      assert.ok(missingBeforeResponsive.rail && missingBeforeResponsive.rail.width >= 440, `Missing Work file must receive the same readable rail width as an available file: ${JSON.stringify(missingBeforeResponsive)}`);
+      assert.equal(missingBeforeResponsive.unavailableNotice, null, `Missing Work file must not repeat its unavailable guidance in a second notice: ${JSON.stringify(missingBeforeResponsive)}`);
+      assert.ok(missingBeforeResponsive.unavailableState, `Missing Work file must render a visible unavailable state: ${JSON.stringify(missingBeforeResponsive)}`);
+      assert.ok(missingBeforeResponsive.unavailableMessage, `Missing Work file must render an actionable unavailable message: ${JSON.stringify(missingBeforeResponsive)}`);
+      assert.equal(await page.locator('[data-file-unavailable-state="true"]').count(), 1, "Missing Work file must render exactly one unavailable state");
+      for (const width of [390, 768, 1024, 1240]) {
+        await measure("work", width);
+        const layout = await measureWorkPanelStage(`missing-at-${width}`);
+        if (width === 1240) {
+          assert.ok(layout.rail && layout.rail.width >= 440, `Work file rail must recover its readable width after a narrow-to-wide resize: ${JSON.stringify(layout)}`);
+        }
+        assert.equal(layout.unavailableNotice, null, `Work missing-file guidance must not be duplicated at ${width}px: ${JSON.stringify(layout)}`);
+        for (const [name, metric] of [["unavailable state", layout.unavailableState], ["unavailable message", layout.unavailableMessage]]) {
+          assert.ok(metric, `Work ${name} is missing at ${width}px: ${JSON.stringify(layout)}`);
+          assert.ok(metric.scrollWidth <= metric.clientWidth + 1, `Work ${name} clips horizontally at ${width}px: ${JSON.stringify(layout)}`);
+          assert.ok(!layout.rail || metric.right <= layout.rail.right + 1, `Work ${name} renders beyond the rail at ${width}px: ${JSON.stringify(layout)}`);
+        }
+      }
       await page.screenshot({ path: path.join(proofDir, "work.png"), fullPage: true });
 
       await navigateApp("agentlas://app/one", "/one");
@@ -483,6 +540,7 @@ if (process.env.AGENTLAS_CHAT_FILE_QA_SEED === "1") {
           workFrom320: workReadable320?.width,
         },
         workComposerAlignment,
+        workPanelStages,
         shortAnswerStayedInline: true,
         avatarContract: { directGroupPortraits: 1, directGroupSpacers: 1, taskforcePortraits: 1, userPortraits: 0 },
         collisionCode: seeded.collisionCode,

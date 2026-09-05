@@ -1590,6 +1590,7 @@ function ChatPage() {
     setMediaPreview(null);
     restorePreferredRightPanelWidth();
   }, [restorePreferredRightPanelWidth]);
+  const readableRightPanelActive = rightPanelOpen && rightPanelTab === "panel" && Boolean(mediaPreview);
   /*
    * ★창이 좁아지면 레일도 같이 줄어든다(2026-09-04 실측).
    *
@@ -1601,12 +1602,18 @@ function ChatPage() {
   useEffect(() => {
     if (typeof window === "undefined") return;
     const onResize = () => setRightPanelWidth((current) => {
-      const next = clampRightPanelWidth(current);
+      const clamped = clampRightPanelWidth(current);
+      // A file/result rail may contract while the window is narrow, but that
+      // contraction is not a new user preference. When room returns, restore
+      // the same temporary readable width that opening the file requested.
+      const next = readableRightPanelActive
+        ? Math.max(clamped, preferredRichResultWidth())
+        : clamped;
       return next === current ? current : next;
     });
     window.addEventListener("resize", onResize);
     return () => window.removeEventListener("resize", onResize);
-  }, []);
+  }, [readableRightPanelActive]);
   const [rightPanelHeight, setRightPanelHeight] = useState<number | null>(() => readRightPanelHeight());
   const workspaceOpen = rightPanelOpen && rightPanelTab === "file";
   const networkOpen = rightPanelOpen && rightPanelTab === "agent";

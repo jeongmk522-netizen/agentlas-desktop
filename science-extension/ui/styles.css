@@ -4243,7 +4243,6 @@ dl dd:empty::after {
   .workspace .railBrandWordmark,
   .workspace .railCollapseButton,
   .workspace .railBackButton,
-  .workspace .projectLibraryBack,
   .workspace .railProjectIdentity,
   .workspace .recentProjectsSection,
   .workspace .currentProjectSection,
@@ -4261,6 +4260,8 @@ dl dd:empty::after {
   .workspace .railBrand { justify-content: center; padding-right: 0; padding-left: 0; }
   .workspace .railBrandLockup { flex: 0 0 auto; justify-content: center; gap: 0; overflow: visible; }
   .workspace .railBrandMark { width: 30px; height: 33px; flex-basis: 30px; }
+  .workspace .projectLibraryBack { width: 40px; min-height: 40px; justify-content: center; margin: 0 auto 4px; padding: 0; }
+  .workspace .projectLibraryBack span { display: none; }
   .workspace .newButton { width: 40px; height: 40px; margin: 0 auto 12px; padding: 0; }
   .workspace .labSection { border-top: 1px solid var(--line); }
   .workspace .labList,

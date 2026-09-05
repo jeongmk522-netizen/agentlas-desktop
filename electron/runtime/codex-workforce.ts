@@ -159,7 +159,12 @@ export class CodexWorkforceObservation {
     }
     if (actual.type === "workspaceWrite") {
       if (!Array.isArray(actual.writableRoots) || actual.writableRoots.some((root: unknown) => typeof root !== "string" || !path.isAbsolute(root))) fail("thread_roots_missing");
-      if (canonical([...actual.writableRoots].sort()) !== canonical([...(wanted.writableRoots as string[])].sort())) fail("thread_roots_mismatch");
+      // Native writableRoots lists additional roots: SandboxPolicy's
+      // get_writable_roots_with_cwd always includes the acknowledged cwd.
+      // 0.153.4 normalizes an explicit duplicate cwd to []. Compare effective
+      // sets while retaining the raw native response below as the evidence.
+      const effectiveRoots = (roots: string[]) => [...new Set([path.resolve(cwd), ...roots.map((root) => path.resolve(root))])].sort();
+      if (canonical(effectiveRoots(actual.writableRoots)) !== canonical(effectiveRoots(wanted.writableRoots as string[]))) fail("thread_roots_mismatch");
     }
     this.threadId = response.thread.id;
     this.policy = JSON.parse(JSON.stringify({ sandbox: actual, approvalPolicy: response.approvalPolicy, approvalsReviewer: response.approvalsReviewer, cwd: response.cwd }));

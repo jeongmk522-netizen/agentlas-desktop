@@ -186,6 +186,7 @@ for (const gate of selected) {
     failed += 1;
     outcomes.push({ gate, status: "FAIL" });
     console.error(`FAIL ${gate}`);
+    console.error(output.trim().split("\n").slice(0, 8).join("\n"));
     console.error(`${viaLoader.stdout || ""}${viaLoader.stderr || ""}`.trim().split("\n").slice(-6).join("\n"));
     continue;
   }

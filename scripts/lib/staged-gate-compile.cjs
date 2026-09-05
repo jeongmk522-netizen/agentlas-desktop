@@ -109,8 +109,16 @@ Module._resolveFilename = function (request, parent, ...rest) {
   catch (error) {
     if (error.code !== "MODULE_NOT_FOUND" || !(request.startsWith(".") || path.isAbsolute(request))) throw error;
     const candidate = path.resolve(parent?.filename ? path.dirname(parent.filename) : root, request);
-    if (!compile(candidate)) throw error;
-    return originalResolve.call(this, request, parent, ...rest);
+    if (compile(candidate)) return originalResolve.call(this, request, parent, ...rest);
+    // Some trusted CJS gates transpile their entry with a source .ts filename.
+    // Its relative runtime imports still need indexed emission, not an npx
+    // cache loader or a fallback into live source/dist.
+    const relative = path.relative(root, candidate).split(path.sep).join("/");
+    if (/^(electron|shared|plugins)\//.test(relative)) {
+      const emitted = path.join(dist, relative);
+      if (compile(emitted)) return originalResolve.call(this, emitted, parent, ...rest);
+    }
+    throw error;
   }
 };
 process.on("exit", () => {

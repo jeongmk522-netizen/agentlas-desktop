@@ -407,6 +407,14 @@ function createComposerEventSync({
   let librarySearchTimer = null;
   let librarySearchComposing = false;
   const uiCopy = (ko, en) => state.locale === "ko" ? ko : en;
+  const pendingHypothesisCopy = (pending) => uiCopy(
+    `${pending}건이 당신의 결정을 기다립니다.`,
+    `${pending} ${pending === 1 ? "hypothesis awaits" : "hypotheses await"} your decision.`,
+  );
+  const earthquakeProjectionCopy = () => uiCopy(
+    "USGS 원본 경도°·위도°·깊이 km · 화면은 축별 정규화",
+    "USGS source longitude° · latitude° · depth km · axes normalized for display",
+  );
   const domainLabels = {
     general: "인문·사회·융합", "life-science": "생명과학", chemistry: "화학", physics: "물리학",
     "materials-science": "재료과학", genomics: "유전체학", astronomy: "천문학", "earth-ecology": "지구·생태·고생물",
@@ -1726,7 +1734,7 @@ function createComposerEventSync({
     // human-only, so a study stops here until someone acts -- and "three cards, some already
     // decided" is not something a reader should have to work out by counting.
     const pending = rows.filter((item) => item && item.status !== "approved" && item.status !== "rejected").length;
-    const waitingLabel = uiCopy(`${pending}건이 당신의 결정을 기다립니다.`, `${pending} ${pending === 1 ? "hypothesis awaits" : "hypotheses await"} your decision.`);
+    const waitingLabel = pendingHypothesisCopy(pending);
     const waitingNotice = pending
       ? `<div class="researcherWaiting" role="status" data-pending-decisions="${escapeHtml(String(pending))}"><span class="stateGlyph" data-state="awaiting-human" aria-hidden="true"></span><strong>${escapeHtml(waitingLabel)}</strong><p>연구는 이 결정 없이 다음 단계로 가지 않습니다. 승인하거나 기각해 주세요.</p></div>`
       : "";
@@ -5800,7 +5808,7 @@ function createComposerEventSync({
       && typeof event.latitude === "number" && Number.isFinite(event.latitude)
       && typeof event.depthKm === "number" && Number.isFinite(event.depthKm)).length : 0;
     const earthquakeView = state.spatialViewByArtifact.get(artifact.id) === "earthquake-depth" && earthquake3dCount ? "earthquake-depth" : "earthquake-map";
-    const earthquakeToolbar = earthquakeCatalog ? `<div class="scientificViewToolbar earthquakeViewToolbar"><div class="scientificViewModes" role="group" aria-label="지진 보기"><button data-spatial-view="earthquake-map" aria-pressed="${earthquakeView === "earthquake-map"}">Map 2D</button><button data-spatial-view="earthquake-depth" aria-pressed="${earthquakeView === "earthquake-depth"}" ${earthquake3dCount ? "" : "disabled"}>Depth 3D · ${escapeHtml(earthquake3dCount)}</button></div><span>USGS 원본 경도°·위도°·깊이 km · 화면은 축별 정규화</span></div>` : "";
+    const earthquakeToolbar = earthquakeCatalog ? `<div class="scientificViewToolbar earthquakeViewToolbar"><div class="scientificViewModes" role="group" aria-label="지진 보기"><button data-spatial-view="earthquake-map" aria-pressed="${earthquakeView === "earthquake-map"}">Map 2D</button><button data-spatial-view="earthquake-depth" aria-pressed="${earthquakeView === "earthquake-depth"}" ${earthquake3dCount ? "" : "disabled"}>Depth 3D · ${escapeHtml(earthquake3dCount)}</button></div><span>${escapeHtml(earthquakeProjectionCopy())}</span></div>` : "";
     const genomicsPayload = artifact.version.payload;
     const genomicsToolbar = artifact.version.rendererId === "agentlas.jbrowse" ? `<div class="genomicsToolbar"><div><span>ASSEMBLY</span><strong>${escapeHtml(genomicsPayload?.assembly?.name || "")}</strong></div><div><span>REGION</span><strong>${escapeHtml(genomicsPayload?.region?.refName || "")}:${escapeHtml(genomicsPayload?.region?.start || "")}–${escapeHtml(genomicsPayload?.region?.end || "")}</strong></div><div><span>VARIANTS</span><strong>${escapeHtml(Array.isArray(genomicsPayload?.variants) ? genomicsPayload.variants.length : 0)} · ClinVar</strong></div><p>Pan · zoom · feature click은 JBrowse 2 세션에서 직접 조작됩니다.</p></div>` : "";
     const statisticsFigureToolbar = statisticsFigurePayload ? `<section class="statisticsFigureToolbar" data-statistics-figure-toolbar><div class="statisticsFigureIdentity"><span>PUBLICATION FIGURE · EXACT BINDING</span><strong>${escapeHtml(statisticsFigurePayload.visualization.title)}</strong><code title="${escapeHtml(statisticsFigurePayload.statisticsArtifact.contentSha256)}">analysis v${escapeHtml(statisticsFigurePayload.statisticsArtifact.artifactVersion)} · ${escapeHtml(String(statisticsFigurePayload.statisticsArtifact.contentSha256).slice(0, 12))}…</code></div><dl class="statisticsFigureSpecs"><div><dt>단 폭</dt><dd>1단 89 mm · 2단 183 mm</dd></div><div><dt>글자</dt><dd>최종 크기에서 8–12 pt</dd></div><div><dt>색</dt><dd>sRGB · 흑백 확인됨</dd></div></dl><div class="statisticsFigureExport"><div><button type="button" data-action="open-compare" ${historyEntries.length < 2 ? "disabled" : ""}>버전 비교</button><button type="button" data-action="export-statistics-figure-svg" ${state.figureActionBusy ? "disabled" : ""}>${state.figureActionBusy ? "생성 중…" : "SVG"}</button><button type="button" data-action="export-statistics-figure-png" ${state.figureActionBusy ? "disabled" : ""}>${state.figureActionBusy ? "생성 중…" : "PNG 600dpi"}</button><button type="button" data-action="export-statistics-figure-pdf" ${state.figureActionBusy ? "disabled" : ""}>${state.figureActionBusy ? "생성 중…" : "PDF 600dpi"}</button><button type="button" data-action="export-statistics-figure-tiff" ${state.figureActionBusy ? "disabled" : ""}>${state.figureActionBusy ? "생성 중…" : "TIFF 600dpi"}</button></div><span class="supportBoundary">SVG · PNG/PDF/TIFF 300/600dpi · sRGB ICC. CMYK와 vector PDF는 아직 미지원. 저널별 정확한 한도는 제출 시 검사합니다.</span></div>${state.figureActionError ? `<p role="alert">${escapeHtml(state.figureActionError)}</p>` : state.figureActionNotice ? `<p role="status">${escapeHtml(state.figureActionNotice)}</p>` : ""}</section>` : "";

@@ -1075,10 +1075,15 @@ function FileViewer({ file, onExpand }: { file: WorkspaceFilePreview; onExpand?:
   const { locale } = useT();
   const ko = locale === "ko";
   const codePreview = isCodeFilePreview(file);
+  const hasDocumentToolbar = file.available !== false
+    && isLiveOutputKind(file.viewerKind)
+    && file.viewerKind !== "image"
+    && file.viewerKind !== "video"
+    && file.viewerKind !== "audio";
   const typeLabel = viewerKindLabel(file.viewerKind, ko);
   return (
     <section style={fileViewerStyle}>
-      {!codePreview && (
+      {!codePreview && !hasDocumentToolbar && (
         <header style={fileViewerHeaderStyle}>
           <span style={fileViewerIconStyle}>{iconForViewerKind(file.viewerKind)}</span>
           <div style={{ flex: 1, minWidth: 0 }}>

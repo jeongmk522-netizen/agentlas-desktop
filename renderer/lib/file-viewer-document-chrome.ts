@@ -498,6 +498,8 @@ const DOCUMENT_CHROME_STYLE = `
 .pdf-shell[data-agentlas-layout='compact'] .pdfViewer { padding-inline: 12px !important; }
 .pptx-viewer-shell[data-agentlas-layout='compact'] .pptx-render-surface { padding-inline: 12px; }
 .excel-wrapper[data-file-viewer-spreadsheet-root] { --evt-select-border-color: #6366f1; --evt-select-area-color: rgba(99,102,241,.08); }
+.excel-wrapper[data-file-viewer-spreadsheet-root] > .toolbar > .summary { display: none; }
+.excel-wrapper[data-file-viewer-spreadsheet-root] > .toolbar > .btn-group { flex: 1 1 0; min-width: 0; overflow-x: auto; }
 .agentlas-sheet-formula-bar { flex: 0 0 34px; min-height: 34px; display: grid; grid-template-columns: 64px 32px minmax(0,1fr); align-items: center; border-bottom: 1px solid #d9dde3; background: #fff; color: #303743; font: 12px/1.2 system-ui,sans-serif; }
 .agentlas-sheet-cell-address { align-self: stretch; display: flex; align-items: center; justify-content: center; border-right: 1px solid #d9dde3; font-weight: 650; font-variant-numeric: tabular-nums; }
 .agentlas-sheet-fx { color: #6b7280; text-align: center; font: italic 600 13px/1 Georgia,serif; }

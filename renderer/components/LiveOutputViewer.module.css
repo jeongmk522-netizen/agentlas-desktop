@@ -17,6 +17,10 @@
 .mediaStatus > span, .loading > span { width: 17px; height: 17px; border: 2px solid rgba(255,255,255,.35); border-top-color: #fff; border-radius: 50%; animation: output-spin .8s linear infinite; }
 .documentEngine { width: 100%; height: 100%; min-height: 420px; position: relative; overflow: hidden; background: #f5f7f5; }
 .documentEngineRoot { width: 100%; height: 100%; min-height: 420px; display: block; }
+/* Shadow toolbar must fit the file rail, not the browser viewport. */
+.documentEngineRoot::part(toolbar) { min-width: 0; max-width: 100%; flex-wrap: wrap; }
+.documentEngineRoot::part(toolbar-group) { min-width: 0; max-width: 100%; box-sizing: border-box; flex-wrap: wrap; }
+.documentEngineRoot::part(input) { flex: 1 1 128px; min-width: 128px; max-width: 100%; }
 .documentEngine[data-fill="true"], .documentEngine[data-fill="true"] .documentEngineRoot { height: 100%; min-height: 0; }
 .documentEngine[data-compact="true"], .documentEngine[data-compact="true"] .documentEngineRoot { min-height: 240px; max-height: 320px; }
 .documentError { position: absolute; inset: 0; z-index: 4; display: grid; place-items: center; align-content: center; gap: 7px; padding: 24px; background: rgba(250, 247, 247, .95); color: #724747; text-align: center; }

@@ -5101,13 +5101,32 @@ export function OneShell() {
    * 부분 본문은 죽은 프로세스의 메모리에 있었으므로 되살릴 수 없다 — 되살릴 수 없는 것을
    * 되살린 척하지 않고, 같은 질문을 다시 보내는 길만 정직하게 연다.
    */
-  const retryUnansweredTurn = useCallback((promptText: string) => {
+  /**
+   * ★ 재시도는 원 실행의 모델로 간다 (UX-2, 2026-09-05).
+   * 실패·미응답 턴의 "다시 시도"가 컴포저의 *지금* 선택으로 나가, 사용자가 그 턴에 고른
+   * 모델이 재시도 한 번에 바뀌었다(실측: 원 실행 qwen3-32b → 재실행 qwen3-235b).
+   * 원장 final 이 남긴 실행 모델이 현재 런타임의 선택지 안에 있을 때만 그 모델을 싣는다 —
+   * 런타임이 바뀌어 그 모델을 고를 수 없으면 모르는 조합을 지어내지 않고 컴포저 선택을 쓴다.
+   */
+  const runtimeSelectionForRetry = useCallback((originalModel: string | null | undefined): RuntimeSelection | undefined => {
+    const model = originalModel?.trim();
+    if (!model || !oneRuntimeSelection || oneRuntimeSelection.model === model) return oneRuntimeSelection;
+    const known = oneModelOptions.some((option) =>
+      option.runtime.kind === oneRuntimeSelection.kind
+      && option.runtime.backend === oneRuntimeSelection.backend
+      && option.id === model);
+    return known ? { ...oneRuntimeSelection, model } : oneRuntimeSelection;
+  }, [oneModelOptions, oneRuntimeSelection]);
+
+  const retryUnansweredTurn = useCallback((promptText: string, originalModel?: string | null) => {
     const chatId = selected?.chatId ?? conversation?.id;
     const prompt = promptText.trim();
     if (!chatId || !prompt || busy) return;
-    void startRun(chatId, null, null, prompt, "conversation", { displayUserMessage: true })
-      .catch((cause) => requestOneOperationalRecovery("one-unanswered-retry", cause));
-  }, [busy, conversation?.id, selected?.chatId, startRun]);
+    void startRun(chatId, null, null, prompt, "conversation", {
+      displayUserMessage: true,
+      runtimeSelection: runtimeSelectionForRetry(originalModel),
+    }).catch((cause) => requestOneOperationalRecovery("one-unanswered-retry", cause));
+  }, [busy, conversation?.id, runtimeSelectionForRetry, selected?.chatId, startRun]);
 
   const sendFocusedFailureToOne = useCallback(() => {
     if (!failureFocus || busy) return;
@@ -6685,7 +6704,7 @@ export function OneShell() {
                               workspacePath={workspacePath}
                               runStatus={block.status}
                               {...(message.role === "user" && message.text.trim()
-                                ? { onRetry: () => retryUnansweredTurn(message.text), retryDisabled: busy }
+                                ? { onRetry: () => retryUnansweredTurn(message.text, block.state.model), retryDisabled: busy }
                                 : {})}
                             />
                             {activeTaskforce && <OneTaskforceConversation state={block.state} org={oneOrgState} locale={appLocale} />}

@@ -4758,7 +4758,7 @@ function ChatPage() {
           이 배너만 감싸는 것이 없어 창 양끝에 그대로 붙었고, 바로 아래 배너는
           margin 0 16px 라 두 줄이 서로 어긋나 보였다. */}
       <div style={{ margin: "0 16px" }}>
-        <KeyStatusBanner mode="banner" />
+        <KeyStatusBanner mode="banner" compact />
       </div>
 
       <div style={{ margin: "0 16px" }}>

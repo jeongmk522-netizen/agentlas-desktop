@@ -103,7 +103,11 @@ function requireFrozenPlan(
   const plan = reader.getAnalysisSpecForProject(projectId, binding.analysisSpecId);
   if (!plan || plan.projectId !== projectId || plan.status !== "frozen"
     || plan.currentVersion !== binding.version || plan.version.version !== binding.version
-    || plan.currentDocumentSha256 !== binding.contentSha256 || plan.version.documentSha256 !== binding.contentSha256) {
+    || plan.currentDocumentSha256 !== binding.contentSha256 || plan.version.documentSha256 !== binding.contentSha256
+    || plan.latestReview?.decision !== "approve" || plan.latestReview.resultingStatus !== "frozen"
+    || plan.latestReview.analysisSpecVersion !== binding.version
+    || plan.latestReview.analysisSpecContentSha256 !== binding.contentSha256
+    || plan.latestReview.analysisSpecLockVersion + 1 !== plan.lockVersion) {
     throw new Error("science-research-lifecycle-plan-gate-blocked");
   }
   return plan;

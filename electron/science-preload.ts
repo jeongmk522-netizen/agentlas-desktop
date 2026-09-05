@@ -208,6 +208,7 @@ contextBridge.exposeInMainWorld("agentlasScience", Object.freeze({
   analysisSpecs: Object.freeze({
     list: (projectId: string) => ipcRenderer.invoke("science:analysisSpecs:list", { extensionId, projectId }),
     get: (projectId: string, analysisSpecId: string) => ipcRenderer.invoke("science:analysisSpecs:get", { extensionId, projectId, analysisSpecId }),
+    review: (input: unknown) => ipcRenderer.invoke("science:analysisSpecs:review", { extensionId, input }),
   }),
   decisions: Object.freeze({
     list: (projectId: string, analysisSpecId?: string, statuses?: string[]) => ipcRenderer.invoke("science:decisions:list", { extensionId, projectId, analysisSpecId, statuses }),

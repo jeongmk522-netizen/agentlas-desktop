@@ -2347,6 +2347,22 @@ export interface ScienceAnalysisSpecVersion {
   createdAt: string;
 }
 
+export interface ScienceAnalysisPlanReviewReceipt {
+  id: string;
+  requestId: string;
+  projectId: string;
+  analysisSpecId: string;
+  analysisSpecVersion: number;
+  analysisSpecContentSha256: string;
+  analysisSpecLockVersion: number;
+  decision: "approve" | "revise";
+  rationale: string | null;
+  actor: "human";
+  resultingStatus: "draft" | "frozen";
+  createdAt: string;
+  receiptSha256: string;
+}
+
 export interface ScienceAnalysisSpec {
   id: string;
   projectId: string;
@@ -2356,6 +2372,7 @@ export interface ScienceAnalysisSpec {
   currentDocumentSha256: string;
   lockVersion: number;
   version: ScienceAnalysisSpecVersion;
+  latestReview: ScienceAnalysisPlanReviewReceipt | null;
   frozenAt: string | null;
   createdAt: string;
   updatedAt: string;
@@ -2479,6 +2496,23 @@ export interface FreezeScienceAnalysisSpecInput {
 }
 
 export interface FreezeScienceAnalysisSpecResult {
+  analysisSpec: ScienceAnalysisSpec;
+  replayed: boolean;
+}
+
+export interface ReviewScienceAnalysisPlanInput {
+  requestId: string;
+  projectId: string;
+  analysisSpecId: string;
+  expectedVersion: number;
+  expectedContentSha256: string;
+  expectedLockVersion: number;
+  decision: "approve" | "revise";
+  rationale?: string | null;
+}
+
+export interface ReviewScienceAnalysisPlanResult {
+  receipt: ScienceAnalysisPlanReviewReceipt;
   analysisSpec: ScienceAnalysisSpec;
   replayed: boolean;
 }

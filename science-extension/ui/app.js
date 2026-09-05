@@ -235,7 +235,7 @@ const { stripAgentControlBlocks, stripStormbreakerContinueMarker, STORMBREAKER_C
     // preview state so the typeset proof and the source it was compiled from cannot drift apart.
     manuscriptPreviewLatex: "", manuscriptPreviewBibtex: "", manuscriptPreviewCapabilities: null,
     artifactBindingBusy: false, artifactBindingError: "", pendingManuscriptBinding: null, manuscriptDraftJob: null,
-    decisionBusy: false, decisionError: "", labDecisionActionBusy: false, labDecisionActionError: "",
+    decisionBusy: false, decisionError: "", analysisPlanReviewSheet: false, analysisPlanReviewBusy: false, analysisPlanReviewError: "", analysisPlanReviewDismissedKey: null, labDecisionActionBusy: false, labDecisionActionError: "",
     resultReviewSheet: false, resultReviewInspection: null, resultReviewBusy: false, resultReviewError: "", resultReviewStale: false, resultReviewOpener: null, resultReviewDraft: { verdict: "", trigger: "", rationale: "" },
     researchContract: null, researchContractSheet: false, researchContractBusy: false, researchContractError: "", researchContractDismissedKey: null,
     scopeLoading: false, scopeError: "",
@@ -542,6 +542,10 @@ const { stripAgentControlBlocks, stripStormbreakerContinueMarker, STORMBREAKER_C
     const presented = state.decisions.filter((decision) => decision?.status === "presented" && typeof decision?.proposalSha256 === "string");
     if (presented.length !== 1) return null;
     const decision = presented[0];
+    const analysisSpec = analysisSpecById(decision.analysisSpecId);
+    if (!analysisSpec || analysisSpec.status !== "draft"
+      || decision.basisVersion !== analysisSpec.currentVersion
+      || decision.basisContentSha256 !== analysisSpec.currentDocumentSha256) return null;
     const bindings = lifecycle.openBlockingDecisions.filter((candidate) => candidate.id === decision.id && candidate.contentSha256 === decision.proposalSha256);
     return bindings.length === 1 ? decision : null;
   };
@@ -986,7 +990,8 @@ const { stripAgentControlBlocks, stripStormbreakerContinueMarker, STORMBREAKER_C
       if (manuscript) { tab.title = manuscript.title; tab.exactVersion = manuscript.currentVersion; tab.exactContentSha256 = manuscript.version?.contentSha256 || null; }
     }
     if (!state.projectFolderOpen && await maybeOpenDraftJobManuscript(projectId, { terminalStatus: state.activeTurn?.status })) return;
-    if (state.researchContractSheet) { render(); return; }
+    maybePresentAnalysisPlanReview();
+    if (state.researchContractSheet || state.analysisPlanReviewSheet) { render(); return; }
     renderWorkspaceTabs();
     renderChatDock();
   }
@@ -1057,6 +1062,10 @@ const { stripAgentControlBlocks, stripStormbreakerContinueMarker, STORMBREAKER_C
     state.submissionArchiveError = "";
     state.analysisSpecs = [];
     state.decisions = [];
+    state.analysisPlanReviewSheet = false;
+    state.analysisPlanReviewBusy = false;
+    state.analysisPlanReviewError = "";
+    state.analysisPlanReviewDismissedKey = null;
     state.artifactContextsByMessage = new Map();
     state.labContextsById = new Map();
     state.artifactHistoryById = new Map();
@@ -1287,6 +1296,7 @@ const { stripAgentControlBlocks, stripStormbreakerContinueMarker, STORMBREAKER_C
       state.acquisitionUnresolvedIds = [];
       state.acquisitionError = "";
       if (!state.projectFolderOpen && await maybeOpenDraftJobManuscript(projectId, { terminalStatus: state.activeTurn?.status })) return;
+      maybePresentAnalysisPlanReview();
       render();
       // Read the hypotheses on opening the project, not only on arriving at their screen: the rail
       // badge tells the researcher that something is waiting on them, and a badge that only appears
@@ -1447,8 +1457,13 @@ const { stripAgentControlBlocks, stripStormbreakerContinueMarker, STORMBREAKER_C
     const estimand = document.estimand;
     const model = document.model;
     const decisions = state.decisions.filter((decision) => decision.analysisSpecId === plan.id && ["queued", "presented", "deferred"].includes(decision.status));
+    const reviewState = plan.status === "frozen" ? "사람 승인 완료"
+      : decisions.length ? `${decisions.length}개 설계 질문 응답 필요`
+        : plan.latestReview?.decision === "revise" ? "수정 요청 전달됨" : "계획 승인 필요";
+    const reviewAction = plan.status === "draft" && decisions.length === 0
+      ? `<button class="primaryButton analysisPlanReviewButton" data-action="open-analysis-plan-review">정확한 계획 검토</button>` : "";
     const values = (items, empty = "정의되지 않음") => Array.isArray(items) && items.length ? items.join(", ") : empty;
-    return `<section class="analysisPlanView" data-analysis-plan-id="${escapeHtml(plan.id)}" data-analysis-plan-version="${escapeHtml(plan.currentVersion)}" data-analysis-plan-sha256="${escapeHtml(plan.currentDocumentSha256)}"><header><div><span>PLAN & PROTOCOLS · EXACT VERSION</span><h1>${escapeHtml(plan.title)}</h1><p>${escapeHtml(document.researchQuestion || project.question)}</p></div><div class="analysisPlanIdentity"><em data-status="${escapeHtml(plan.status)}">${escapeHtml(plan.status)}</em><strong>v${escapeHtml(plan.currentVersion)}</strong><code title="${escapeHtml(plan.currentDocumentSha256)}">${escapeHtml(plan.currentDocumentSha256.slice(0, 12))}…</code></div></header><div class="analysisPlanGrid"><section><span>Estimand</span>${estimand ? `<dl><div><dt>Population</dt><dd>${escapeHtml(estimand.population)}</dd></div><div><dt>Exposure</dt><dd>${escapeHtml(estimand.treatmentOrExposure)}</dd></div><div><dt>Comparator</dt><dd>${escapeHtml(estimand.comparator || "없음")}</dd></div><div><dt>Outcome</dt><dd>${escapeHtml(estimand.outcome)}</dd></div><div><dt>Measure</dt><dd>${escapeHtml(estimand.summaryMeasure)}</dd></div></dl>` : `<p>연구자가 estimand를 아직 확정하지 않았습니다.</p>`}</section><section><span>Design & dependence</span><dl><div><dt>Study</dt><dd>${escapeHtml(document.design?.studyType || "미정")}</dd></div><div><dt>Observation unit</dt><dd>${escapeHtml(document.design?.observationUnit || "미정")}</dd></div><div><dt>Dependence</dt><dd>${escapeHtml(document.design?.dependence?.kind || "unresolved")}</dd></div><div><dt>Inputs</dt><dd>${escapeHtml(document.data?.inputs?.length || 0)} exact artifact version(s)</dd></div></dl></section><section><span>Model</span>${model ? `<dl><div><dt>Family</dt><dd>${escapeHtml(model.family)}</dd></div><div><dt>Formula</dt><dd><code>${escapeHtml(model.formula)}</code></dd></div><div><dt>Distribution / link</dt><dd>${escapeHtml(`${model.distribution || "—"} / ${model.link || "—"}`)}</dd></div><div><dt>Rationale</dt><dd>${escapeHtml(model.rationale)}</dd></div></dl>` : `<p>모델이 아직 확정되지 않았습니다.</p>`}</section><section><span>Validity checks</span><dl><div><dt>Diagnostics</dt><dd>${escapeHtml(values(document.requiredDiagnostics))}</dd></div><div><dt>Sensitivity</dt><dd>${escapeHtml(values(document.sensitivityAnalyses))}</dd></div><div><dt>Missing data</dt><dd>${escapeHtml(document.missingData?.strategy || "unresolved")}</dd></div><div><dt>Multiplicity</dt><dd>${escapeHtml(document.multiplicity?.strategy || "unresolved")}</dd></div></dl></section></div><footer><div><span>Human decisions</span><strong>${escapeHtml(decisions.length ? `${decisions.length}개 미해결` : "미해결 결정 없음")}</strong></div><div><span>Expected outputs</span><strong>${escapeHtml(values(document.expectedArtifacts?.map((item) => item.title), "등록 없음"))}</strong></div><div><span>Runtime boundary</span><strong>${escapeHtml(`${document.runtimePolicy?.network || "deny"} network · ${document.runtimePolicy?.maxWallTimeMinutes || "-"} min`)}</strong></div></footer></section>`;
+    return `<section class="analysisPlanView" data-analysis-plan-id="${escapeHtml(plan.id)}" data-analysis-plan-version="${escapeHtml(plan.currentVersion)}" data-analysis-plan-sha256="${escapeHtml(plan.currentDocumentSha256)}"><header><div><span>PLAN & PROTOCOLS · EXACT VERSION</span><h1>${escapeHtml(plan.title)}</h1><p>${escapeHtml(document.researchQuestion || project.question)}</p></div><div class="analysisPlanIdentity"><em data-status="${escapeHtml(plan.status)}">${escapeHtml(plan.status)}</em><strong>v${escapeHtml(plan.currentVersion)}</strong><code title="${escapeHtml(plan.currentDocumentSha256)}">${escapeHtml(plan.currentDocumentSha256.slice(0, 12))}…</code>${reviewAction}</div></header><div class="analysisPlanGrid"><section><span>Estimand</span>${estimand ? `<dl><div><dt>Population</dt><dd>${escapeHtml(estimand.population)}</dd></div><div><dt>Exposure</dt><dd>${escapeHtml(estimand.treatmentOrExposure)}</dd></div><div><dt>Comparator</dt><dd>${escapeHtml(estimand.comparator || "없음")}</dd></div><div><dt>Outcome</dt><dd>${escapeHtml(estimand.outcome)}</dd></div><div><dt>Measure</dt><dd>${escapeHtml(estimand.summaryMeasure)}</dd></div></dl>` : `<p>연구자가 estimand를 아직 확정하지 않았습니다.</p>`}</section><section><span>Design & dependence</span><dl><div><dt>Study</dt><dd>${escapeHtml(document.design?.studyType || "미정")}</dd></div><div><dt>Observation unit</dt><dd>${escapeHtml(document.design?.observationUnit || "미정")}</dd></div><div><dt>Dependence</dt><dd>${escapeHtml(document.design?.dependence?.kind || "unresolved")}</dd></div><div><dt>Inputs</dt><dd>${escapeHtml(document.data?.inputs?.length || 0)} exact artifact version(s)</dd></div></dl></section><section><span>Model</span>${model ? `<dl><div><dt>Family</dt><dd>${escapeHtml(model.family)}</dd></div><div><dt>Formula</dt><dd><code>${escapeHtml(model.formula)}</code></dd></div><div><dt>Distribution / link</dt><dd>${escapeHtml(`${model.distribution || "—"} / ${model.link || "—"}`)}</dd></div><div><dt>Rationale</dt><dd>${escapeHtml(model.rationale)}</dd></div></dl>` : `<p>이 계획은 도메인별 실행 도구가 모형 계약을 소유하므로 model=null을 명시했습니다.</p>`}</section><section><span>Validity checks</span><dl><div><dt>Diagnostics</dt><dd>${escapeHtml(values(document.requiredDiagnostics))}</dd></div><div><dt>Sensitivity</dt><dd>${escapeHtml(values(document.sensitivityAnalyses))}</dd></div><div><dt>Missing data</dt><dd>${escapeHtml(document.missingData?.strategy || "unresolved")}</dd></div><div><dt>Multiplicity</dt><dd>${escapeHtml(document.multiplicity?.strategy || "unresolved")}</dd></div></dl></section></div><footer><div><span>Human review</span><strong>${escapeHtml(reviewState)}</strong></div><div><span>Expected outputs</span><strong>${escapeHtml(values(document.expectedArtifacts?.map((item) => item.title), "등록 없음"))}</strong></div><div><span>Runtime boundary</span><strong>${escapeHtml(`${document.runtimePolicy?.network || "deny"} network · ${document.runtimePolicy?.maxWallTimeMinutes || "-"} min`)}</strong></div></footer></section>`;
   }
 
   // Approving or rejecting a hypothesis is reserved for a person: the agent-visible tool refuses
@@ -6204,6 +6219,36 @@ const { stripAgentControlBlocks, stripStormbreakerContinueMarker, STORMBREAKER_C
     return `<div class="chatQuestionScrim decisionSheetScrim" role="presentation"><form class="bottomSheet chatQuestionSheet researchDecisionSheet" id="research-decision-form" role="dialog" aria-modal="true" aria-labelledby="research-decision-title" data-chat-question-sheet="true"><header><div><span>Research decision · ${escapeHtml(analysisSpec?.title || "Analysis plan")}</span><h2 id="research-decision-title">${escapeHtml(decision.prompt.title)}</h2></div><button type="button" data-action="defer-research-decision" aria-label="이 결정을 나중에 답하기">×</button></header><div class="decisionSheetBody"><section class="decisionQuestion"><p>${escapeHtml(decision.prompt.question)}</p><div class="decisionWhy"><div><strong>왜 지금 묻나요?</strong><span>${escapeHtml(decision.prompt.whyAsked)}</span></div><div><strong>답하지 않으면</strong><span>${escapeHtml(decision.prompt.impactIfUnanswered)}</span></div></div></section><fieldset class="decisionOptions"><legend>연구 방향을 선택하세요</legend>${optionCards}</fieldset><label class="decisionRationale"><span>선택 이유 <em>선택 사항</em></span><textarea name="rationale" maxlength="8000" rows="3" placeholder="판단 근거, 제약 또는 AI가 다음 단계에서 고려할 내용을 남겨 주세요."></textarea></label><div class="decisionRecommendation"><strong>AI 추천 근거 · 신뢰도 ${escapeHtml(Math.round(Number(decision.recommendation?.confidence || 0) * 100))}%</strong><span>${escapeHtml(decision.recommendation?.rationale || "")}</span></div><div class="formError" role="alert">${escapeHtml(state.decisionError)}</div></div><footer><span>선택은 immutable decision receipt로 저장되며 분석계획 새 버전에 적용됩니다.</span><button class="secondaryButton" type="button" data-action="defer-research-decision" ${state.decisionBusy ? "disabled" : ""}>나중에</button><button class="primaryButton" type="submit" ${state.decisionBusy ? "disabled" : ""}>${state.decisionBusy ? "적용 중…" : "이 선택으로 계속"}</button></footer></form></div>`;
   }
 
+  const analysisPlanReviewKey = (plan) => plan
+    ? `${plan.id}:${plan.currentVersion}:${plan.currentDocumentSha256}:${plan.lockVersion}` : null;
+
+  function reviewableAnalysisPlan() {
+    const plan = analysisSpecById(state.selectedAnalysisPlanId) || state.analysisSpecs[0] || null;
+    if (!plan || plan.status !== "draft") return null;
+    const openDecisions = state.decisions.filter((decision) => decision.analysisSpecId === plan.id
+      && ["queued", "presented", "deferred"].includes(decision.status));
+    return openDecisions.length === 0 ? plan : null;
+  }
+
+  function maybePresentAnalysisPlanReview() {
+    const plan = reviewableAnalysisPlan();
+    const key = analysisPlanReviewKey(plan);
+    if (!plan || !key || plan.latestReview?.decision === "revise" || state.analysisPlanReviewDismissedKey === key) return;
+    state.selectedAnalysisPlanId = plan.id;
+    state.analysisPlanReviewSheet = true;
+    state.analysisPlanReviewError = "";
+  }
+
+  function analysisPlanReviewSheet() {
+    if (!state.analysisPlanReviewSheet) return "";
+    const plan = reviewableAnalysisPlan();
+    if (!plan) return "";
+    const document = plan.version?.document || {};
+    const inputs = Array.isArray(document.data?.inputs) ? document.data.inputs : [];
+    const inputRows = inputs.map((item) => `<li><strong>${escapeHtml(item.artifactId)} · v${escapeHtml(item.artifactVersion)}</strong><code title="${escapeHtml(item.contentSha256)}">${escapeHtml(String(item.contentSha256).slice(0, 16))}…</code></li>`).join("");
+    return `<div class="chatQuestionScrim analysisPlanReviewScrim" role="presentation"><form class="bottomSheet analysisPlanReviewSheet" id="analysis-plan-review-form" role="dialog" aria-modal="true" aria-labelledby="analysis-plan-review-title" data-analysis-plan-id="${escapeHtml(plan.id)}" data-analysis-plan-version="${escapeHtml(plan.currentVersion)}" data-analysis-plan-sha256="${escapeHtml(plan.currentDocumentSha256)}" data-analysis-plan-lock-version="${escapeHtml(plan.lockVersion)}"><header><div><span>Human authorization · exact analysis plan</span><h2 id="analysis-plan-review-title">이 분석계획을 그대로 고정할까요?</h2></div><button type="button" data-action="close-analysis-plan-review" aria-label="분석계획 검토를 나중에 하기">×</button></header><div class="analysisPlanReviewBody"><section class="analysisPlanReviewIdentity"><strong>${escapeHtml(plan.title)}</strong><dl><div><dt>Plan ID</dt><dd><code>${escapeHtml(plan.id)}</code></dd></div><div><dt>Version</dt><dd>v${escapeHtml(plan.currentVersion)}</dd></div><div><dt>Content</dt><dd><code>${escapeHtml(plan.currentDocumentSha256)}</code></dd></div><div><dt>Lock</dt><dd>${escapeHtml(plan.lockVersion)}</dd></div></dl></section><section class="analysisPlanReviewSummary"><div><span>Research question</span><strong>${escapeHtml(document.researchQuestion || "정의되지 않음")}</strong></div><div><span>Estimand</span><strong>${escapeHtml(document.estimand ? `${document.estimand.population} · ${document.estimand.outcome} · ${document.estimand.summaryMeasure}` : "미해결")}</strong></div><div><span>Design</span><strong>${escapeHtml(`${document.design?.studyType || "미정"} · ${document.design?.dependence?.kind || "unresolved"}`)}</strong></div><div><span>Model boundary</span><strong>${escapeHtml(document.model ? `${document.model.family} · ${document.model.formula}` : "도메인 실행 도구가 소유 (model=null)")}</strong></div></section><section class="analysisPlanReviewInputs"><span>Exact input artifacts</span><ul>${inputRows}</ul></section><label class="decisionRationale"><span>검토 의견 <em>수정 요청 시 필수</em></span><textarea name="rationale" maxlength="8000" rows="3" placeholder="승인 근거 또는 수정할 내용을 구체적으로 적어 주세요."></textarea></label><div class="analysisPlanReviewBoundary"><strong>AI 추천은 승인으로 간주되지 않습니다.</strong><span>승인은 지금 화면의 ID · version · content hash · lock에만 유효하며, 성공하면 같은 트랜잭션에서 frozen 상태가 됩니다.</span></div><div class="formError" role="alert">${escapeHtml(state.analysisPlanReviewError)}</div></div><footer><button class="secondaryButton" type="submit" name="decision" value="revise" ${state.analysisPlanReviewBusy ? "disabled" : ""}>수정 요청</button><button class="primaryButton" type="submit" name="decision" value="approve" ${state.analysisPlanReviewBusy ? "disabled" : ""}>${state.analysisPlanReviewBusy ? "저장 중…" : "이 exact plan 승인"}</button></footer></form></div>`;
+  }
+
   function researchContractApprovalSheet() {
     const contract = state.researchContract;
     const project = selectedProject();
@@ -6442,7 +6487,7 @@ const { stripAgentControlBlocks, stripStormbreakerContinueMarker, STORMBREAKER_C
     if (!project) return projectLibrary();
     if (state.projectFolderOpen) return projectFolder(project);
     const main = state.mode === "session" ? researchView(project) : state.mode === "manuscript" ? manuscriptWorkbench() : artifactWorkbench();
-    return `<section class="workspace ${state.drawer ? "drawerOpen" : ""}" data-workspace-mode="${escapeHtml(state.mode)}" data-project-destination="${escapeHtml(state.currentDestination)}" data-rail-collapsed="${state.railCollapsed}">${projectRail(project)}<button class="railScrim" data-action="collapse-rail" aria-label="사이드바 닫기"></button><main class="mainPane"><header class="topbar"><div class="topLocation workspaceLocation"><button class="workspaceSidebarReveal" data-action="expand-rail" aria-label="사이드바 열기" title="사이드바 열기">${heroIcon("chevron-right")}</button><div class="workspaceTabGroup" role="tablist" aria-label="연구, 열린 Lab 아티팩트와 원고">${researchWorkspaceTabButton()}<div class="workspaceTabsShell" data-workspace-tabs-shell><button class="workspaceTabOverflow workspaceTabOverflowPrevious" type="button" data-action="scroll-workspace-tabs" data-direction="previous" aria-label="이전 열린 탭 보기" hidden>${heroIcon("chevron-right", "uiIcon isReverse")}</button><nav class="workspaceTabs" data-workspace-tabs role="presentation">${workspaceTabButtons()}</nav><button class="workspaceTabOverflow workspaceTabOverflowNext" type="button" data-action="scroll-workspace-tabs" data-direction="next" aria-label="다음 열린 탭 보기" hidden>${heroIcon("chevron-right")}</button></div></div><button class="workspaceTabAdd" data-action="new" aria-label="새 연구 시작" title="새 연구">${heroIcon("plus")}</button></div><div class="topActions">${state.workspaceSyncError ? `<span class="workspaceSyncWarning" role="status" title="${escapeHtml(state.workspaceSyncError)}">저장 실패</span>` : ""}<span class="statusPill" title="${escapeHtml(`${lifecycleLabel()} · ${state.lifecycle?.stateSha256 || ""}`)}">${escapeHtml(lifecycleCompactLabel())}</span><button data-action="toggle-drawer">${state.mode === "session" ? "근거" : "세부"}</button></div></header><div class="workspaceBody"><div class="contentPane workspaceCenter"><div class="workspaceSurface" id="science-workspace-panel" role="tabpanel" aria-labelledby="${escapeHtml(workspaceTabDomId(state.activeWorkspaceTabId))}" data-workspace-surface>${main}</div></div>${chatDock()}</div></main>${contextDrawer()}${modal()}${manuscriptModal()}${journalTargetSheet()}${submissionExportSheet()}${evidenceGraphInferenceReviewSheet()}${episodeResultReviewSheet()}${researchContractApprovalSheet()}${researchDecisionSheet()}</section>`;
+    return `<section class="workspace ${state.drawer ? "drawerOpen" : ""}" data-workspace-mode="${escapeHtml(state.mode)}" data-project-destination="${escapeHtml(state.currentDestination)}" data-rail-collapsed="${state.railCollapsed}">${projectRail(project)}<button class="railScrim" data-action="collapse-rail" aria-label="사이드바 닫기"></button><main class="mainPane"><header class="topbar"><div class="topLocation workspaceLocation"><button class="workspaceSidebarReveal" data-action="expand-rail" aria-label="사이드바 열기" title="사이드바 열기">${heroIcon("chevron-right")}</button><div class="workspaceTabGroup" role="tablist" aria-label="연구, 열린 Lab 아티팩트와 원고">${researchWorkspaceTabButton()}<div class="workspaceTabsShell" data-workspace-tabs-shell><button class="workspaceTabOverflow workspaceTabOverflowPrevious" type="button" data-action="scroll-workspace-tabs" data-direction="previous" aria-label="이전 열린 탭 보기" hidden>${heroIcon("chevron-right", "uiIcon isReverse")}</button><nav class="workspaceTabs" data-workspace-tabs role="presentation">${workspaceTabButtons()}</nav><button class="workspaceTabOverflow workspaceTabOverflowNext" type="button" data-action="scroll-workspace-tabs" data-direction="next" aria-label="다음 열린 탭 보기" hidden>${heroIcon("chevron-right")}</button></div></div><button class="workspaceTabAdd" data-action="new" aria-label="새 연구 시작" title="새 연구">${heroIcon("plus")}</button></div><div class="topActions">${state.workspaceSyncError ? `<span class="workspaceSyncWarning" role="status" title="${escapeHtml(state.workspaceSyncError)}">저장 실패</span>` : ""}<span class="statusPill" title="${escapeHtml(`${lifecycleLabel()} · ${state.lifecycle?.stateSha256 || ""}`)}">${escapeHtml(lifecycleCompactLabel())}</span><button data-action="toggle-drawer">${state.mode === "session" ? "근거" : "세부"}</button></div></header><div class="workspaceBody"><div class="contentPane workspaceCenter"><div class="workspaceSurface" id="science-workspace-panel" role="tabpanel" aria-labelledby="${escapeHtml(workspaceTabDomId(state.activeWorkspaceTabId))}" data-workspace-surface>${main}</div></div>${chatDock()}</div></main>${contextDrawer()}${modal()}${manuscriptModal()}${journalTargetSheet()}${submissionExportSheet()}${evidenceGraphInferenceReviewSheet()}${episodeResultReviewSheet()}${researchContractApprovalSheet()}${researchDecisionSheet()}${analysisPlanReviewSheet()}</section>`;
   }
 
   function rememberScroll(mode = state.mode) {
@@ -6472,6 +6517,7 @@ const { stripAgentControlBlocks, stripStormbreakerContinueMarker, STORMBREAKER_C
     if (contentPane) contentPane.scrollTop = state.scrollByMode[state.mode] || 0;
     if (state.modal) document.querySelector(state.newProjectStep === "field" ? "[data-research-template]" : 'input[name="title"]')?.focus();
     if (state.researchContractSheet) requestAnimationFrame(() => document.querySelector(".researchContractSheet")?.focus({ preventScroll: true }));
+    if (state.analysisPlanReviewSheet) requestAnimationFrame(() => document.querySelector(".analysisPlanReviewSheet textarea")?.focus({ preventScroll: true }));
     if (!state.resultReviewSheet && state.mode === "lab" && state.selectedArtifactId && state.artifactHistoryById.has(state.selectedArtifactId)) {
       void hydrateArtifactRenderer();
       if (state.artifactComparison?.diff) void hydrateArtifactComparePreviews(state.artifactComparison);
@@ -8861,6 +8907,23 @@ const { stripAgentControlBlocks, stripStormbreakerContinueMarker, STORMBREAKER_C
     if (target.dataset.action === "reject-manuscript-proposal") { void decideManuscriptProposal(target.dataset.proposalId, "reject"); return; }
     if (target.dataset.action === "regenerate-manuscript-proposal") { prepareStaleProposalRegeneration(target.dataset.proposalId); return; }
     if (target.dataset.action === "defer-research-decision") { void deferPresentedResearchDecision(); return; }
+    if (target.dataset.action === "open-analysis-plan-review") {
+      const plan = reviewableAnalysisPlan();
+      if (!plan) return;
+      state.selectedAnalysisPlanId = plan.id;
+      state.analysisPlanReviewSheet = true;
+      state.analysisPlanReviewError = "";
+      render();
+      return;
+    }
+    if (target.dataset.action === "close-analysis-plan-review") {
+      state.analysisPlanReviewDismissedKey = analysisPlanReviewKey(reviewableAnalysisPlan());
+      state.analysisPlanReviewSheet = false;
+      state.analysisPlanReviewBusy = false;
+      state.analysisPlanReviewError = "";
+      render();
+      return;
+    }
     if (target.dataset.action === "open-research-contract-sheet") { state.researchContractSheet = state.researchContract?.status === "draft"; state.researchContractError = ""; render(); return; }
     if (target.dataset.action === "close-research-contract-sheet") {
       state.researchContractDismissedKey = researchContractKey(state.researchContract);
@@ -9521,6 +9584,57 @@ const { stripAgentControlBlocks, stripStormbreakerContinueMarker, STORMBREAKER_C
   });
 
   root.addEventListener("submit", async (event) => {
+    if (event.target.id === "analysis-plan-review-form") {
+      event.preventDefault();
+      const plan = reviewableAnalysisPlan();
+      const projectId = state.selectedId;
+      const decision = event.submitter?.value === "revise" ? "revise" : "approve";
+      const form = new FormData(event.target);
+      const rationale = String(form.get("rationale") || "").trim() || null;
+      if (!plan || !projectId || state.analysisPlanReviewBusy) return;
+      if (decision === "revise" && !rationale) {
+        state.analysisPlanReviewError = "수정할 내용을 적어 주세요.";
+        render();
+        return;
+      }
+      state.analysisPlanReviewBusy = true;
+      state.analysisPlanReviewError = "";
+      render();
+      let routed = false;
+      try {
+        const current = await science.analysisSpecs.get(projectId, plan.id);
+        if (!current || current.status !== "draft"
+          || current.currentVersion !== plan.currentVersion
+          || current.currentDocumentSha256 !== plan.currentDocumentSha256
+          || current.lockVersion !== plan.lockVersion) throw new Error("science-analysis-version-conflict");
+        const result = await science.analysisSpecs.review({
+          requestId: crypto.randomUUID(), projectId, analysisSpecId: current.id,
+          expectedVersion: current.currentVersion, expectedContentSha256: current.currentDocumentSha256,
+          expectedLockVersion: current.lockVersion, decision, rationale,
+        });
+        if (!result?.receipt || result.receipt.actor !== "human" || result.receipt.decision !== decision || !result.analysisSpec) {
+          throw new Error("science-analysis-plan-review-result-invalid");
+        }
+        state.analysisSpecs = [result.analysisSpec, ...state.analysisSpecs.filter((item) => item.id !== result.analysisSpec.id)];
+        state.analysisPlanReviewSheet = false;
+        state.analysisPlanReviewDismissedKey = null;
+        const exact = `analysis_spec_id=${result.analysisSpec.id}, version=${result.analysisSpec.currentVersion}, content_sha256=${result.analysisSpec.currentDocumentSha256}`;
+        state.composerDraft = decision === "approve"
+          ? `사람이 화면에서 ${exact}를 승인했고 immutable approval receipt ${result.receipt.id}가 저장되었습니다. 최신 research lifecycle을 다시 읽고 이 frozen exact plan만 결합해 허용된 다음 단계로 진행하세요. 계획을 다시 쓰거나 채팅 문구를 승인으로 추론하지 마세요.`
+          : `사람이 화면에서 ${exact}의 수정을 요청했습니다. 수정 의견: ${rationale}\n\n현재 draft를 승인 또는 freeze하지 말고, 이 의견을 반영한 새 exact analysis plan을 제안한 뒤 다시 사람 검토를 요청하세요.`;
+        routed = true;
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        state.analysisPlanReviewError = /science-analysis-version-conflict/.test(message)
+          ? "검토 중 계획 버전이 바뀌었습니다. 자동 승인하지 않았습니다. 최신 계획을 다시 확인해 주세요."
+          : message;
+      } finally {
+        state.analysisPlanReviewBusy = false;
+        render();
+      }
+      if (routed && projectId === state.selectedId) await startComposerTurn({ forceAppend: true });
+      return;
+    }
     if (event.target.id === "runtime-question-form") {
       event.preventDefault();
       const form = new FormData(event.target);
@@ -9638,6 +9752,7 @@ const { stripAgentControlBlocks, stripStormbreakerContinueMarker, STORMBREAKER_C
         state.decisionError = error instanceof Error ? error.message : String(error);
       } finally {
         state.decisionBusy = false;
+        maybePresentAnalysisPlanReview();
         render();
       }
       return;

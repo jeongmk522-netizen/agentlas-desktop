@@ -238,6 +238,7 @@ import {
   type ScienceAnalysisSpecDocument,
   type ScienceAnalysisSpec,
   type ScienceAnalysisSpecVersion,
+  type ScienceAnalysisPlanReviewReceipt,
   type ScienceAnalysisDecisionDraft,
   type ScienceDecisionOption,
   type ScienceDecisionRequest,
@@ -249,6 +250,8 @@ import {
   type AnswerScienceDecisionResult,
   type FreezeScienceAnalysisSpecInput,
   type FreezeScienceAnalysisSpecResult,
+  type ReviewScienceAnalysisPlanInput,
+  type ReviewScienceAnalysisPlanResult,
   SCIENCE_APPROVAL_SCOPES,} from "../../shared/science-contract";
 import {
   assertScienceEpisodeResultReviewReceipt,
@@ -557,7 +560,7 @@ import {
   builtinAgentId,
 } from "../architecture/manifest";
 
-export const SCIENCE_SCHEMA_VERSION = 56;
+export const SCIENCE_SCHEMA_VERSION = 57;
 const UUID_RE = /^[a-f0-9]{8}-[a-f0-9]{4}-[1-8][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/i;
 const SHA256_RE = /^[a-f0-9]{64}$/;
 const SCIENCE_SOURCE_TEXT_CHUNK_MAX_BYTES = 2_400;
@@ -6207,6 +6210,50 @@ export class ScienceStore {
         );
         CREATE INDEX IF NOT EXISTS idx_science_analysis_spec_versions ON analysis_spec_versions(analysis_spec_id, version DESC);
 
+        CREATE TABLE IF NOT EXISTS analysis_plan_review_receipts (
+          id TEXT PRIMARY KEY,
+          request_id TEXT NOT NULL UNIQUE,
+          project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE RESTRICT,
+          analysis_spec_id TEXT NOT NULL,
+          analysis_spec_version INTEGER NOT NULL CHECK (analysis_spec_version >= 1),
+          analysis_spec_content_sha256 TEXT NOT NULL CHECK (length(analysis_spec_content_sha256) = 64),
+          analysis_spec_lock_version INTEGER NOT NULL CHECK (analysis_spec_lock_version >= 1),
+          decision TEXT NOT NULL CHECK (decision IN ('approve','revise')),
+          rationale TEXT CHECK (rationale IS NULL OR length(rationale) BETWEEN 1 AND 8000),
+          actor TEXT NOT NULL CHECK (actor = 'human'),
+          resulting_status TEXT NOT NULL CHECK (resulting_status IN ('draft','frozen')),
+          created_at TEXT NOT NULL,
+          receipt_sha256 TEXT NOT NULL UNIQUE CHECK (length(receipt_sha256) = 64),
+          FOREIGN KEY (analysis_spec_id, analysis_spec_version, analysis_spec_content_sha256)
+            REFERENCES analysis_spec_versions(analysis_spec_id, version, document_sha256) ON DELETE RESTRICT,
+          CHECK ((decision = 'approve' AND resulting_status = 'frozen') OR (decision = 'revise' AND resulting_status = 'draft'))
+        );
+        CREATE INDEX IF NOT EXISTS idx_science_analysis_plan_review_latest
+          ON analysis_plan_review_receipts(project_id, analysis_spec_id, created_at DESC, id DESC);
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_science_analysis_plan_one_approval
+          ON analysis_plan_review_receipts(analysis_spec_id, analysis_spec_version, analysis_spec_content_sha256)
+          WHERE decision = 'approve';
+        CREATE TRIGGER IF NOT EXISTS trg_science_analysis_plan_review_scope_insert
+        BEFORE INSERT ON analysis_plan_review_receipts BEGIN
+          SELECT RAISE(ABORT, 'science-analysis-plan-review-scope-invalid') WHERE NOT EXISTS (
+            SELECT 1 FROM analysis_specs s
+            JOIN analysis_spec_versions v ON v.analysis_spec_id = s.id AND v.version = s.current_version
+            WHERE s.id = NEW.analysis_spec_id AND s.project_id = NEW.project_id AND s.status = 'draft'
+              AND s.current_version = NEW.analysis_spec_version
+              AND s.current_document_sha256 = NEW.analysis_spec_content_sha256
+              AND s.lock_version = NEW.analysis_spec_lock_version
+              AND v.document_sha256 = NEW.analysis_spec_content_sha256
+          );
+        END;
+        CREATE TRIGGER IF NOT EXISTS trg_science_analysis_plan_review_immutable_update
+        BEFORE UPDATE ON analysis_plan_review_receipts BEGIN
+          SELECT RAISE(ABORT, 'science-analysis-plan-review-immutable');
+        END;
+        CREATE TRIGGER IF NOT EXISTS trg_science_analysis_plan_review_immutable_delete
+        BEFORE DELETE ON analysis_plan_review_receipts BEGIN
+          SELECT RAISE(ABORT, 'science-analysis-plan-review-immutable');
+        END;
+
         CREATE TABLE IF NOT EXISTS research_run_analysis_plan_bindings (
           run_id TEXT PRIMARY KEY REFERENCES research_runs(id) ON DELETE CASCADE,
           project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
@@ -8845,6 +8892,49 @@ export class ScienceStore {
           const projectColumns = new Set((this.db.pragma("table_info('projects')") as Array<{ name: string }>).map((column) => column.name));
           if (!projectColumns.has("research_template_id")) this.db.exec("ALTER TABLE projects ADD COLUMN research_template_id TEXT");
           if (!projectColumns.has("initial_lab_id")) this.db.exec("ALTER TABLE projects ADD COLUMN initial_lab_id TEXT");
+        }
+        if (found < 57) {
+          this.db.exec(`
+            CREATE TABLE IF NOT EXISTS analysis_plan_review_receipts (
+              id TEXT PRIMARY KEY,
+              request_id TEXT NOT NULL UNIQUE,
+              project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE RESTRICT,
+              analysis_spec_id TEXT NOT NULL,
+              analysis_spec_version INTEGER NOT NULL CHECK (analysis_spec_version >= 1),
+              analysis_spec_content_sha256 TEXT NOT NULL CHECK (length(analysis_spec_content_sha256) = 64),
+              analysis_spec_lock_version INTEGER NOT NULL CHECK (analysis_spec_lock_version >= 1),
+              decision TEXT NOT NULL CHECK (decision IN ('approve','revise')),
+              rationale TEXT CHECK (rationale IS NULL OR length(rationale) BETWEEN 1 AND 8000),
+              actor TEXT NOT NULL CHECK (actor = 'human'),
+              resulting_status TEXT NOT NULL CHECK (resulting_status IN ('draft','frozen')),
+              created_at TEXT NOT NULL,
+              receipt_sha256 TEXT NOT NULL UNIQUE CHECK (length(receipt_sha256) = 64),
+              FOREIGN KEY (analysis_spec_id, analysis_spec_version, analysis_spec_content_sha256)
+                REFERENCES analysis_spec_versions(analysis_spec_id, version, document_sha256) ON DELETE RESTRICT,
+              CHECK ((decision = 'approve' AND resulting_status = 'frozen') OR (decision = 'revise' AND resulting_status = 'draft'))
+            );
+            CREATE INDEX IF NOT EXISTS idx_science_analysis_plan_review_latest
+              ON analysis_plan_review_receipts(project_id, analysis_spec_id, created_at DESC, id DESC);
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_science_analysis_plan_one_approval
+              ON analysis_plan_review_receipts(analysis_spec_id, analysis_spec_version, analysis_spec_content_sha256)
+              WHERE decision = 'approve';
+            CREATE TRIGGER IF NOT EXISTS trg_science_analysis_plan_review_scope_insert
+            BEFORE INSERT ON analysis_plan_review_receipts BEGIN
+              SELECT RAISE(ABORT, 'science-analysis-plan-review-scope-invalid') WHERE NOT EXISTS (
+                SELECT 1 FROM analysis_specs s
+                JOIN analysis_spec_versions v ON v.analysis_spec_id = s.id AND v.version = s.current_version
+                WHERE s.id = NEW.analysis_spec_id AND s.project_id = NEW.project_id AND s.status = 'draft'
+                  AND s.current_version = NEW.analysis_spec_version
+                  AND s.current_document_sha256 = NEW.analysis_spec_content_sha256
+                  AND s.lock_version = NEW.analysis_spec_lock_version
+                  AND v.document_sha256 = NEW.analysis_spec_content_sha256
+              );
+            END;
+            CREATE TRIGGER IF NOT EXISTS trg_science_analysis_plan_review_immutable_update
+            BEFORE UPDATE ON analysis_plan_review_receipts BEGIN SELECT RAISE(ABORT, 'science-analysis-plan-review-immutable'); END;
+            CREATE TRIGGER IF NOT EXISTS trg_science_analysis_plan_review_immutable_delete
+            BEFORE DELETE ON analysis_plan_review_receipts BEGIN SELECT RAISE(ABORT, 'science-analysis-plan-review-immutable'); END;
+          `);
         }
         const migrationForeignKeyViolations = this.db.pragma("foreign_key_check") as Array<Record<string, unknown>>;
         if (migrationForeignKeyViolations.length > 0) throw new Error("science-schema-foreign-key-invalid");
@@ -18563,6 +18653,50 @@ export class ScienceStore {
     }
   }
 
+  private analysisPlanReviewFromRow(row: Record<string, unknown>): ScienceAnalysisPlanReviewReceipt {
+    const receipt: ScienceAnalysisPlanReviewReceipt = {
+      id: String(row.id), requestId: String(row.request_id), projectId: String(row.project_id),
+      analysisSpecId: String(row.analysis_spec_id), analysisSpecVersion: Number(row.analysis_spec_version),
+      analysisSpecContentSha256: safeSha256(row.analysis_spec_content_sha256, "analysis-review-content-sha256"),
+      analysisSpecLockVersion: Number(row.analysis_spec_lock_version),
+      decision: String(row.decision) as ScienceAnalysisPlanReviewReceipt["decision"],
+      rationale: row.rationale === null || row.rationale === undefined ? null : String(row.rationale),
+      actor: "human",
+      resultingStatus: String(row.resulting_status) as ScienceAnalysisPlanReviewReceipt["resultingStatus"],
+      createdAt: String(row.created_at), receiptSha256: safeSha256(row.receipt_sha256, "analysis-review-receipt-sha256"),
+    };
+    const expectedSha256 = sha256Json({
+      requestId: receipt.requestId, projectId: receipt.projectId, analysisSpecId: receipt.analysisSpecId,
+      analysisSpecVersion: receipt.analysisSpecVersion, analysisSpecContentSha256: receipt.analysisSpecContentSha256,
+      analysisSpecLockVersion: receipt.analysisSpecLockVersion, decision: receipt.decision, rationale: receipt.rationale,
+      actor: receipt.actor, resultingStatus: receipt.resultingStatus, createdAt: receipt.createdAt,
+    });
+    if (receipt.receiptSha256 !== expectedSha256
+      || !UUID_RE.test(receipt.id) || !UUID_RE.test(receipt.requestId) || !UUID_RE.test(receipt.projectId) || !UUID_RE.test(receipt.analysisSpecId)
+      || !Number.isSafeInteger(receipt.analysisSpecVersion) || receipt.analysisSpecVersion < 1
+      || !Number.isSafeInteger(receipt.analysisSpecLockVersion) || receipt.analysisSpecLockVersion < 1
+      || !["approve", "revise"].includes(receipt.decision)
+      || receipt.resultingStatus !== (receipt.decision === "approve" ? "frozen" : "draft")) {
+      throw new Error("science-analysis-plan-review-integrity-failed");
+    }
+    return receipt;
+  }
+
+  getLatestAnalysisPlanReview(projectId: string, analysisSpecId: string): ScienceAnalysisPlanReviewReceipt | null {
+    if (!UUID_RE.test(projectId) || !UUID_RE.test(analysisSpecId)) return null;
+    const row = this.db.prepare(`SELECT * FROM analysis_plan_review_receipts
+      WHERE project_id = ? AND analysis_spec_id = ? ORDER BY created_at DESC, rowid DESC LIMIT 1`)
+      .get(projectId, analysisSpecId) as Record<string, unknown> | undefined;
+    return row ? this.analysisPlanReviewFromRow(row) : null;
+  }
+
+  getAnalysisPlanReviewByRequestId(requestId: string): ScienceAnalysisPlanReviewReceipt | null {
+    if (!UUID_RE.test(requestId)) return null;
+    const row = this.db.prepare("SELECT * FROM analysis_plan_review_receipts WHERE request_id = ?")
+      .get(requestId) as Record<string, unknown> | undefined;
+    return row ? this.analysisPlanReviewFromRow(row) : null;
+  }
+
   private analysisSpecFromRow(row: Record<string, unknown>): ScienceAnalysisSpec {
     const document = normalizeScienceAnalysisDocument(parseObject(row.document_json));
     const documentSha256 = safeSha256(row.document_sha256, "analysis-document-sha256");
@@ -18581,6 +18715,7 @@ export class ScienceStore {
     return {
       id: String(row.id), projectId: String(row.project_id), title: String(row.title), status: String(row.status) as ScienceAnalysisSpec["status"],
       currentVersion: Number(row.current_version), currentDocumentSha256: documentSha256, lockVersion: Number(row.lock_version), version,
+      latestReview: this.getLatestAnalysisPlanReview(String(row.project_id), String(row.id)),
       frozenAt: row.frozen_at === null || row.frozen_at === undefined ? null : String(row.frozen_at), createdAt: String(row.created_at), updatedAt: String(row.updated_at),
     };
   }
@@ -18822,6 +18957,73 @@ export class ScienceStore {
     })();
   }
 
+  reviewAnalysisPlan(input: ReviewScienceAnalysisPlanInput): ReviewScienceAnalysisPlanResult {
+    if (!input || typeof input !== "object" || !UUID_RE.test(String(input.requestId ?? ""))) throw new Error("science-request-id-invalid");
+    const expectedVersion = safePositiveInteger(input.expectedVersion, 1, Number.MAX_SAFE_INTEGER, "analysis-version");
+    const expectedContentSha256 = safeSha256(input.expectedContentSha256, "analysis-content-sha256");
+    const expectedLockVersion = safePositiveInteger(input.expectedLockVersion, 1, Number.MAX_SAFE_INTEGER, "analysis-lock-version");
+    if (input.decision !== "approve" && input.decision !== "revise") throw new Error("science-analysis-plan-review-decision-invalid");
+    const rationale = input.rationale === undefined || input.rationale === null || input.rationale === ""
+      ? null : safeText(input.rationale, 8_000, "science-analysis-plan-review-rationale-invalid");
+    const requestSha256 = sha256Json({
+      projectId: input.projectId, analysisSpecId: input.analysisSpecId, expectedVersion,
+      expectedContentSha256, expectedLockVersion, decision: input.decision, rationale,
+    });
+    return this.db.transaction(() => {
+      const prior = this.replay<ReviewScienceAnalysisPlanResult>(input.requestId, "analysis.plan.review", requestSha256);
+      if (prior) {
+        const receipt = this.getAnalysisPlanReviewByRequestId(input.requestId);
+        const analysisSpec = this.getAnalysisSpecForProject(input.projectId, input.analysisSpecId);
+        if (!receipt || receipt.requestId !== input.requestId || receipt.receiptSha256 !== prior.receipt.receiptSha256 || !analysisSpec) {
+          throw new Error("science-analysis-plan-review-replay-integrity-failed");
+        }
+        return { receipt, analysisSpec, replayed: true };
+      }
+      const analysisSpec = this.getAnalysisSpecForProject(input.projectId, input.analysisSpecId);
+      if (!analysisSpec) throw new Error("science-analysis-spec-not-found");
+      if (analysisSpec.status !== "draft" || analysisSpec.currentVersion !== expectedVersion
+        || analysisSpec.currentDocumentSha256 !== expectedContentSha256 || analysisSpec.lockVersion !== expectedLockVersion) {
+        throw new Error("science-analysis-version-conflict");
+      }
+      if (input.decision === "approve") {
+        const openDecisions = this.listDecisionRequests(input.projectId, analysisSpec.id, ["queued", "presented", "deferred"]);
+        if (openDecisions.length) throw new Error("science-analysis-open-decision");
+        const document = analysisSpec.version.document;
+        if (!document.estimand || document.design.dependence.kind === "unresolved" || document.missingData.strategy === "unresolved"
+          || document.multiplicity.strategy === "unresolved" || document.requiredDiagnostics.length === 0 || document.data.inputs.length === 0) {
+          throw new Error("science-analysis-spec-incomplete");
+        }
+        this.validateAnalysisDocumentReferences(input.projectId, document);
+      }
+      const now = new Date().toISOString();
+      const resultingStatus = input.decision === "approve" ? "frozen" : "draft";
+      const receiptId = randomUUID();
+      const receiptSha256 = sha256Json({
+        requestId: input.requestId, projectId: input.projectId, analysisSpecId: analysisSpec.id,
+        analysisSpecVersion: expectedVersion, analysisSpecContentSha256: expectedContentSha256,
+        analysisSpecLockVersion: expectedLockVersion, decision: input.decision, rationale,
+        actor: "human", resultingStatus, createdAt: now,
+      });
+      this.db.prepare(`INSERT INTO analysis_plan_review_receipts
+        (id,request_id,project_id,analysis_spec_id,analysis_spec_version,analysis_spec_content_sha256,analysis_spec_lock_version,
+         decision,rationale,actor,resulting_status,created_at,receipt_sha256)
+        VALUES (?,?,?,?,?,?,?,?,?,'human',?,?,?)`).run(
+        receiptId, input.requestId, input.projectId, analysisSpec.id, expectedVersion, expectedContentSha256,
+        expectedLockVersion, input.decision, rationale, resultingStatus, now, receiptSha256,
+      );
+      if (input.decision === "approve") {
+        this.db.prepare("UPDATE analysis_specs SET status = 'frozen', lock_version = lock_version + 1, frozen_at = ?, updated_at = ? WHERE id = ? AND project_id = ? AND lock_version = ?")
+          .run(now, now, analysisSpec.id, input.projectId, expectedLockVersion);
+      }
+      const reviewed = this.getAnalysisSpecForProject(input.projectId, analysisSpec.id);
+      const receipt = this.getLatestAnalysisPlanReview(input.projectId, analysisSpec.id);
+      if (!reviewed || !receipt || receipt.id !== receiptId || receipt.receiptSha256 !== receiptSha256) throw new Error("science-analysis-plan-review-readback-failed");
+      const result: ReviewScienceAnalysisPlanResult = { receipt, analysisSpec: reviewed, replayed: false };
+      this.remember(input.requestId, "analysis.plan.review", requestSha256, result, now);
+      return result;
+    })();
+  }
+
   freezeAnalysisSpec(input: FreezeScienceAnalysisSpecInput): FreezeScienceAnalysisSpecResult {
     if (!input || typeof input !== "object" || !UUID_RE.test(String(input.requestId ?? ""))) throw new Error("science-request-id-invalid");
     const expectedVersion = safePositiveInteger(input.expectedVersion, 1, Number.MAX_SAFE_INTEGER, "analysis-version");
@@ -18833,22 +19035,20 @@ export class ScienceStore {
       if (prior) return { ...prior, replayed: true };
       const analysisSpec = this.getAnalysisSpecForProject(input.projectId, input.analysisSpecId);
       if (!analysisSpec) throw new Error("science-analysis-spec-not-found");
-      if (analysisSpec.status !== "draft" || analysisSpec.currentVersion !== expectedVersion || analysisSpec.currentDocumentSha256 !== expectedContentSha256 || analysisSpec.lockVersion !== expectedLockVersion) throw new Error("science-analysis-version-conflict");
-      const document = analysisSpec.version.document;
-      const openDecisions = this.listDecisionRequests(input.projectId, analysisSpec.id, ["queued", "presented", "deferred"]);
-      if (openDecisions.length) throw new Error("science-analysis-open-decision");
-      // `experimentalUnit` and `model` are deliberately nullable in the public plan schema:
-      // observational catalogues may have no manipulable experimental unit, and domain-specific
-      // tools carry their model contract themselves. Treating either null as incomplete made a
-      // schema-valid domain plan impossible to freeze.
-      if (!document.estimand || document.design.dependence.kind === "unresolved" || document.missingData.strategy === "unresolved" || document.multiplicity.strategy === "unresolved" || document.requiredDiagnostics.length === 0 || document.data.inputs.length === 0) throw new Error("science-analysis-spec-incomplete");
-      this.validateAnalysisDocumentReferences(input.projectId, document);
-      const now = new Date().toISOString();
-      this.db.prepare("UPDATE analysis_specs SET status = 'frozen', lock_version = lock_version + 1, frozen_at = ?, updated_at = ? WHERE id = ? AND project_id = ? AND lock_version = ?")
-        .run(now, now, analysisSpec.id, input.projectId, expectedLockVersion);
-      const frozen = this.getAnalysisSpecForProject(input.projectId, analysisSpec.id)!;
-      const result: FreezeScienceAnalysisSpecResult = { analysisSpec: frozen, replayed: false };
-      this.remember(input.requestId, "analysis.spec.freeze", requestSha256, result, now);
+      if (analysisSpec.status !== "frozen" || analysisSpec.currentVersion !== expectedVersion
+        || analysisSpec.currentDocumentSha256 !== expectedContentSha256 || analysisSpec.lockVersion !== expectedLockVersion) {
+        if (analysisSpec.status === "draft") throw new Error("science-analysis-plan-human-approval-required");
+        throw new Error("science-analysis-version-conflict");
+      }
+      const approval = analysisSpec.latestReview;
+      if (!approval || approval.decision !== "approve" || approval.resultingStatus !== "frozen"
+        || approval.analysisSpecVersion !== analysisSpec.currentVersion
+        || approval.analysisSpecContentSha256 !== analysisSpec.currentDocumentSha256
+        || approval.analysisSpecLockVersion + 1 !== analysisSpec.lockVersion) {
+        throw new Error("science-analysis-plan-human-approval-required");
+      }
+      const result: FreezeScienceAnalysisSpecResult = { analysisSpec, replayed: false };
+      this.remember(input.requestId, "analysis.spec.freeze", requestSha256, result, new Date().toISOString());
       return result;
     })();
   }

@@ -95,6 +95,7 @@ const SERVER_KEY = SCIENCE_MCP_SERVER_KEY;
 
 type ScienceContext = NonNullable<InvocationExecutionContext["science"]>;
 type McpTool = { name: string; route: string; description: string; inputSchema: Record<string, unknown> };
+const TOOL_UUID_RE = /^[a-f0-9]{8}-[a-f0-9]{4}-[1-8][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/iu;
 type Grant = {
   tokenHash: string;
   context: ScienceContext;
@@ -1786,7 +1787,7 @@ const PLATFORM_TOOLS: McpTool[] = [
   {
     name: "propose_analysis_plan",
     route: "/v1/platform/analysis-plans/propose",
-    description: "Create the first immutable version of a confirmatory analysis plan bound to exact project artifact versions. Exact shapes matter: estimand is null or {population,treatmentOrExposure,comparator,outcome,summaryMeasure,timeHorizon}; design.dependence is one typed object with kind; data.inputs use camelCase {artifactId,artifactVersion,contentSha256}; model is null for domain-specific tools, otherwise exactly {family,formula,distribution,link,groupingVariables,randomEffects,rationale} with family lm|glm|mixed-effects|gee; expectedArtifacts contains {role,title}, where role is result-table|figure|diagnostics|methods. If the estimand or dependence structure is unresolved, include exactly one matching human decision draft; otherwise decisions must be empty. This does not freeze or authorize execution.",
+    description: "Create the first immutable version of a confirmatory analysis plan bound to exact project artifact versions. `document` is never arbitrary JSON: it requires exactly schemaVersion,purpose,researchQuestion,population,estimand,design,data,model,missingData,multiplicity,requiredDiagnostics,sensitivityAnalyses,seed,runtimePolicy,expectedArtifacts. estimand is null or exactly {population,treatmentOrExposure,comparator,outcome,summaryMeasure,timeHorizon}. design is exactly {studyType,experimentalUnit,observationUnit,dependence}; dependence is exactly one of {kind:'unresolved'}, {kind:'independent'}, {kind:'repeated',subjectIdVariable,timeVariable}, {kind:'clustered',clusterVariables}, or {kind:'repeated-and-clustered',subjectIdVariable,timeVariable,clusterVariables}. data is exactly {inputs,outcomeVariables,predictorVariables,transformations,exclusions}; inputs use camelCase {artifactId,artifactVersion,contentSha256}, and outcomeVariables/predictorVariables are string arrays. model is null for domain-specific tools, otherwise exactly {family,formula,distribution,link,groupingVariables,randomEffects,rationale}, family lm|glm|mixed-effects|gee. expectedArtifacts items are exactly {role,title}, role result-table|figure|diagnostics|methods. If estimand or dependence is unresolved, include exactly one matching human decision draft; otherwise decisions must be empty. This creates a draft only and never records human approval or authorizes execution.",
     inputSchema: {
       type: "object",
       properties: {
@@ -1832,7 +1833,7 @@ const PLATFORM_TOOLS: McpTool[] = [
   {
     name: "freeze_analysis_plan",
     route: "/v1/platform/analysis-plans/freeze",
-    description: "Freeze a complete confirmatory analysis plan using exact optimistic-concurrency fields. Freezing is rejected while a typed human decision is open, a required design field is unresolved, or an artifact reference is stale.",
+    description: "Verify and bind an analysis plan that the researcher already approved in the Science UI. This tool cannot approve or mutate a draft: a draft fails with science-analysis-plan-human-approval-required. Re-list plans after the human acts, then pass the exact frozen version, content hash, and post-approval lock version.",
     inputSchema: {
       type: "object",
       properties: {
@@ -2716,7 +2717,23 @@ function localJsonSchemaRef(rootSchemaValue: unknown, ref: string): unknown {
   return current;
 }
 
-function assertNoUndeclaredToolProperties(
+function schemaTypeMatches(value: unknown, type: unknown): boolean {
+  if (Array.isArray(type)) return type.some((candidate) => schemaTypeMatches(value, candidate));
+  if (type === "null") return value === null;
+  if (type === "array") return Array.isArray(value);
+  if (type === "object") return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+  if (type === "integer") return typeof value === "number" && Number.isSafeInteger(value);
+  if (type === "number") return typeof value === "number" && Number.isFinite(value);
+  if (type === "string") return typeof value === "string";
+  if (type === "boolean") return typeof value === "boolean";
+  return true;
+}
+
+function schemaValueEquals(left: unknown, right: unknown): boolean {
+  return JSON.stringify(left) === JSON.stringify(right);
+}
+
+function assertExactToolInputSchema(
   value: unknown,
   schemaValue: unknown,
   code: string,
@@ -2728,16 +2745,46 @@ function assertNoUndeclaredToolProperties(
   if (typeof schema.$ref === "string") {
     const resolved = localJsonSchemaRef(rootSchemaValue, schema.$ref);
     if (!resolved) throw new Error(code);
-    assertNoUndeclaredToolProperties(value, resolved, code, rootSchemaValue, path);
+    assertExactToolInputSchema(value, resolved, code, rootSchemaValue, path);
     return;
   }
-  const alternatives = [
-    ...(Array.isArray(schema.oneOf) ? schema.oneOf : []),
-    ...(Array.isArray(schema.anyOf) ? schema.anyOf : []),
-  ];
+  if (schema.type !== undefined && !schemaTypeMatches(value, schema.type)) throw new Error(code);
+  if (Object.prototype.hasOwnProperty.call(schema, "const") && !schemaValueEquals(value, schema.const)) throw new Error(code);
+  if (Array.isArray(schema.enum) && !schema.enum.some((candidate) => schemaValueEquals(value, candidate))) throw new Error(code);
+
+  const alternativesMatch = (candidate: unknown): boolean => {
+    try {
+      assertExactToolInputSchema(value, candidate, code, rootSchemaValue, path);
+      return true;
+    } catch (error) {
+      if (error instanceof Error && error.message === code) return false;
+      throw error;
+    }
+  };
+  if (Array.isArray(schema.oneOf) && schema.oneOf.filter(alternativesMatch).length !== 1) throw new Error(code);
+  if (Array.isArray(schema.anyOf) && !schema.anyOf.some(alternativesMatch)) throw new Error(code);
+  if (Array.isArray(schema.allOf)) {
+    for (const candidate of schema.allOf) assertExactToolInputSchema(value, candidate, code, rootSchemaValue, path);
+  }
+
+  if (typeof value === "string") {
+    if (typeof schema.minLength === "number" && value.length < schema.minLength) throw new Error(code);
+    if (typeof schema.maxLength === "number" && value.length > schema.maxLength) throw new Error(code);
+    if (typeof schema.pattern === "string" && !new RegExp(schema.pattern, "u").test(value)) throw new Error(code);
+    if (schema.format === "uuid" && !TOOL_UUID_RE.test(value)) throw new Error(code);
+  }
+  if (typeof value === "number") {
+    if (typeof schema.minimum === "number" && value < schema.minimum) throw new Error(code);
+    if (typeof schema.maximum === "number" && value > schema.maximum) throw new Error(code);
+    if (typeof schema.exclusiveMinimum === "number" && value <= schema.exclusiveMinimum) throw new Error(code);
+    if (typeof schema.exclusiveMaximum === "number" && value >= schema.exclusiveMaximum) throw new Error(code);
+  }
   if (Array.isArray(value)) {
+    if (typeof schema.minItems === "number" && value.length < schema.minItems) throw new Error(code);
+    if (typeof schema.maxItems === "number" && value.length > schema.maxItems) throw new Error(code);
+    if (schema.uniqueItems === true && new Set(value.map((item) => JSON.stringify(item))).size !== value.length) throw new Error(code);
     if (schema.items !== undefined) {
-      for (const [index, item] of value.entries()) assertNoUndeclaredToolProperties(item, schema.items, code, rootSchemaValue, `${path}[${index}]`);
+      for (const [index, item] of value.entries()) assertExactToolInputSchema(item, schema.items, code, rootSchemaValue, `${path}[${index}]`);
     }
     return;
   }
@@ -2745,31 +2792,27 @@ function assertNoUndeclaredToolProperties(
   const properties = schema.properties && typeof schema.properties === "object" && !Array.isArray(schema.properties)
     ? schema.properties as Record<string, unknown>
     : null;
+  const recordValue = value as Record<string, unknown>;
+  if (Array.isArray(schema.required) && schema.required.some((key) => typeof key !== "string" || !Object.prototype.hasOwnProperty.call(recordValue, key))) {
+    throw new Error(code);
+  }
   if (schema.additionalProperties === false) {
     const unexpectedProperty = Object.keys(value).find((key) => !properties || !Object.prototype.hasOwnProperty.call(properties, key));
     if (unexpectedProperty) throw new ToolInputSchemaError(code, path, unexpectedProperty, properties ? Object.keys(properties) : []);
   }
   if (properties) {
-    const recordValue = value as Record<string, unknown>;
     for (const [key, propertySchema] of Object.entries(properties)) {
       if (Object.prototype.hasOwnProperty.call(recordValue, key)) {
-        assertNoUndeclaredToolProperties(recordValue[key], propertySchema, code, rootSchemaValue, `${path}.${key}`);
+        assertExactToolInputSchema(recordValue[key], propertySchema, code, rootSchemaValue, `${path}.${key}`);
       }
     }
   }
-  if (!properties && alternatives.length > 0) {
-    let schemaError: ToolInputSchemaError | null = null;
-    for (const alternative of alternatives) {
-      try {
-        assertNoUndeclaredToolProperties(value, alternative, code, rootSchemaValue, path);
-        return;
-      } catch (error) {
-        if (!(error instanceof Error) || error.message !== code) throw error;
-        if (error instanceof ToolInputSchemaError && !schemaError) schemaError = error;
+  if (schema.additionalProperties && typeof schema.additionalProperties === "object" && properties) {
+    for (const [key, nested] of Object.entries(recordValue)) {
+      if (!Object.prototype.hasOwnProperty.call(properties, key)) {
+        assertExactToolInputSchema(nested, schema.additionalProperties, code, rootSchemaValue, `${path}.${key}`);
       }
     }
-    if (schemaError) throw schemaError;
-    throw new Error(code);
   }
 }
 
@@ -5302,7 +5345,7 @@ async function handle(request: http.IncomingMessage, response: http.ServerRespon
     if (route === "/v1/platform/astronomy/catalog-search") {
       exactToolBody(body, ["tool_call_id", "center_ra_deg", "center_dec_deg", "radius_deg", "limit", "title"], "science-astronomy-catalog-input-invalid");
     }
-    assertNoUndeclaredToolProperties(
+    assertExactToolInputSchema(
       body,
       platformTool?.inputSchema ?? descriptorTool?.mcp.inputSchema,
       "science-tool-input-schema-invalid",

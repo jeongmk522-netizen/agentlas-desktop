@@ -799,7 +799,8 @@ button.manuscriptBinding:hover { border-color: var(--line-strong); background: v
 .manuscriptStartGate { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 9px; margin: 14px 26px 0; padding: 10px 12px; }
 .manuscriptStartGate strong { color: var(--ink); white-space: nowrap; }
 .manuscriptStartModal .formError { margin-right: 26px; margin-left: 26px; }
-.manuscriptStartModal .modalActions { margin-top: 8px; border-top: 1px solid var(--line); padding: 14px 26px 16px; }
+.manuscriptStartModal .modalActions { margin-top: 8px; border-top: 1px solid var(--line); padding: 14px 32px 18px 26px; }
+.manuscriptStartModal .modalActions button { min-height: 40px; padding-right: 20px; padding-left: 20px; }
 .manuscriptDraftJobCard { display: grid; grid-template-columns: 34px minmax(0, 1fr); gap: 10px; margin: 0 0 14px; border: 1px solid var(--line); border-radius: 11px; background: #fafaf8; padding: 11px; }
 .manuscriptDraftJobCard > span { width: 34px; height: 34px; display: grid; place-items: center; border-radius: 9px; background: #fff; border: 1px solid var(--line); }
 .manuscriptDraftJobCard .uiIcon { width: 16px; height: 16px; }
@@ -957,6 +958,35 @@ button.manuscriptBinding:hover { border-color: var(--line-strong); background: v
 .researchDecisionSheet > footer { min-height: 64px; flex: 0 0 64px; align-items: center; margin: 0; border-top: 1px solid var(--line); padding: 10px 24px; background: var(--surface); }
 .researchDecisionSheet > footer > span { min-width: 0; margin-right: auto; overflow: hidden; color: var(--muted); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
 .researchDecisionSheet > footer button { min-height: 42px; padding-right: 18px; padding-left: 18px; font-size: 12px; }
+
+.analysisPlanReviewButton { margin-top: 10px; white-space: nowrap; }
+.analysisPlanReviewSheet { width: min(920px, calc(100vw - 48px)); max-height: calc(100vh - 72px); display: flex; flex-direction: column; overflow: hidden; padding: 13px 0 0; border-radius: 22px 22px 0 0; }
+.analysisPlanReviewSheet > header { min-height: 65px; flex: 0 0 65px; align-items: center; border-bottom: 1px solid var(--line); padding: 0 28px 13px; }
+.analysisPlanReviewSheet > header h2 { font-family: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; font-size: 23px; font-weight: 660; letter-spacing: -.02em; }
+.analysisPlanReviewBody { min-width: 0; min-height: 0; flex: 1 1 auto; overflow-y: auto; padding: 22px 28px 26px; }
+.analysisPlanReviewIdentity { border: 1px solid var(--line-strong); border-radius: 12px; background: var(--surface-subtle); padding: 14px 16px; }
+.analysisPlanReviewIdentity > strong { display: block; margin-bottom: 10px; font-size: 14px; }
+.analysisPlanReviewIdentity dl { display: grid; grid-template-columns: minmax(0, 1.4fr) 80px minmax(0, 1.6fr) 58px; gap: 12px; margin: 0; }
+.analysisPlanReviewIdentity dl > div { min-width: 0; }
+.analysisPlanReviewIdentity dt { color: var(--muted); font-size: 10px; font-weight: 720; text-transform: uppercase; }
+.analysisPlanReviewIdentity dd { min-width: 0; margin: 4px 0 0; overflow: hidden; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.analysisPlanReviewIdentity code { font-size: 9px; }
+.analysisPlanReviewSummary { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin-top: 14px; }
+.analysisPlanReviewSummary > div { min-width: 0; border: 1px solid var(--line); border-radius: 10px; padding: 11px 12px; }
+.analysisPlanReviewSummary span, .analysisPlanReviewInputs > span { display: block; color: var(--muted); font-size: 10px; font-weight: 730; letter-spacing: .05em; text-transform: uppercase; }
+.analysisPlanReviewSummary strong { display: block; margin-top: 6px; font-size: 11px; line-height: 1.5; overflow-wrap: anywhere; }
+.analysisPlanReviewInputs { margin-top: 14px; }
+.analysisPlanReviewInputs ul { display: grid; gap: 6px; margin: 8px 0 0; padding: 0; list-style: none; }
+.analysisPlanReviewInputs li { min-width: 0; display: flex; align-items: center; justify-content: space-between; gap: 12px; border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; }
+.analysisPlanReviewInputs li strong { min-width: 0; overflow: hidden; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.analysisPlanReviewInputs li code { flex: 0 0 auto; color: var(--muted); font-size: 8px; }
+.analysisPlanReviewSheet .decisionRationale { display: block; margin-top: 14px; }
+.analysisPlanReviewSheet .decisionRationale textarea { width: 100%; box-sizing: border-box; }
+.analysisPlanReviewBoundary { display: grid; gap: 4px; margin-top: 12px; border-left: 3px solid var(--ink); background: var(--surface-subtle); padding: 10px 12px; }
+.analysisPlanReviewBoundary strong { font-size: 11px; }
+.analysisPlanReviewBoundary span { color: var(--muted); font-size: 11px; line-height: 1.5; }
+.analysisPlanReviewSheet > footer { min-height: 66px; flex: 0 0 66px; align-items: center; margin: 0; border-top: 1px solid var(--line); padding: 11px 28px 14px; background: var(--surface); }
+.analysisPlanReviewSheet > footer button { min-height: 42px; padding-right: 20px; padding-left: 20px; font-size: 12px; }
 
 .researchContractSheet { width: min(900px, calc(100vw - 48px)); max-height: calc(100vh - 96px); display: flex; flex-direction: column; overflow: hidden; padding: 0; border-color: #dddddd; border-radius: 16px 16px 0 0; box-shadow: 0 -18px 54px rgba(28, 30, 28, .14); outline: none; }
 .researchContractSheet > .sheetHandle { display: none; }

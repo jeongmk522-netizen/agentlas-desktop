@@ -231,6 +231,7 @@ import type {
   AnswerScienceDecisionInput,
   DeferScienceDecisionInput,
   PresentScienceDecisionInput,
+  ReviewScienceAnalysisPlanInput,
   ScienceDecisionRequest,
 } from "../shared/science-contract";
 import type { ProductExtensionPermission } from "../shared/product-extension";
@@ -2867,6 +2868,16 @@ app.whenReady().then(async () => {
     assertScienceSender(event, input);
     const record = input && typeof input === "object" ? input as Record<string, unknown> : {};
     return scienceStore().getAnalysisSpecForProject(String(record.projectId ?? ""), String(record.analysisSpecId ?? ""));
+  });
+  // Analysis-plan approval is a human authorization boundary. The MCP-visible freeze route can
+  // only verify an already approved/frozen exact version; it cannot manufacture this receipt.
+  ipcMain.handle("science:analysisSpecs:review", (event, envelope: unknown) => {
+    assertScienceSender(event, envelope);
+    const input = envelope && typeof envelope === "object" && "input" in envelope
+      ? (envelope as { input?: unknown }).input
+      : null;
+    if (!input || typeof input !== "object") throw new Error("science-analysis-plan-review-input-invalid");
+    return scienceStore().reviewAnalysisPlan(input as ReviewScienceAnalysisPlanInput);
   });
   ipcMain.handle("science:decisions:list", (event, input: unknown) => {
     assertScienceSender(event, input);

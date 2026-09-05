@@ -186,9 +186,6 @@ jobs:
       - name: Materialize pinned private Node runtime for CLI bootstrap
         run: npm run fetch:node
 
-      - name: Materialize Playwright-pinned Agentlas browser runtime
-        run: npm run fetch:browser
-
       - name: Package verified Actions artifacts only
         shell: bash
         run: |

@@ -73,7 +73,16 @@ const selected = gates.slice(0, MAX_GATES);
 const dropped = gates.slice(MAX_GATES);
 
 let failed = 0;
+let selftested = 0;
 const skipped = [];
+// Precommit validates this verifier's deterministic contract only. The release
+// invocation still requires native Windows/Linux hosts and built artifacts.
+const localExecutionContracts = new Map([
+  ["scripts/verify-packaged-updater-install-e2e.cjs", {
+    mode: "SELFTEST",
+    args: ["--selftest"],
+  }],
+]);
 // 인자가 있어야 자기검사로 도는 게이트는 파일 머리에 `// gate-args: --self-test` 를 적는다.
 // (verify-mac-install-boundary.mjs 는 인자 없이 부르면 사용법 오류로 죽어 "실패"로 오보됐다.)
 function gateArgs(gate) {
@@ -83,12 +92,30 @@ function gateArgs(gate) {
 }
 
 for (const gate of selected) {
-  const result = spawnSync(process.execPath, [gate, ...gateArgs(gate)], { cwd: root, encoding: "utf8" });
+  const localContract = localExecutionContracts.get(gate);
+  const args = localContract?.args ?? gateArgs(gate);
+  if (localContract) {
+    console.log(`run  ${localContract.mode} ${JSON.stringify([process.execPath, gate, ...args])}`);
+    console.log("native updater E2E: NOT VERIFIED — release requires native Windows/Linux hosts and built artifacts.");
+  }
+  const result = spawnSync(process.execPath, [gate, ...args], { cwd: root, encoding: "utf8" });
   if (result.status === 0) {
-    console.log(`ok   ${gate}`);
+    if (localContract) {
+      selftested += 1;
+      console.log(`ok   ${localContract.mode} ${gate}`);
+    } else {
+      console.log(`ok   ${gate}`);
+    }
     continue;
   }
   const output = `${result.stdout || ""}${result.stderr || ""}`;
+  // A failed deterministic selftest is a failure, never a native-host skip.
+  if (localContract) {
+    failed += 1;
+    console.error(`FAIL ${localContract.mode} ${gate}`);
+    console.error(output.trim().split("\n").slice(-6).join("\n"));
+    continue;
+  }
   // 이 게이트는 Electron 호스트를 요구한다. 여기서 돌릴 수 없다는 사실은 실패가 아니지만,
   // 통과로 세지도 않는다 — 무엇을 확인하지 못했는지 남긴다.
   // 호스트 판별의 신호는 두 갈래다: electron API 부재, 그리고 **네이티브 모듈 ABI**
@@ -153,5 +180,6 @@ if (dropped.length) {
 if (skipped.length) {
   console.warn(`run-bound-gates: ${skipped.length} gate(s) were not verified here (host or build tooling missing) — 위 skip 줄에 각각의 사유가 있습니다.`);
 }
-console.log(`run-bound-gates: ${selected.length - failed - skipped.length} passed, ${failed} failed, ${skipped.length} skipped (of ${gates.length} bound).`);
+console.log(`run-bound-gates: ${selected.length - failed - skipped.length - selftested} passed, ${selftested} SELFTEST passed, ${failed} failed, ${skipped.length} skipped (of ${gates.length} bound).`);
+console.log("native updater E2E: NOT VERIFIED by this precommit runner.");
 process.exit(failed ? 1 : 0);

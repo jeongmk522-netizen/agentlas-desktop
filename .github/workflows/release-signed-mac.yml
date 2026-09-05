@@ -224,8 +224,6 @@ jobs:
       # it proves this tag's pinned Core, schema version, README, and CHANGELOG
       # agree, which is what makes the artifact a valid release at all.
       - name: Verify deterministic release contracts
-        env:
-          GITHUB_TOKEN: ${{ secrets.AGENTLAS_DESKTOP_RELEASE_TOKEN }}
         run: |
           npm run release:preflight
           npm run build:electron
@@ -273,7 +271,6 @@ jobs:
       # while making the release-owned policy available on the macOS runner.
       AGENTLAS_PRODUCT_EXTENSION_TRUSTED_KEYS_JSON: >-
         {"agentlas-product-extension-release-v1":"-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEAhdzhuUqdSa8P+ydZZZ9pgrvoPDLZJq9mBohjEw9qa8g=\n-----END PUBLIC KEY-----"}
-      AGENTLAS_PRODUCT_EXTENSION_TRUSTED_KEYS_JSON: ${{ vars.AGENTLAS_PRODUCT_EXTENSION_TRUSTED_KEYS_JSON }}
       AGENTLAS_MAC_UPDATE_HISTORY_COUNT: "2"
       AGENTLAS_MAC_UPDATE_REQUIRED_HISTORY_TAGS: "v0.8.59,v0.8.60"
       AGENTLAS_MAC_UPDATE_HISTORY_CACHE_DIR: ${{ github.workspace }}/.release-cache/agentlas-mac-update-history

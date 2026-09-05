@@ -670,6 +670,9 @@ export function installPagedDocumentChrome(host: HTMLElement, locale: "ko" | "en
   let spreadsheetWheelHandler: (() => void) | null = null;
   let spreadsheetClickHandler: ((event: Event) => void) | null = null;
   let pdfAlignTimer = 0;
+  let pdfSelectionFrame = 0;
+  let pdfSettleFrame = 0;
+  let pdfSelectionRevision = 0;
   let rebuildFrame = 0;
 
   const stopDiscovery = () => {
@@ -694,10 +697,20 @@ export function installPagedDocumentChrome(host: HTMLElement, locale: "ko" | "en
     rebuildFrame = 0;
   };
 
+  const cancelPdfAlignment = () => {
+    pdfSelectionRevision += 1;
+    if (pdfSelectionFrame) window.cancelAnimationFrame(pdfSelectionFrame);
+    if (pdfSettleFrame) window.cancelAnimationFrame(pdfSettleFrame);
+    if (pdfAlignTimer) window.clearTimeout(pdfAlignTimer);
+    pdfSelectionFrame = 0;
+    pdfSettleFrame = 0;
+    pdfAlignTimer = 0;
+  };
+
   const disconnectPdf = () => {
     pdfObserver?.disconnect();
     pdfResizeObserver?.disconnect();
-    if (pdfAlignTimer) window.clearTimeout(pdfAlignTimer);
+    cancelPdfAlignment();
     if (pdfRoot && pdfClickHandler) pdfRoot.removeEventListener("click", pdfClickHandler, true);
     pdfShell?.removeAttribute("data-agentlas-single-page-ready");
     pdfRoot = null;
@@ -804,6 +817,7 @@ export function installPagedDocumentChrome(host: HTMLElement, locale: "ko" | "en
     const initialActive = nav.querySelector<HTMLElement>(".pdf-page-button--active");
     let selectedPage = Math.max(1, initialActive ? navigationButtons().indexOf(initialActive) + 1 : 1);
     const showPage = (page: number) => {
+      if (disposed || pdfRoot !== root) return;
       const pages = Array.from(viewer.querySelectorAll<HTMLElement>(".page[data-page-number]"));
       selectedPage = Math.max(1, Math.min(page, Math.max(1, pages.length)));
       pages.forEach((pageNode) => {
@@ -824,6 +838,7 @@ export function installPagedDocumentChrome(host: HTMLElement, locale: "ko" | "en
       }
     };
     pdfResizeObserver = observeCodexPanelLayout(shell, () => {
+      if (disposed || pdfRoot !== root) return;
       showPage(selectedPage);
       onPageSelected?.();
     });
@@ -831,16 +846,24 @@ export function installPagedDocumentChrome(host: HTMLElement, locale: "ko" | "en
       const target = event.target instanceof Element ? event.target.closest<HTMLElement>(".pdf-page-button") : null;
       if (!target) return;
       const page = navigationButtons().indexOf(target) + 1;
+      cancelPdfAlignment();
+      const revision = pdfSelectionRevision;
+      const isCurrentSelection = () => !disposed && pdfRoot === root && revision === pdfSelectionRevision;
       showPage(page);
       closeCompactNavigation(shell);
-      window.requestAnimationFrame(() => {
+      pdfSelectionFrame = window.requestAnimationFrame(() => {
+        pdfSelectionFrame = 0;
+        if (!isCurrentSelection()) return;
         showPage(page);
         onPageSelected?.();
-        window.requestAnimationFrame(() => showPage(page));
-        if (pdfAlignTimer) window.clearTimeout(pdfAlignTimer);
+        if (!isCurrentSelection()) return;
+        pdfSettleFrame = window.requestAnimationFrame(() => {
+          pdfSettleFrame = 0;
+          if (isCurrentSelection()) showPage(page);
+        });
         pdfAlignTimer = window.setTimeout(() => {
           pdfAlignTimer = 0;
-          showPage(page);
+          if (isCurrentSelection()) showPage(page);
         }, 120);
       });
     };

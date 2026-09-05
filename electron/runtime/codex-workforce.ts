@@ -20,8 +20,12 @@ function digest(value: unknown): string {
   return `sha256:${crypto.createHash("sha256").update(canonical(value)).digest("hex")}`;
 }
 function version(value: unknown): string | null {
+  // app-server 0.153.4 reports its native version under initialize's client
+  // name: agentlas-desktop/0.153.4 (...), not necessarily codex_cli_rs/....
+  // Accept the exact client identity used by codex-session.ts as well as the
+  // native CLI branding; never extract an arbitrary number from the response.
   return typeof value === "string"
-    ? /(?:^|\s)(?:codex[-_]cli(?:[-_]rs)?|codex)[/ ](\d+\.\d+\.\d+(?:[-+][A-Za-z0-9.-]+)?)(?=\s|$|\()/.exec(value)?.[1] ?? null
+    ? /(?:^|\s)(?:codex[-_]cli(?:[-_]rs)?|codex|agentlas-desktop)[/ ](\d+\.\d+\.\d+(?:[-+][A-Za-z0-9.-]+)?)(?=\s|$|\()/.exec(value)?.[1] ?? null
     : null;
 }
 

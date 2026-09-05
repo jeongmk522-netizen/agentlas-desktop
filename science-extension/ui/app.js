@@ -364,7 +364,7 @@ function createComposerEventSync({
   const state = {
     locale: "en",
     projects: [], selectedId: null, lifecycle: null, researchLoopInspection: null, conversations: [], selectedConversationId: null, messages: [], sources: [], sourceFigures: [], runs: [], artifacts: [], labs: [], workspaceLabBindings: [], labCatalog: [], labDecisionProjections: [], rendererPacks: [], manuscripts: [], claimLedger: null, journalProfiles: [], submissionExports: [], analysisSpecs: [], decisions: [],
-    artifactContextsByMessage: new Map(), labContextsById: new Map(), artifactHistoryById: new Map(), selectedLabId: null, selectedArtifactOriginVersion: null, inspectedArtifactVersion: null, inspectedArtifactContext: null, artifactComparison: null, draftHistoryGuard: null, labsExpanded: true, expandedLabGroups: new Set(["chemistry"]), expandedLabDecisions: new Set(), projectMenuOpen: false, projectFolderOpen: false, projectLibrarySummaries: new Map(), projectLibrarySummaryState: "loading", librarySearch: "", librarySelectedProjectId: null, projectFolderSelectedKey: null, newProjectStep: "details", selectedResearchTemplateId: null, newProjectDraft: { title: "", question: "" }, newProjectRequestId: null, newProjectRequestSignature: "", labManagerOpen: false, labManagerBusyId: null, labManagerError: "", historyOpen: false, railCollapsed: readRailCollapsed(),
+    artifactContextsByMessage: new Map(), labContextsById: new Map(), artifactHistoryById: new Map(), selectedLabId: null, selectedArtifactOriginVersion: null, inspectedArtifactVersion: null, inspectedArtifactContext: null, artifactComparison: null, draftHistoryGuard: null, labsExpanded: true, expandedLabGroups: new Set(["chemistry"]), expandedLabDecisions: new Set(), projectMenuOpen: false, projectFolderOpen: false, projectLibrarySummaries: new Map(), projectLibrarySummaryState: "loading", librarySearch: "", librarySelectedProjectId: null, projectFolderSelectedKey: null, newProjectStep: "details", selectedResearchTemplateId: null, newProjectDraft: { title: "", question: "" }, newProjectRequestId: null, newProjectRequestSignature: "", labManagerOpen: false, labManagerBusyId: null, labManagerGeneration: 0, labManagerError: "", historyOpen: false, railCollapsed: readRailCollapsed(),
     blocksByMessage: new Map(), citationsByMessage: new Map(), evidenceById: new Map(), selectedSourceId: null, selectedArtifactId: null,
     evidenceGraph: null, evidenceGraphReviews: [], evidenceGraphLoading: false, evidenceGraphError: "", selectedEvidenceGraphNodeId: null, selectedEvidenceGraphCandidateId: null, evidenceGraphReviewSheet: false, evidenceGraphReviewDecision: "accepted", evidenceGraphReviewBusy: false, evidenceGraphReviewError: "", evidenceGraphPathAnchorId: null, evidenceGraphPath: null,
     mode: "session", drawer: null, modal: false, manuscriptModal: false, saving: false, loadingProject: false, projectError: "", activeVegaView: null, activeCytoscape: null, activeNumericSurface: null, activeJBrowseTarget: null, scrollByMode: { session: 0, lab: 0, manuscript: 0 }, returnMessageId: null,
@@ -1660,7 +1660,7 @@ function createComposerEventSync({
       const preview = context.selectedVersion.rendererId === "agentlas.vega"
         ? `<span class="inlineArtifactPreview" data-inline-vega-artifact="${escapeHtml(context.artifact.id)}" data-inline-vega-version="${escapeHtml(version)}" aria-label="${escapeHtml(previewLabel)}"></span>`
         : `<span class="inlineArtifactPreview" data-inline-capture-artifact="${escapeHtml(context.artifact.id)}" data-inline-capture-version="${escapeHtml(version)}" aria-label="${escapeHtml(previewLabel)}"></span>`;
-      return `<button class="inlineArtifact" data-inline-artifact-id="${escapeHtml(context.artifact.id)}" data-inline-artifact-version="${escapeHtml(version)}" data-inline-conversation-id="${escapeHtml(message.conversationId)}" data-inline-message-id="${escapeHtml(message.id)}" aria-label="${escapeHtml(uiCopy(`${title} 아티팩트 v${version} 열기`, `Open ${title}, artifact version ${version}`))}">${preview}<strong>${escapeHtml(title)}</strong><span>${escapeHtml(versionLabel)}</span></button>`;
+      return `<div class="inlineArtifactItem"><button class="inlineArtifact" data-inline-artifact-id="${escapeHtml(context.artifact.id)}" data-inline-artifact-version="${escapeHtml(version)}" data-inline-conversation-id="${escapeHtml(message.conversationId)}" data-inline-message-id="${escapeHtml(message.id)}" aria-label="${escapeHtml(uiCopy(`${title} 아티팩트 v${version} 열기`, `Open ${title}, artifact version ${version}`))}">${preview}<strong>${escapeHtml(title)}</strong><span>${escapeHtml(versionLabel)}</span></button><button class="inlineArtifactRetry" type="button" data-action="retry-inline-preview" hidden>${uiCopy("미리보기 다시 시도", "Retry preview")}</button></div>`;
     }).join("")}</div>` : "";
     if (message.role === "user") return `<article class="questionBubble"><div>${escapeHtml(message.content)}</div><span>${escapeHtml(formatDate(message.createdAt))}</span></article>`;
     if (!blocks.length) return `<article class="answer" id="message-${escapeHtml(message.id)}" data-message-id="${escapeHtml(message.id)}" tabindex="-1"><div class="answerMeta">${message.role === "assistant" ? "Agentlas Science" : escapeHtml(message.role)}</div><div class="scienceArticleMarkdown">${scienceArticleMarkdown(message.content)}</div>${artifactCards}</article>`;
@@ -6672,6 +6672,7 @@ function createComposerEventSync({
   async function toggleProjectLabBookmark(labId, enabled) {
     const projectId = state.selectedId;
     if (!projectId || state.labManagerBusyId) return;
+    const generation = state.labManagerGeneration;
     const existing = state.workspaceLabBindings.find((binding) => binding.labId === labId) || null;
     state.labManagerBusyId = labId;
     state.labManagerError = "";
@@ -6687,9 +6688,9 @@ function createComposerEventSync({
         activatedBy: existing?.activatedBy || "user",
         config: existing?.config && typeof existing.config === "object" ? existing.config : {},
       });
-      if (state.selectedId !== projectId) return;
+      if (state.selectedId !== projectId || state.labManagerGeneration !== generation) return;
       const [workspaceState, labs] = await Promise.all([science.workspace.get(projectId), science.labs.list(projectId)]);
-      if (state.selectedId !== projectId) return;
+      if (state.selectedId !== projectId || state.labManagerGeneration !== generation) return;
       state.workspaceLabBindings = Array.isArray(workspaceState?.labs) ? workspaceState.labs.filter((binding) => binding?.projectId === projectId) : [];
       state.labs = Array.isArray(labs) ? labs : [];
       if (!enabled) {
@@ -6705,7 +6706,7 @@ function createComposerEventSync({
       state.labManagerBusyId = null;
       render();
     } catch (error) {
-      if (state.selectedId !== projectId) return;
+      if (state.selectedId !== projectId || state.labManagerGeneration !== generation) return;
       state.labManagerBusyId = null;
       state.labManagerError = error instanceof Error ? error.message : String(error);
       render();
@@ -7030,7 +7031,8 @@ function createComposerEventSync({
       const asset = template?.id || "data-table";
       return `<button type="button" data-action="${folderMode ? "open-sidebar-project" : "select-library-project"}" data-library-project-id="${escapeHtml(project.id)}" aria-current="${project.id === selectedProjectId ? "page" : "false"}"><img src="./assets/research-templates/${escapeHtml(asset)}.png" alt=""><span title="${escapeHtml(project.title)}">${escapeHtml(project.title)}</span></button>`;
     }).join("");
-    return `<aside class="projectHubSidebar"><header><button class="projectHubBack" type="button" data-action="back-to-work" aria-label="${uiCopy("Agentlas Work로 돌아가기", "Back to Agentlas Work")}">${heroIcon("chevron-right", "uiIcon isReverse")}</button><span class="projectHubBrand"><img src="./assets/agentlas-mark.png" alt=""><strong>Agentlas <em>Science*</em></strong></span></header><label class="projectHubSideSearch">${heroIcon("search")}<input type="search" data-project-search="side" value="${escapeHtml(state.librarySearch)}" placeholder="${uiCopy("프로젝트 검색", "Search projects")}" aria-label="${uiCopy("프로젝트 검색", "Search projects")}"></label><nav class="projectHubPrimaryNav" aria-label="${uiCopy("연구 보관함 메뉴", "Research library menu")}"><button type="button" class="isActive" data-action="back-to-projects">${heroIcon("grid")}<span>${uiCopy("프로젝트", "Projects")}</span></button><button type="button" data-action="new">${heroIcon("plus")}<span>${uiCopy("새 연구", "New research")}</span></button></nav><section class="projectHubProjectList"><header><strong>${uiCopy("프로젝트", "Projects")}</strong><span>${escapeHtml(state.projects.length)}</span></header><div>${projectLinks || `<p>${uiCopy("아직 프로젝트가 없습니다.", "No projects yet.")}</p>`}</div></section></aside>`;
+    const backToWorkLabel = uiCopy("Agentlas Work로 돌아가기", "Back to Agentlas Work");
+    return `<aside class="projectHubSidebar"><header><span class="projectHubBrand"><img src="./assets/agentlas-mark.png" alt=""><strong>Agentlas <em>Science*</em></strong></span></header><button class="projectHubBack" type="button" data-action="back-to-work" aria-label="${backToWorkLabel}" title="${backToWorkLabel}"><strong>${backToWorkLabel}</strong></button><label class="projectHubSideSearch">${heroIcon("search")}<input type="search" data-project-search="side" value="${escapeHtml(state.librarySearch)}" placeholder="${uiCopy("프로젝트 검색", "Search projects")}" aria-label="${uiCopy("프로젝트 검색", "Search projects")}"></label><nav class="projectHubPrimaryNav" aria-label="${uiCopy("연구 보관함 메뉴", "Research library menu")}"><button type="button" class="isActive" data-action="back-to-projects">${heroIcon("grid")}<span>${uiCopy("프로젝트", "Projects")}</span></button><button type="button" data-action="new">${heroIcon("plus")}<span>${uiCopy("새 연구", "New research")}</span></button></nav><section class="projectHubProjectList"><header><strong>${uiCopy("프로젝트", "Projects")}</strong><span>${escapeHtml(state.projects.length)}</span></header><div>${projectLinks || `<p>${uiCopy("아직 프로젝트가 없습니다.", "No projects yet.")}</p>`}</div></section></aside>`;
   }
 
   function projectLibrary() {
@@ -7270,17 +7272,24 @@ function createComposerEventSync({
   function setInlineArtifactPreviewState(host, stateName) {
     if (!host?.isConnected) return;
     const card = host.closest(".inlineArtifact");
+    const retry = host.closest(".inlineArtifactItem")?.querySelector(".inlineArtifactRetry");
     host.dataset.renderFailed = "true";
     host.dataset.previewMissing = "true";
     const status = document.createElement("span");
     status.className = "inlineArtifactPreviewStatus";
     status.textContent = stateName === "loading"
       ? uiCopy("미리보기를 다시 불러오는 중…", "Reloading preview…")
-      : uiCopy("미리보기를 불러오지 못했습니다 · 다시 시도", "Preview unavailable · Retry");
+      : uiCopy("미리보기를 불러오지 못했습니다.", "Preview unavailable.");
     host.replaceChildren(status);
     if (card) {
-      card.dataset.previewRetry = stateName === "loading" ? "loading" : "true";
       card.setAttribute("aria-busy", String(stateName === "loading"));
+    }
+    if (retry) {
+      retry.hidden = false;
+      retry.disabled = stateName === "loading";
+      retry.textContent = stateName === "loading"
+        ? uiCopy("다시 불러오는 중…", "Retrying…")
+        : uiCopy("미리보기 다시 시도", "Retry preview");
     }
   }
 
@@ -7288,9 +7297,13 @@ function createComposerEventSync({
     delete host.dataset.renderFailed;
     delete host.dataset.previewMissing;
     const card = host.closest(".inlineArtifact");
+    const retry = host.closest(".inlineArtifactItem")?.querySelector(".inlineArtifactRetry");
     if (!card) return;
-    delete card.dataset.previewRetry;
     card.removeAttribute("aria-busy");
+    if (retry) {
+      retry.hidden = true;
+      retry.disabled = false;
+    }
   }
 
   async function hydrateInlineArtifactPreview(host) {
@@ -7935,6 +7948,8 @@ function createComposerEventSync({
     const content = document.createElement("div"); content.className = "statisticsAnalysisContent";
     surface.append(header, content);
     host.replaceChildren(surface);
+    let restoreInteractiveView = null;
+    let captureLayoutError = null;
     if (view === "figure") {
       if (!window.vega || !window.vegaExpressionInterpreter) throw new Error("science-paleontology-vega-runtime-missing");
       content.classList.add("statisticsChartHost");
@@ -7943,8 +7958,28 @@ function createComposerEventSync({
       await state.activeVegaView.runAsync();
       const canvas = content.querySelector("canvas");
       if (!canvas) throw new Error("science-paleontology-vega-canvas-missing");
+      canvas.style.maxWidth = "none";
       await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
-      fitArtifactVegaCanvas(content, { capture: true, gutter: 10 });
+      // The verification capture remains fitted. The interactive Lab restores
+      // the exact Vega dimensions afterwards so every occurrence label is
+      // readable by scrolling, rather than compressing 70 rows into a thumbnail.
+      if (interactive) restoreInteractiveView = () => {
+        if (!canvas.isConnected) return;
+        canvas.style.width = `${canvas.dataset.vegaNaturalCssWidth}px`;
+        canvas.style.height = `${canvas.dataset.vegaNaturalCssHeight}px`;
+        canvas.style.marginInline = "0";
+        content.style.placeItems = "start";
+        content.scrollTop = 0;
+        content.scrollLeft = 0;
+        content.dataset.interactiveChartScale = "1";
+      };
+      try {
+        fitArtifactVegaCanvas(content, { capture: true, gutter: 10 });
+      } catch (error) {
+        if (!interactive) throw error;
+        captureLayoutError = error;
+        restoreInteractiveView?.();
+      }
       const footer = document.createElement("footer");
       const copy = document.createElement("div");
       const caption = document.createElement("strong"); caption.textContent = `${estimates.oldestBoundMa}–${estimates.youngestBoundMa} Ma reported envelope`;
@@ -7984,7 +8019,7 @@ function createComposerEventSync({
     host.dataset.paleontologyReady = "true";
     host.dataset.paleontologyView = view;
     host.dataset.tableRows = String(tablePayload.rows.length);
-    return { view, rowCount: tablePayload.rows.length, columnCount: tablePayload.columns.length };
+    return { view, rowCount: tablePayload.rows.length, columnCount: tablePayload.columns.length, restoreInteractiveView, captureLayoutError };
   }
 
   function renderDataTable(version, host, artifactId, interactive = true) {
@@ -9064,12 +9099,24 @@ function createComposerEventSync({
     if (paleontologyArtifactPayload(artifact.version)) {
       try {
         const rendered = await renderPaleontologyEvidence(artifact.version, host, artifact.id, true);
+        if (!host.isConnected || state.selectedArtifactId !== artifact.id) return;
         if (rendered.view === "figure") {
-          const bundle = await science.artifacts.capture({ projectId: artifact.projectId, artifactId: artifact.id, artifactVersion: artifact.version.version, contentSha256: artifact.version.contentSha256 });
-          const status = document.querySelector(".rendererStatus");
-          if (status && bundle?.visualReviewEligible) status.dataset.visualCapture = "verified";
+          try {
+            if (rendered.captureLayoutError) throw rendered.captureLayoutError;
+            const bundle = await science.artifacts.capture({ projectId: artifact.projectId, artifactId: artifact.id, artifactVersion: artifact.version.version, contentSha256: artifact.version.contentSha256 });
+            if (!host.isConnected || state.selectedArtifactId !== artifact.id) return;
+            const status = document.querySelector(".rendererStatus");
+            if (status && bundle?.visualReviewEligible) status.dataset.visualCapture = "verified";
+          } catch (error) {
+            if (!host.isConnected || state.selectedArtifactId !== artifact.id) return;
+            host.dataset.captureFailed = "true";
+            if (errorNode) errorNode.textContent = error instanceof Error ? error.message : String(error);
+          } finally {
+            rendered.restoreInteractiveView?.();
+          }
         }
       } catch (error) {
+        if (!host.isConnected || state.selectedArtifactId !== artifact.id) return;
         host.dataset.renderFailed = "true";
         if (errorNode) errorNode.textContent = error instanceof Error ? error.message : String(error);
       }
@@ -9395,11 +9442,9 @@ function createComposerEventSync({
   root.addEventListener("click", (event) => {
     const target = event.target.closest("button");
     if (!target) return;
-    if (target.dataset.inlineArtifactId && target.dataset.previewRetry) {
-      if (target.dataset.previewRetry !== "loading") {
-        const host = target.querySelector("[data-inline-vega-artifact], [data-inline-capture-artifact]");
-        if (host) void hydrateInlineArtifactPreview(host);
-      }
+    if (target.dataset.action === "retry-inline-preview") {
+      const host = target.closest(".inlineArtifactItem")?.querySelector("[data-inline-vega-artifact], [data-inline-capture-artifact]");
+      if (host) void hydrateInlineArtifactPreview(host);
       return;
     }
     if (target.dataset.action === "answer-runtime-question") { void answerRuntimeQuestion(target.dataset.runtimeQuestionAnswer || ""); return; }
@@ -9594,15 +9639,18 @@ function createComposerEventSync({
       return;
     }
     if (target.dataset.action === "manage-project-labs") {
+      state.labManagerGeneration += 1;
       state.labManagerOpen = true;
+      state.labManagerBusyId = null;
       state.labManagerError = "";
       render();
       requestAnimationFrame(() => document.querySelector(".labManagerRow")?.focus());
       return;
     }
     if (target.dataset.action === "close-project-labs") {
-      if (state.labManagerBusyId) return;
+      state.labManagerGeneration += 1;
       state.labManagerOpen = false;
+      state.labManagerBusyId = null;
       state.labManagerError = "";
       render();
       requestAnimationFrame(() => document.querySelector(".manageLabsButton")?.focus());

@@ -431,7 +431,8 @@ button { cursor: pointer; color: inherit; }
 .answer p, .answerBlock p { margin: 0; font-family: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; font-size: 13px; line-height: 1.72; white-space: pre-wrap; overflow-wrap: anywhere; }
 .answerBlock { margin-bottom: 15px; }
 .inlineArtifacts { display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; margin-top: 18px; }
-.inlineArtifact { min-width: 0; display: flex; flex-direction: column; align-items: flex-start; border: 1px solid transparent; border-radius: 10px; background: transparent; padding: 6px; text-align: left; box-shadow: none; overflow: hidden; transition: transform 140ms ease, border-color 140ms ease, background-color 140ms ease; }
+.inlineArtifactItem { min-width: 0; display: grid; }
+.inlineArtifact { width: 100%; min-width: 0; display: flex; flex-direction: column; align-items: flex-start; border: 1px solid transparent; border-radius: 10px; background: transparent; padding: 6px; text-align: left; box-shadow: none; overflow: hidden; transition: transform 140ms ease, border-color 140ms ease, background-color 140ms ease; }
 .inlineArtifact:hover { border-color: var(--line); background: var(--surface-subtle); transform: scale(1.012); }
 .inlineArtifact:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
 .inlineArtifactPreview { width: 100%; min-height: 118px; max-height: 230px; display: grid; place-items: center; margin: 0 0 10px; border: 0; border-radius: 8px; overflow: hidden; background: var(--surface-subtle); }
@@ -441,6 +442,10 @@ button { cursor: pointer; color: inherit; }
 .inlineArtifactPreviewStatus { display: inline-flex; align-items: center; justify-content: center; min-height: 34px; }
 .inlineArtifact strong { display: block; margin: 0 4px; font-family: "Pretendard", Inter, ui-sans-serif, -apple-system, sans-serif; font-size: 15px; line-height: 1.35; }
 .inlineArtifact > span:not(.inlineArtifactPreview) { display: block; margin: 5px 4px 1px; color: var(--muted); font-size: 11px; }
+.inlineArtifactRetry { width: max-content; min-height: 28px; justify-self: end; margin: 3px 6px 0; border: 0; border-radius: 7px; background: transparent; padding: 0 8px; color: var(--muted-deep); font-size: 11px; font-weight: 650; }
+.inlineArtifactRetry:hover { background: var(--surface-subtle); color: var(--ink); }
+.inlineArtifactRetry:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
+.inlineArtifactRetry:disabled { cursor: progress; opacity: .62; }
 @media (prefers-reduced-motion: reduce) { .inlineArtifact { transition: none; } .inlineArtifact:hover { transform: none; } }
 .citationRow { display: inline-flex; gap: 4px; margin-top: 7px; }
 .citationChip { min-width: 30px; height: 25px; border: 1px solid var(--line); border-radius: 7px; background: var(--soft); color: var(--muted); font-size: 12px; font-weight: 650; }
@@ -1980,10 +1985,11 @@ button.manuscriptBinding:hover { border-color: var(--line-strong); background: v
    three-pane library geometry used by the provided reference. */
 .projectHub { width: 100%; height: 100%; min-width: 0; display: grid; grid-template-columns: 220px minmax(0, 1fr) 248px; overflow: hidden; background: var(--surface); color: var(--ink); }
 .projectHubSidebar { min-width: 0; display: flex; flex-direction: column; overflow: hidden; border-right: 1px solid var(--grey-200); background: var(--grey-50); padding: 14px 12px; }
-.projectHubSidebar > header { min-height: 34px; display: flex; align-items: center; gap: 8px; }
-.projectHubBack { width: 30px; height: 30px; flex: 0 0 auto; display: grid; place-items: center; border: 0; border-radius: var(--science-radius-control); background: transparent; color: var(--grey-600); padding: 0; }
+.projectHubSidebar > header { min-height: 34px; display: flex; align-items: center; padding: 0 2px; }
+.projectHubBack { width: 100%; min-height: 34px; flex: 0 0 auto; display: flex; align-items: center; border: 0; border-radius: var(--science-radius-control); background: transparent; color: var(--grey-600); margin-top: 4px; padding: 0 10px; text-align: left; }
 .projectHubBack:hover { background: var(--surface); color: var(--ink); }
-.projectHubBack .uiIcon { width: 14px; height: 14px; }
+.projectHubBack:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
+.projectHubBack strong { overflow: hidden; font-size: 11px; font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }
 .projectHubBrand { min-width: 0; display: flex; align-items: center; gap: 8px; }
 .projectHubBrand img { width: 28px; height: 31px; object-fit: contain; }
 .projectHubBrand strong { font-size: 14px; letter-spacing: -.025em; white-space: nowrap; }
@@ -2282,7 +2288,7 @@ button.manuscriptBinding:hover { border-color: var(--line-strong); background: v
   .artifactWorkspace.historyOpen .labWorkGrid { grid-template-columns: minmax(0, 1fr) 220px; }
   .experimentLoop { grid-template-columns: 120px minmax(140px, 1fr) minmax(160px, 1fr) auto; gap: 10px; }
   .originStrip { padding-left: 14px; padding-right: 14px; }
-  .originStrip { align-items: flex-start; flex-wrap: wrap; }
+  .originStrip { align-items: flex-start; flex-wrap: wrap; flex-basis: auto; flex-shrink: 0; }
   .originStrip > div:last-child { margin-left: auto; }
   .vegaEditorFields { grid-template-columns: minmax(160px, 1fr) 108px; }
   .vegaEditor fieldset { grid-column: 1 / -1; }
@@ -4438,46 +4444,48 @@ dl dd:empty::after {
 }
 @media (max-width: 1480px) {
   /* 여기서부터는 줄여도 본문이 안 나온다. 사이드바를 아이콘만 남기고 접는다 --
-     목적지는 아이콘으로 계속 닿을 수 있고, 본문은 읽을 수 있는 폭을 되찾는다. */
-  .workspace, .workspace.drawerOpen { grid-template-columns: var(--rail-compact) minmax(0, 1fr); }
-  .workspace .railLabel,
-  .workspace .projectNavLabel,
-  .workspace .railBrandWordmark,
-  .workspace .railCollapseButton,
-  .workspace .railBackButton,
-  .workspace .railProjectIdentity,
-  .workspace .recentProjectsSection,
-  .workspace .currentProjectSection,
-  .workspace .railDisclosure,
-  .workspace .labChevron,
-  .workspace .labGroupLabel,
-  .workspace .labGroupDisclosure em,
-  .workspace .labEndChevron,
-  .workspace .labGroupChildren,
-  .workspace .researcherCard > span:nth-child(2),
-  .workspace .researcherCard button,
-  .workspace .railEmpty,
-  .workspace .newButton strong,
-  .workspace .projectWorkflowNav button > span { display: none; }
-  .workspace .railBrand { justify-content: center; padding-right: 0; padding-left: 0; }
-  .workspace .railBrandLockup { flex: 0 0 auto; justify-content: center; gap: 0; overflow: visible; }
-  .workspace .railBrandMark { width: 30px; height: 33px; flex-basis: 30px; }
-  .workspace .projectLibraryBack { width: 40px; min-height: 40px; justify-content: center; margin: 0 auto 4px; padding: 0; }
-  .workspace .projectLibraryBack span { display: none; }
-  .workspace .newButton { width: 40px; height: 40px; margin: 0 auto 12px; padding: 0; }
-  .workspace .labSection { border-top: 1px solid var(--line); }
-  .workspace .labList,
-  .workspace .labList.isOpen { display: block; padding: 8px 0; }
-  .workspace .labGroupDisclosure { width: 40px; height: 40px; justify-content: center; margin: 3px auto; padding: 0; }
-  .workspace .labGroupIcon { width: 18px; flex-basis: 18px; }
-  .workspace .labGroupIcon .uiIcon { width: 18px; height: 18px; }
-  .workspace .projectContextCard { margin: 0; }
-  .workspace .projectContextCard .currentProject { display: none; }
-  .workspace .projectWorkflowNav { max-height: none; overflow: visible; padding: 6px 0; }
-  .workspace .projectWorkflowNav button { width: 40px; min-height: 40px; margin: 1px auto; padding: 0; justify-content: center; gap: 0; }
-  .workspace .projectWorkflowNav button > .uiIcon { display: block; width: 18px; height: 18px; flex-basis: 18px; }
-  .workspace .researcherCard { justify-content: center; padding-right: 0; padding-left: 0; }
-  :root { --science-question-rail-width: var(--rail-compact); }
+     목적지는 아이콘으로 계속 닿을 수 있고, 본문은 읽을 수 있는 폭을 되찾는다.
+     이 표현은 사용자가 실제로 접은 상태에만 적용한다. */
+  .workspace[data-rail-collapsed="true"],
+  .workspace.drawerOpen[data-rail-collapsed="true"] { grid-template-columns: var(--rail-compact) minmax(0, 1fr); }
+  .workspace[data-rail-collapsed="true"] .railLabel,
+  .workspace[data-rail-collapsed="true"] .projectNavLabel,
+  .workspace[data-rail-collapsed="true"] .railBrandWordmark,
+  .workspace[data-rail-collapsed="true"] .railCollapseButton,
+  .workspace[data-rail-collapsed="true"] .railBackButton,
+  .workspace[data-rail-collapsed="true"] .railProjectIdentity,
+  .workspace[data-rail-collapsed="true"] .recentProjectsSection,
+  .workspace[data-rail-collapsed="true"] .currentProjectSection,
+  .workspace[data-rail-collapsed="true"] .railDisclosure,
+  .workspace[data-rail-collapsed="true"] .labChevron,
+  .workspace[data-rail-collapsed="true"] .labGroupLabel,
+  .workspace[data-rail-collapsed="true"] .labGroupDisclosure em,
+  .workspace[data-rail-collapsed="true"] .labEndChevron,
+  .workspace[data-rail-collapsed="true"] .labGroupChildren,
+  .workspace[data-rail-collapsed="true"] .researcherCard > span:nth-child(2),
+  .workspace[data-rail-collapsed="true"] .researcherCard button,
+  .workspace[data-rail-collapsed="true"] .railEmpty,
+  .workspace[data-rail-collapsed="true"] .newButton strong,
+  .workspace[data-rail-collapsed="true"] .projectWorkflowNav button > span { display: none; }
+  .workspace[data-rail-collapsed="true"] .railBrand { justify-content: center; padding-right: 0; padding-left: 0; }
+  .workspace[data-rail-collapsed="true"] .railBrandLockup { flex: 0 0 auto; justify-content: center; gap: 0; overflow: visible; }
+  .workspace[data-rail-collapsed="true"] .railBrandMark { width: 30px; height: 33px; flex-basis: 30px; }
+  .workspace[data-rail-collapsed="true"] .projectLibraryBack { width: 40px; min-height: 40px; justify-content: center; margin: 0 auto 4px; padding: 0; }
+  .workspace[data-rail-collapsed="true"] .projectLibraryBack span { display: none; }
+  .workspace[data-rail-collapsed="true"] .newButton { width: 40px; height: 40px; margin: 0 auto 12px; padding: 0; }
+  .workspace[data-rail-collapsed="true"] .labSection { border-top: 1px solid var(--line); }
+  .workspace[data-rail-collapsed="true"] .labList,
+  .workspace[data-rail-collapsed="true"] .labList.isOpen { display: block; padding: 8px 0; }
+  .workspace[data-rail-collapsed="true"] .labGroupDisclosure { width: 40px; height: 40px; justify-content: center; margin: 3px auto; padding: 0; }
+  .workspace[data-rail-collapsed="true"] .labGroupIcon { width: 18px; flex-basis: 18px; }
+  .workspace[data-rail-collapsed="true"] .labGroupIcon .uiIcon { width: 18px; height: 18px; }
+  .workspace[data-rail-collapsed="true"] .projectContextCard { margin: 0; }
+  .workspace[data-rail-collapsed="true"] .projectContextCard .currentProject { display: none; }
+  .workspace[data-rail-collapsed="true"] .projectWorkflowNav { max-height: none; overflow: visible; padding: 6px 0; }
+  .workspace[data-rail-collapsed="true"] .projectWorkflowNav button { width: 40px; min-height: 40px; margin: 1px auto; padding: 0; justify-content: center; gap: 0; }
+  .workspace[data-rail-collapsed="true"] .projectWorkflowNav button > .uiIcon { display: block; width: 18px; height: 18px; flex-basis: 18px; }
+  .workspace[data-rail-collapsed="true"] .researcherCard { justify-content: center; padding-right: 0; padding-left: 0; }
+  .workspace[data-rail-collapsed="true"] { --science-question-rail-width: var(--rail-compact); }
 }
 @media (max-width: 900px) {
   :root { --science-chat-width: 288px; --science-chat-width-compact: 280px; }

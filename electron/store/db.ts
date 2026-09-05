@@ -17,7 +17,7 @@ import { reconcileTaskParticipantsFromRunEventsInDb } from "./task-participant-p
 let _db: Database.Database | null = null;
 let _postContinuityRepairsDeferred = false;
 
-const SCHEMA_VERSION = 110;
+const SCHEMA_VERSION = 111;
 
 /**
  * The schema version this binary's migration ladder produces.
@@ -6045,6 +6045,25 @@ export function initStore(options: StoreInitOptions = {}): void {
         "ALTER TABLE automation_runs ADD COLUMN dry_run INTEGER NOT NULL DEFAULT 0 CHECK(dry_run IN (0, 1))",
       );
     }
+  }
+
+  // v111: append-only goal amendments; the v94 original remains unchanged.
+  // No backfill: old requests cannot acquire invented message provenance.
+  if (userVersion < 111) {
+    _db.transaction(() => {
+      _db!.exec(`
+        CREATE TABLE IF NOT EXISTS chat_goal_revisions (
+          goal_id TEXT NOT NULL,
+          revision INTEGER NOT NULL CHECK(revision > 0),
+          source_message_id TEXT NOT NULL,
+          payload_json TEXT NOT NULL,
+          created_at TEXT NOT NULL,
+          PRIMARY KEY(goal_id, revision),
+          UNIQUE(goal_id, source_message_id),
+          FOREIGN KEY(goal_id) REFERENCES chat_goal_contracts(goal_id) ON DELETE CASCADE
+        );
+      `);
+    })();
   }
 
   } catch (error) {

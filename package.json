@@ -15,7 +15,7 @@
     "minimumSourceAppVersion": "0.7.0",
     "minimumRuntimeVersion": "1.0.4",
     "minimumSchemaVersion": 35,
-    "targetSchemaVersion": 110,
+    "targetSchemaVersion": 111,
     "bundledRuntimeVersion": "1.2.40"
   },
   "agentlasBundledRuntimeSource": {

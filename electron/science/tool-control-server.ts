@@ -157,6 +157,27 @@ export const SCIENCE_RESEARCH_LIFECYCLE_PRECONDITIONS_SCHEMA = {
     exactLifecyclePreconditionSchema({ kind: { const: "fail" }, fromPhase: { type: "string", enum: [...SCIENCE_RESEARCH_MAIN_PHASE_SCHEMA.enum, "blocked"] }, evidenceSha256: MANUSCRIPT_SHA256_SCHEMA }),
   ],
 } as const;
+export const SCIENCE_RESEARCH_FROZEN_PLAN_SCHEMA = {
+  type: ["object", "null"],
+  description: "Exact frozen analysis-plan binding from list_analysis_plans. Use null before a plan is frozen; otherwise send only analysisSpecId, version, and contentSha256.",
+  properties: {
+    analysisSpecId: {
+      ...MANUSCRIPT_UUID_SCHEMA,
+      description: "The frozen analysis plan's id from list_analysis_plans (not id or analysisSpecVersion).",
+    },
+    version: {
+      type: "integer",
+      minimum: 1,
+      description: "The frozen analysis plan's currentVersion from list_analysis_plans.",
+    },
+    contentSha256: {
+      ...MANUSCRIPT_SHA256_SCHEMA,
+      description: "The frozen analysis plan's currentDocumentSha256 from list_analysis_plans.",
+    },
+  },
+  required: ["analysisSpecId", "version", "contentSha256"],
+  additionalProperties: false,
+} as const;
 const SCIENCE_DOMAIN_SCHEMA = {
   type: "string",
   enum: ["general", "life-science", "chemistry", "physics", "materials-science", "genomics", "astronomy", "earth-ecology", "statistics", "economics", "finance"],
@@ -1119,7 +1140,7 @@ const PLATFORM_TOOLS: McpTool[] = [
         preconditions: SCIENCE_RESEARCH_LIFECYCLE_PRECONDITIONS_SCHEMA,
         open_blocking_decisions: { type: "array", maxItems: 100, items: { type: "object" } },
         blockers: { type: "array", maxItems: 100, items: { type: "string", minLength: 1, maxLength: 8000 } },
-        frozen_analysis_plan: { type: ["object", "null"] },
+        frozen_analysis_plan: SCIENCE_RESEARCH_FROZEN_PLAN_SCHEMA,
         submission_export: { type: ["object", "null"] },
         stop: { type: ["object", "null"] },
       },

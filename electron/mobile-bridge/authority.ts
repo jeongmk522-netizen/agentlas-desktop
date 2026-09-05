@@ -1046,6 +1046,9 @@ async function resolveMobileRoleSelection(
     (selection.backend === undefined || candidate.backend === selection.backend),
   );
   if (!runtime) throw new Error("The selected Desktop runtime is unavailable");
+  if (runtimeCredentialUnavailable(runtime)) {
+    throw new Error("The selected Desktop runtime credential is unavailable");
+  }
   if (
     selection.model &&
     (runtime.availableModels?.length ?? 0) > 0 &&

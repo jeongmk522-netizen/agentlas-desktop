@@ -1648,9 +1648,12 @@ export interface MobileBridgeAutomationDto {
 export interface MobileBridgeUsageWindowDto {
   id: string;
   label: string;
-  kind: "5h" | "7d" | "monthly" | "daily";
+  kind: "5h" | "7d" | "monthly" | "daily" | "unknown";
   usedPercent: number;
   resetAt: number | null;
+  windowDurationMins: number | null;
+  limitId: string | null;
+  limitName: string | null;
   model: string | null;
   used: number | null;
   limit: number | null;

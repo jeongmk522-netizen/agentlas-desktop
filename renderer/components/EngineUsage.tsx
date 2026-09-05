@@ -67,13 +67,15 @@ const ENGINES: EngineDef[] = [
 ];
 
 function windowLabel(w: UsageWindow, ko: boolean): string {
+  const named = (label: string) => w.limitName ? `${w.limitName} · ${label}` : label;
   if (w.kind === "monthly") return ko ? "추가 크레딧" : "Extra credits";
   if (w.id.includes("-local-")) return ko ? (w.kind === "5h" ? "최근 5시간(로컬)" : "최근 7일(로컬)") : w.kind === "5h" ? "Last 5h (local)" : "Last 7d (local)";
-  if (w.kind === "5h") return ko ? "5시간" : "5-hour";
+  if (w.kind === "5h") return named(ko ? "5시간" : "5-hour");
   if (w.kind === "daily") return w.label || (ko ? "일일" : "Daily");
   if (w.model === "opus") return ko ? "Opus 7일" : "Opus 7d";
   if (w.model === "sonnet") return ko ? "Sonnet 7일" : "Sonnet 7d";
-  return ko ? "주간(7일)" : "Weekly (7d)";
+  if (w.kind === "7d") return named(ko ? "주간(7일)" : "Weekly (7d)");
+  return w.label || (ko ? "사용량 한도" : "Usage limit");
 }
 
 function formatReset(resetAt: number | null | undefined, ko: boolean): string {

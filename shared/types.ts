@@ -4711,7 +4711,7 @@ export interface AuthSession {
 // ── LLM 엔진 사용량 (구독 rate-limit 창 + 크레딧) ──────────────
 // Claude/Codex/Gemini의 프로바이더 OAuth usage 엔드포인트에서 조회한 정규화 결과.
 /** 사용량 창 종류. 5h=5시간 롤링, 7d=주간(7일), monthly=월 크레딧, daily=일일(모델별·Gemini). */
-export type UsageWindowKind = "5h" | "7d" | "monthly" | "daily";
+export type UsageWindowKind = "5h" | "7d" | "monthly" | "daily" | "unknown";
 
 /** 한 프로바이더의 단일 사용량 창. */
 export interface UsageWindow {
@@ -4724,6 +4724,12 @@ export interface UsageWindow {
   usedPercent: number;
   /** 리셋 시각(epoch ms). 모르면 미설정. */
   resetAt?: number | null;
+  /** 공급자가 밝힌 실제 창 길이(분). 위치(primary/secondary)로 추정하지 않는다. */
+  windowDurationMins?: number | null;
+  /** 공급자 소유 제한 식별자. 모델별/일반 제한을 합치지 않기 위해 보존한다. */
+  limitId?: string | null;
+  /** 공급자 소유 제한 표시명. 모델별 제한을 구분할 때 사용한다. */
+  limitName?: string | null;
   /** 모델 한정 창이면 "opus" | "sonnet" 등. */
   model?: string | null;
   /** monthly 크레딧 창: 사용/한도/단위($·credits). */

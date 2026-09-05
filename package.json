@@ -47,6 +47,7 @@
     "test:work-responsive-rail": "node scripts/qa-work-responsive-rail.cjs",
     "test:work-runtime-selection": "electron scripts/qa-work-runtime-selection.cjs",
     "test:work-stop-retry-followup": "node scripts/qa-work-stop-retry-followup.cjs",
+    "test:codex-usage-windows": "node scripts/qa-codex-usage-windows.cjs",
     "dev": "concurrently -k --success first -n NEXT,ELECTRON -c blue,magenta \"npm:dev:renderer\" \"npm:dev:electron\"",
     "dev:renderer": "npm run --silent sync:renderer-assets && cd renderer && next dev -p 3100",
     "dev:electron": "wait-on http://localhost:3100 && node scripts/build-macos-input-driver.cjs && tsc -p electron/tsconfig.json && cross-env NODE_ENV=development ELECTRON_START_URL=http://localhost:3100 electron .",

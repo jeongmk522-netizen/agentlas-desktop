@@ -19,14 +19,16 @@ function canonical(value: unknown): string {
 function digest(value: unknown): string {
   return `sha256:${crypto.createHash("sha256").update(canonical(value)).digest("hex")}`;
 }
-function version(value: unknown): string | null {
-  // app-server 0.153.4 reports its native version under initialize's client
-  // name: agentlas-desktop/0.153.4 (...), not necessarily codex_cli_rs/....
-  // Accept the exact client identity used by codex-session.ts as well as the
-  // native CLI branding; never extract an arbitrary number from the response.
-  return typeof value === "string"
-    ? /(?:^|\s)(?:codex[-_]cli(?:[-_]rs)?|codex|agentlas-desktop)[/ ](\d+\.\d+\.\d+(?:[-+][A-Za-z0-9.-]+)?)(?=\s|$|\()/.exec(value)?.[1] ?? null
-    : null;
+function version(value: unknown, initialize = false): string | null {
+  if (typeof value !== "string" || value.length > 2048 || /[\r\n\x00]/.test(value)) return null;
+  // Codex's app-server-client parses the version after the first slash in
+  // initialize.userAgent (rust-v0.153.4, remote.rs). Its product label varies
+  // with the host/client. Process provenance is the spawned Codex transport,
+  // not this display label; require a bounded header and an exact version match.
+  const header = /^[A-Za-z0-9][A-Za-z0-9 ._-]{0,127}\/(\d+\.\d+\.\d+(?:[-+][A-Za-z0-9.-]+)?)(?=\s|$|\()/.exec(value)?.[1];
+  if (header || initialize) return header ?? null;
+  // Discovery may retain the literal `codex --version` CLI output.
+  return /^(?:codex[-_]cli(?:[-_]rs)?|codex) (\d+\.\d+\.\d+(?:[-+][A-Za-z0-9.-]+)?)$/.exec(value)?.[1] ?? null;
 }
 
 /** Input provenance only. Codex does not echo an MCP endpoint/config digest. */
@@ -127,7 +129,7 @@ export class CodexWorkforceObservation {
 
   constructor(private readonly req: RunnerRequest, init: unknown, private readonly configDigest: string | null) {
     this.grant = structuredClone(req.workforceRuntimeToolGrant!);
-    const actual = record(init) ? version(init.userAgent) : null;
+    const actual = record(init) ? version(init.userAgent, true) : null;
     if (!actual) fail("initialize_version_missing");
     this.runtimeVersion = actual!;
     const expected = this.grant.runtimeVersion;

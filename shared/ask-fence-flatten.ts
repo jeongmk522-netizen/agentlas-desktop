@@ -7,39 +7,11 @@
 // stripAgentControlBlocks 로 펜스를 통째 제거했고, 텔레그램만 자기 평문화기를 갖고
 // 있었다). 표면마다 손으로 다시 짜면 한 표면씩 빠진다 — 그래서 한 벌이 소유한다.
 import { AGENT_ASK_OPEN, AGENT_ASK_CLOSE } from "./agent-control-blocks";
+import { renderPlainAskBody } from "./ask-plaintext";
 
 /** 펜스 본문(JSON)을 사람이 읽을 질문+선택지 텍스트로 바꾼다. 파싱 실패 시 null. */
 export function flattenAskFenceBody(body: string, replyLocale: "ko" | "en"): string | null {
-  const stripped = body.replace(/^```(?:json)?\s*/i, "").replace(/```$/i, "").trim();
-  let obj: unknown;
-  try {
-    obj = JSON.parse(stripped);
-  } catch {
-    return null;
-  }
-  if (!obj || typeof obj !== "object") return null;
-  const o = obj as Record<string, unknown>;
-  if (typeof o.question !== "string") return null;
-  const lines: string[] = [o.question.trim()];
-  const optionsRaw = Array.isArray(o.options) ? o.options : [];
-  let n = 0;
-  for (const opt of optionsRaw) {
-    if (!opt || typeof opt !== "object") continue;
-    const ob = opt as Record<string, unknown>;
-    if (typeof ob.label !== "string") continue;
-    const desc =
-      typeof ob.description === "string" && ob.description.trim() ? ` — ${ob.description.trim()}` : "";
-    lines.push(`${n + 1}. ${ob.label.trim()}${desc}`);
-    n++;
-  }
-  if (n > 0) {
-    lines.push(
-      replyLocale === "en"
-        ? "\nReply with the number (or the option) you want."
-        : "\n원하는 번호(또는 항목)를 답장으로 보내주세요.",
-    );
-  }
-  return lines.join("\n");
+  return renderPlainAskBody(body, replyLocale);
 }
 
 /**

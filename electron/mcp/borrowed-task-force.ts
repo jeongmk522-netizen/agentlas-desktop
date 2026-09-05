@@ -6326,9 +6326,10 @@ async function runBorrowedTaskForceInvocationInternal(p: BorrowedTaskForceParams
   // Main-only receipt so InvocationService verifies the same bytes instead of
   // incorrectly replacing a successful, reopenable team result with
   // result-not-durable.
-  const durableTextForVerification = emitFinal && !p.req.agentAppMode
-    ? appendChatMessage(p.chat.id, "assistant", displayText).text
+  const durableAssistantEntry = emitFinal && !p.req.agentAppMode
+    ? appendChatMessage(p.chat.id, "assistant", displayText)
     : undefined;
+  const durableTextForVerification = durableAssistantEntry?.text;
   p.sink({
     kind: "tool-use",
     done: true,
@@ -6349,6 +6350,9 @@ async function runBorrowedTaskForceInvocationInternal(p: BorrowedTaskForceParams
       kind: "final",
       text: displayText,
       ...(durableTextForVerification ? { durableTextForVerification } : {}),
+      ...(durableAssistantEntry
+        ? { durableAssistantMessageIdForVerification: durableAssistantEntry.id }
+        : {}),
       tokens: final.tokens,
       model: modelLabel(synthesisActive),
       modelRole: "orchestrator",

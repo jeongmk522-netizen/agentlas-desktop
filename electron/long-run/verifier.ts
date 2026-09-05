@@ -4,6 +4,7 @@ import type { RunEventUi } from "../../shared/types";
 import {
   bindLongRunWorker,
   getLongRunByGoalId,
+  getLongRunGoalRevisionBinding,
   listLongRunTasks,
   recordLongRunVerification,
   requestLongRunVerification,
@@ -192,7 +193,8 @@ export async function verifyGoalCompletionClaim(input: {
   if (!accepting) throw new Error("desktop_long_run_verifier_admission_closed");
   const run = getLongRunByGoalId(input.goalId);
   if (!run) return null;
-  requestLongRunVerification(input.goalId, input.evidence);
+  const goalRevision = getLongRunGoalRevisionBinding(run.id)?.revision;
+  if (!requestLongRunVerification(input.goalId, input.evidence)) return null;
   const task = listLongRunTasks(run.id, true)[0] ?? null;
   if (!task) return null;
 
@@ -270,6 +272,7 @@ export async function verifyGoalCompletionClaim(input: {
     for (const verdict of verdicts) {
       recordLongRunVerification({
         runId: run.id,
+        goalRevision,
         taskId: task.id,
         criterionIndex: verdict.criterionIndex,
         verifierWorkerId: workerId,

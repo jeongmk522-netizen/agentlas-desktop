@@ -153,8 +153,8 @@ export function completeChatGoalContract(
   getDb().prepare(
     `UPDATE chat_goal_contracts
      SET status = ?, updated_at = ?, completed_at = ?
-     WHERE goal_id = ? AND status = 'active'`,
-  ).run(status, now, now, normalized);
+     WHERE goal_id = ? AND (status = 'active' OR (? = 'cancelled' AND status = 'blocked'))`,
+  ).run(status, now, now, normalized, status);
   return toContext(readRow(normalized));
 }
 

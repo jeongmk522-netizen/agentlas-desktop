@@ -583,7 +583,7 @@ function ProjectTeamCard({
       </span>
     </div>
   );
-  return <section style={{ padding: 12, border: "1px solid var(--paper-edge)", borderRadius: 10, background: "var(--paper)" }}>
+  return <section className={railStyles.artifactSection} style={{ padding: "16px 2px", flexShrink: 0 }}>
     <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
       <div style={{ fontSize: 10, fontWeight: 800, letterSpacing: ".08em", color: "var(--muted-deep)", textTransform: "uppercase" }}>{ko ? "프로젝트 에이전트" : "Project agents"}</div>
       <span style={{ marginLeft: "auto", color: "var(--muted-deep)", fontSize: 10 }}>{ko ? `${rows.length}명 연결됨` : `${rows.length} connected`}</span>
@@ -685,7 +685,8 @@ function ProjectContextSummary({
       type="button"
       onClick={onOpenMemory}
       aria-label={ko ? "프로젝트 지시와 기억 자세히 보기" : "Open project instructions and memory"}
-      style={{ width: "100%", padding: 12, border: "1px solid var(--paper-edge)", borderRadius: 10, background: "var(--paper)", color: "var(--ink)", textAlign: "left", cursor: "pointer" }}
+      className={railStyles.artifactSection}
+      style={{ width: "100%", padding: "16px 2px", flexShrink: 0, borderTop: 0, borderLeft: 0, borderRight: 0, borderRadius: 0, background: "transparent", color: "var(--ink)", textAlign: "left", cursor: "pointer" }}
     >
       <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
         <span style={{ fontSize: 10, fontWeight: 800, letterSpacing: ".08em", color: "var(--muted-deep)", textTransform: "uppercase" }}>{ko ? "프로젝트 맥락" : "Project context"}</span>
@@ -1488,7 +1489,9 @@ const agentTabStyle: CSSProperties = {
   minHeight: 0,
   display: "flex",
   flexDirection: "column",
-  overflow: "hidden",
+  overflowY: "auto",
+  overflowX: "hidden",
+  padding: "0 20px",
 };
 
 const receiptCardStyle: CSSProperties = {

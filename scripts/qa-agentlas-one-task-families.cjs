@@ -31,9 +31,14 @@ function surface({ family, title, summary, layoutProfile, blocks, artifacts = []
     layoutProfile,
     surfaceState: { value: "ready", summary: "Ready", readOnly: true, lastSyncedAt: now },
     blocks,
+    // intent "open_work" is deliberately excluded from the card's own semantic-action
+    // buttons (renderer/components/one/OneAdaptiveResult.tsx: `action.intent !== "open_work"`)
+    // — that affordance lives in the persistent rail instead. Use an intent that the card
+    // actually renders as a clickable primary action so the mobile-reachability check below
+    // exercises a real, currently-visible control instead of a button that never mounts.
     primaryAction: {
       actionId: `action_${family}_details`,
-      intent: "open_work",
+      intent: "try_result",
       label: artifacts.length > 0 ? "파일 확인" : "자세히 보기",
       targetRef: `task_${family}_001`,
       enabled: true,
@@ -406,7 +411,12 @@ async function capture(browser, baseUrl, family, surfaceValue, viewport) {
   await page.goto(`${baseUrl}/one.html?task=${taskId}`, { waitUntil: "domcontentloaded", timeout: 20_000 });
   await page.waitForSelector(`[data-surface-contract="1.0.0"]`, { timeout: 10_000 });
   await page.waitForTimeout(500);
-  const expectedKinds = surfaceValue.blocks.map((block) => block.type);
+  // Narrative blocks are deliberately never rendered inline in One's own conversation
+  // surface (OneAdaptiveResult.tsx passes omitNarrative unconditionally, and its own
+  // comment explains prose summaries stay out of the card by design) — the model's own
+  // chat reply already carries that narrative, so a Narrative block declared on the
+  // fixture correctly produces no [data-block-kind="Narrative"] element here.
+  const expectedKinds = surfaceValue.blocks.map((block) => block.type).filter((type) => type !== "Narrative");
   const metrics = await page.evaluate(() => ({
     text: document.body.innerText,
     width: document.documentElement.scrollWidth,
@@ -425,7 +435,7 @@ async function capture(browser, baseUrl, family, surfaceValue, viewport) {
     assert.match(metrics.text, /1\. 식 정리/);
     assert.match(metrics.text, /3\. 해 구하기/);
   }
-  const suffix = viewport.width <= 700 ? "mobile" : "desktop";
+  const suffix = viewport.width <= 960 ? "narrow" : "desktop";
   const screenshot = path.join(outDir, `${family}-${suffix}.png`);
   await page.screenshot({ path: screenshot, fullPage: true });
   await page.evaluate(() => {
@@ -481,7 +491,7 @@ async function main() {
   try {
     for (const [family, manifest] of Object.entries(families)) {
       results.push(await capture(browser, baseUrl, family, manifest, { width: 1440, height: 1100 }));
-      results.push(await capture(browser, baseUrl, family, manifest, { width: 390, height: 844 }));
+      results.push(await capture(browser, baseUrl, family, manifest, { width: 960, height: 700 } /* electron/main.ts minWidth: 960 — 그보다 좁은 창은 제품에서 만날 수 없다 */));
     }
   } finally {
     await browser.close().catch(() => {});

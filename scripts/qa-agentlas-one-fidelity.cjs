@@ -69,7 +69,7 @@ function installOneFixture(mode) {
     title: "50만원 이하 공기청정기 비교",
     projectId: null,
     firmId: null,
-    status: mode === "team" || mode === "progress" ? "open" : mode === "briefing-language" ? "partial" : "completed",
+    status: mode === "team" || mode === "progress" ? "open" : "completed",
     originChatId: chatId,
     createdAt: "2026-07-19T03:10:00.000Z",
     updatedAt: now,
@@ -83,6 +83,7 @@ function installOneFixture(mode) {
     firmId: null,
     agentId: "agent-one",
     kind: "user",
+    originSurface: "one",
     title: mode === "conversation" ? "거실 공기청정기 알아보기" : task.title,
     archivedAt: null,
     createdAt: "2026-07-19T03:00:00.000Z",
@@ -170,7 +171,11 @@ function installOneFixture(mode) {
     ],
     cost: { hubBorrowing: "none", runtimeUsage: "unknown", currency: null, authoritativeQuoteRef: null },
     selectionBoundary: "existing_exact_installed_roster_only", limitation: "none", canConfirmTeam: true,
-    reservedRun: null, startedRun: null, createdAt: now, updatedAt: now, expiresAt: "2026-07-19T04:30:00.000Z",
+    // `now` is a fixed fixture timestamp (2026-07-19) but the browser's Date.now() is the
+    // real wall clock at test time, and the team-preflight expiry check compares against
+    // that real clock. A hardcoded expiresAt drifts into the past as real time advances
+    // and makes the proposal look expired, so pin this one to the real clock instead.
+    reservedRun: null, startedRun: null, createdAt: now, updatedAt: now, expiresAt: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
   };
 
   const profile = { contractVersion: "1.0.0", oneId: `one_${"1".repeat(32)}`, version: 1, displayName: "One", role: englishUi ? "Assistant" : "내 비서이자 팀장", profileContext: "", preferredLocale: englishUi ? "en" : "ko", timeZone: "Asia/Seoul", operatingPrinciples: [], createdAt: now, updatedAt: now };
@@ -229,7 +234,7 @@ function installOneFixture(mode) {
     projectionSurface: "one",
     projectionMode: "summary",
     display: { title: task.title, summary: resultMode ? surface.summary : mode === "progress" ? "제품과 출처를 교차 확인하고 있어요." : "팀을 확인하고 시작할 수 있어요." },
-    status: { value: mode === "briefing-language" ? "waiting" : resultMode ? "completed" : mode === "progress" ? "running" : "waiting", source: "authoritative_event", asOf: now },
+    status: { value: resultMode ? "completed" : mode === "progress" ? "running" : "waiting", source: "authoritative_event", asOf: now },
     sync: {
       connection: "online",
       lastSyncedAt: now,
@@ -411,6 +416,12 @@ async function capture(browser, baseUrl, fixture) {
   await page.goto(`${baseUrl}/one.html${fixture.query}`, { waitUntil: "domcontentloaded", timeout: 20_000 });
   await page.waitForSelector("main", { timeout: 10_000 });
   await page.waitForTimeout(900);
+  if (fixture.mode === "team") {
+    // The team preflight auto-resolves and starts a run on load; the mock invoke.run's
+    // default "QA final" completion fires ~180ms after that, but the auto-resolve chain
+    // itself (getForChat -> autoResolve -> start) can land after the flat 900ms wait above.
+    await page.getByText("QA final", { exact: false }).waitFor({ timeout: 8_000 });
+  }
   if (fixture.mode === "followup") {
     const composer = page.getByLabel("One에게 요청");
     await composer.fill("30만원 이하로 다시 골라줘");
@@ -466,16 +477,19 @@ async function capture(browser, baseUrl, fixture) {
     assert.doesNotMatch(metrics.text, /\d+%/);
   }
   if (fixture.mode === "briefing-language") {
-    assert.match(metrics.text, /One result is ready for you\./);
-    assert.match(metrics.text, /Open the result to review what One prepared\./);
-    const briefingText = await page.getByRole("heading", { name: "One result is ready for you." })
-      .locator("xpath=ancestor::section[1]")
-      .innerText();
-    assert.doesNotMatch(
-      briefingText,
-      /[\u3131-\u318e\uac00-\ud7a3]/u,
-      `English system briefings must not contain Korean copy: ${briefingText}`,
-    );
+    // The old two-step "briefing card, then open the result" gate is gone: opening a
+    // completed task now renders the full result inline (OneAdaptiveResult with
+    // omitNarrative, renderer/components/one/OneAdaptiveResult.tsx). What still must hold
+    // is that the app's own chrome \u2014 not the model-authored Korean product content \u2014
+    // renders in English when the locale is English.
+    assert.match(metrics.text, /Recommended/);
+    assert.match(metrics.text, /STRENGTHS/);
+    assert.match(metrics.text, /LIMITATIONS/);
+    assert.match(metrics.text, /View \d+ sources/);
+    const sourcesSection = await page.getByLabel("Work result").innerText();
+    for (const chrome of ["Recommended", "STRENGTHS", "LIMITATIONS", "Spreadsheet", "Document", "Verified", "Open"]) {
+      assert.ok(sourcesSection.includes(chrome), `expected English chrome "${chrome}" in the result region`);
+    }
   }
   if (fixture.mode === "followup") {
     assert.match(metrics.text, /이전 결과를 참고해 이 대화에서 이어서 진행해요/);
@@ -575,7 +589,7 @@ async function main() {
   const { server, baseUrl } = await startServer();
   const browser = await chromium.launch();
   const fixtures = [
-    { name: "briefing-language-desktop", mode: "briefing-language", query: "", viewport: { width: 1440, height: 920 } },
+    { name: "briefing-language-desktop", mode: "briefing-language", query: "?task=task_launch_comparison_001", viewport: { width: 1440, height: 920 } },
     { name: "conversation-desktop", mode: "conversation", query: "?chat=chat_one_conversation_001", viewport: { width: 1440, height: 920 } },
     { name: "team-desktop", mode: "team", query: "?task=task_launch_comparison_001", viewport: { width: 1440, height: 980 } },
     { name: "team-mobile", mode: "team", query: "?task=task_launch_comparison_001", viewport: { width: 390, height: 844 } },

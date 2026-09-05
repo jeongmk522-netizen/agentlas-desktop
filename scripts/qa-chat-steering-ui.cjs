@@ -362,7 +362,7 @@ async function main() {
     await steeringSend.waitFor({ state: "visible" });
     assert.equal(await steeringSend.isEnabled(), true, "busy composer must allow a steering send");
     await steeringSend.click();
-    await page.getByText(/새 방향 반영 중|Applying direction/).waitFor();
+    await page.getByText(/다음 지시 \d+개|\d+ queued/).waitFor();
     await page.getByText(steeringPrompt, { exact: true }).waitFor();
     await page.waitForFunction(() => window.__steeringQA.steerRequests.length === 1);
     layouts.push(await assertLayout(page, "steering-queued"));
@@ -370,13 +370,13 @@ async function main() {
     await sleep(950);
 
     await page.waitForFunction(() => window.__qa.calls.filter((call) => call.name === "invoke.steer").length === 1);
-    await page.waitForFunction(() => !document.body.innerText.includes("새 방향 반영 중") && !document.body.innerText.includes("Applying direction"));
+    await page.waitForFunction(() => !/다음 지시 \d+개|\d+ queued/.test(document.body.innerText));
     const runs = await invokeCalls(page);
     assert.equal(runs.length, 1, "renderer must not start a duplicate run while Main owns steering");
     const steerCalls = await invokeCalls(page, "invoke.steer");
     assert.equal(steerCalls[0].payload.userPrompt, steeringPrompt, "steering instruction must use the Main-owned steer contract");
     const secondRun = { runId: "main-steer-run-2", userPrompt: steeringPrompt };
-    assert.equal(await page.getByText(/새 방향 반영 중|Applying direction/).count(), 0, "steering badge must clear after attach");
+    assert.equal(await page.getByText(/다음 지시 \d+개|\d+ queued/).count(), 0, "steering badge must clear after attach");
     assert.equal(await page.getByText(/^⚠️.*Cancelled$/).count(), 0, "steering cancellation must not render an error bubble");
 
     const secondChannel = `invoke:${secondRun.runId}`;

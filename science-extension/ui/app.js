@@ -1065,7 +1065,10 @@ const { stripAgentControlBlocks, stripStormbreakerContinueMarker, STORMBREAKER_C
     state.analysisPlanReviewSheet = false;
     state.analysisPlanReviewBusy = false;
     state.analysisPlanReviewError = "";
-    state.analysisPlanReviewDismissedKey = null;
+    // Dismissal is scoped to the exact plan id/version/hash/lock key. Preserve it across a
+    // same-project refresh or artifact-tab move; a new plan revision naturally has a new key and
+    // will be presented again. Switching projects must never carry the dismissal across scope.
+    if (switchingProject) state.analysisPlanReviewDismissedKey = null;
     state.artifactContextsByMessage = new Map();
     state.labContextsById = new Map();
     state.artifactHistoryById = new Map();
@@ -2151,6 +2154,11 @@ const { stripAgentControlBlocks, stripStormbreakerContinueMarker, STORMBREAKER_C
     const inputCount = (Array.isArray(run?.inputs) ? run.inputs : []).length;
     const outputs = analysisRunOutputs(run);
     const boundOutputs = analysisRunBoundOutputs(run);
+    const boundArtifactIds = new Set(boundOutputs.map((output) => output.artifactId));
+    // Some acquisition tools keep the output manifest immutable and record the later artifact
+    // projection separately. The artifact read model still carries the exact sourceRunId, so show
+    // that durable result instead of leaving the researcher with byte/hash rows only.
+    const projectedArtifacts = [...artifactsById.values()].filter((artifact) => artifact?.sourceRunId === run.id && !boundArtifactIds.has(artifact.id));
     const outputRows = boundOutputs.map((output) => {
       const artifact = artifactsById.get(output.artifactId) || null;
       const boundVersion = Number(output.artifactVersion);
@@ -2159,10 +2167,20 @@ const { stripAgentControlBlocks, stripStormbreakerContinueMarker, STORMBREAKER_C
         : Number(artifact.currentVersion) === boundVersion
           ? uiCopy("현재 버전이 이 실행이 계산한 그 버전입니다.", "The current artifact version is the exact version produced by this run.")
           : uiCopy(`아티팩트가 v${artifact.currentVersion}로 갱신됐습니다. 지금 열리는 결과는 이 실행이 계산한 버전이 아닙니다.`, `The artifact is now v${artifact.currentVersion}. The version currently opened is not the version produced by this run.`);
-      return `<li class="analysisRunOutput" data-artifact-id="${escapeHtml(output.artifactId)}" data-artifact-version="${escapeHtml(boundVersion)}" data-output-current="${Boolean(artifact && Number(artifact.currentVersion) === boundVersion)}">
+      return `<li class="analysisRunOutput" data-output-current="${Boolean(artifact && Number(artifact.currentVersion) === boundVersion)}">
         <strong>${escapeHtml(artifact?.title || output.artifactId)}</strong>
         <span>${escapeHtml(artifact?.kind || output.mimeType || "unknown")} · v${escapeHtml(boundVersion)} · <code title="${escapeHtml(output.sha256)}">${escapeHtml(runResultShortHash(output.sha256))}</code></span>
         <em>${escapeHtml(binding)}</em>
+        ${artifact ? `<button class="analysisRunArtifactOpen" type="button" data-action="open-result-artifact" data-result-artifact-id="${escapeHtml(artifact.id)}" data-result-artifact-version="${escapeHtml(boundVersion)}">${uiCopy("정확한 아티팩트 열기", "Open exact artifact")}${heroIcon("chevron-right")}</button>` : ""}
+      </li>`;
+    }).join("");
+    const projectedRows = projectedArtifacts.map((artifact) => {
+      const artifactVersion = Number(artifact.currentVersion);
+      return `<li class="analysisRunOutput analysisRunProjectedArtifact" data-output-current="true">
+        <strong>${escapeHtml(artifact.title)}</strong>
+        <span>${escapeHtml(artifact.kind || "artifact")} · v${escapeHtml(artifactVersion)} · <code title="${escapeHtml(artifact.version?.contentSha256 || "")}">${escapeHtml(runResultShortHash(artifact.version?.contentSha256))}</code></span>
+        <em>${uiCopy("이 실행에서 생성되어 프로젝트 아티팩트로 연결된 정확한 결과입니다.", "This exact result was created by this run and linked as a project artifact.")}</em>
+        <button class="analysisRunArtifactOpen" type="button" data-action="open-result-artifact" data-result-artifact-id="${escapeHtml(artifact.id)}" data-result-artifact-version="${escapeHtml(artifactVersion)}">${uiCopy("정확한 아티팩트 열기", "Open exact artifact")}${heroIcon("chevron-right")}</button>
       </li>`;
     }).join("");
     const manifestRows = outputs.filter((output) => !output?.artifactId).map((output) => `<li class="analysisRunManifestOutput" data-output-role="${escapeHtml(output?.role || "")}">
@@ -2185,10 +2203,10 @@ const { stripAgentControlBlocks, stripStormbreakerContinueMarker, STORMBREAKER_C
         <div><dt>${uiCopy("시작 · 종료", "Started · finished")}</dt><dd>${escapeHtml(`${run.startedAt ?? "—"} · ${run.finishedAt || uiCopy("진행 중", "In progress")}`)}</dd></div>
       </dl>
       ${run.summary ? `<p class="analysisRunSummary">${escapeHtml(run.summary)}</p>` : ""}
-      ${boundOutputs.length
-        ? `<ul class="analysisRunOutputs">${outputRows}</ul>`
+      ${boundOutputs.length || projectedArtifacts.length
+        ? `<ul class="analysisRunOutputs">${outputRows}${projectedRows}</ul>`
         : ""}
-      ${manifestRows ? `<div class="analysisRunManifest"><strong>${uiCopy(`저장된 결과 매니페스트 ${outputs.length - boundOutputs.length}개`, `Stored result manifests: ${outputs.length - boundOutputs.length}`)}</strong><ul>${manifestRows}</ul><p>${uiCopy("실행 결과는 보존됐지만 과학 아티팩트로 투영되지는 않았습니다. 그림·표·원고에는 아직 연결할 수 없습니다.", "The run result is preserved, but it has not been projected into a scientific artifact. It cannot yet be linked to a figure, table, or manuscript.")}</p></div>` : ""}
+      ${manifestRows ? `<div class="analysisRunManifest"><strong>${uiCopy(`저장된 결과 매니페스트 ${outputs.length - boundOutputs.length}개`, `Stored result manifests: ${outputs.length - boundOutputs.length}`)}</strong><ul>${manifestRows}</ul><p>${projectedArtifacts.length ? uiCopy("원시 출력은 매니페스트로 보존되며, 이 실행에서 생성된 정확한 아티팩트는 위 링크에서 열 수 있습니다.", "Raw outputs remain preserved as manifests; open the exact artifact created by this run from the link above.") : uiCopy("실행 결과는 보존됐지만 과학 아티팩트로 투영되지는 않았습니다. 그림·표·원고에는 아직 연결할 수 없습니다.", "The run result is preserved, but it has not been projected into a scientific artifact. It cannot yet be linked to a figure, table, or manuscript.")}</p></div>` : ""}
       ${outputless ? `<p class="analysisRunUnbound" role="alert"><strong>${uiCopy("성공으로 기록됐지만 출력이 없습니다.", "The run is marked as succeeded, but it has no output.")}</strong><span>${uiCopy("정확한 실행 기록을 다시 읽어 확인했습니다. 출력 매니페스트 항목이 하나도 없어 이 실행은 결과로 셀 수 없습니다. 출력이 필요한 실행이었다면 다시 실행해야 합니다.", "The exact run record was checked again. With no output-manifest entries, this run cannot count as a result. If output was expected, run it again.")}</span></p>` : ""}
     </article>`;
   }
@@ -2221,10 +2239,11 @@ const { stripAgentControlBlocks, stripStormbreakerContinueMarker, STORMBREAKER_C
   // ready result. Previews reuse the existing capture host, which calls science.artifacts.preview
   // and prints its own boundary when no capture exists -- never a stand-in image.
   const resultArtifactKindLabels = {
-    "chart.vega": "차트", "chart.numeric-3d": "3D 수치 표면", "literature.citation-network": "인용 네트워크",
-    "astronomy.sky-catalog": "천체 카탈로그", "genomics.variant-track": "변이 트랙", "phylogeny.radial": "계통수",
-    "protein.structure": "단백질 구조", "chemistry.document": "화학 구조", table: "표", image: "게재용 래스터",
+    "chart.vega": ["차트", "Chart"], "chart.numeric-3d": ["3D 수치 표면", "3D numeric surface"], "literature.citation-network": ["인용 네트워크", "Citation network"],
+    "astronomy.sky-catalog": ["천체 카탈로그", "Sky catalog"], "genomics.variant-track": ["변이 트랙", "Variant track"], "phylogeny.radial": ["계통수", "Phylogeny"],
+    "protein.structure": ["단백질 구조", "Protein structure"], "chemistry.document": ["화학 구조", "Chemical structure"], table: ["표", "Table"], image: ["게재용 래스터", "Publication raster"],
   };
+  const resultArtifactKindLabel = (kind) => resultArtifactKindLabels[kind] ? uiCopy(...resultArtifactKindLabels[kind]) : kind;
   const resultReceiptWithStatus = (receipts, status) => (Array.isArray(receipts) ? receipts : []).find((receipt) => receipt?.status === status) || null;
   const resultIsPublicationReady = (artifactId) => Boolean(resultReceiptWithStatus(state.resultValidations.get(artifactId)?.receipts, "verified"));
 
@@ -2283,15 +2302,17 @@ const { stripAgentControlBlocks, stripStormbreakerContinueMarker, STORMBREAKER_C
     const preview = verified
       ? `<figure class="resultArtifactPreview" data-inline-capture-artifact="${escapeHtml(artifact.id)}" data-inline-capture-version="${escapeHtml(version)}" aria-label="${escapeHtml(`${artifact.title} v${version} 검증 캡처`)}">검증 캡처를 불러오는 중…</figure>`
       : `<p class="resultArtifactNoPreview">검증된 캡처가 없어 미리보기를 만들지 않았습니다.</p>`;
+    const openAction = `<div class="resultArtifactActions"><button class="${verified ? "secondaryButton" : "primaryButton"}" type="button" data-action="open-result-artifact" data-result-artifact-id="${escapeHtml(artifact.id)}" data-result-artifact-version="${escapeHtml(version)}">${verified ? uiCopy("검증된 아티팩트 열기", "Open verified artifact") : uiCopy("아티팩트 열고 시각 검증 실행", "Open artifact and run visual verification")}${heroIcon("chevron-right")}</button>${verified ? "" : `<span>${uiCopy("실제 데이터 렌더러를 열어 캡처와 검증 영수증 생성을 시도합니다. 영수증이 남기 전에는 게재 검증됨으로 표시하지 않습니다.", "Opens the real-data renderer and attempts capture-based validation. It remains unverified until a receipt is recorded.")}</span>`}</div>`;
     return `<article class="resultArtifact" data-artifact-id="${escapeHtml(artifact.id)}" data-artifact-kind="${escapeHtml(artifact.kind)}" data-artifact-version="${escapeHtml(version)}" data-result-ready="${Boolean(verified)}">
       <header>
         <strong>${escapeHtml(artifact.title)}</strong>
-        <span>${escapeHtml(`${resultArtifactKindLabels[artifact.kind] || artifact.kind}${state.resultFigureIds.has(artifact.id) ? " · 통계 Figure" : ""}`)} · v${escapeHtml(version)}</span>
+        <span>${escapeHtml(`${resultArtifactKindLabel(artifact.kind)}${state.resultFigureIds.has(artifact.id) ? uiCopy(" · 통계 Figure", " · Statistical figure") : ""}`)} · v${escapeHtml(version)}</span>
         <code title="${escapeHtml(contentSha256)}">${escapeHtml(runResultShortHash(contentSha256))}</code>
       </header>
       ${artifact.status === "failed" ? `<p class="resultArtifactFailed" role="alert">이 아티팩트는 failed 상태로 저장돼 있습니다. 내용을 신뢰할 수 없습니다.</p>` : ""}
       ${validation}
       ${preview}
+      ${openAction}
     </article>`;
   }
 
@@ -3971,6 +3992,19 @@ const { stripAgentControlBlocks, stripStormbreakerContinueMarker, STORMBREAKER_C
   async function openLab(labId, artifactId, originVersion = null, returnMessageId = null, exactVersion = null) {
     rememberScroll();
     state.labDecisionActionError = "";
+    // Lab context is a snapshot. Acquisition can materialize an artifact after that snapshot was
+    // loaded, so refresh before deciding the Lab is empty or an explicit result is missing.
+    const projectId = state.selectedId;
+    if (projectId) {
+      try {
+        const latestContexts = await science.artifacts.forLab(projectId, labId);
+        if (projectId !== state.selectedId) return;
+        if (Array.isArray(latestContexts)) state.labContextsById.set(labId, latestContexts);
+      } catch {
+        // Keep the last verified snapshot. An explicit result open still resolves its exact
+        // project/Lab context first and fails closed rather than inventing a route.
+      }
+    }
     // The analysis catalogue is what the statistics launch screen offers. Fetch it when that Lab is
     // opened rather than on every render, and once per session: it changes only when the plugin does.
     if (labId === "statistics-analysis") void loadStatisticsMethodCatalogue();
@@ -4016,6 +4050,25 @@ const { stripAgentControlBlocks, stripStormbreakerContinueMarker, STORMBREAKER_C
     } catch (error) {
       state.artifactHistoryById.set(nextArtifactId, { error: error instanceof Error ? error.message : String(error), entries: [] });
       if (state.mode === "lab" && state.selectedArtifactId === nextArtifactId) render();
+    }
+  }
+
+  async function openResultArtifact(artifactId, artifactVersion) {
+    const projectId = state.selectedId;
+    if (!projectId || !artifactId || !Number.isSafeInteger(artifactVersion) || artifactVersion < 1) return;
+    try {
+      const context = await science.artifacts.context(projectId, artifactId, artifactVersion);
+      if (projectId !== state.selectedId) return;
+      if (!context || context.artifact?.id !== artifactId || context.selectedVersion?.version !== artifactVersion
+        || context.artifact?.projectId !== projectId || !context.linkage?.labId) {
+        throw new Error("science-result-artifact-context-invalid");
+      }
+      const known = state.labContextsById.get(context.linkage.labId) || [];
+      state.labContextsById.set(context.linkage.labId, [context, ...known.filter((item) => item?.artifact?.id !== artifactId)]);
+      await openLab(context.linkage.labId, artifactId, null, null, artifactVersion);
+    } catch (error) {
+      state.resultsError = error instanceof Error ? error.message : String(error);
+      render();
     }
   }
 
@@ -5584,9 +5637,18 @@ const { stripAgentControlBlocks, stripStormbreakerContinueMarker, STORMBREAKER_C
           : artifact.version.rendererId === "agentlas.table"
             ? "artifactCanvas dataTableCanvas"
         : artifact.version.rendererId !== "agentlas.vega" ? "artifactCanvas artifactCanvasExternal" : "artifactCanvas";
+    const activeToolbar = artifact.version.rendererId === "agentlas.vega"
+      ? statisticsFigureToolbar || (paleontologyPayload ? "" : `${earthquakeToolbar}${earthquakeView === "earthquake-depth" ? "" : vegaEditorMarkup(artifact, vegaDraft)}`)
+      : numericSurfaceToolbar || numericSurfaceRasterToolbar || statisticsRasterToolbar || citationToolbar || skyToolbar || genomicsToolbar;
+    // Economic charts are the primary result. Keep the chart above its editable presentation
+    // controls so a 1162x768 window shows the evidence before optional authoring settings.
+    const economicChartSettings = !inspectingHistory && economicPayload && activeToolbar
+      ? `<details class="vegaEditorDisclosure"><summary><span>${uiCopy("차트 설정", "Chart settings")}</span><small>${uiCopy("제목·크기·표시 옵션과 게재용 그림 준비", "Title, sizing, display options, and publication-figure preparation")}</small></summary>${activeToolbar}</details>`
+      : "";
+    const toolbarBeforeCanvas = economicChartSettings ? "" : activeToolbar;
     const canvas = inspectingHistory
       ? `<div class="artifactCanvasFrame historicalFrame"><div class="historicalStatus"><span>기록 보기 · v${escapeHtml(state.inspectedArtifactVersion)} · 읽기 전용</span><button data-artifact-history-version="${escapeHtml(artifact.currentVersion)}">현재 v${escapeHtml(artifact.currentVersion)}으로 돌아가기</button></div><div class="artifactCanvas historicalArtifactCanvas"><div class="historicalCaptureNotice"><strong>검증된 캡처</strong><span>이 화면은 기록 보존용이며 조작할 수 없습니다.</span></div><div class="historicalPreviewSurface" data-historical-artifact-host="${escapeHtml(artifact.id)}" data-historical-artifact-version="${escapeHtml(state.inspectedArtifactVersion)}" aria-label="${escapeHtml(artifact.title)} v${escapeHtml(state.inspectedArtifactVersion)} 기록">${historyError ? `<span class="historicalError">${escapeHtml(historyError)}</span>` : inspectedContext ? "" : `<span class="historicalLoading">검증된 과거 버전을 불러오는 중…</span>`}</div></div></div>`
-      : `<div class="artifactCanvasFrame"><div class="rendererStatus"><span>${escapeHtml(artifact.kind)}</span><span>${escapeHtml(artifact.version.rendererId)} · ${escapeHtml(artifact.version.rendererVersion)}${earthquakeView === "earthquake-depth" || skyView === "astronomy-distance" ? " + Three.js 0.173.0" : ""} <em data-runtime-status></em></span></div>${artifact.version.rendererId === "agentlas.vega" ? statisticsFigureToolbar || (paleontologyPayload ? "" : `${earthquakeToolbar}${earthquakeView === "earthquake-depth" ? "" : vegaEditorMarkup(artifact, vegaDraft)}`) : numericSurfaceToolbar || numericSurfaceRasterToolbar || statisticsRasterToolbar || citationToolbar || skyToolbar || genomicsToolbar}<div class="${canvasClass}" data-artifact-host="${escapeHtml(artifact.id)}" data-artifact-version="${escapeHtml(artifact.version.version)}" data-content-sha256="${escapeHtml(artifact.version.contentSha256)}" aria-label="${escapeHtml(artifact.title)}"></div><div class="renderError" data-render-error role="alert"></div></div>`;
+      : `<div class="artifactCanvasFrame"><div class="rendererStatus"><span>${escapeHtml(artifact.kind)}</span><span>${escapeHtml(artifact.version.rendererId)} · ${escapeHtml(artifact.version.rendererVersion)}${earthquakeView === "earthquake-depth" || skyView === "astronomy-distance" ? " + Three.js 0.173.0" : ""} <em data-runtime-status></em></span></div>${toolbarBeforeCanvas}<div class="${canvasClass}" data-artifact-host="${escapeHtml(artifact.id)}" data-artifact-version="${escapeHtml(artifact.version.version)}" data-content-sha256="${escapeHtml(artifact.version.contentSha256)}" aria-label="${escapeHtml(artifact.title)}"></div><div class="renderError" data-render-error role="alert"></div>${economicChartSettings}</div>`;
     const loopObservation = semanticObservations[0] || null;
     const loopEvidence = loopObservation ? `${loopObservation.label}: ${loopObservation.value}${loopObservation.unit ? ` ${loopObservation.unit}` : ""}` : (activeVersion?.semantic?.summary || "현재 아티팩트의 다음 검증 단계를 연구 채팅에서 함께 결정합니다.");
     const spatialArtifact = (artifact.version.rendererId === "agentlas.table" && artifact.version.payload?.schema === "agentlas.science.materials-catalog-artifact/v1")
@@ -5595,11 +5657,13 @@ const { stripAgentControlBlocks, stripStormbreakerContinueMarker, STORMBREAKER_C
     const spatial3dOpen = (artifact.version.rendererId === "agentlas.table" && artifact.version.payload?.schema === "agentlas.science.materials-catalog-artifact/v1" && state.spatialViewByArtifact.get(artifact.id) !== "materials-table")
       || (artifact.version.rendererId === "agentlas.vega" && earthquakeView === "earthquake-depth")
       || (artifact.version.rendererId === "agentlas.d3-sky" && skyView === "astronomy-distance");
-    return `<section class="artifactWorkspace ${state.historyOpen ? "historyOpen" : ""} ${state.artifactComparison ? "compareOpen" : ""} ${spatialArtifact ? "spatialArtifact" : ""} ${spatial3dOpen ? "spatial3dOpen" : ""}"><header class="labWorkspaceHeader visuallyHidden"><span>${escapeHtml(labCapabilityLabel(state.selectedLabId))}</span><strong>아티팩트 보관소 · 작업공간</strong><span class="originVersion">${capability}</span><button data-action="back-session">${state.returnMessageId ? "대화의 아티팩트로" : "세션으로 돌아가기"}</button></header>${tabs ? `<nav class="artifactTabs" data-count="${escapeHtml(labArtifacts.length)}" aria-label="Lab 아티팩트">${tabs}</nav>` : ""}${originStrip}${statisticsLineage}${paleontologyLineage}${labDecisionPanelMarkup()}<div class="labWorkGrid"><div class="figureColumn">
+    const decisionPanel = labDecisionPanelMarkup();
+    const chartPriority = Boolean(economicPayload && !inspectingHistory);
+    return `<section class="artifactWorkspace ${state.historyOpen ? "historyOpen" : ""} ${state.artifactComparison ? "compareOpen" : ""} ${spatialArtifact ? "spatialArtifact" : ""} ${spatial3dOpen ? "spatial3dOpen" : ""}" data-chart-priority="${chartPriority}"><header class="labWorkspaceHeader visuallyHidden"><span>${escapeHtml(labCapabilityLabel(state.selectedLabId))}</span><strong>아티팩트 보관소 · 작업공간</strong><span class="originVersion">${capability}</span><button data-action="back-session">${state.returnMessageId ? "대화의 아티팩트로" : "세션으로 돌아가기"}</button></header>${tabs ? `<nav class="artifactTabs" data-count="${escapeHtml(labArtifacts.length)}" aria-label="Lab 아티팩트">${tabs}</nav>` : ""}${originStrip}${statisticsLineage}${paleontologyLineage}${chartPriority ? "" : decisionPanel}<div class="labWorkGrid"><div class="figureColumn">
       ${canvas}
       <section class="artifactInterpretation"><div><div class="researchKicker">${inspectingHistory ? "과거 버전 의미 기록" : "Semantic layer"}</div><h2>${escapeHtml(activeVersion?.semantic?.title || (inspectingHistory ? `v${state.inspectedArtifactVersion} 기록을 불러오는 중…` : artifact.title))}</h2><p>${escapeHtml(activeVersion?.semantic?.summary || (inspectingHistory ? "현재 버전 정보로 대체하지 않고, 선택한 과거 버전의 검증이 끝날 때까지 기다립니다." : ""))}</p></div>${observations ? `<dl class="observationGrid">${observations}</dl>` : ""}</section>
       <div data-artifact-compare-host>${artifactCompareMarkup(artifact, history)}</div>
-    </div><aside class="versionRail" data-version-timeline aria-label="아티팩트 버전 기록"><header><span>버전 기록</span><div><strong>${escapeHtml(artifact.currentVersion)}개</strong><button data-action="open-compare" ${historyEntries.length < 2 ? "disabled" : ""}>비교</button></div></header><div class="versionRows">${timeline}</div><footer>저장된 버전만 기록됩니다. 과거 버전은 읽기 전용입니다.</footer></aside></div></section>`;
+    </div><aside class="versionRail" data-version-timeline aria-label="아티팩트 버전 기록"><header><span>버전 기록</span><div><strong>${escapeHtml(artifact.currentVersion)}개</strong><button data-action="open-compare" ${historyEntries.length < 2 ? "disabled" : ""}>비교</button></div></header><div class="versionRows">${timeline}</div><footer>저장된 버전만 기록됩니다. 과거 버전은 읽기 전용입니다.</footer></aside></div>${chartPriority ? decisionPanel : ""}</section>`;
   }
 
   function errorState() {
@@ -9262,6 +9326,10 @@ const { stripAgentControlBlocks, stripStormbreakerContinueMarker, STORMBREAKER_C
       const exactVersion = Number(target.dataset.artifactVersion);
       const action = () => void openLab("paleontology-evidence", target.dataset.paleontologyArtifactId, Number.isSafeInteger(exactVersion) ? exactVersion : null, null, Number.isSafeInteger(exactVersion) ? exactVersion : null);
       if (!guardArtifactDraftNavigation(action)) action();
+      return;
+    }
+    if (target.dataset.action === "open-result-artifact") {
+      void openResultArtifact(target.dataset.resultArtifactId || "", Number(target.dataset.resultArtifactVersion));
       return;
     }
     if (target.dataset.inlineArtifactId || target.dataset.chatArtifactId) { const action = () => void openConversationArtifact(target); if (!guardArtifactDraftNavigation(action)) action(); return; }

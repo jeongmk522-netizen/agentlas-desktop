@@ -506,7 +506,7 @@ export interface ScienceDatasetTablePayload {
     formulaLikeCellCount: number;
   };
   receipts: {
-    parserId: "agentlas.csv-to-table" | "agentlas.comparative-genomics-publication-table";
+    parserId: "agentlas.csv-to-table" | "agentlas.comparative-genomics-publication-table" | "agentlas.paired-artifact-table-aligner";
     parserVersion: "1.0.0";
     rawSha256: string;
     headerSha256: string;

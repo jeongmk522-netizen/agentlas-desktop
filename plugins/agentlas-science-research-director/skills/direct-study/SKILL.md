@@ -66,7 +66,12 @@ concrete options and a recommendation ("A or B? I recommend A because ..."). A b
 8. Draft the design with `propose_analysis_plan` (estimand, units, design, definitions, exclusions,
    missing data, model, multiplicity, diagnostics, sensitivity analyses, expected artifacts) and
    record power or precision planning where the live coverage supports it, or an explicit gap
-   where it does not. Freeze with `freeze_analysis_plan` before confirmatory execution. After the
+   where it does not. For paired statistics sourced from two World Bank chart artifacts, first call
+   `prepare_paired_statistics_table` with the plan's prespecified minimum complete-pair count. Keep
+   its full-outer Data Table visible even when insufficient, but propose the successor only when
+   `readyForStatistics` is true; then bind that single table plus its concrete model and method
+   tokens. Never present two chart inputs or `model: null` as executable. Freeze with
+   `freeze_analysis_plan` before confirmatory execution. After the
    approved contract and current hypothesis exist, inspect or start the authoritative Research
    Loop. Persist and start an exact Research Episode before Lab execution; after execution, settle
    it exactly once with terminal run IDs, run-backed artifact versions/hashes, and committed

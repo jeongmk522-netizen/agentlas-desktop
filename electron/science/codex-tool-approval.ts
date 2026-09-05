@@ -7,22 +7,37 @@ import { detachedSpawnOpts, killCliTree, probeCliVersion, spawnCli, withCliPath 
 export const SCIENCE_MCP_SERVER_KEY = "agentlas-science";
 
 /**
- * These are the only Science tools Codex may run without its own MCP popup.
+ * Exact Science MCP operations that do not replace a human research decision.
  *
- * `inspect_evidence_graph` is intentionally not labelled as a pure read: its handler refreshes the
- * canonical, machine-derived projection before returning the bounded graph. The host grant still
- * constrains that refresh to the current project and turn. Human decisions and their receipts are
- * not part of this allowlist.
+ * These calls either read state, create a derived/pre-review record, verify an approval that the
+ * Science UI already persisted, or close terminal episode bookkeeping. Analysis execution,
+ * manuscript application/export, publication, and human decisions deliberately remain outside
+ * this list and continue through the ordinary approval boundary.
  */
 export const SCIENCE_CODEX_EXACT_TOOL_APPROVALS = [
   { toolName: "inspect_research_workspace", effect: "bounded-read" },
   { toolName: "list_research_hypotheses", effect: "bounded-read" },
   { toolName: "inspect_evidence_graph", effect: "derived-projection-refresh" },
+  { toolName: "inspect_research_loop", effect: "bounded-read" },
+  { toolName: "describe_statistics_capabilities", effect: "bounded-read" },
+  { toolName: "list_analysis_plans", effect: "bounded-read" },
+  { toolName: "prepare_paired_statistics_table", effect: "derived-artifact-preparation" },
+  { toolName: "propose_analysis_plan", effect: "pre-review-draft" },
+  { toolName: "freeze_analysis_plan", effect: "verify-existing-human-approval" },
+  { toolName: "settle_research_episode", effect: "terminal-bookkeeping" },
 ] as const;
 
-export function scienceCodexExactToolApprovalConfigArgs(supported: boolean): string[] {
+export function scienceCodexExactToolApprovalConfigArgs(
+  supported: boolean,
+  toolNames: readonly string[] = SCIENCE_CODEX_EXACT_TOOL_APPROVALS.map(({ toolName }) => toolName),
+): string[] {
   if (!supported) return [];
-  return SCIENCE_CODEX_EXACT_TOOL_APPROVALS.flatMap(({ toolName }) => [
+  const exactNames = [...new Set(toolNames)];
+  if (exactNames.length < 1 || exactNames.length > 300
+    || exactNames.some((toolName) => !/^[a-z][a-z0-9_]{0,79}$/u.test(toolName))) {
+    throw new Error("science-codex-tool-approval-catalog-invalid");
+  }
+  return exactNames.flatMap((toolName) => [
     "-c",
     `mcp_servers.${SCIENCE_MCP_SERVER_KEY}.tools.${toolName}.approval_mode="approve"`,
   ]);

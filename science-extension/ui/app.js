@@ -216,7 +216,7 @@ const { stripAgentControlBlocks, stripStormbreakerContinueMarker, STORMBREAKER_C
   };
   const state = {
     locale: "en",
-    projects: [], selectedId: null, lifecycle: null, conversations: [], selectedConversationId: null, messages: [], sources: [], sourceFigures: [], runs: [], artifacts: [], labs: [], workspaceLabBindings: [], labCatalog: [], labDecisionProjections: [], rendererPacks: [], manuscripts: [], claimLedger: null, journalProfiles: [], submissionExports: [], analysisSpecs: [], decisions: [],
+    projects: [], selectedId: null, lifecycle: null, researchLoopInspection: null, conversations: [], selectedConversationId: null, messages: [], sources: [], sourceFigures: [], runs: [], artifacts: [], labs: [], workspaceLabBindings: [], labCatalog: [], labDecisionProjections: [], rendererPacks: [], manuscripts: [], claimLedger: null, journalProfiles: [], submissionExports: [], analysisSpecs: [], decisions: [],
     artifactContextsByMessage: new Map(), labContextsById: new Map(), artifactHistoryById: new Map(), selectedLabId: null, selectedArtifactOriginVersion: null, inspectedArtifactVersion: null, inspectedArtifactContext: null, artifactComparison: null, draftHistoryGuard: null, labsExpanded: true, expandedLabGroups: new Set(["chemistry"]), expandedLabDecisions: new Set(), projectMenuOpen: false, projectFolderOpen: false, projectLibrarySummaries: new Map(), projectLibrarySummaryState: "loading", newProjectStep: "field", selectedResearchTemplateId: null, newProjectDraft: { title: "", question: "" }, historyOpen: false, railCollapsed: readRailCollapsed(),
     blocksByMessage: new Map(), citationsByMessage: new Map(), evidenceById: new Map(), selectedSourceId: null, selectedArtifactId: null,
     evidenceGraph: null, evidenceGraphReviews: [], evidenceGraphLoading: false, evidenceGraphError: "", selectedEvidenceGraphNodeId: null, selectedEvidenceGraphCandidateId: null, evidenceGraphReviewSheet: false, evidenceGraphReviewDecision: "accepted", evidenceGraphReviewBusy: false, evidenceGraphReviewError: "", evidenceGraphPathAnchorId: null, evidenceGraphPath: null,
@@ -457,9 +457,26 @@ const { stripAgentControlBlocks, stripStormbreakerContinueMarker, STORMBREAKER_C
   const lifecycleLabel = () => state.lifecycle
     ? `${lifecyclePhaseLabels[state.lifecycle.phase] || state.lifecycle.phase} · ${state.lifecycle.status} · r${state.lifecycle.revision}`
     : "Lifecycle unavailable";
-  const lifecycleCompactLabel = () => state.lifecycle
+  const researchLoopPresentation = () => {
+    const inspection = state.researchLoopInspection;
+    const session = inspection?.session;
+    if (!session || inspection?.active !== true) return null;
+    const episode = Array.isArray(inspection.episodes)
+      ? inspection.episodes.find((item) => ["planned", "running", "waiting-for-decision"].includes(item.status)) || null
+      : null;
+    const turnRunning = state.activeTurn && ["queued", "running", "cancelling"].includes(state.activeTurn.status);
+    const attention = ["paused", "pausing"].includes(session.status) || Boolean(episode && !turnRunning);
+    return {
+      attention,
+      label: attention
+        ? uiCopy(`Episode ${episode?.ordinal || session.currentEpisode} · 조치 필요`, `Episode ${episode?.ordinal || session.currentEpisode} · action required`)
+        : uiCopy(`Episode ${episode?.ordinal || session.currentEpisode} · ${session.status}`, `Episode ${episode?.ordinal || session.currentEpisode} · ${session.status}`),
+      detail: `${session.status} · ${session.stage}${episode ? ` · episode ${episode.ordinal} ${episode.status}` : ""}`,
+    };
+  };
+  const lifecycleCompactLabel = () => researchLoopPresentation()?.label || (state.lifecycle
     ? `${lifecyclePhaseLabels[state.lifecycle.phase] || state.lifecycle.phase} · r${state.lifecycle.revision}`
-    : "Lifecycle";
+    : "Lifecycle");
   const labDecisionStateLabels = {
     "input-needed": "입력 확인 필요",
     "human-decision-needed": "연구자 결정 필요",
@@ -948,7 +965,7 @@ const { stripAgentControlBlocks, stripStormbreakerContinueMarker, STORMBREAKER_C
     if (!conversation || projectId !== state.selectedId) return;
     const messages = await science.conversations.messages(projectId, conversation.id);
     const safeMessages = Array.isArray(messages) ? messages : [];
-    const [messageEvidence, messageArtifactRows, attached, manuscripts, journalProfiles, analysisSpecs, decisions, lifecycle, project, researchContract, graphSnapshot, labDecisionProjections, runs] = await Promise.all([
+    const [messageEvidence, messageArtifactRows, attached, manuscripts, journalProfiles, analysisSpecs, decisions, lifecycle, project, researchContract, graphSnapshot, labDecisionProjections, loopInspection, runs] = await Promise.all([
       loadMessageEvidence(projectId, safeMessages),
       Promise.all(safeMessages.map(async (message) => [message.id, await science.artifacts.forMessage(projectId, message.conversationId, message.id)])),
       science.composer.attach({ projectId, conversationId: conversation.id }),
@@ -961,6 +978,7 @@ const { stripAgentControlBlocks, stripStormbreakerContinueMarker, STORMBREAKER_C
       science.researchContracts.get(projectId),
       science.evidenceGraph.get(projectId).catch((error) => ({ graph: null, reviews: [], error: error instanceof Error ? error.message : String(error) })),
       science.labs.decisionProjections(projectId),
+      science.researchLoops.inspect(projectId).catch(() => null),
       science.runs.list(projectId),
     ]);
     if (projectId !== state.selectedId || conversation.id !== selectedConversation()?.id) return;
@@ -980,6 +998,7 @@ const { stripAgentControlBlocks, stripStormbreakerContinueMarker, STORMBREAKER_C
     state.labDecisionProjections = Array.isArray(labDecisionProjections) ? labDecisionProjections : [];
     state.runs = Array.isArray(runs) ? runs : [];
     state.lifecycle = lifecycle;
+    state.researchLoopInspection = loopInspection;
     state.evidenceGraph = graphSnapshot?.graph || null;
     state.evidenceGraphReviews = Array.isArray(graphSnapshot?.reviews) ? graphSnapshot.reviews : [];
     state.evidenceGraphError = graphSnapshot?.error || "";
@@ -1105,6 +1124,7 @@ const { stripAgentControlBlocks, stripStormbreakerContinueMarker, STORMBREAKER_C
     state.projectError = "";
     state.workspaceSyncError = "";
     state.activeTurn = null;
+    state.researchLoopInspection = null;
     state.composerSending = false;
     state.composerError = "";
     state.selectedManuscriptId = null;
@@ -1156,8 +1176,8 @@ const { stripAgentControlBlocks, stripStormbreakerContinueMarker, STORMBREAKER_C
     state.loadingProject = true;
     if (!preservedWorkspace) render();
     try {
-      const [workspaceState, conversations, sources, sourceFigures, artifacts, labs, capabilityCatalog, labDecisionProjections, rendererPacks, manuscripts, journalProfiles, analysisSpecs, decisions, lifecycle, project, researchContract, graphSnapshot, runs] = await Promise.all([
-        science.workspace.get(projectId), science.conversations.list(projectId), science.sources.list(projectId), science.sourceFigures?.list ? science.sourceFigures.list(projectId).catch(() => []) : [], science.artifacts.list(projectId), science.labs.list(projectId), science.labs.catalog(), science.labs.decisionProjections(projectId), science.rendererPacks.list(), science.manuscripts.list(projectId), science.journals.list(projectId), science.analysisSpecs.list(projectId), science.decisions.list(projectId, undefined, ["queued", "presented", "deferred"]), science.researchLifecycle.get(projectId), science.projects.get(projectId), science.researchContracts.get(projectId), science.evidenceGraph.get(projectId).catch((error) => ({ graph: null, reviews: [], error: error instanceof Error ? error.message : String(error) })), science.runs.list(projectId),
+      const [workspaceState, conversations, sources, sourceFigures, artifacts, labs, capabilityCatalog, labDecisionProjections, rendererPacks, manuscripts, journalProfiles, analysisSpecs, decisions, lifecycle, project, researchContract, graphSnapshot, loopInspection, runs] = await Promise.all([
+        science.workspace.get(projectId), science.conversations.list(projectId), science.sources.list(projectId), science.sourceFigures?.list ? science.sourceFigures.list(projectId).catch(() => []) : [], science.artifacts.list(projectId), science.labs.list(projectId), science.labs.catalog(), science.labs.decisionProjections(projectId), science.rendererPacks.list(), science.manuscripts.list(projectId), science.journals.list(projectId), science.analysisSpecs.list(projectId), science.decisions.list(projectId, undefined, ["queued", "presented", "deferred"]), science.researchLifecycle.get(projectId), science.projects.get(projectId), science.researchContracts.get(projectId), science.evidenceGraph.get(projectId).catch((error) => ({ graph: null, reviews: [], error: error instanceof Error ? error.message : String(error) })), science.researchLoops.inspect(projectId).catch(() => null), science.runs.list(projectId),
       ]);
       if (epoch !== selectionEpoch) return;
       const safeConversations = Array.isArray(conversations) ? conversations : [];
@@ -1191,6 +1211,7 @@ const { stripAgentControlBlocks, stripStormbreakerContinueMarker, STORMBREAKER_C
       state.analysisSpecs = Array.isArray(analysisSpecs) ? analysisSpecs : [];
       state.decisions = Array.isArray(decisions) ? decisions : [];
       state.lifecycle = lifecycle;
+      state.researchLoopInspection = loopInspection;
       state.evidenceGraph = graphSnapshot?.graph || null;
       state.evidenceGraphReviews = Array.isArray(graphSnapshot?.reviews) ? graphSnapshot.reviews : [];
       state.evidenceGraphError = graphSnapshot?.error || "";
@@ -1468,13 +1489,23 @@ const { stripAgentControlBlocks, stripStormbreakerContinueMarker, STORMBREAKER_C
     const values = (items, empty = "정의되지 않음") => Array.isArray(items) && items.length ? items.join(", ") : empty;
     const exactInputCount = Array.isArray(document.data?.inputs) ? document.data.inputs.length : 0;
     const acquisitionSourceCount = Array.isArray(document.data?.acquisition?.sources) ? document.data.acquisition.sources.length : 0;
+    const plannedStatisticsMethods = Array.isArray(document.requiredDiagnostics)
+      ? document.requiredDiagnostics.filter((entry) => typeof entry === "string" && entry.startsWith("agentlas.statistics.method:"))
+      : [];
+    const executionBlocked = plan.status === "frozen" && plannedStatisticsMethods.length > 0
+      && (exactInputCount !== 1 || !model);
     const inputBindingSummary = exactInputCount
       ? uiCopy(`정확한 아티팩트 버전 ${exactInputCount}개`, `${exactInputCount} exact artifact version${exactInputCount === 1 ? "" : "s"}`)
       : acquisitionSourceCount
         ? uiCopy(`사전 수집 출처 ${acquisitionSourceCount}개 · 분석 전 정확한 입력 재승인 필요`, `${acquisitionSourceCount} preregistered source${acquisitionSourceCount === 1 ? "" : "s"} · exact inputs require approval before analysis`)
         : uiCopy("입력 데이터 또는 수집 계획 없음", "No input data or acquisition plan");
-    const modelBoundary = uiCopy("분석 실행 단계에서 해당 도구가 모형을 확정합니다.", "The analysis tool will define the model when the analysis runs.");
-    return `<section class="analysisPlanView" data-analysis-plan-id="${escapeHtml(plan.id)}" data-analysis-plan-version="${escapeHtml(plan.currentVersion)}" data-analysis-plan-sha256="${escapeHtml(plan.currentDocumentSha256)}"><header><div><span>PLAN & PROTOCOLS · EXACT VERSION</span><h1>${escapeHtml(plan.title)}</h1><p>${escapeHtml(document.researchQuestion || project.question)}</p></div><div class="analysisPlanIdentity"><em data-status="${escapeHtml(plan.status)}">${escapeHtml(plan.status)}</em><strong>v${escapeHtml(plan.currentVersion)}</strong><code title="${escapeHtml(plan.currentDocumentSha256)}">${escapeHtml(plan.currentDocumentSha256.slice(0, 12))}…</code>${reviewAction}</div></header><div class="analysisPlanGrid"><section><span>Estimand</span>${estimand ? `<dl><div><dt>Population</dt><dd>${escapeHtml(estimand.population)}</dd></div><div><dt>Exposure</dt><dd>${escapeHtml(estimand.treatmentOrExposure)}</dd></div><div><dt>Comparator</dt><dd>${escapeHtml(estimand.comparator || "없음")}</dd></div><div><dt>Outcome</dt><dd>${escapeHtml(estimand.outcome)}</dd></div><div><dt>Measure</dt><dd>${escapeHtml(estimand.summaryMeasure)}</dd></div></dl>` : `<p>연구자가 estimand를 아직 확정하지 않았습니다.</p>`}</section><section><span>Design & dependence</span><dl><div><dt>Study</dt><dd>${escapeHtml(document.design?.studyType || "미정")}</dd></div><div><dt>Observation unit</dt><dd>${escapeHtml(document.design?.observationUnit || "미정")}</dd></div><div><dt>Dependence</dt><dd>${escapeHtml(document.design?.dependence?.kind || "unresolved")}</dd></div><div><dt>Inputs</dt><dd>${escapeHtml(inputBindingSummary)}</dd></div></dl></section><section><span>Model</span>${model ? `<dl><div><dt>Family</dt><dd>${escapeHtml(model.family)}</dd></div><div><dt>Formula</dt><dd><code>${escapeHtml(model.formula)}</code></dd></div><div><dt>Distribution / link</dt><dd>${escapeHtml(`${model.distribution || "—"} / ${model.link || "—"}`)}</dd></div><div><dt>Rationale</dt><dd>${escapeHtml(model.rationale)}</dd></div></dl>` : `<p>${escapeHtml(modelBoundary)}</p>`}</section><section><span>Validity checks</span><dl><div><dt>Diagnostics</dt><dd>${escapeHtml(values(document.requiredDiagnostics))}</dd></div><div><dt>Sensitivity</dt><dd>${escapeHtml(values(document.sensitivityAnalyses))}</dd></div><div><dt>Missing data</dt><dd>${escapeHtml(document.missingData?.strategy || "unresolved")}</dd></div><div><dt>Multiplicity</dt><dd>${escapeHtml(document.multiplicity?.strategy || "unresolved")}</dd></div></dl></section></div><footer><div><span>Human review</span><strong>${escapeHtml(reviewState)}</strong></div><div><span>Expected outputs</span><strong>${escapeHtml(values(document.expectedArtifacts?.map((item) => item.title), "등록 없음"))}</strong></div><div><span>Runtime boundary</span><strong>${escapeHtml(`${document.runtimePolicy?.network || "deny"} network · ${document.runtimePolicy?.maxWallTimeMinutes || "-"} min`)}</strong></div></footer></section>`;
+    const modelBoundary = executionBlocked
+      ? uiCopy("실행 차단 — 통계 분석을 시작하려면 정확히 하나의 정렬된 Data Table과 구체적인 호환 모형을 묶은 후속 계획이 필요합니다.", "Execution blocked — statistics require a successor plan binding exactly one aligned Data Table and a concrete compatible model.")
+      : uiCopy("분석 실행 전에 구체적인 호환 모형을 묶어야 합니다.", "A concrete compatible model must be bound before analysis can run.");
+    const blockedBadge = executionBlocked
+      ? `<em class="analysisPlanExecutionBadge" data-status="blocked">${uiCopy("실행 차단", "Execution blocked")}</em>`
+      : "";
+    return `<section class="analysisPlanView" data-analysis-plan-id="${escapeHtml(plan.id)}" data-analysis-plan-version="${escapeHtml(plan.currentVersion)}" data-analysis-plan-sha256="${escapeHtml(plan.currentDocumentSha256)}" data-execution-ready="${executionBlocked ? "false" : "true"}"><header><div><span>PLAN & PROTOCOLS · EXACT VERSION</span><h1>${escapeHtml(plan.title)}</h1><p>${escapeHtml(document.researchQuestion || project.question)}</p></div><div class="analysisPlanIdentity"><em data-status="${escapeHtml(plan.status)}">${escapeHtml(plan.status)}</em>${blockedBadge}<strong>v${escapeHtml(plan.currentVersion)}</strong><code title="${escapeHtml(plan.currentDocumentSha256)}">${escapeHtml(plan.currentDocumentSha256.slice(0, 12))}…</code>${reviewAction}</div></header><div class="analysisPlanGrid"><section><span>Estimand</span>${estimand ? `<dl><div><dt>Population</dt><dd>${escapeHtml(estimand.population)}</dd></div><div><dt>Exposure</dt><dd>${escapeHtml(estimand.treatmentOrExposure)}</dd></div><div><dt>Comparator</dt><dd>${escapeHtml(estimand.comparator || "없음")}</dd></div><div><dt>Outcome</dt><dd>${escapeHtml(estimand.outcome)}</dd></div><div><dt>Measure</dt><dd>${escapeHtml(estimand.summaryMeasure)}</dd></div></dl>` : `<p>연구자가 estimand를 아직 확정하지 않았습니다.</p>`}</section><section><span>Design & dependence</span><dl><div><dt>Study</dt><dd>${escapeHtml(document.design?.studyType || "미정")}</dd></div><div><dt>Observation unit</dt><dd>${escapeHtml(document.design?.observationUnit || "미정")}</dd></div><div><dt>Dependence</dt><dd>${escapeHtml(document.design?.dependence?.kind || "unresolved")}</dd></div><div><dt>Inputs</dt><dd>${escapeHtml(inputBindingSummary)}</dd></div></dl></section><section><span>Model</span>${model ? `<dl><div><dt>Family</dt><dd>${escapeHtml(model.family)}</dd></div><div><dt>Formula</dt><dd><code>${escapeHtml(model.formula)}</code></dd></div><div><dt>Distribution / link</dt><dd>${escapeHtml(`${model.distribution || "—"} / ${model.link || "—"}`)}</dd></div><div><dt>Rationale</dt><dd>${escapeHtml(model.rationale)}</dd></div></dl>` : `<p class="${executionBlocked ? "analysisPlanExecutionBlock" : ""}">${escapeHtml(modelBoundary)}</p>`}</section><section><span>Validity checks</span><dl><div><dt>Diagnostics</dt><dd>${escapeHtml(values(document.requiredDiagnostics))}</dd></div><div><dt>Sensitivity</dt><dd>${escapeHtml(values(document.sensitivityAnalyses))}</dd></div><div><dt>Missing data</dt><dd>${escapeHtml(document.missingData?.strategy || "unresolved")}</dd></div><div><dt>Multiplicity</dt><dd>${escapeHtml(document.multiplicity?.strategy || "unresolved")}</dd></div></dl></section></div><footer><div><span>Human review</span><strong>${escapeHtml(reviewState)}</strong></div><div><span>Expected outputs</span><strong>${escapeHtml(values(document.expectedArtifacts?.map((item) => item.title), "등록 없음"))}</strong></div><div><span>Runtime boundary</span><strong>${escapeHtml(`${document.runtimePolicy?.network || "deny"} network · ${document.runtimePolicy?.maxWallTimeMinutes || "-"} min`)}</strong></div></footer></section>`;
   }
 
   // Approving or rejecting a hypothesis is reserved for a person: the agent-visible tool refuses
@@ -5990,7 +6021,14 @@ const { stripAgentControlBlocks, stripStormbreakerContinueMarker, STORMBREAKER_C
     // .failClosed 가 본문 위쪽(303px)에 폭 760 으로 그려진다. 그래서 가리켜도 된다.
     return explained ? "실행을 시작하지 못했습니다 · 위 안내를 확인하세요" : t;
   };
-  const status = composerStatusText(state.composerError) || (running ? (state.activeTurn.status === "cancelling" ? "연구 실행을 중단하는 중…" : "Agent runtime 연구 중…") : state.activeTurn?.status === "cancelled" ? uiCopy("연구 실행 중단됨", "Research run stopped") : needsInitialRun ? "저장된 첫 질문을 실행할 수 있습니다" : "Agent runtime 준비");
+  const loopPresentation = researchLoopPresentation();
+  const status = composerStatusText(state.composerError) || (running
+    ? (state.activeTurn.status === "cancelling" ? "연구 실행을 중단하는 중…" : "Agent runtime 연구 중…")
+    : state.activeTurn?.status === "cancelled"
+      ? uiCopy("연구 실행 중단됨", "Research run stopped")
+      : loopPresentation?.attention
+        ? loopPresentation.label
+        : needsInitialRun ? "저장된 첫 질문을 실행할 수 있습니다" : "Agent runtime 준비");
     return `<footer class="composer${docked ? " dockedComposer" : ""}"><div class="composerBox"><textarea data-composer-input ${disabled || running || needsInitialRun ? "disabled" : ""} rows="2" aria-label="후속 질문" placeholder="후속 질문, 분석 또는 실험 요청">${escapeHtml(state.composerDraft)}</textarea><div class="composerBar"><div class="composerTools"><span class="composerStatus">${escapeHtml(status)}</span><button class="composerAttachButton" disabled title="첨부는 다음 단계에서 연결됩니다" aria-label="첨부 준비 중">${heroIcon("plus")}</button><span class="composerModePill">${heroIcon("sparkles")} Science</span></div><button class="sendButton" data-action="${running ? "cancel-turn" : "send-turn"}" ${sendDisabled ? "disabled" : ""} aria-label="${running ? "중단" : needsInitialRun ? "첫 질문 실행" : "보내기"}">${running ? "■" : "↑"}</button></div></div></footer>`;
   }
 
@@ -6658,7 +6696,11 @@ const { stripAgentControlBlocks, stripStormbreakerContinueMarker, STORMBREAKER_C
     if (!project) return projectLibrary();
     if (state.projectFolderOpen) return projectFolder(project);
     const main = state.mode === "session" ? researchView(project) : state.mode === "manuscript" ? manuscriptWorkbench() : artifactWorkbench();
-    return `<section class="workspace ${state.drawer ? "drawerOpen" : ""}" data-workspace-mode="${escapeHtml(state.mode)}" data-project-destination="${escapeHtml(state.currentDestination)}" data-rail-collapsed="${state.railCollapsed}">${projectRail(project)}<button class="railScrim" data-action="collapse-rail" aria-label="사이드바 닫기"></button><main class="mainPane"><header class="topbar"><div class="topLocation workspaceLocation"><button class="workspaceSidebarReveal" data-action="expand-rail" aria-label="사이드바 열기" title="사이드바 열기">${heroIcon("chevron-right")}</button><div class="workspaceTabGroup" role="tablist" aria-label="연구, 열린 Lab 아티팩트와 원고">${researchWorkspaceTabButton()}<div class="workspaceTabsShell" data-workspace-tabs-shell><button class="workspaceTabOverflow workspaceTabOverflowPrevious" type="button" data-action="scroll-workspace-tabs" data-direction="previous" aria-label="이전 열린 탭 보기" hidden>${heroIcon("chevron-right", "uiIcon isReverse")}</button><nav class="workspaceTabs" data-workspace-tabs role="presentation">${workspaceTabButtons()}</nav><button class="workspaceTabOverflow workspaceTabOverflowNext" type="button" data-action="scroll-workspace-tabs" data-direction="next" aria-label="다음 열린 탭 보기" hidden>${heroIcon("chevron-right")}</button></div></div><button class="workspaceTabAdd" data-action="new" aria-label="새 연구 시작" title="새 연구">${heroIcon("plus")}</button></div><div class="topActions">${state.workspaceSyncError ? `<span class="workspaceSyncWarning" role="status" title="${escapeHtml(state.workspaceSyncError)}">저장 실패</span>` : ""}<span class="statusPill" title="${escapeHtml(`${lifecycleLabel()} · ${state.lifecycle?.stateSha256 || ""}`)}">${escapeHtml(lifecycleCompactLabel())}</span><button data-action="toggle-drawer">${state.mode === "session" ? "근거" : "세부"}</button></div></header><div class="workspaceBody"><div class="contentPane workspaceCenter"><div class="workspaceSurface" id="science-workspace-panel" role="tabpanel" aria-labelledby="${escapeHtml(workspaceTabDomId(state.activeWorkspaceTabId))}" data-workspace-surface>${main}</div></div>${chatDock()}</div></main>${contextDrawer()}${modal()}${manuscriptModal()}${journalTargetSheet()}${submissionExportSheet()}${evidenceGraphInferenceReviewSheet()}${episodeResultReviewSheet()}${researchContractApprovalSheet()}${researchDecisionSheet()}${analysisPlanReviewSheet()}</section>`;
+    const loopPresentation = researchLoopPresentation();
+    const statusTitle = loopPresentation?.attention
+      ? `${loopPresentation.detail} · ${lifecycleLabel()} · ${state.lifecycle?.stateSha256 || ""}`
+      : `${lifecycleLabel()} · ${state.lifecycle?.stateSha256 || ""}`;
+    return `<section class="workspace ${state.drawer ? "drawerOpen" : ""}" data-workspace-mode="${escapeHtml(state.mode)}" data-project-destination="${escapeHtml(state.currentDestination)}" data-rail-collapsed="${state.railCollapsed}">${projectRail(project)}<button class="railScrim" data-action="collapse-rail" aria-label="사이드바 닫기"></button><main class="mainPane"><header class="topbar"><div class="topLocation workspaceLocation"><button class="workspaceSidebarReveal" data-action="expand-rail" aria-label="사이드바 열기" title="사이드바 열기">${heroIcon("chevron-right")}</button><div class="workspaceTabGroup" role="tablist" aria-label="연구, 열린 Lab 아티팩트와 원고">${researchWorkspaceTabButton()}<div class="workspaceTabsShell" data-workspace-tabs-shell><button class="workspaceTabOverflow workspaceTabOverflowPrevious" type="button" data-action="scroll-workspace-tabs" data-direction="previous" aria-label="이전 열린 탭 보기" hidden>${heroIcon("chevron-right", "uiIcon isReverse")}</button><nav class="workspaceTabs" data-workspace-tabs role="presentation">${workspaceTabButtons()}</nav><button class="workspaceTabOverflow workspaceTabOverflowNext" type="button" data-action="scroll-workspace-tabs" data-direction="next" aria-label="다음 열린 탭 보기" hidden>${heroIcon("chevron-right")}</button></div></div><button class="workspaceTabAdd" data-action="new" aria-label="새 연구 시작" title="새 연구">${heroIcon("plus")}</button></div><div class="topActions">${state.workspaceSyncError ? `<span class="workspaceSyncWarning" role="status" title="${escapeHtml(state.workspaceSyncError)}">저장 실패</span>` : ""}<span class="statusPill" data-tone="${loopPresentation?.attention ? "manual" : "pass"}" title="${escapeHtml(statusTitle)}">${escapeHtml(lifecycleCompactLabel())}</span><button data-action="toggle-drawer">${state.mode === "session" ? "근거" : "세부"}</button></div></header><div class="workspaceBody"><div class="contentPane workspaceCenter"><div class="workspaceSurface" id="science-workspace-panel" role="tabpanel" aria-labelledby="${escapeHtml(workspaceTabDomId(state.activeWorkspaceTabId))}" data-workspace-surface>${main}</div></div>${chatDock()}</div></main>${contextDrawer()}${modal()}${manuscriptModal()}${journalTargetSheet()}${submissionExportSheet()}${evidenceGraphInferenceReviewSheet()}${episodeResultReviewSheet()}${researchContractApprovalSheet()}${researchDecisionSheet()}${analysisPlanReviewSheet()}</section>`;
   }
 
   function rememberScroll(mode = state.mode) {

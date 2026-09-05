@@ -1227,7 +1227,7 @@ button.manuscriptBinding:hover { border-color: var(--line-strong); background: v
 .runtimeQuestionOptions { display: grid; gap: 4px; }
 .runtimeQuestionPopover[data-compact="true"] .runtimeQuestionOptions { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .runtimeQuestionOptions > button { min-width: 0; min-height: 48px; display: grid; grid-template-columns: 24px minmax(0, 1fr); align-items: start; column-gap: 9px; row-gap: 2px; border: 0; border-radius: 12px; background: var(--science-surface-1); padding: 8px 12px; color: var(--science-ink); text-align: left; }
-.runtimeQuestionPopover[data-compact="true"] .runtimeQuestionOptions > button { align-items: center; padding: 12px 16px; }
+.runtimeQuestionPopover[data-compact="true"] .runtimeQuestionOptions > button { align-items: center; padding: 14px 18px; }
 .runtimeQuestionOptions > button:hover, .runtimeQuestionOptions > button:focus-visible { background: var(--science-surface-2); outline: 0; box-shadow: 0 0 0 2px rgba(54, 53, 53, .14); }
 .runtimeQuestionOptions > button:disabled, .runtimeQuestionPopover > header button:disabled, .runtimeQuestionFreeText button:disabled { opacity: .5; cursor: default; }
 .runtimeQuestionOptions > button > span { width: 24px; height: 24px; display: grid; grid-row: 1 / span 2; place-items: center; border-radius: 50%; background: var(--science-surface-0); color: var(--grey-600); font-size: 11px; font-weight: 700; }
@@ -1781,6 +1781,7 @@ button.manuscriptBinding:hover { border-color: var(--line-strong); background: v
 .analysisPlanView > header p { max-width: 680px; margin: 10px 0 0; color: var(--muted-deep); font-size: 12px; line-height: 1.6; }
 .analysisPlanIdentity { flex: 0 0 auto; display: grid; justify-items: end; gap: 5px; }
 .analysisPlanIdentity em { border: 1px solid var(--line-strong); border-radius: 999px; padding: 4px 8px; color: var(--muted-deep); font-size: 11px; font-style: normal; font-weight: 700; }
+.analysisPlanIdentity .analysisPlanExecutionBadge[data-status="blocked"] { border-color: #e2b6af; background: #fff3f1; color: var(--danger); }
 .analysisPlanIdentity strong { font-size: 12px; }
 .analysisPlanIdentity code { color: var(--muted); font-size: 11px; }
 .analysisPlanGrid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); border-bottom: 1px solid var(--line); }
@@ -1793,6 +1794,7 @@ button.manuscriptBinding:hover { border-color: var(--line-strong); background: v
 .analysisPlanGrid dt { color: var(--muted); font-size: 11px; }
 .analysisPlanGrid dd { min-width: 0; margin: 0; font-size: 12px; line-height: 1.45; overflow-wrap: anywhere; }
 .analysisPlanGrid p { margin: 10px 0 0; color: var(--muted-deep); font-size: 12px; line-height: 1.5; }
+.analysisPlanGrid .analysisPlanExecutionBlock { border-left: 3px solid var(--danger); background: #fff7f6; color: #8e342a; padding: 10px 12px; }
 .analysisPlanGrid code { font-size: 11px; }
 .analysisPlanView > footer { display: grid; grid-template-columns: 150px minmax(0, 1fr) 190px; gap: 18px; padding: 16px 0; }
 .analysisPlanView > footer strong { display: block; margin-top: 5px; font-size: 12px; line-height: 1.45; }
@@ -2165,6 +2167,15 @@ button.manuscriptBinding:hover { border-color: var(--line-strong); background: v
 }
 
 @container science-center (max-width: 799px) {
+  .workspaceCenter .analysisPlanView { width: calc(100% - 32px); margin: 22px auto 40px; }
+  .workspaceCenter .analysisPlanView > header { flex-direction: column; gap: 14px; }
+  .workspaceCenter .analysisPlanIdentity { justify-items: start; }
+  .workspaceCenter .analysisPlanGrid { grid-template-columns: minmax(0, 1fr); }
+  .workspaceCenter .analysisPlanGrid > section { padding: 18px 0 20px; }
+  .workspaceCenter .analysisPlanGrid > section:nth-child(even) { border-left: 0; padding-right: 0; padding-left: 0; }
+  .workspaceCenter .analysisPlanGrid > section + section { border-top: 1px solid var(--line); }
+  .workspaceCenter .analysisPlanGrid dl > div { grid-template-columns: minmax(88px, .32fr) minmax(0, 1fr); gap: 10px; }
+  .workspaceCenter .analysisPlanView > footer { grid-template-columns: minmax(0, 1fr); gap: 14px; }
   .labDecisionPanel > header { align-items: flex-start; flex-direction: column; }
   .labDecisionHeaderActions { width: 100%; justify-content: space-between; flex-wrap: wrap; }
   .evidenceGraphView { padding: 18px 16px 36px; }

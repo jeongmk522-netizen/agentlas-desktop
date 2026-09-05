@@ -280,11 +280,22 @@ import {
   type ScienceRendererRenderRequest,
 } from "../../shared/science-renderer-runtime";
 import {
+  SCIENCE_PAIRED_TABLE_ALIGNER_ID,
+  SCIENCE_PAIRED_TABLE_ALIGNER_INPUT_SCHEMA,
+  SCIENCE_PAIRED_TABLE_ALIGNER_OUTPUT_MIME,
+  SCIENCE_PAIRED_TABLE_ALIGNER_VERSION,
+  SCIENCE_PAIRED_TABLE_METHODS,
   SCIENCE_TABLE_ARTIFACT_KIND,
   SCIENCE_TABLE_LAB_ID,
+  SCIENCE_TABLE_LIMITS,
   SCIENCE_TABLE_RENDERER_ID,
   SCIENCE_TABLE_RENDERER_VERSION,
+  alignSciencePairedSeries,
+  scienceTableSha256,
   validateScienceTablePayload,
+  type PrepareSciencePairedStatisticsTableInput,
+  type PrepareSciencePairedStatisticsTableResult,
+  type SciencePairedSeriesAlignmentSource,
 } from "../../shared/science-table";
 import {
   SCIENCE_NUMERIC_SURFACE_ARTIFACT_KIND,
@@ -350,6 +361,8 @@ import {
   SCIENCE_STATISTICS_DATA_TABLE_PROJECTION_RECEIPT_V3_SCHEMA,
   SCIENCE_STATISTICS_TOOL_ID,
   SCIENCE_STATISTICS_TOOL_VERSION,
+  isScienceStatisticsMethod,
+  scienceStatisticsMethodMatchesAnalysisModel,
   scienceStatisticsSha256,
   validateScienceStatisticsAnalysisPayload,
   validateScienceStatisticsFigureArtifactPayload,
@@ -357,6 +370,10 @@ import {
   validateScienceStatisticsFigureVectorArtifactPayload,
   type ScienceStatisticsFigureVectorArtifactPayload,
 } from "../../shared/science-statistics";
+import {
+  SCIENCE_ECONOMICS_ARTIFACT_SCHEMA,
+  validateScienceEconomicIndicatorArtifactPayload,
+} from "../../shared/science-economics";
 import type {
   ScienceStatisticsFigureSvgExport,
   ScienceStatisticsFigureSvgPreviewPng,
@@ -3314,6 +3331,24 @@ function normalizeScienceDependence(value: unknown): ScienceAnalysisSpecDocument
   throw new Error("science-analysis-dependence-invalid");
 }
 
+function normalizeScienceAnalysisModel(value: unknown): NonNullable<ScienceAnalysisSpecDocument["model"]> {
+  const item = safeJsonRecord(value, 64 * 1024, "analysis-model");
+  if (!hasExactKeys(item, ["family", "formula", "distribution", "link", "groupingVariables", "randomEffects", "rationale"])
+    || typeof item.family !== "string"
+    || !SCIENCE_ANALYSIS_MODEL_FAMILIES.includes(item.family as NonNullable<ScienceAnalysisSpecDocument["model"]>["family"])) {
+    throw new Error("science-analysis-model-invalid");
+  }
+  return {
+    family: item.family as NonNullable<ScienceAnalysisSpecDocument["model"]>["family"],
+    formula: safeText(item.formula, 4_000, "analysis-model-formula"),
+    distribution: nullableAnalysisText(item.distribution, 120, "analysis-model-distribution"),
+    link: nullableAnalysisText(item.link, 120, "analysis-model-link"),
+    groupingVariables: safeTextList(item.groupingVariables, 32, 240, "analysis-model-grouping", 0),
+    randomEffects: safeTextList(item.randomEffects, 32, 500, "analysis-model-random-effect", 0),
+    rationale: safeText(item.rationale, 8_000, "analysis-model-rationale"),
+  };
+}
+
 function normalizeScienceAnalysisDocument(value: unknown): ScienceAnalysisSpecDocument {
   const record = safeJsonRecord(value, 2 * 1024 * 1024, "analysis-spec");
   const expected = ["schemaVersion", "purpose", "researchQuestion", "population", "estimand", "design", "data", "model", "missingData", "multiplicity", "requiredDiagnostics", "sensitivityAnalyses", "seed", "runtimePolicy", "expectedArtifacts"];
@@ -3366,21 +3401,7 @@ function normalizeScienceAnalysisDocument(value: unknown): ScienceAnalysisSpecDo
   const studyType = String(design.studyType ?? "") as ScienceAnalysisSpecDocument["design"]["studyType"];
   if (!["randomized-experiment", "observational", "quasi-experiment", "simulation"].includes(studyType)) throw new Error("science-analysis-study-type-invalid");
   let model: ScienceAnalysisSpecDocument["model"] = null;
-  if (record.model !== null) {
-    const item = safeJsonRecord(record.model, 64 * 1024, "analysis-model");
-    if (!hasExactKeys(item, ["family", "formula", "distribution", "link", "groupingVariables", "randomEffects", "rationale"])
-      || typeof item.family !== "string"
-      || !SCIENCE_ANALYSIS_MODEL_FAMILIES.includes(item.family as NonNullable<ScienceAnalysisSpecDocument["model"]>["family"])) throw new Error("science-analysis-model-invalid");
-    model = {
-      family: item.family as NonNullable<ScienceAnalysisSpecDocument["model"]>["family"],
-      formula: safeText(item.formula, 4_000, "analysis-model-formula"),
-      distribution: nullableAnalysisText(item.distribution, 120, "analysis-model-distribution"),
-      link: nullableAnalysisText(item.link, 120, "analysis-model-link"),
-      groupingVariables: safeTextList(item.groupingVariables, 32, 240, "analysis-model-grouping", 0),
-      randomEffects: safeTextList(item.randomEffects, 32, 500, "analysis-model-random-effect", 0),
-      rationale: safeText(item.rationale, 8_000, "analysis-model-rationale"),
-    };
-  }
+  if (record.model !== null) model = normalizeScienceAnalysisModel(record.model);
   const artifactsRaw = Array.isArray(record.expectedArtifacts) ? record.expectedArtifacts : null;
   if (!artifactsRaw || artifactsRaw.length > 32) throw new Error("science-analysis-expected-artifacts-invalid");
   const expectedArtifacts = artifactsRaw.map((entry) => {
@@ -11490,6 +11511,269 @@ export class ScienceStore {
     })();
   }
 
+  preparePairedStatisticsTable(input: PrepareSciencePairedStatisticsTableInput): PrepareSciencePairedStatisticsTableResult {
+    if (!input || typeof input !== "object" || !UUID_RE.test(String(input.requestId ?? ""))) throw new Error("science-request-id-invalid");
+    if (!UUID_RE.test(String(input.projectId ?? "")) || !UUID_RE.test(String(input.conversationId ?? ""))
+      || !UUID_RE.test(String(input.originMessageId ?? ""))) throw new Error("science-paired-table-origin-invalid");
+    const title = safeText(input.title, 240, "science-paired-table-title-invalid");
+    const outputKeyColumn = safeText(input.outputKeyColumn, 120, "science-paired-table-output-column-invalid");
+    const safeColumnName = (value: unknown): string => {
+      const name = safeText(value, 120, "science-paired-table-output-column-invalid");
+      if (!/^[A-Za-z][A-Za-z0-9_]{0,119}$/u.test(name)) throw new Error("science-paired-table-output-column-invalid");
+      return name;
+    };
+    if (!/^[A-Za-z][A-Za-z0-9_]{0,119}$/u.test(outputKeyColumn)) throw new Error("science-paired-table-output-column-invalid");
+    if (!Array.isArray(input.sources) || input.sources.length !== 2) throw new Error("science-paired-table-sources-invalid");
+    if (!Array.isArray(input.methods) || input.methods.length < 1 || input.methods.length > SCIENCE_PAIRED_TABLE_METHODS.length
+      || new Set(input.methods).size !== input.methods.length
+      || input.methods.some((method) => !SCIENCE_PAIRED_TABLE_METHODS.includes(method))) {
+      throw new Error("science-paired-table-methods-invalid");
+    }
+    const minimumCompletePairs = safePositiveInteger(
+      input.minimumCompletePairs,
+      3,
+      SCIENCE_TABLE_LIMITS.maxRows,
+      "science-paired-table-minimum-complete-pairs-invalid",
+    );
+    const model = normalizeScienceAnalysisModel(input.model);
+    for (const method of input.methods) {
+      if (!scienceStatisticsMethodMatchesAnalysisModel(method, model)) throw new Error("science-analysis-statistics-method-model-mismatch");
+    }
+    const modelSha256 = scienceStatisticsSha256(model);
+    const resolved = input.sources.map((raw, index) => {
+      if (!raw || typeof raw !== "object" || Array.isArray(raw)
+        || !hasExactKeys(raw as unknown as Record<string, unknown>, ["artifactId", "artifactVersion", "contentSha256", "keyColumn", "valueColumn", "outputColumn", "label"])
+        || !UUID_RE.test(String(raw.artifactId ?? ""))) throw new Error(`science-paired-table-source-${index + 1}-invalid`);
+      const artifactVersion = safePositiveInteger(raw.artifactVersion, 1, Number.MAX_SAFE_INTEGER, "science-paired-table-source-version-invalid");
+      const contentSha256 = safeSha256(raw.contentSha256, "science-paired-table-source-content-invalid");
+      const keyColumn = safeText(raw.keyColumn, 240, "science-paired-table-key-column-invalid");
+      const valueColumn = safeText(raw.valueColumn, 240, "science-paired-table-value-column-invalid");
+      const outputColumn = safeColumnName(raw.outputColumn);
+      const label = safeText(raw.label, 240, "science-paired-table-label-invalid");
+      const context = this.getArtifactContextForProject(input.projectId, raw.artifactId, artifactVersion);
+      if (!context || context.selectedVersion.contentSha256 !== contentSha256
+        || context.artifact.kind !== "chart.vega" || context.selectedVersion.rendererId !== "agentlas.vega"
+        || context.selectedVersion.payload.schema !== SCIENCE_ECONOMICS_ARTIFACT_SCHEMA || !context.artifact.sourceRunId) {
+        throw new Error(`science-paired-table-source-${index + 1}-not-found`);
+      }
+      const payload = validateScienceEconomicIndicatorArtifactPayload(context.selectedVersion.payload);
+      const keyDefinition = payload.table.columns.find((column) => column.id === keyColumn);
+      const valueDefinition = payload.table.columns.find((column) => column.id === valueColumn);
+      if (!keyDefinition || keyDefinition.type !== "string" || !valueDefinition || valueDefinition.type !== "number") {
+        throw new Error(`science-paired-table-source-${index + 1}-columns-invalid`);
+      }
+      const sourceRun = this.getResearchRunForProject(input.projectId, context.artifact.sourceRunId);
+      const artifactBinding = this.getRunArtifactBinding(input.projectId, context.artifact.sourceRunId);
+      if (!sourceRun || sourceRun.status !== "succeeded" || !artifactBinding
+        || artifactBinding.artifactId !== context.artifact.id || artifactBinding.artifactVersion !== artifactVersion
+        || artifactBinding.artifactContentSha256 !== contentSha256) {
+        throw new Error(`science-paired-table-source-${index + 1}-lineage-invalid`);
+      }
+      const values = new Map<string, number | null>();
+      for (const row of payload.table.rows) {
+        const key = row[keyColumn as keyof typeof row];
+        const value = row[valueColumn as keyof typeof row];
+        if (typeof key !== "string" || !key.trim() || Buffer.byteLength(key, "utf8") > SCIENCE_TABLE_LIMITS.maxCellTextBytes
+          || (value !== null && (typeof value !== "number" || !Number.isFinite(value)))) {
+          throw new Error(`science-paired-table-source-${index + 1}-row-invalid`);
+        }
+        if (values.has(key)) throw new Error(`science-paired-table-source-${index + 1}-duplicate-key`);
+        values.set(key, value as number | null);
+      }
+      return {
+        artifactId: context.artifact.id,
+        artifactVersion,
+        contentSha256,
+        keyColumn,
+        valueColumn,
+        outputColumn,
+        label,
+        context,
+        payload,
+        sourceRun,
+        values,
+      };
+    });
+    if (resolved[0]!.artifactId === resolved[1]!.artifactId && resolved[0]!.artifactVersion === resolved[1]!.artifactVersion) {
+      throw new Error("science-paired-table-source-duplicate");
+    }
+    const alignmentSource = (source: typeof resolved[number]): SciencePairedSeriesAlignmentSource => ({
+      outputColumn: source.outputColumn,
+      values: [...source.values].map(([key, value]) => ({ key, value })),
+    });
+    const alignment = alignSciencePairedSeries(outputKeyColumn, [alignmentSource(resolved[0]!), alignmentSource(resolved[1]!)]);
+    const { rows, nullCount } = alignment;
+    const columns: ScienceDatasetTablePayload["columns"] = [
+      { name: outputKeyColumn, logicalType: "string", nullable: false },
+      { name: "paired_eligible", logicalType: "boolean", nullable: false },
+      ...resolved.flatMap((source): ScienceDatasetTablePayload["columns"] => [
+        { name: source.outputColumn, logicalType: "number", nullable: true },
+        { name: `${source.outputColumn}_missing`, logicalType: "boolean", nullable: false },
+      ]),
+    ];
+    const profile = { rowCount: rows.length, columnCount: columns.length, nullCount, formulaLikeCellCount: 0 };
+    const descriptor = {
+      schema: SCIENCE_PAIRED_TABLE_ALIGNER_INPUT_SCHEMA,
+      policy: "full-outer-by-exact-string-key-preserve-null/v1",
+      title,
+      outputKeyColumn,
+      sources: resolved.map((source) => ({
+        artifactId: source.artifactId,
+        artifactVersion: source.artifactVersion,
+        contentSha256: source.contentSha256,
+        sourceRunId: source.sourceRun.id,
+        keyColumn: source.keyColumn,
+        valueColumn: source.valueColumn,
+        outputColumn: source.outputColumn,
+        label: source.label,
+      })),
+      methods: [...input.methods],
+      model,
+      modelSha256,
+      completePairCount: alignment.completePairCount,
+      minimumCompletePairs,
+    };
+    const rawSha256 = scienceTableSha256(descriptor);
+    const table = validateScienceTablePayload({
+      schema: "agentlas.science-table/v1",
+      columns,
+      rows,
+      profile,
+      receipts: {
+        parserId: SCIENCE_PAIRED_TABLE_ALIGNER_ID,
+        parserVersion: SCIENCE_PAIRED_TABLE_ALIGNER_VERSION,
+        rawSha256,
+        headerSha256: scienceTableSha256(columns.map((column) => column.name)),
+        rowsSha256: scienceTableSha256(rows),
+        tableSha256: scienceTableSha256({ schema: "agentlas.science-table/v1", columns, rows, profile }),
+      },
+    });
+    const descriptorBlob = this.putRunBlob(Buffer.from(JSON.stringify(canonicalValue(descriptor)), "utf8"));
+    if (descriptorBlob.sha256 !== rawSha256) throw new Error("science-paired-table-descriptor-hash-invalid");
+    const sourceBlobs = resolved.map((source) => this.putRunBlob(Buffer.from(JSON.stringify(canonicalValue(source.payload)), "utf8")));
+    const inputs: ScienceResearchRunResourceInput[] = [
+      {
+        role: "paired-table-alignment-descriptor",
+        mimeType: "application/vnd.agentlas.science.paired-table-alignment-input+json",
+        ...descriptorBlob,
+        artifactId: null,
+        artifactVersion: null,
+      },
+      ...sourceBlobs.map((blob, index) => ({
+        role: `paired-table-source-${index + 1}`,
+        mimeType: "application/vnd.agentlas.science.artifact+json",
+        ...blob,
+        artifactId: resolved[index]!.artifactId,
+        artifactVersion: resolved[index]!.artifactVersion,
+      })),
+    ];
+    const environmentSha256 = sha256Json({ toolId: SCIENCE_PAIRED_TABLE_ALIGNER_ID, toolVersion: SCIENCE_PAIRED_TABLE_ALIGNER_VERSION, runtime: process.version });
+    const created = this.createResearchRun({
+      requestId: input.requestId,
+      projectId: input.projectId,
+      conversationId: input.conversationId,
+      originMessageId: input.originMessageId,
+      parentRunId: resolved[0]!.sourceRun.id,
+      parentBindings: resolved.map((source, index) => ({ ordinal: index + 1, role: index === 0 ? "primary" : `paired-source-${index + 1}`, parentRunId: source.sourceRun.id })),
+      toolId: SCIENCE_PAIRED_TABLE_ALIGNER_ID,
+      toolVersion: SCIENCE_PAIRED_TABLE_ALIGNER_VERSION,
+      runtime: "electron-main",
+      inputManifestSha256: sha256Json(inputs),
+      environmentSha256,
+      inputs,
+    });
+    let run = this.getResearchRunForProject(input.projectId, created.run.id) ?? created.run;
+    if (created.replayed && run.status === "failed") throw new Error("science-paired-table-prior-run-failed");
+    if (created.replayed && run.status === "running") throw new Error("science-paired-table-run-in-progress");
+    if (!created.replayed) {
+      const outputBlob = this.putRunBlob(Buffer.from(JSON.stringify(canonicalValue(table)), "utf8"));
+      const outputs: ScienceResearchRunResourceInput[] = [{
+        role: "normalized-table",
+        mimeType: SCIENCE_PAIRED_TABLE_ALIGNER_OUTPUT_MIME,
+        ...outputBlob,
+        artifactId: null,
+        artifactVersion: null,
+      }];
+      run = this.completeResearchRun({
+        requestId: stableUuid(`${input.requestId}:complete`),
+        projectId: input.projectId,
+        runId: run.id,
+        status: "succeeded",
+        outputManifestSha256: sha256Json(outputs),
+        summary: `${rows.length} exact keys aligned from two immutable source artifacts; missing measurements remain null with explicit flags.`,
+        outputs,
+      }).run;
+    }
+    let artifact = this.getArtifactForSourceRun(input.projectId, run.id, SCIENCE_TABLE_LAB_ID);
+    if (!artifact) {
+      artifact = this.createArtifact({
+        projectId: input.projectId,
+        sourceRunId: run.id,
+        kind: SCIENCE_TABLE_ARTIFACT_KIND,
+        title,
+        rendererId: SCIENCE_TABLE_RENDERER_ID,
+        rendererVersion: SCIENCE_TABLE_RENDERER_VERSION,
+        rendererBinding: null,
+        payload: table as unknown as Record<string, unknown>,
+        semantic: {
+          title,
+          summary: `${rows.length} exact join keys aligned from two immutable artifacts without imputing measurements.`,
+          entities: resolved.map((source) => ({ id: source.outputColumn, label: source.label, type: "measured-series" })),
+          observations: [
+            { label: "Aligned keys", value: rows.length, unit: null },
+            { label: "Missing measurements", value: nullCount, unit: null },
+          ],
+          warnings: nullCount > 0 ? [`${nullCount} missing measurement cell(s) remain null and are marked by explicit boolean columns.`] : [],
+        },
+        provenance: {
+          sourceRunId: run.id,
+          sourceRefs: resolved.map((source) => source.payload.evidence.source.canonicalUri),
+          datasetSha256: resolved.map((source) => source.contentSha256),
+          codeSha256: sha256Json({ toolId: SCIENCE_PAIRED_TABLE_ALIGNER_ID, toolVersion: SCIENCE_PAIRED_TABLE_ALIGNER_VERSION }),
+          environmentSha256,
+        },
+        linkage: {
+          labId: SCIENCE_TABLE_LAB_ID,
+          origin: { surface: "conversation", conversationId: input.conversationId, messageId: input.originMessageId, loopSessionId: null, runId: run.id, branchId: null },
+          parent: null,
+          inputs: resolved.map((source) => ({ artifactId: source.artifactId, version: source.artifactVersion })),
+        },
+      });
+      this.bindSucceededRunArtifact({
+        requestId: stableUuid(`science-paired-table-run-artifact-binding:v1:${input.projectId}:${run.id}:${artifact.id}:${artifact.currentVersion}`),
+        projectId: input.projectId,
+        runId: run.id,
+        outputOrdinal: 1,
+        artifactId: artifact.id,
+        artifactVersion: artifact.currentVersion,
+        expectedArtifactContentSha256: artifact.version.contentSha256,
+      });
+    }
+    const preparation = {
+      dataInputs: [{ artifactId: artifact.id, artifactVersion: artifact.currentVersion, contentSha256: artifact.version.contentSha256 }],
+      model,
+      modelSha256,
+      requiredDiagnostics: input.methods.map((method) => `agentlas.statistics.method:${method}`),
+      sourceTables: input.methods.map((method) => ({
+        artifact_id: artifact!.id,
+        artifact_version: artifact!.currentVersion,
+        content_sha256: artifact!.version.contentSha256,
+        method,
+        projection_kind: "declared-columns",
+        columns: {
+          x: { column: resolved[0]!.outputColumn },
+          y: { column: resolved[1]!.outputColumn },
+          xLabel: { value: resolved[0]!.label },
+          yLabel: { value: resolved[1]!.label },
+        },
+      })),
+      completePairCount: alignment.completePairCount,
+      minimumCompletePairs,
+      readyForStatistics: alignment.completePairCount >= minimumCompletePairs,
+    };
+    return { run, artifact, table, preparation, replayed: created.replayed };
+  }
+
   createResearchRun(input: CreateScienceResearchRunInput): CreateScienceResearchRunResult {
     if (!input || typeof input !== "object" || !UUID_RE.test(String(input.requestId ?? ""))) throw new Error("science-request-id-invalid");
     if (!UUID_RE.test(String(input.projectId ?? "")) || !UUID_RE.test(String(input.conversationId ?? "")) || !UUID_RE.test(String(input.originMessageId ?? ""))) throw new Error("science-run-origin-invalid");
@@ -13711,6 +13995,77 @@ export class ScienceStore {
           || source.canonicalUri !== validated.source.canonicalUri || rawOutput?.sha256 !== validated.responseSha256 || !catalogOutput) {
           throw new Error("science-materials-run-lineage-invalid");
         }
+      } else if (payload.schema === "agentlas.science-table/v1"
+        && sourceRun?.toolId === SCIENCE_PAIRED_TABLE_ALIGNER_ID
+        && sourceRun.toolVersion === SCIENCE_PAIRED_TABLE_ALIGNER_VERSION) {
+        const table = validateScienceTablePayload(payload);
+        const descriptorInput = sourceRun.inputs[0];
+        const sourceInputs = sourceRun.inputs.slice(1);
+        const output = sourceRun.outputs[0];
+        if (sourceRun.status !== "succeeded" || sourceRun.inputs.length !== 3 || sourceRun.outputs.length !== 1
+          || !descriptorInput || descriptorInput.ordinal !== 1 || descriptorInput.role !== "paired-table-alignment-descriptor"
+          || descriptorInput.mimeType !== "application/vnd.agentlas.science.paired-table-alignment-input+json"
+          || !output || output.ordinal !== 1 || output.role !== "normalized-table" || output.mimeType !== SCIENCE_PAIRED_TABLE_ALIGNER_OUTPUT_MIME
+          || table.receipts.parserId !== SCIENCE_PAIRED_TABLE_ALIGNER_ID
+          || table.receipts.parserVersion !== SCIENCE_PAIRED_TABLE_ALIGNER_VERSION
+          || table.receipts.rawSha256 !== descriptorInput.sha256
+          || !this.readRunBlob(output).equals(Buffer.from(JSON.stringify(canonicalValue(table)), "utf8"))) {
+          throw new Error("science-paired-table-run-lineage-invalid");
+        }
+        let descriptor: Record<string, unknown>;
+        try { descriptor = JSON.parse(this.readRunBlob(descriptorInput).toString("utf8")) as Record<string, unknown>; }
+        catch { throw new Error("science-paired-table-descriptor-invalid"); }
+        const descriptorSources = Array.isArray(descriptor.sources) ? descriptor.sources : null;
+        if (!hasExactKeys(descriptor, ["schema", "policy", "title", "outputKeyColumn", "sources", "methods", "model", "modelSha256", "completePairCount", "minimumCompletePairs"])
+          || descriptor.schema !== SCIENCE_PAIRED_TABLE_ALIGNER_INPUT_SCHEMA
+          || descriptor.policy !== "full-outer-by-exact-string-key-preserve-null/v1"
+          || !descriptorSources || descriptorSources.length !== 2
+          || !Number.isSafeInteger(descriptor.completePairCount) || Number(descriptor.completePairCount) < 0
+          || !Number.isSafeInteger(descriptor.minimumCompletePairs) || Number(descriptor.minimumCompletePairs) < 3
+          || scienceStatisticsSha256(normalizeScienceAnalysisModel(descriptor.model)) !== descriptor.modelSha256) {
+          throw new Error("science-paired-table-descriptor-invalid");
+        }
+        const descriptorOutputColumns = descriptorSources.map((entry) => entry && typeof entry === "object" && !Array.isArray(entry)
+          ? String((entry as Record<string, unknown>).outputColumn ?? "") : "");
+        if (descriptorOutputColumns.some((name) => !/^[A-Za-z][A-Za-z0-9_]{0,119}$/u.test(name))) {
+          throw new Error("science-paired-table-descriptor-invalid");
+        }
+        let exactCompletePairCount = 0;
+        for (const row of table.rows) {
+          const eligible = descriptorOutputColumns.every((name) => row[name] !== null);
+          if (row.paired_eligible !== eligible
+            || descriptorOutputColumns.some((name) => row[`${name}_missing`] !== (row[name] === null))) {
+            throw new Error("science-paired-table-eligibility-invalid");
+          }
+          if (eligible) exactCompletePairCount += 1;
+        }
+        if (descriptor.completePairCount !== exactCompletePairCount) {
+          throw new Error("science-paired-table-eligibility-invalid");
+        }
+        const parents = this.getResearchRunParentBindings(projectId, sourceRun.id);
+        if (parents.length !== 2 || sourceInputs.length !== 2) {
+          throw new Error("science-paired-table-parent-lineage-invalid");
+        }
+        const exactInputHashes: string[] = [];
+        descriptorSources.forEach((entry, index) => {
+          const item = entry && typeof entry === "object" && !Array.isArray(entry) ? entry as Record<string, unknown> : null;
+          const runInput = sourceInputs[index];
+          if (!item || !hasExactKeys(item, ["artifactId", "artifactVersion", "contentSha256", "sourceRunId", "keyColumn", "valueColumn", "outputColumn", "label"])
+            || !runInput || runInput.role !== `paired-table-source-${index + 1}`
+            || runInput.artifactId !== item.artifactId || runInput.artifactVersion !== item.artifactVersion
+            || parents[index]?.ordinal !== index + 1 || parents[index]?.role !== (index === 0 ? "primary" : `paired-source-${index + 1}`)
+            || parents[index]?.parentRunId !== item.sourceRunId) {
+            throw new Error("science-paired-table-parent-lineage-invalid");
+          }
+          const sourceContext = this.getArtifactContextForProject(projectId, String(item.artifactId), Number(item.artifactVersion));
+          if (!sourceContext || sourceContext.selectedVersion.contentSha256 !== item.contentSha256
+            || sourceContext.artifact.sourceRunId !== item.sourceRunId
+            || !this.readRunBlob(runInput).equals(Buffer.from(JSON.stringify(canonicalValue(sourceContext.selectedVersion.payload)), "utf8"))) {
+            throw new Error("science-paired-table-source-lineage-invalid");
+          }
+          exactInputHashes.push(String(item.contentSha256));
+        });
+        if (exactInputHashes.length !== 2) throw new Error("science-paired-table-source-lineage-invalid");
       } else if (payload.schema === "agentlas.science-table/v1"
         && sourceRun?.toolId === "agentlas.paleontology-candidate-comparison"
         && sourceRun.toolVersion === "1.0.0") {
@@ -16245,6 +16600,21 @@ export class ScienceStore {
           throw new Error("science-materials-run-lineage-invalid");
         }
       } else if (payload.schema === "agentlas.science-table/v1"
+        && sourceRun?.toolId === SCIENCE_PAIRED_TABLE_ALIGNER_ID
+        && sourceRun.toolVersion === SCIENCE_PAIRED_TABLE_ALIGNER_VERSION) {
+        this.validateArtifactPayloadForProject(input.projectId, SCIENCE_TABLE_RENDERER_ID, payload, sourceRunId);
+        const descriptorInput = sourceRun.inputs[0]!;
+        const descriptor = JSON.parse(this.readRunBlob(descriptorInput).toString("utf8")) as Record<string, unknown>;
+        const descriptorSources = descriptor.sources as Array<Record<string, unknown>>;
+        const expectedInputs = descriptorSources.map((entry) => ({ artifactId: String(entry.artifactId), version: Number(entry.artifactVersion) }));
+        const expectedHashes = descriptorSources.map((entry) => String(entry.contentSha256));
+        if (linkage.labId !== SCIENCE_TABLE_LAB_ID || linkage.origin.runId !== sourceRun.id || linkage.parent !== null
+          || sha256Json(linkage.inputs) !== sha256Json(expectedInputs)
+          || sha256Json(provenance.datasetSha256) !== sha256Json(expectedHashes)
+          || provenance.codeSha256 !== sha256Json({ toolId: SCIENCE_PAIRED_TABLE_ALIGNER_ID, toolVersion: SCIENCE_PAIRED_TABLE_ALIGNER_VERSION })) {
+          throw new Error("science-paired-table-provenance-invalid");
+        }
+      } else if (payload.schema === "agentlas.science-table/v1"
         && sourceRun?.toolId === "agentlas.paleontology-candidate-comparison"
         && sourceRun.toolVersion === "1.0.0") {
         const columns = Array.isArray(payload.columns) ? payload.columns : null;
@@ -18673,9 +19043,55 @@ export class ScienceStore {
   }
 
   private validateAnalysisDocumentReferences(projectId: string, document: ScienceAnalysisSpecDocument): void {
+    const plannedStatisticsMethods = document.requiredDiagnostics
+      .filter((entry) => entry.startsWith("agentlas.statistics.method:"))
+      .map((entry) => entry.slice("agentlas.statistics.method:".length));
     for (const input of document.data.inputs) {
       const context = this.getArtifactContextForProject(projectId, input.artifactId, input.artifactVersion);
       if (!context || context.selectedVersion.contentSha256 !== input.contentSha256) throw new Error("science-analysis-input-not-found");
+    }
+    // Acquisition-only plans may be approved before bytes exist. Once a plan binds inputs for a
+    // registered statistics method, however, approval must mean that the exact frozen document is
+    // executable: the gateway accepts one immutable Data Table, a concrete compatible model, and
+    // the method token(s). Rejecting this here keeps a human from approving a plan that can only
+    // fail later at the runner boundary.
+    if (document.data.inputs.length > 0 && plannedStatisticsMethods.length > 0) {
+      if (document.data.inputs.length !== 1) throw new Error("science-analysis-statistics-source-table-required");
+      const input = document.data.inputs[0]!;
+      const context = this.getArtifactContextForProject(projectId, input.artifactId, input.artifactVersion);
+      if (!context || context.artifact.kind !== SCIENCE_TABLE_ARTIFACT_KIND
+        || context.selectedVersion.rendererId !== SCIENCE_TABLE_RENDERER_ID
+        || context.linkage.labId !== SCIENCE_TABLE_LAB_ID) {
+        throw new Error("science-analysis-statistics-source-table-required");
+      }
+      const table = validateScienceTablePayload(context.selectedVersion.payload);
+      const sourceRun = context.artifact.sourceRunId
+        ? this.getResearchRunForProject(projectId, context.artifact.sourceRunId)
+        : null;
+      if (sourceRun?.toolId === SCIENCE_PAIRED_TABLE_ALIGNER_ID
+        && sourceRun.toolVersion === SCIENCE_PAIRED_TABLE_ALIGNER_VERSION) {
+        const descriptorInput = sourceRun.inputs.find((item) => item.role === "paired-table-alignment-descriptor");
+        let descriptor: Record<string, unknown> | null = null;
+        try {
+          descriptor = descriptorInput
+            ? JSON.parse(this.readRunBlob(descriptorInput).toString("utf8")) as Record<string, unknown>
+            : null;
+        } catch {
+          descriptor = null;
+        }
+        const pairedEligibleCount = table.rows.filter((row) => row.paired_eligible === true).length;
+        if (!descriptor || descriptor.completePairCount !== pairedEligibleCount
+          || !Number.isSafeInteger(descriptor.minimumCompletePairs)
+          || pairedEligibleCount < Number(descriptor.minimumCompletePairs)) {
+          throw new Error("science-analysis-statistics-insufficient-complete-pairs");
+        }
+      }
+      if (!document.model) throw new Error("science-analysis-statistics-model-required");
+      for (const method of plannedStatisticsMethods) {
+        if (!isScienceStatisticsMethod(method) || !scienceStatisticsMethodMatchesAnalysisModel(method, document.model)) {
+          throw new Error("science-analysis-statistics-method-model-mismatch");
+        }
+      }
     }
   }
 

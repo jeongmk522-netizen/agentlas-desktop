@@ -73,6 +73,7 @@ import type { ScienceEvidenceGraphConditioningContext, ScienceEvidenceGraphEdgeK
 import { SCIENCE_EVIDENCE_GRAPH_EDGE_KINDS } from "../../shared/science-evidence-graph";
 import { scienceResearchIntentCatalog } from "../../shared/science-research-intent";
 import { scienceStudyProgress } from "./study-progress";
+import { SCIENCE_PAIRED_TABLE_METHODS, SCIENCE_TABLE_LIMITS } from "../../shared/science-table";
 import { scienceNextResearchPhaseGate } from "./store";
 import { scienceLabDecisionProjectionsForProject } from "./lab-decision-projection-service";
 import { loadSciencePluginRuntime, readSciencePluginFile } from "./plugin-runtime";
@@ -1820,6 +1821,41 @@ const PLATFORM_TOOLS: McpTool[] = [
         artifact_version: { type: "integer", minimum: 1 },
       },
       required: ["tool_call_id", "artifact_id", "artifact_version"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "prepare_paired_statistics_table",
+    route: "/v1/platform/statistics/prepare-paired-table",
+    description: "Before proposing an artifact-bound confirmatory plan, deterministically full-outer-align exactly two immutable World Bank indicator artifacts by their exact string key. The output is one run-backed Data Table with both measured columns, preserved nulls, explicit per-series missing flags, a paired_eligible flag, exact parent-run/artifact lineage, a compatible reviewed model hash, method tokens, and ready-to-use declared-column source_table bindings. Pass the plan's prespecified minimum complete-pair count. The table remains visible when that threshold is not met, but readyForStatistics is false and a successor statistics plan is rejected. This tool prepares evidence and execution bindings only; it does not approve, freeze, or run an analysis plan.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        tool_call_id: { type: "string", minLength: 1, maxLength: 160 },
+        title: { type: "string", minLength: 1, maxLength: 240 },
+        output_key_column: { type: "string", pattern: "^[A-Za-z][A-Za-z0-9_]{0,119}$" },
+        sources: {
+          type: "array", minItems: 2, maxItems: 2,
+          items: {
+            type: "object",
+            properties: {
+              artifact_id: { type: "string", format: "uuid" },
+              artifact_version: { type: "integer", minimum: 1 },
+              content_sha256: MANUSCRIPT_SHA256_SCHEMA,
+              key_column: { type: "string", minLength: 1, maxLength: 240 },
+              value_column: { type: "string", minLength: 1, maxLength: 240 },
+              output_column: { type: "string", pattern: "^[A-Za-z][A-Za-z0-9_]{0,119}$" },
+              label: { type: "string", minLength: 1, maxLength: 240 },
+            },
+            required: ["artifact_id", "artifact_version", "content_sha256", "key_column", "value_column", "output_column", "label"],
+            additionalProperties: false,
+          },
+        },
+        methods: { type: "array", minItems: 1, maxItems: SCIENCE_PAIRED_TABLE_METHODS.length, uniqueItems: true, items: { type: "string", enum: [...SCIENCE_PAIRED_TABLE_METHODS] } },
+        model: ANALYSIS_MODEL_SCHEMA,
+        minimum_complete_pairs: { type: "integer", minimum: 3, maximum: SCIENCE_TABLE_LIMITS.maxRows },
+      },
+      required: ["tool_call_id", "title", "output_key_column", "sources", "methods", "model", "minimum_complete_pairs"],
       additionalProperties: false,
     },
   },
@@ -4109,6 +4145,31 @@ async function platformResult(route: string, body: Record<string, unknown>, gran
   }
   if (route === "/v1/platform/capabilities") {
     return { ok: true, ...grant.catalog };
+  }
+  if (route === "/v1/platform/statistics/prepare-paired-table") {
+    const sources = (body.sources as Array<Record<string, unknown>>).map((source) => ({
+      artifactId: exactText(source.artifact_id, 80, "science-paired-table-source-id-invalid"),
+      artifactVersion: positiveInteger(source.artifact_version, "science-paired-table-source-version-invalid"),
+      contentSha256: exactSha256(source.content_sha256, "science-paired-table-source-content-invalid"),
+      keyColumn: exactText(source.key_column, 240, "science-paired-table-key-column-invalid"),
+      valueColumn: exactText(source.value_column, 240, "science-paired-table-value-column-invalid"),
+      outputColumn: exactText(source.output_column, 120, "science-paired-table-output-column-invalid"),
+      label: exactText(source.label, 240, "science-paired-table-label-invalid"),
+    }));
+    if (sources.length !== 2) throw new Error("science-paired-table-sources-invalid");
+    const result = store.preparePairedStatisticsTable({
+      requestId: stableUuid(`science-paired-table-align:v1:${grant.context.invocationRunId}:${toolCallId}`),
+      projectId: grant.context.projectId,
+      conversationId: grant.context.conversationId,
+      originMessageId: grant.context.originUserMessageId,
+      title: exactText(body.title, 240, "science-paired-table-title-invalid"),
+      outputKeyColumn: exactText(body.output_key_column, 120, "science-paired-table-output-column-invalid"),
+      sources: sources as [typeof sources[number], typeof sources[number]],
+      methods: body.methods as typeof SCIENCE_PAIRED_TABLE_METHODS[number][],
+      model: body.model as NonNullable<ScienceAnalysisSpecDocument["model"]>,
+      minimumCompletePairs: positiveInteger(body.minimum_complete_pairs, "science-paired-table-minimum-complete-pairs-invalid"),
+    });
+    return { ok: true, schema: "agentlas.science.paired-table-preparation-result/v1", ...result };
   }
   if (route === "/v1/platform/analysis-plans/list") {
     return { ok: true, schema: "agentlas.science-analysis-plan-list/v1", analysisPlans: store.listAnalysisSpecs(grant.context.projectId) };

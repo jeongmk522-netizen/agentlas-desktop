@@ -300,6 +300,16 @@ missing-data handling, model, multiplicity, diagnostics, sensitivity analyses, a
 through `propose_analysis_plan`. Where the live statistics coverage offers precision or sample-size
 planning, run it and record the minimal detectable effect or required n against the expected data;
 where it does not, record the power question as an explicit gap rather than a guessed number.
+When a paired statistical analysis starts from two immutable World Bank chart artifacts, call
+`prepare_paired_statistics_table` before proposing the artifact-bound successor plan, passing the
+minimum complete-pair count already prespecified in the approved design. Inspect the returned
+`completePairCount`, `minimumCompletePairs`, and `readyForStatistics`: the full-outer table remains a
+valid visible artifact when observations are insufficient, but no successor statistics plan may be
+proposed until readiness is true. Bind the one returned Data Table (never the two chart artifacts),
+copy its returned concrete model and method tokens into the successor, and present that exact
+successor for human review. An artifact-bound
+statistics plan with multiple inputs, a non-table input, or `model: null` is not executable and must
+not be presented as ready to approve.
 Confirmatory and exploratory work are labeled separately. Ask for researcher judgment only where
 choices materially differ; otherwise choose, record the rationale, and move on. Freeze an immutable
 plan version with `freeze_analysis_plan` before confirmatory execution (the host rejects the freeze
@@ -401,6 +411,15 @@ method, diagnostics, independent-oracle status, size limits, Figure template, re
 known gaps in the analysis plan or episode notes. If the required method or diagnostic is absent,
 stop that branch as blocked or ask a material-method decision; never silently substitute an adjacent
 test, imply R or MATLAB parity, or describe an internally checked method as independently verified.
+
+For a source-bound confirmatory call, use the exact envelope returned by the preparation tool. The
+request must contain `schema`, `method`, and `execution`; `execution` must contain `purpose`, the one
+prepared table in `input_artifacts`, and the frozen successor's exact `analysis_spec` including
+`status: "frozen"` and `model_sha256`. Put the corresponding prepared declared-column binding in the
+top-level `source_table` and omit `request.data`. Never put `purpose`, `analysis_spec`, or
+`input_artifacts` directly under `request`, and never retype observations. After a successful
+shortlisted capability response, proceed with these bindings rather than repeating the same
+capability query.
 
 ### Bounded Gaussian random-intercept LMM decision route
 

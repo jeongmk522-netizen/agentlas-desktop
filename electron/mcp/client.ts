@@ -1513,6 +1513,8 @@ export async function runMcpInvocation(
   signal?: AbortSignal,
   workspaceBinding?: InvocationWorkspaceBinding,
   executionContext?: InvocationExecutionContext,
+  /** Main-only hook after this invocation's user message is durably stored. */
+  onDurableUserMessage?: (messageId: string) => Promise<void>,
 ): Promise<McpInvocationResult> {
   // A scheduled invocation is the worker leg of the automation, even though
   // it shares this implementation with an interactive orchestrator turn.
@@ -1705,6 +1707,7 @@ export async function runMcpInvocation(
   // the ordinary single-run persistence point. Keep the visible request durable
   // exactly once regardless of which executable orchestrator owns it.
   let userMessagePersisted = false;
+  let persistedUserMessageId: string | null = null;
   // A product-authored continuation is not the person's turn. It stays durable
   // so the next turn keeps the context, but it is written as a system turn:
   // replaying the conversation must never attribute our wording to the user,
@@ -1721,7 +1724,7 @@ export async function runMcpInvocation(
        * 데스크탑 경로에서 이 인자를 넘기지 않아, 실제로 그것을 쓰는 곳은 모바일
        * 브리지 하나뿐이었다.
        */
-      appendChatMessage(chat.id, "user", req.userPrompt, req.images?.length ? { images: req.images } : undefined);
+      persistedUserMessageId = appendChatMessage(chat.id, "user", req.userPrompt, req.images?.length ? { images: req.images } : undefined).id;
       if (priorHistory.length === 0) autoTitleFromFirstMessage(chat.id, req.userPrompt);
     }
     userMessagePersisted = true;
@@ -1731,6 +1734,15 @@ export async function runMcpInvocation(
   // Persist it at the first safe point after the exact local chat is resolved;
   // later orchestration branches keep calling this idempotent helper.
   persistUserMessage();
+  if (persistedUserMessageId && onDurableUserMessage && !signal?.aborted) {
+    try {
+      await onDurableUserMessage(persistedUserMessageId);
+      chat.goalId = getChatGoalId(chat.id);
+    } catch {
+      tryRecordRunEvent({ runId: req.runId!, chatId: chat.id, kind: "durable_user_message_hook_failed", payload: { messageId: persistedUserMessageId } });
+    }
+  }
+  if (signal?.aborted) return earlyResult();
   // A paired phone and a direct scheduled run use the normal Desktop runtime
   // contract. Multi-hop unattended orchestration has a narrower Main-authored
   // boundary below so planner/worker/synthesis output cannot smuggle memory
@@ -4901,9 +4913,9 @@ ${effectiveUserPrompt}`;
           projectDir: workforceProjectDir,
         }) ?? latestGoalDecision;
         if (latestGoalDecision) {
-          if (passShouldContinue && !latestGoalDecision.continue && GOAL_HARD_STOP_REASONS.has(latestGoalDecision.reason)) {
+          if (!latestGoalDecision.continue) {
             passShouldContinue = false;
-            goalHardStop = latestGoalDecision;
+            if (GOAL_HARD_STOP_REASONS.has(latestGoalDecision.reason)) goalHardStop = latestGoalDecision;
           } else if (!passShouldContinue && latestGoalDecision.continue) {
             // Codex 동형: 모델이 마커를 안 붙여도 goal이 미달이면 계속한다.
             passShouldContinue = true;
@@ -5084,11 +5096,10 @@ ${effectiveUserPrompt}`;
           stormbreakerContinueRequested = true;
         } else if (
           stormbreakerContinueRequested &&
-          !latestGoalDecision.continue &&
-          GOAL_HARD_STOP_REASONS.has(latestGoalDecision.reason)
+          !latestGoalDecision.continue
         ) {
           stormbreakerContinueRequested = false;
-          goalHardStop = latestGoalDecision;
+          if (GOAL_HARD_STOP_REASONS.has(latestGoalDecision.reason)) goalHardStop = latestGoalDecision;
         }
       }
       /*

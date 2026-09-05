@@ -16,7 +16,10 @@ import {
   listLongRunTasks,
   settleLongRunWorkerAttempt,
   startLongRunWorkerAttempt,
+  transitionLongRun,
 } from "../store/long-runs";
+import { completeChatGoalContract } from "../store/chat-goals";
+import { prepareInvocationAutomaticGoal } from "./automatic-goal";
 import { DesktopLongRunInvocationProjection } from "../long-run/invocation-projection";
 import { resolveDesktopRuntimeAdapter } from "../long-run/runtime-adapters";
 import { runMcpInvocation, type InvocationExecutionContext } from "../mcp/client";
@@ -209,6 +212,8 @@ interface RunRecord {
   pendingQuestion: boolean;
   settlementPublished: boolean;
   longRunProjection?: DesktopLongRunInvocationProjection;
+  automaticGoalId?: string;
+  automaticGoalDeadline?: ReturnType<typeof setTimeout>;
   /** Main-owned monotonic sequence shared by provider and resident-process events. */
   observableStepSequence: number;
   executionSource?: InvocationExecutionContext["source"];
@@ -1411,9 +1416,13 @@ export class InvocationService {
         console.warn("[long-run] first Goal materialization failed:", error);
       }
     }
-    const goalLongRun = projectionGoalId ? getLongRunByGoalId(projectionGoalId) : null;
-    const goalLongRunTask = goalLongRun ? listLongRunTasks(goalLongRun.id, true)[0] ?? null : null;
-    const goalInvocationProjection = goalLongRun && goalLongRunTask
+    let goalLongRun = projectionGoalId ? getLongRunByGoalId(projectionGoalId) : null;
+    let goalLongRunTask = goalLongRun ? listLongRunTasks(goalLongRun.id, true)[0] ?? null : null;
+    let goalInvocationProjection: DesktopLongRunInvocationProjection | null = null;
+    const refreshGoalProjection = (): void => {
+      goalLongRun = projectionGoalId ? getLongRunByGoalId(projectionGoalId) : null;
+      goalLongRunTask = goalLongRun ? listLongRunTasks(goalLongRun.id, true)[0] ?? null : null;
+      goalInvocationProjection = goalLongRun && goalLongRunTask
       ? new DesktopLongRunInvocationProjection({
           longRunId: goalLongRun.id,
           taskId: goalLongRunTask.id,
@@ -1427,7 +1436,9 @@ export class InvocationService {
           permissionProfile: runReq.permissions ?? "read",
         })
       : null;
-    if (goalInvocationProjection) record.longRunProjection = goalInvocationProjection;
+      if (goalInvocationProjection) record.longRunProjection = goalInvocationProjection;
+    };
+    refreshGoalProjection();
     let goalControllerAttemptId: string | null = null;
     let goalControllerAttemptSettled = false;
     const bindGoalControllerAttempt = (selection: RuntimeSelection): void => {
@@ -1971,6 +1982,34 @@ export class InvocationService {
       controller.signal,
       runWorkspaceBinding,
       executionContext,
+      async (sourceMessageId) => {
+        // Only ordinary local, user-authored root-chat work enters automatic
+        // Goal. Science and remote/automation authority keep their own adapters.
+        if (projectionGoalId || runReq.agentAppMode || runWorkspaceBinding || executionContext ||
+            runReq.promptOrigin === "system" || runReq.planMode || chat.kind === "division" || controller.signal.aborted) return;
+        try {
+          const admitted = await prepareInvocationAutomaticGoal({ runId, chatId: chat.id, sourceMessageId,
+            userPrompt: runReq.userPrompt, permission: runReq.permissions ?? "read", signal: controller.signal });
+          if (!admitted || controller.signal.aborted) return;
+          projectionGoalId = admitted.goalId;
+          record.automaticGoalId = admitted.goalId;
+          transitionLongRun({ runId: admitted.id, to: "running", actorKind: "host", reason: "automatic-goal-user-dispatch" });
+          refreshGoalProjection();
+          setChatGoalBinding(chat.id, admitted.goalId);
+          const goalEvent: McpInvocationEvent = { kind: "tool-use", tool: { name: "Goal", result:
+            `${admitted.objective}\n\n${admitted.acceptanceCriteria.map((criterion) => `• ${criterion}`).join("\n")}\n\n` +
+            (pickLocale(runReq) === "ko" ? "최대 3회 실행 · 10분 후 미완료 목표는 유지합니다. 금액 사용량은 아직 계측되지 않습니다." :
+              "Up to 3 passes / 10 minutes; unfinished criteria are retained. Monetary usage is not yet metered.") } };
+          record.events.push(goalEvent);
+          recordMcpInvocationEvent(runId, runReq, goalEvent);
+          this.publishRunEvent(record, { runId, chatId: chat.id, event: goalEvent });
+          const remaining = Date.parse(admitted.budget.wallclockDeadline!) - Date.now();
+          record.automaticGoalDeadline = setTimeout(() => this.cancelWithReason(runId, new Error("automatic_goal_time_budget")), Math.max(1, remaining));
+        } catch {
+          tryRecordRunEvent({ runId, chatId: chat.id, kind: "automatic_goal_binding_failed", payload: { sourceMessageId } });
+          // Goal enrichment failure must never swallow the original request.
+        }
+      },
     )
       .then((result) => {
         // A compromised runtime must not turn the private attachment staging
@@ -1993,7 +2032,9 @@ export class InvocationService {
             hasFinalText: Boolean(result.finalText?.trim()),
           },
         });
-        const completionClaim = result.goalCompletionClaim;
+        const completionClaim = result.goalCompletionClaim ?? (record.automaticGoalId && !record.pendingQuestion && !controller.signal.aborted
+          ? { claimed: true, goalId: record.automaticGoalId, evidence: "Automatic Goal: verify the durable terminal result against all criteria." }
+          : undefined);
         if (completionClaim?.claimed && completionClaim.goalId) {
           // The client records only a verification request. The independent
           // judge starts here, after invoke_completed/mcp_final and the result
@@ -2006,13 +2047,37 @@ export class InvocationService {
               invocationRunId: runId,
               projectDir: getChatWorkingFolder(chat.id),
             }))
+            .then((verification) => {
+              if (!record.automaticGoalId || controller.signal.aborted) return;
+              if (verification?.completed) {
+                completeChatGoalContract(record.automaticGoalId, "completed");
+                if (getChat(chat.id)?.goalId === record.automaticGoalId) setChatGoalBinding(chat.id, null);
+              } else {
+                const current = getLongRunByGoalId(record.automaticGoalId);
+                if (current && ["running", "verifying"].includes(current.status)) transitionLongRun({ runId: current.id, to: "blocked", actorKind: "host", reason: "verification_inconclusive" });
+              }
+            })
             .catch((error: unknown) => {
               console.warn("[long-run] terminal verification failed:", error);
+              if (record.automaticGoalId && !controller.signal.aborted) {
+                const current = getLongRunByGoalId(record.automaticGoalId);
+                if (current && ["running", "verifying"].includes(current.status)) {
+                  transitionLongRun({ runId: current.id, to: "blocked", actorKind: "host", reason: "verification_unavailable" });
+                }
+              }
             });
         }
       })
       .catch((error: unknown) => {
         settleGoalControllerAttempt(false);
+        if (record.automaticGoalId && !controller.signal.aborted) {
+          try {
+            const current = getLongRunByGoalId(record.automaticGoalId);
+            if (current && ["queued", "running", "waiting_worker", "waiting_tool"].includes(current.status)) {
+              transitionLongRun({ runId: current.id, to: "blocked", actorKind: "host", reason: "invocation_failed" });
+            }
+          } catch { /* Keep the original provider failure visible. */ }
+        }
         const rawMessage = redactOneAttachmentText(
           runReq,
           error instanceof Error ? error.message : String(error),
@@ -2081,7 +2146,20 @@ export class InvocationService {
         }
       })
       .finally(() => {
+        if (record.automaticGoalDeadline) clearTimeout(record.automaticGoalDeadline);
         settleGoalControllerAttempt(false);
+        if (record.automaticGoalId && controller.signal.aborted) {
+          try {
+            const current = getLongRunByGoalId(record.automaticGoalId);
+            if (current && ["pausing", "cancelling"].includes(current.status)) {
+              const next = transitionLongRun({ runId: current.id, to: current.status === "cancelling" ? "cancelled" : "paused", actorKind: "host", reason: controller.signal.reason instanceof Error && controller.signal.reason.message === "automatic_goal_time_budget" ? "budget" : "user" });
+              if (next.status === "cancelled") {
+                completeChatGoalContract(next.goalId, "cancelled");
+                if (getChat(chat.id)?.goalId === next.goalId) setChatGoalBinding(chat.id, null);
+              }
+            }
+          } catch { /* The durable requested stop remains non-admitting. */ }
+        }
         if (!terminalObserved) {
           canonicalTask = trySetTaskStatus(
             runReq.chatId,
@@ -2183,6 +2261,17 @@ export class InvocationService {
     reason: Error,
   ): "requested" | "already-requested" | "not-found" {
     const record = this.activeRuns.get(runId);
+    if (record?.automaticGoalId) {
+      try {
+        const goal = getLongRunByGoalId(record.automaticGoalId);
+        if (goal && !["completed", "failed", "cancelled", "cancelling", "paused"].includes(goal.status)) {
+          transitionLongRun({ runId: goal.id,
+            to: reason.message === "stopped_by_user" ? "cancelling" : "pausing",
+            actorKind: reason.message === "stopped_by_user" ? "user" : "host",
+            reason: reason.message === "automatic_goal_time_budget" ? "budget" : "user" });
+        }
+      } catch { /* Always abort the actual invocation even if persistence fails. */ }
+    }
     // Stop is terminal for the visible work item: it also clears directions
     // queued behind the active turn. Steering itself never calls cancel.
     if (record?.chatId) {

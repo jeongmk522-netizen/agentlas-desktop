@@ -10,6 +10,7 @@ export async function resolveAutomaticGoalIntent(
   source: GoalSourceMessage,
   options: {
     signal?: AbortSignal;
+    timeoutMs?: number;
     judgeFn?: (spec: RequiredJudgeSpec<IntakeLabel>) => Promise<RequiredVerdict<IntakeLabel>>;
   } = {},
 ): Promise<GoalIntakeDecision> {
@@ -31,7 +32,7 @@ export async function resolveAutomaticGoalIntent(
       ].join(" "),
       signal: options.signal,
       scanSecrets: true,
-      timeoutMs: 30_000,
+      timeoutMs: Math.min(30_000, Math.max(1, options.timeoutMs ?? 30_000)),
     });
     if (options.signal?.aborted || result.source !== "llm" || !result.verdict) return abstain;
     return { messageId: source.messageId, intent: result.verdict, commitment: result.verdict === "execute" ? "now" : "uncertain" };

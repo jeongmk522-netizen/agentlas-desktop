@@ -19,7 +19,7 @@ function userSource(chatId: string, messageId: string): GoalSourceMessage {
 
 function finiteBudget(budget: LongRunBudget): void {
   if (!Number.isSafeInteger(budget.maxCycles) || budget.maxCycles! < 1 ||
-      !Number.isFinite(budget.maxCostUsd) || budget.maxCostUsd! < 0 ||
+      (budget.maxCostUsd !== null && (!Number.isFinite(budget.maxCostUsd) || budget.maxCostUsd < 0)) ||
       !Number.isSafeInteger(budget.maxWorkers) || budget.maxWorkers! < 1 ||
       !budget.wallclockDeadline || !Number.isFinite(Date.parse(budget.wallclockDeadline)) ||
       Date.parse(budget.wallclockDeadline) <= Date.now()) throw new Error("auto_goal_finite_budget_required");
@@ -76,7 +76,7 @@ export function controlAutomaticGoal(input: {
     if (input.command === "resume") {
       if (input.expectedVersion === undefined) throw new Error("auto_goal_resume_version_required");
       finiteBudget(run.budget);
-      if (run.cycleCount >= run.budget.maxCycles! || run.costUsedUsd >= run.budget.maxCostUsd!) throw new Error("auto_goal_budget_exhausted");
+      if (run.cycleCount >= run.budget.maxCycles! || (run.budget.maxCostUsd !== null && run.costUsedUsd >= run.budget.maxCostUsd)) throw new Error("auto_goal_budget_exhausted");
       // The scheduler retains a blocked contract while stopping continuation.
       // Only this explicit user resume may reactivate it, within the same CAS
       // transaction and without resetting any consumed budget.

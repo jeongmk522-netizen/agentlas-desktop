@@ -36,7 +36,7 @@ import type {
 } from "@shared/types";
 import { ChatStream, type StreamMessage, type StreamStep, type PipelineStage } from "@/components/ChatStream";
 import { ToolApprovalInline } from "@/components/ToolApprovalInline";
-import { normalizeToolCall } from "@shared/tool-call-detail";
+import { normalizeToolCall, shadowsToolRecordedPath } from "@shared/tool-call-detail";
 import { runtimeSelectionReceiptMatches } from "@shared/runtime-selection-receipt";
 import { ChatQuestionSheet, type QuestionSheetAnswer } from "@/components/ChatQuestionSheet";
 import { McpKeyRequestSheet } from "@/components/McpKeyRequestSheet";
@@ -1702,7 +1702,11 @@ function ChatPage() {
         || entry.baseKey !== baseKey
         || entry.stepsKey !== stepsKey
       ) {
+        /* 도구 기록이 같은 이름을 절대경로로 갖고 있으면 그 기록이 정본이다. 산문에서
+           찍어 만든 경로는 실행 폴더를 잘못 고른 "만든 적 없는 파일"일 수 있다. */
+        const recordedPaths = [...toolPaths, ...outputToolPaths];
         const textPreviews = linkedFileArtifactsInText(text, mediaBasePaths)
+          .filter((file) => !shadowsToolRecordedPath(file.path, recordedPaths))
           .map((file) => workspacePreviewFromLinkedFile(file));
         const toolPreviews = toolPaths
           .map((filePath) => workspacePreviewFromLinkedFile(linkedFileArtifactFromPath(filePath)));

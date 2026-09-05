@@ -595,3 +595,33 @@ export function formatToolRunSummary(summary: ToolRunSummary, locale: "ko" | "en
   if (parts.length === 2) return `${parts[0]} and ${parts[1]}`;
   return `${parts.slice(0, -1).join(", ")}, and ${parts.at(-1)}`;
 }
+
+/**
+ * 산문에 적힌 파일 이름은 폴더를 모른다. 렌더러는 그것을 후보 실행 폴더(기본 실행 폴더 →
+ * 승인된 작업 폴더 순)로 찍어 절대경로로 만든다 — 첫 후보가 틀리면 그 경로의 파일은
+ * **존재하지 않는다.**
+ *
+ * 같은 이름을 도구 기록이 절대경로로 갖고 있으면 그 기록이 정본이다. 찍어 만든 경로를
+ * 산출물로 함께 올리면 결과 레일이 "만든 적 없는 파일"을 한 줄 더 보여준다.
+ *
+ * 실측(2026-09-05, 실제 claude-code 실행): Write 는 `/private/tmp/<project>/hello.md`
+ * 한 번뿐이었는데, 답변 본문의 `` `hello.md` `` 가 `<userData>/agent-cwd/hello.md` 로
+ * 찍혀 레일에 산출물이 두 줄로 떴고 그중 한 줄은 디스크에 없었다.
+ */
+export function shadowsToolRecordedPath(
+  candidatePath: string | undefined | null,
+  toolPaths: readonly string[],
+): boolean {
+  if (!candidatePath) return false;
+  const canonical = (value: string) => (value.startsWith("/private/") ? value.slice("/private".length) : value);
+  const baseName = (value: string) => canonical(value).split("/").pop() ?? "";
+  const candidate = canonical(candidatePath);
+  const candidateName = baseName(candidatePath);
+  if (!candidateName) return false;
+  let shadowed = false;
+  for (const toolPath of toolPaths) {
+    if (canonical(toolPath) === candidate) return false;
+    if (baseName(toolPath) === candidateName) shadowed = true;
+  }
+  return shadowed;
+}

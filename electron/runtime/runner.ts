@@ -274,6 +274,37 @@ export function workforceZeroToolsEnforcement(
   };
 }
 
+/**
+ * Runtime-owned receipt for a host-authority row (policy `host`, 2026-09-05): the run
+ * executed under the host's own permission mode and capability grants, not a sandbox.
+ * Evidence is honest about that — nothing was made ephemeral or ignored.
+ */
+export function workforceHostAuthorityEnforcement(
+  req: RunnerRequest,
+  runtimeKind: string,
+): WorkforcePermissionEnforcementReceipt | undefined {
+  const grant = validatedWorkforceGrant(req);
+  if (!grant) return undefined;
+  return {
+    permissionPolicyDigest: grant.permissionPolicyDigest,
+    enforcementMode: "native-sandbox",
+    status: "enforced",
+    approvalReceiptIds: [],
+    enforcementEvidence: {
+      runtimeKind,
+      runtimeVersion: grant.runtimeVersion,
+      sandboxMode: "host-native",
+      toolInventory: "policy-filtered",
+      disabledCapabilities: [],
+      ephemeral: false,
+      ignoredUserConfig: false,
+      ignoredRules: false,
+      toolInventoryDigest: grant.toolInventoryDigest,
+      grantedToolIds: [...grant.grantedToolIds],
+    },
+  };
+}
+
 /** Runtime-owned receipt after exact config hash + connected-server/tool proof. */
 export function workforceNativeToolEnforcement(
   req: RunnerRequest,

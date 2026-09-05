@@ -6,6 +6,7 @@ import { testServerConnection } from "../mcp-tools/client";
 import { buildMcpConfigFile, mcpConfigKey } from "../mcp-tools/mcp-config";
 import { listInstalledServers } from "../mcp-tools/registry";
 import type { WorkforceExecutionContext, WorkforcePermissionPolicy } from "./workforce-orchestrator";
+import { isHostAuthorityPolicy } from "./workforce-orchestrator";
 
 const TOOL_INVENTORY_SCHEMA = "agentlas.workforce-tool-inventory.v1";
 const TOOL_INVENTORY_DIGEST_SCHEMA = "agentlas.workforce-tool-inventory-digest.v1";
@@ -97,7 +98,8 @@ export interface WorkforcePairRuntimeGrant {
     mcpAllowedTools?: string[];
     mcpCodexConfigArgs?: string[];
     env?: NodeJS.ProcessEnv;
-    untrustedNoTools: true;
+    /** false for a host-authority row (2026-09-05): the run keeps the host's own mode. */
+    untrustedNoTools: boolean;
     untrustedAllowedMcpTools?: string[];
     workforceRuntimeToolGrant: WorkforceRuntimeToolGrant;
   };
@@ -361,6 +363,7 @@ function validatePlannerBindings(input: {
   slotId: string;
   agentReleaseId: string;
   permissionPolicyDigest: string;
+  policy: WorkforcePermissionPolicy;
   runtimeId: string;
   bindings: WorkforcePlannerCapabilityBinding[];
   entries: WorkforceToolMenuEntry[];
@@ -403,6 +406,7 @@ function validatePlannerBindings(input: {
       slotId: row.slotId,
       agentReleaseId: row.agentReleaseId,
       permissionPolicyDigest: row.policyDigest,
+      policy: row.policy,
       runtimeId,
       bindings,
       entries: selectedEntries,
@@ -539,7 +543,9 @@ export async function finalizeWorkforceCapabilityBinding(input: {
           mcpAllowedTools,
           mcpCodexConfigArgs,
           env,
-          untrustedNoTools: true,
+          // A host-authority policy means the package declared no ceiling: the row runs
+          // with the host's own permission mode instead of the no-authority sandbox.
+          untrustedNoTools: !isHostAuthorityPolicy(row.policy),
           untrustedAllowedMcpTools: mcpAllowedTools,
           workforceRuntimeToolGrant: {
             schemaVersion: "agentlas.desktop-workforce-runtime-tool-grant.v1",

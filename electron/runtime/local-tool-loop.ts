@@ -11,7 +11,7 @@
 import fs from "node:fs";
 import { createHash } from "node:crypto";
 import type { RunnerEvents, RunnerFailure, RunnerRequest, RunnerResult } from "./runner";
-import { workforceNativeToolEnforcement, workforceZeroToolsEnforcement } from "./runner";
+import { workforceHostAuthorityEnforcement, workforceNativeToolEnforcement, workforceZeroToolsEnforcement } from "./runner";
 import { detectRuntimeRefusal } from "./runtime-refusal";
 import { tStatus } from "./status-i18n";
 import { abortReasonError } from "./abort-reason";
@@ -658,7 +658,9 @@ export async function runLocalOpenAiChat(
   // 실제로 도구를 썼다면(예: 사용자 승인 MCP), workforceNativeToolEnforcement가
   // 계약 위반으로 throw할 수 있다. 그 경우 zero-tools 영수증으로 안전하게 낮춘다.
   const enforcement =
-    grantedToolIds.length > 0
+    req.workforceRuntimeToolGrant && !req.untrustedNoTools
+      ? workforceHostAuthorityEnforcement(req, runtimeKind)
+      : grantedToolIds.length > 0
       ? (() => {
           try {
             return workforceNativeToolEnforcement(req, runtimeKind, []);

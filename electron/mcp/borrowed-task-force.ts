@@ -90,6 +90,7 @@ import {
   type WorkforceExecutionContext,
   type WorkforcePermissionPolicy,
   type WorkforceSelectionReceipt,
+  isHostAuthorityPolicy,
 } from "./workforce-orchestrator";
 import {
   cleanupWorkforceRuntimeGrants,
@@ -2985,21 +2986,23 @@ function packageToolBoundary(
   // strictly below that ceiling in the measured no-authority sandbox.
   if (spec.permissionPolicy) {
     if (!workforceGrant) throw new Error(`workforce_runtime_grant_missing:${spec.slug}`);
+    if (isHostAuthorityPolicy(spec.permissionPolicy)) {
+      // Owner decision 2026-08-20, applied here 2026-09-05: a package carries no tool
+      // authority. The row runs with the host's own permission mode; the digest-bound
+      // tool grant is kept for the execution receipt, and a planner-bound MCP subset
+      // (if any) still travels with it. Nothing forces read-only here any more —
+      // measured 2026-09-05: a staffed design agent could not edit a file the user had
+      // granted write access to, because this branch always returned `read`.
+      const { untrustedNoTools: _sandbox, untrustedAllowedMcpTools: _sandboxTools, ...runner } = workforceGrant.runner;
+      return { ...runner, untrustedNoTools: false };
+    }
+    // Legacy prepared rows (before 2026-09-05) still carry a package ceiling and the
+    // receipt contract for them still expects the no-authority sandbox.
     return { permission: "read", ...workforceGrant.runner };
   }
-  const toolPermissions = spec.toolPermissions;
-  if (!toolPermissions) return {};
-  const denyNetwork = toolPermissions.network === "deny";
-  const denyShell = toolPermissions.shell === "deny";
-  if (!denyNetwork && !denyShell) return {};
-  return {
-    permission: "read",
-    mcpConfigPath: undefined,
-    mcpAllowedTools: undefined,
-    mcpCodexConfigArgs: undefined,
-    untrustedNoTools: true,
-    untrustedAllowedMcpTools: undefined,
-  };
+  // Legacy toolPermissions (network/shell deny) no longer narrow the run: the host
+  // mode and capability grants are the boundary (owner decision 2026-08-20).
+  return {};
 }
 
 /** What the package itself declared, stated to the model. Prompt text is not enforcement —
@@ -3007,17 +3010,15 @@ function packageToolBoundary(
  *  cannot be revoked through MCP config, so the model must also be told the ceiling. */
 function packagePermissionLine(spec: BorrowedAgentSpec): string | null {
   if (spec.permissionPolicy) {
+    if (isHostAuthorityPolicy(spec.permissionPolicy)) {
+      return "Tools and authority follow the host run mode for this turn; anything beyond it is approved at action time. The package declares no ceiling of its own.";
+    }
     return `Digest-bound package permission ceiling (host may execute more narrowly): ${JSON.stringify(spec.permissionPolicy)}. Unknown tools are denied.`;
   }
-  const p = spec.toolPermissions;
-  if (!p) return null;
-  const rules: string[] = [];
-  if (p.network === "deny") rules.push("no network access (no browsing, fetching, or calling external endpoints)");
-  else if (p.network === "ask") rules.push("network access only for what this packet explicitly requires");
-  if (p.shell === "deny") rules.push("no shell, terminal, or process execution");
-  else if (p.shell === "ask") rules.push("shell use only for what this packet explicitly requires");
-  if (rules.length === 0) return null;
-  return `This package declares its own tool ceiling, which applies on top of the host mode: ${rules.join("; ")}. Do not exceed it even if a tool appears available.`;
+  // Legacy toolPermissions are recorded in the manifest but are not a ceiling
+  // (owner decision 2026-08-20): say nothing that would make the model refuse a
+  // tool the host actually granted.
+  return null;
 }
 
 function buildBorrowedAgentSystemPrompt(spec: BorrowedAgentSpec, permission: RunnerRequest["permission"]): string {

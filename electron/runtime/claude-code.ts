@@ -12,6 +12,7 @@ import type { Runner, RunnerRequest, RunnerEvents, RunnerResult , RunnerFailure 
 import {
   ensureChildCloseAfterExit,
   startCliHeartbeat,
+  workforceHostAuthorityEnforcement,
   workforceNativeToolEnforcement,
   workforceZeroToolsEnforcement,
   wrapSystemPrompt,
@@ -576,12 +577,16 @@ const runClaudeTurn = async (
   );
   const workforceMcpConfig = await inspectWorkforceMcpConfig(runReq);
   const hasExactWorkforceMcpGrant = Boolean(workforceMcpConfig);
+  // Host-authority Workforce row (2026-09-05): the grant travels for the receipt, but the
+  // run keeps the host's own MCP wiring and permission mode.
+  const hostAuthorityWorkforce = Boolean(runReq.workforceRuntimeToolGrant) && !runReq.untrustedNoTools;
   const workforceGrantHasTools = Boolean(runReq.workforceRuntimeToolGrant?.grantedToolIds.length);
-  if (workforceGrantHasTools && !hasExactWorkforceMcpGrant) {
+  if (workforceGrantHasTools && !hasExactWorkforceMcpGrant && !hostAuthorityWorkforce) {
     throw new Error("workforce_runtime_tool_grant_config_unverified");
   }
   if (
     runReq.workforceRuntimeToolGrant &&
+    !hostAuthorityWorkforce &&
     !workforceGrantHasTools &&
     (runReq.mcpConfigPath || runReq.mcpAllowedTools?.length || runReq.untrustedAllowedMcpTools?.length)
   ) {
@@ -1585,7 +1590,9 @@ const runClaudeTurn = async (
           sessionId,
           tokens,
           observedUsage,
-          workforcePermissionEnforcement: hasExactWorkforceMcpGrant
+          workforcePermissionEnforcement: hostAuthorityWorkforce
+            ? workforceHostAuthorityEnforcement(runReq, KIND)
+            : hasExactWorkforceMcpGrant
             ? workforceNativeToolEnforcement(
                 runReq,
                 KIND,
@@ -1608,7 +1615,9 @@ const runClaudeTurn = async (
             failure: runnerFailure,
             tokens,
             observedUsage,
-            workforcePermissionEnforcement: hasExactWorkforceMcpGrant
+            workforcePermissionEnforcement: hostAuthorityWorkforce
+            ? workforceHostAuthorityEnforcement(runReq, KIND)
+            : hasExactWorkforceMcpGrant
               ? workforceNativeToolEnforcement(
                   runReq,
                   KIND,

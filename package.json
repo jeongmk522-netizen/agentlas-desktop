@@ -142,6 +142,7 @@
     "test:store-isolation": "node scripts/store-isolation-contract.mjs",
     "test:store-sidecar-lock-safety": "tsc -p electron/tsconfig.json && electron scripts/store-sidecar-lock-safety-contract.cjs",
     "test:seat-departure": "tsc -p electron/tsconfig.json && electron scripts/seat-departure-value-contract.cjs",
+    "test:workforce-host-authority": "tsc -p electron/tsconfig.json && node scripts/workforce-host-authority-contract.cjs",
     "build:model-catalog-snapshot": "node scripts/build-model-catalog-snapshot.cjs",
     "test:effort-per-model": "node scripts/effort-per-model-contract.mjs",
     "test:plugin-builder": "npm run build:electron && ELECTRON_RUN_AS_NODE=1 electron scripts/plugin-builder-gate.cjs",

@@ -1,3 +1,4 @@
+// index-snapshot-protocol: 1
 /*
  * 변경한 파일을 물고 있는 게이트만 골라 실제로 돌린다 — PRD 게이트 §7.2.
  *
@@ -11,41 +12,50 @@
  * 사용:
  *   node scripts/run-bound-gates.mjs --staged     # 스테이지된 파일 기준(커밋 관문)
  *   node scripts/run-bound-gates.mjs <path> ...   # 명시한 파일 기준
- *   AGENTLAS_BOUND_GATES_MAX=12                   # 한 번에 돌릴 최대 개수(기본 12)
+ *   AGENTLAS_BOUND_GATES_MAX=12                   # 명시 실행 기본12; INDEX 기본 전부, cap 누락은 실패
+ *   AGENTLAS_PRIVATE_GATE_ALLOWLIST=/private/.../gates.json # [{path,sha256}] 고정 비공개 검사기
+ *   AGENTLAS_GATE_EVIDENCE_DIR=/private/.../receipts        # tree/검사/최소 TS emit 해시 영수증
  *
  * 원칙
  * - 호스트를 추측하지 않는다: node 로 먼저 돌리고, 그 게이트가 Electron 을 요구하면
  *   (electron 심볼로 실패하면) **건너뛴 사실을 말한다.** 부재를 성공으로 위장하지 않는다.
  * - 상한을 넘으면 무엇을 안 돌렸는지 반드시 출력한다(조용한 절단 금지).
  */
-import { execFileSync, spawnSync } from "node:child_process";
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { gatesWatching } from "./gates-watching.mjs";
+import { readSnapshot, runIndexGates, verifySnapshot } from "./lib/staged-gate-snapshot.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const MAX_GATES = Math.max(1, Number(process.env.AGENTLAS_BOUND_GATES_MAX || 12));
-
-function stagedFiles() {
-  try {
-    return execFileSync("git", ["-C", root, "diff", "--cached", "--name-only", "--diff-filter=ACMR"], { encoding: "utf8" })
-      .split("\n")
-      .map((line) => line.trim())
-      .filter(Boolean);
-  } catch {
-    return [];
-  }
-}
-
 const args = process.argv.slice(2);
-const changed = args.includes("--staged")
-  ? stagedFiles()
-  : args.filter((value) => !value.startsWith("--"));
+if (args.includes("--staged")) {
+  try { process.exit(runIndexGates(root)); }
+  catch (error) { console.error(`run-bound-gates: ${error.message}`); process.exit(1); }
+}
+const snapshotAt = args.indexOf("--snapshot");
+const snapshot = snapshotAt >= 0 ? readSnapshot(root, args[snapshotAt + 1]) : null;
+const outcomes = [];
+let discovered = [];
+function finish(code) {
+  if (snapshot) fs.writeFileSync(path.join(root, ".agentlas-index-gate-results.json"), JSON.stringify({
+    protocol: 1, tree: snapshot.tree, gates: discovered, results: outcomes,
+    complete: outcomes.length === discovered.length, exitStatus: code,
+  }));
+  process.exit(code);
+}
+const { gatesWatching } = await import("./gates-watching.mjs");
+// A staged commit must not succeed with silently unexecuted overflow gates.
+const MAX_GATES = process.env.AGENTLAS_BOUND_GATES_MAX === undefined && snapshot
+  ? Infinity : Number(process.env.AGENTLAS_BOUND_GATES_MAX || 12);
+if (!(MAX_GATES > 0) || (Number.isFinite(MAX_GATES) && !Number.isInteger(MAX_GATES))) {
+  throw new Error("INVALID_BOUND_GATES_MAX");
+}
+const changed = snapshot ? snapshot.changed : args.filter((value) => !value.startsWith("--"));
 
 if (changed.length === 0) {
   console.log("run-bound-gates: nothing changed; no gate is bound to this commit.");
-  process.exit(0);
+  finish(0);
 }
 
 // 거의 모든 게이트가 언급하는 파일(package.json, tsconfig …)은 바인딩 신호가 아니다.
@@ -63,10 +73,15 @@ for (const file of changed) {
   for (const gate of gatesWatching(file)) bound.add(gate);
 }
 
-const gates = [...bound].filter((gate) => fs.existsSync(path.join(root, gate))).sort();
+const gates = [...bound].sort();
+discovered = gates;
+if (snapshot && JSON.stringify(gates) !== JSON.stringify(snapshot.expectedGates)) throw new Error("INDEX_GATE_DISCOVERY_MISMATCH");
+for (const gate of gates) {
+  if (!fs.existsSync(path.join(root, gate))) throw new Error(`BOUND_GATE_MISSING: ${gate}`);
+}
 if (gates.length === 0) {
   console.log(`run-bound-gates: no gate mentions the ${changed.length} changed file(s).`);
-  process.exit(0);
+  finish(0);
 }
 
 const selected = gates.slice(0, MAX_GATES);
@@ -92,26 +107,38 @@ function gateArgs(gate) {
 }
 
 for (const gate of selected) {
+  if (snapshot) verifySnapshot(root, snapshot);
   const localContract = localExecutionContracts.get(gate);
   const args = localContract?.args ?? gateArgs(gate);
   if (localContract) {
     console.log(`run  ${localContract.mode} ${JSON.stringify([process.execPath, gate, ...args])}`);
     console.log("native updater E2E: NOT VERIFIED — release requires native Windows/Linux hosts and built artifacts.");
   }
-  const result = spawnSync(process.execPath, [gate, ...args], { cwd: root, encoding: "utf8" });
+  const preload = snapshot ? ["--require", path.join(root, "scripts/lib/staged-gate-compile.cjs")] : [];
+  const result = spawnSync(process.execPath, [...preload, gate, ...args], { cwd: root, encoding: "utf8" });
   if (result.status === 0) {
     if (localContract) {
       selftested += 1;
+      outcomes.push({ gate, status: "SELFTEST" });
       console.log(`ok   ${localContract.mode} ${gate}`);
     } else {
+      outcomes.push({ gate, status: "PASS" });
       console.log(`ok   ${gate}`);
     }
     continue;
   }
   const output = `${result.stdout || ""}${result.stderr || ""}`;
+  if (snapshot && /(?:COMPILE_SOURCE_|INDEXED_TS_|INDEX_BUILD_|INVALID_INDEXED_|UNSUPPORTED_INDEXED_|LIVE_REPOSITORY_ACCESS_)/.test(output)) {
+    failed += 1;
+    outcomes.push({ gate, status: "FAIL" });
+    console.error(`FAIL ${gate}`);
+    console.error(output.trim().split("\n").slice(0, 8).join("\n"));
+    continue;
+  }
   // A failed deterministic selftest is a failure, never a native-host skip.
   if (localContract) {
     failed += 1;
+    outcomes.push({ gate, status: "FAIL" });
     console.error(`FAIL ${localContract.mode} ${gate}`);
     console.error(output.trim().split("\n").slice(-6).join("\n"));
     continue;
@@ -122,6 +149,7 @@ for (const gate of selected) {
   // (better-sqlite3 는 이 체크아웃에서 electron ABI 로 빌드돼 node 로는 못 연다 — 실측).
   if (/Cannot read properties of undefined \(reading '(?:setPath|whenReady|getPath|quit|exit|on)'\)|require\(['"]electron['"]\)|ERR_DLOPEN_FAILED|NODE_MODULE_VERSION/.test(output)) {
     skipped.push(gate);
+    outcomes.push({ gate, status: "SKIP", reason: "Electron host" });
     console.log(`skip ${gate} — needs the Electron host; run it with \`npx electron ${gate}\``);
     continue;
   }
@@ -136,20 +164,27 @@ for (const gate of selected) {
    * 필수 의존성으로 만들지 않는 이유는, 없는 환경에서 또 다른 거짓 실패가 나기 때문이다.
    */
   if (/Cannot find module .*(?:\.\.?\/|@\/)/.test(output) || /Unknown file extension "\.tsx?"/.test(output)) {
-    const viaLoader = spawnSync("npx", ["--no-install", "tsx", gate, ...gateArgs(gate)], {
+    const viaLoader = snapshot
+      ? spawnSync(process.execPath, [...preload, "node_modules/tsx/dist/cli.mjs", gate, ...gateArgs(gate)], {
+        cwd: root, encoding: "utf8",
+      })
+      : spawnSync("npx", ["--no-install", "tsx", gate, ...gateArgs(gate)], {
       cwd: root,
       encoding: "utf8",
     });
     if (viaLoader.status === 0) {
+      outcomes.push({ gate, status: "PASS", mode: "TS loader" });
       console.log(`ok   ${gate} (TS 로더)`);
       continue;
     }
-    if (viaLoader.error || viaLoader.status === null) {
+    if (!snapshot && (viaLoader.error || viaLoader.status === null)) {
       skipped.push(gate);
+      outcomes.push({ gate, status: "SKIP", reason: "TS loader missing" });
       console.log(`skip ${gate} — TypeScript 로더가 필요합니다; \`npx tsx ${gate}\` 로 돌리세요`);
       continue;
     }
     failed += 1;
+    outcomes.push({ gate, status: "FAIL" });
     console.error(`FAIL ${gate}`);
     console.error(`${viaLoader.stdout || ""}${viaLoader.stderr || ""}`.trim().split("\n").slice(-6).join("\n"));
     continue;
@@ -163,13 +198,15 @@ for (const gate of selected) {
    * 게이트까지 함께 넘어간다 — 실제로 그렇게 스키마 판올림이 짝 없이 나갈 뻔했다.
    * 통과로 세지 않고 무엇을 확인하지 못했는지 남긴다.
    */
-  if (/npx canceled due to missing packages|command not found: (?:esbuild|tsc)|Cannot find package '(?:esbuild)'/.test(output)) {
+  if (!snapshot && /npx canceled due to missing packages|command not found: (?:esbuild|tsc)|Cannot find package '(?:esbuild)'/.test(output)) {
     const missing = /esbuild/.test(output) ? "esbuild" : "빌드 도구";
     skipped.push(gate);
+    outcomes.push({ gate, status: "SKIP", reason: "build tooling missing" });
     console.log(`skip ${gate} — ${missing} 가 없어 확인하지 못했습니다; 이 저장소에 의존으로 선언되어 있지 않습니다`);
     continue;
   }
   failed += 1;
+  outcomes.push({ gate, status: "FAIL" });
   console.error(`FAIL ${gate}`);
   console.error(output.trim().split("\n").slice(-6).join("\n"));
 }
@@ -182,4 +219,4 @@ if (skipped.length) {
 }
 console.log(`run-bound-gates: ${selected.length - failed - skipped.length - selftested} passed, ${selftested} SELFTEST passed, ${failed} failed, ${skipped.length} skipped (of ${gates.length} bound).`);
 console.log("native updater E2E: NOT VERIFIED by this precommit runner.");
-process.exit(failed ? 1 : 0);
+finish(failed || (snapshot && dropped.length) ? 1 : 0);

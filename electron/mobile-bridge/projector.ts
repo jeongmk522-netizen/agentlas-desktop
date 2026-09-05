@@ -1484,6 +1484,15 @@ function automationsDto(): MobileBridgeAutomationDto[] {
 }
 
 /** DESKTOP_MOBILE_BRIDGE: Runtime source paths and credential locators are intentionally omitted. */
+function runtimeCredentialUnavailable(runtime: RuntimeStatus): boolean {
+  // Keep this adapter buildable against an older shared/types snapshot while
+  // the credential-access field rolls out additively.
+  const access = (
+    runtime as RuntimeStatus & { credentialAccess?: { status?: string } }
+  ).credentialAccess;
+  return access?.status === "unavailable";
+}
+
 export function projectMobileBridgeRuntimes(
   runtimes: readonly RuntimeStatus[],
 ): MobileBridgeRuntimeDto[] {
@@ -1492,6 +1501,9 @@ export function projectMobileBridgeRuntimes(
     backend: runtime.backend,
     version: runtime.version,
     active: runtime.active,
+    ...(runtimeCredentialUnavailable(runtime)
+      ? { credentialUnavailable: true }
+      : {}),
     model: runtime.model ?? null,
     effort: runtime.effort ?? null,
     efforts: (runtime.efforts ?? []).slice(0, 20).map((effort) => ({

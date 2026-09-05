@@ -673,6 +673,8 @@ export interface MobileBridgeRuntimeDto {
   backend: string;
   version: string | null;
   active: boolean;
+  /** Secret-free marker for a retained runtime whose credential cannot be read. */
+  credentialUnavailable?: boolean;
   model: string | null;
   effort: string | null;
   efforts: Array<{ id: string; label: string }>;

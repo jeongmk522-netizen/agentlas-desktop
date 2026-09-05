@@ -146,6 +146,7 @@ import type {
   RuntimeKind,
   RuntimeRole,
   RuntimeSelection,
+  RuntimeStatus,
 } from "../../shared/types";
 import {
   MOBILE_BRIDGE_PROTOCOL_VERSION,
@@ -233,6 +234,13 @@ const BUILD_HISTORY_ENTRY_MAX_BYTES = 16_000;
 const BUILD_HISTORY_MAX_ENTRIES = 32;
 const MOBILE_RUNTIME_KINDS = RUNTIME_KINDS;
 const MOBILE_RUNTIME_BACKENDS = RUNTIME_BACKENDS;
+
+function runtimeCredentialUnavailable(runtime: RuntimeStatus): boolean {
+  const access = (
+    runtime as RuntimeStatus & { credentialAccess?: { status?: string } }
+  ).credentialAccess;
+  return access?.status === "unavailable";
+}
 const MOBILE_RUNTIME_ROLES = ["orchestrator", "worker"] as const;
 const BUILD_APPROVAL_TIMEOUT_MS = 90_000;
 const TERMINAL_PREVIEW_TTL_MS = 60_000;
@@ -2972,6 +2980,9 @@ export class AgentlasDesktopMobileBridgeAuthority implements MobileBridgeAuthori
         const runtime = candidates.find((candidate) =>
           candidate.kind === kind && (backend === undefined || candidate.backend === backend));
         if (!runtime) throw new Error("The selected Desktop runtime is unavailable");
+        if (runtimeCredentialUnavailable(runtime)) {
+          throw new Error("The selected Desktop runtime credential is unavailable");
+        }
         const model = optionalIdentifier(params, "model", 200);
         if (
           model &&

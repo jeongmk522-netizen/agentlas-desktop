@@ -850,16 +850,25 @@ function backupDatabaseFile(db: Database.Database, tag: string): string | null {
   try {
     const source = db.name;
     if (!source || source === ":memory:") return null;
-    // A resident follower may still hold WAL/SHM mappings while the Desktop
-    // migration owner starts. FULL makes the main file copyable without
-    // resizing either shared sidecar under that peer; TRUNCATE here can SIGBUS
-    // a mapped wal-index page. If a reader prevents a full checkpoint, skip the
-    // optional backup rather than copy an incomplete main file.
-    const checkpoint = db.pragma("wal_checkpoint(FULL)") as Array<{ busy?: number }>;
-    if (checkpoint.some((row) => Number(row.busy ?? 0) !== 0)) return null;
     const stamp = new Date().toISOString().replace(/[:.]/g, "-");
     const target = `${source}.${tag}-${stamp}.bak`;
-    fs.copyFileSync(source, target);
+    // ★ Copy through SQLite, never through fs (2026-09-05). Until this date the
+    // backup was `wal_checkpoint(FULL)` + `fs.copyFileSync(source, target)`. On
+    // POSIX, closing *any* descriptor a process holds on a file releases every
+    // fcntl lock that process holds on it — so the copy's open/close silently
+    // dropped this connection's SHARED lock on the main file for the rest of
+    // the app's life. From then on any peer that closed (agentlasd, a headless
+    // wake, the terminal follower) could take EXCLUSIVE, delete -wal/-shm under
+    // our mapping, and the next wal-index touch was EXC_BAD_ACCESS/SIGBUS —
+    // every upgrade start re-armed it (crash reports 2026-08-28…09-04, all in
+    // walIndexAppend/walFindFrame). `VACUUM INTO` writes a consistent copy of
+    // the current content (WAL included) using SQLite's own VFS descriptors,
+    // which share this connection's inode bookkeeping, so no lock is lost and
+    // no checkpoint is needed. It must not run inside a transaction — callers
+    // take the backup before they open theirs. Gate:
+    // scripts/store-sidecar-lock-safety-contract.cjs (probes the fcntl locks).
+    db.prepare("VACUUM INTO ?").run(target);
+    hardenStoreFile(target);
     return target;
   } catch {
     return null;

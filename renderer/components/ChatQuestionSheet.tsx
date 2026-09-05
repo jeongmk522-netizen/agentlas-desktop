@@ -192,7 +192,9 @@ export function ChatQuestionSheet({
     const nts = q.multiSelect ? notes : { ...notes, [q.id]: "" };
     const sel = q.multiSelect
       ? { ...selected, [q.id]: cur.includes(label) ? cur.filter((x) => x !== label) : [...cur, label] }
-      : { ...selected, [q.id]: cur.includes(label) ? [] : [label] };
+      // Single-select options submit immediately. Keep an already-selected
+      // option selected so a failed save can be retried with the same click.
+      : { ...selected, [q.id]: [label] };
     return { sel, nts };
   };
 

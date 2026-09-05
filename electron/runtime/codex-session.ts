@@ -331,7 +331,7 @@ export function codexPoolKey(input: {
   bin: string;
   mcpConfigPath?: string;
   toolBrokerSettingsPath?: string;
-  /** 스폰 argv(app-server 하위 명령 + `-c` 오버라이드들). 정렬해서 넣는다. */
+  /** 스폰 argv 그대로: 반복된 옵션은 순서에 따라 적용 값이 달라진다. */
   args: string[];
   env?: NodeJS.ProcessEnv;
 }): string {
@@ -340,7 +340,7 @@ export function codexPoolKey(input: {
     envDigest.update(name).update("\0").update(String((input.env ?? {})[name] ?? "")).update("\0");
   }
   const argvDigest = crypto.createHash("sha256");
-  for (const arg of [...input.args].sort()) argvDigest.update(arg).update("\0");
+  for (const arg of input.args) argvDigest.update(arg).update("\0");
   return crypto
     .createHash("sha256")
     .update("codex-pool-v1\0")

@@ -10,7 +10,7 @@ import fs from "node:fs/promises";
 import crypto from "node:crypto";
 import { StringDecoder } from "node:string_decoder";
 import type { Runner, RunnerEvents, RunnerRequest, RunnerResult , RunnerFailure } from "./runner";
-import { cumulativeSurfaceGateText, ensureChildCloseAfterExit, startCliHeartbeat, wrapSystemPrompt } from "./runner";
+import { cumulativeSurfaceGateText, ensureChildCloseAfterExit, startCliHeartbeat, wrapSystemPrompt, workforceObservedHostAuthorityEnforcement } from "./runner";
 import { detectRuntimeRefusal } from "./runtime-refusal";
 import { abortReasonError } from "./abort-reason";
 import { containsMcpStartupTransportFatal } from "./mcp-startup-fatal";
@@ -54,6 +54,7 @@ import {
   type CodexResidentSession,
   type CodexTurnSink,
 } from "./codex-session";
+import { CodexWorkforceObservation, inspectCodexWorkforceGrant, readCodexWorkforceInventory } from "./codex-workforce";
 import { answerCodexMcpElicitation } from "./codex-elicitation";
 import { residencyDisabledFor } from "./claude-session";
 import { isResidencyExemptAgent, resolveAgentResidencySource } from "./agent-residency";
@@ -1042,6 +1043,8 @@ async function runCodexResidentTurn(input: {
   const cwd = req.cwd ?? agentRunCwd();
   const env = req.env ?? process.env;
   const policy = codexThreadPolicy(req.permission, cwd);
+  const requestedConfigDigest = inspectCodexWorkforceGrant(req, mcpArgs);
+  let workforceObservation: CodexWorkforceObservation | null = null;
   const approvalsReviewer = req.approvalsReviewer ?? "user";
   const imageDiagnosis = req.untrustedNoTools || req.restrictedReadBoundary || req.judgmentOnly
     ? null
@@ -1084,6 +1087,7 @@ async function runCodexResidentTurn(input: {
       markCodexAppServerUnsupported(err instanceof Error ? err.message : String(err));
       events.onStatus(`[residency] disabled kind=${KIND} reason=app-server-unsupported`);
     }
+    if (req.workforceRuntimeToolGrant) throw err;
     return { retryOneShot: true };
   }
 
@@ -1256,6 +1260,7 @@ async function runCodexResidentTurn(input: {
       case "turn/completed": {
         const turn = params?.turn;
         if (!turn || (turnId && String(turn.id ?? "") !== turnId)) break;
+        workforceObservation?.completeTurn(params);
         if (turn.status === "interrupted") interrupted = true;
         failure = codexFailureFromTurn(turn) ?? failure;
         settleTurn?.("completed");
@@ -1278,6 +1283,9 @@ async function runCodexResidentTurn(input: {
   const sink: CodexTurnSink = {
     onNotification,
     onServerRequest: async (method, params) => {
+      if (method === "item/tool/call" || isCodexApprovalRequest(method)) {
+        workforceObservation?.assertRequestContext(params, turnId);
+      }
       if (method === "item/tool/call") {
         const callId = typeof params?.callId === "string" ? params.callId : "";
         const tool = typeof params?.tool === "string" ? params.tool : "";
@@ -1309,6 +1317,7 @@ async function runCodexResidentTurn(input: {
         if (arbiter) {
           try { decision = await arbiter(ask); } catch { decision = "deny"; }
         }
+        workforceObservation?.approval(method, params, decision);
         if (decision === "deny") {
           events.onStatus(`[tool-approval] runtime=${KIND} capability=other tool=${CODEX_IMAGE_TOOL_NAME} decision=deny`);
           return {
@@ -1374,6 +1383,7 @@ async function runCodexResidentTurn(input: {
         throw new AcpRpcError({ code: -32601, message: `Method not found: ${method}` });
       }
       const { reply, decision, ask } = await answerCodexApproval(method, params, approvalCtx);
+      workforceObservation?.approval(method, params, decision);
       events.onStatus(
         `[tool-approval] runtime=${KIND} capability=${codexApprovalCapability(ask)} tool=${ask.tool} decision=${decision}`,
       );
@@ -1412,28 +1422,40 @@ async function runCodexResidentTurn(input: {
 
   try {
     session.active = sink;
+    if (req.workforceRuntimeToolGrant) workforceObservation = new CodexWorkforceObservation(req, session.init, req.workforceRuntimeToolGrant.canonicalConfigSha256);
     /* ── 스레드: 살아 있는 세션이면 그대로, 새 프로세스면 resume 또는 start ── */
-    if (!reusing) {
+    if (!reusing || workforceObservation) {
       const startParams: Record<string, unknown> = {
         cwd,
         approvalPolicy: policy.approvalPolicy,
         approvalsReviewer,
         sandbox: policy.sandbox,
+        // Thread start/resume acknowledges effective policy. Request the same
+        // workspace-write values that turn/start will use before admitting a
+        // Workforce model turn; a requested turn override alone is no proof.
+        ...(workforceObservation && req.permission === "write" ? { config: {
+          "sandbox_workspace_write.writable_roots": [path.resolve(cwd)],
+          "sandbox_workspace_write.network_access": true,
+          "sandbox_workspace_write.exclude_tmpdir_env_var": true,
+          "sandbox_workspace_write.exclude_slash_tmp": true,
+        } } : {}),
         developerInstructions: `${buildDeveloperInstructions(req)}\n\n${codexImageToolInstructions(Boolean(imageToolSlot))}`,
         ...(req.model ? { model: req.model } : {}),
         ...(imageToolSlot ? { dynamicTools: [CODEX_IMAGE_DYNAMIC_TOOL] } : {}),
       };
       let resumed = false;
-      if (resumeThreadId) {
+      const threadToResume = reusing ? session.threadId : resumeThreadId;
+      if (threadToResume) {
         let releaseResume: (() => void) | undefined;
         try {
-          releaseResume = await prepareCodexThreadResume(session, resumeThreadId, req.signal);
-          await session.conn.request(
+          releaseResume = await prepareCodexThreadResume(session, threadToResume, req.signal);
+          const response = await session.conn.request(
             "thread/resume",
-            { threadId: resumeThreadId, ...startParams },
+            { threadId: threadToResume, ...startParams },
             { timeoutMs: 120_000, signal: req.signal },
           );
-          session.threadId = resumeThreadId;
+          workforceObservation?.acknowledgeThread(response, policy, cwd, approvalsReviewer, threadToResume);
+          session.threadId = threadToResume;
           resumed = true;
         } catch (err) {
           if (req.signal?.aborted) throw abortReasonError(req);
@@ -1449,12 +1471,18 @@ async function runCodexResidentTurn(input: {
         const started = await session.conn.request("thread/start", startParams, { timeoutMs: 120_000, signal: req.signal });
         const id = String(started?.thread?.id ?? "");
         if (!id) throw new Error("codex app-server thread/start returned no thread id");
+        workforceObservation?.acknowledgeThread(started, policy, cwd, approvalsReviewer);
         session.threadId = id;
       }
       // 버전 스큐 관측 — 이 세션이 어떤 app-server 였는지 영수증에 남긴다.
       events.onStatus(codexProtocolReceipt(session.init));
     }
     if (!session.threadId) throw new Error("codex app-server session has no thread");
+    if (workforceObservation) {
+      workforceObservation.observeInventory(await readCodexWorkforceInventory(
+        session.conn.request.bind(session.conn), session.threadId, req.signal,
+      ));
+    }
 
     /* ── 턴 ── */
     // 새 스레드면 시스템+히스토리 시드, 이어가는 스레드면 사용자 턴만(+gap/turn 컨텍스트).
@@ -1486,6 +1514,7 @@ async function runCodexResidentTurn(input: {
       settleTurn = (reason) => { settleTurn = null; resolve(reason); };
     });
     const started = await session.conn.request("turn/start", turnParams, { timeoutMs: 120_000, signal: req.signal });
+    workforceObservation?.startTurn(started);
     if (typeof started?.turn?.id === "string") turnId = started.turn.id;
     events.onStatus(`[runtime-session] ${continuing ? "resumed" : "created"} kind=${KIND}`);
     const reason = await settled;
@@ -1510,6 +1539,7 @@ async function runCodexResidentTurn(input: {
         markCodexAppServerUnsupported(closedReason || session.conn.lastStderr);
         events.onStatus(`[residency] disabled kind=${KIND} reason=app-server-unsupported`);
       }
+      if (workforceObservation) throw new Error("workforce_codex_observation_transport_closed");
       if (!emitted && !bodyText()) return { retryOneShot: true };
       return {
         result: {
@@ -1530,6 +1560,16 @@ async function runCodexResidentTurn(input: {
       throw abortReasonError(req);
     }
 
+    // Re-read the actual connected inventory after the completed turn. Any
+    // drift invalidates this invocation and must never replay a paid turn.
+    if (workforceObservation) {
+      if (inspectCodexWorkforceGrant(req, mcpArgs) !== requestedConfigDigest) throw new Error("workforce_codex_observation_config_drift");
+      workforceObservation.observeInventory(await readCodexWorkforceInventory(
+        session.conn.request.bind(session.conn), session.threadId!, req.signal,
+      ));
+    }
+    const workforcePermissionEnforcement = workforceObservation
+      ? workforceObservedHostAuthorityEnforcement(req, KIND, workforceObservation.finish()) : undefined;
     session.completedTurns += 1;
     const text = bodyText().trim();
     /*
@@ -1568,12 +1608,13 @@ async function runCodexResidentTurn(input: {
         ...(failure ? { failure } : {}),
         sessionId: session.threadId,
         ...(usage.last ? { tokens: usage.last.outputTokens, observedUsage: usage.last } : {}),
+        ...(workforcePermissionEnforcement ? { workforcePermissionEnforcement } : {}),
         appliedEffort,
       },
     };
   } catch (err) {
     broken = true;
-    if (req.signal?.aborted) throw err;
+    if (req.signal?.aborted || req.workforceRuntimeToolGrant) throw err;
     if (err instanceof CodexSessionContinuityError) throw err;
     if (looksLikeMissingAppServer(session.conn?.lastStderr ?? "", err)) {
       markCodexAppServerUnsupported(err instanceof Error ? err.message : String(err));
@@ -1640,6 +1681,12 @@ export const runCodex: Runner = async (
     throw new Error(
       "Codex is not enabled for remote or unattended read-only execution because its host filesystem boundary is not release-verified.",
     );
+  }
+  // A Workforce receipt exists only on the acknowledged app-server path.
+  // Ordinary Codex exec fallback is not an equivalent evidence producer.
+  if (req.workforceRuntimeToolGrant && (!codexAppServerSupported()
+    || residencyDisabledFor(KIND, req.env ?? process.env) || req.isolatedMcpConfig || !req.chatId)) {
+    throw new Error("workforce_codex_observation_app_server_required");
   }
   const bin = await getBin();
   if (!bin) {
@@ -1783,6 +1830,7 @@ export const runCodex: Runner = async (
     });
     if (attempt.result) return attempt.result;
   }
+  if (runReq.workforceRuntimeToolGrant) throw new Error("workforce_codex_observation_no_exec_fallback");
 
   /*
    * 출력 형태 계약 — codex 는 스키마를 **파일 경로**로만 받는다

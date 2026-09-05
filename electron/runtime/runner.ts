@@ -1,5 +1,6 @@
 // 모든 런타임(CLI 3종 + BYOK 3종)이 구현해야 하는 통합 인터페이스.
 // mcp/client.ts가 활성 런타임 → 적절한 러너로 라우팅한다.
+import { createHash } from "node:crypto";
 import type { ChatHistoryEntry, ImageAttachment, McpInvocationEvent } from "../../shared/types";
 import { tStatus, type RuntimeLocale } from "./status-i18n";
 import { GLOBAL_CONNECTION_SKILL } from "./global-skill";
@@ -199,14 +200,15 @@ export interface WorkforceRuntimeToolGrant {
 
 export interface WorkforcePermissionEnforcementReceipt {
   permissionPolicyDigest: string;
-  enforcementMode: "native-sandbox" | "no-authority-sandbox" | "zero-tools";
+  enforcementMode: "native-sandbox" | "no-authority-sandbox" | "zero-tools" | "host-native";
   status: "enforced";
   approvalReceiptIds: string[];
   enforcementEvidence: {
     runtimeKind: string;
     runtimeVersion: string | null;
     sandboxMode: "read-only" | "no-filesystem" | "host-native" | "not-applicable";
-    toolInventory: "empty" | "non-authoritative" | "policy-filtered";
+    toolInventory: "empty" | "non-authoritative" | "policy-filtered" | "host-observed";
+    hostObservation?: WorkforceHostObservation;
     disabledCapabilities: string[];
     ephemeral: boolean;
     ignoredUserConfig: boolean;
@@ -214,6 +216,41 @@ export interface WorkforcePermissionEnforcementReceipt {
     toolInventoryDigest: string;
     grantedToolIds: string[];
   };
+}
+
+/** Native protocol observations, collected by the runner rather than authored by a model.
+ * toolIds cover inventoryScope only; they never imply unobserved built-in isolation.
+ */
+export interface WorkforceHostObservation {
+  schemaVersion: "agentlas.workforce-host-observation.v1";
+  permissionPolicyDigest: string;
+  toolInventoryDigest: string;
+  runtimeKind: string;
+  runtimeVersion: string;
+  sessionId: string;
+  turnId: string;
+  nativePolicy: Record<string, unknown>;
+  toolIds: string[];
+  connectedServers: string[];
+  approvalEvents: Array<{ requestId: string; decision: string }>;
+  completed: true;
+  inventoryScope: "connected-mcp-tools" | "native-init-tools";
+  nativeToolsEnumerated: boolean;
+  requestedConfigDigest: string | null;
+  observationDigest: string;
+}
+
+export function workforceHostObservationDigest(
+  value: Omit<WorkforceHostObservation, "observationDigest">,
+): string {
+  const canonical = (row: unknown): unknown => {
+    if (Array.isArray(row)) return row.map(canonical);
+    if (!row || typeof row !== "object") return row;
+    return Object.fromEntries(Object.keys(row).sort().map((key) => [
+      key, canonical((row as Record<string, unknown>)[key]),
+    ]));
+  };
+  return `sha256:${createHash("sha256").update(JSON.stringify(canonical(value)), "utf8").digest("hex")}`;
 }
 
 const WORKFORCE_SHA256_RE = /^sha256:[0-9a-f]{64}$/;
@@ -301,6 +338,65 @@ export function workforceHostAuthorityEnforcement(
       ignoredRules: false,
       toolInventoryDigest: grant.toolInventoryDigest,
       grantedToolIds: [...grant.grantedToolIds],
+    },
+  };
+}
+
+/** Admit only an invocation-bound native observation. Runtime-specific adapters
+ * must compare the acknowledged native policy with the requested host boundary.
+ * This receipt describes observed host authority, never a package sandbox.
+ */
+export function workforceObservedHostAuthorityEnforcement(
+  req: RunnerRequest,
+  runtimeKind: string,
+  observation: WorkforceHostObservation,
+): WorkforcePermissionEnforcementReceipt | undefined {
+  const grant = validatedWorkforceGrant(req);
+  if (!grant) return undefined;
+  const { observationDigest, ...payload } = observation;
+  const validIds = (values: string[], max: number) => Array.isArray(values) &&
+    values.length <= max && new Set(values).size === values.length &&
+    values.every((value) => typeof value === "string" && WORKFORCE_TOOL_ID_RE.test(value));
+  if (
+    observation.schemaVersion !== "agentlas.workforce-host-observation.v1" ||
+    observation.permissionPolicyDigest !== grant.permissionPolicyDigest ||
+    observation.toolInventoryDigest !== grant.toolInventoryDigest ||
+    observation.runtimeKind !== runtimeKind ||
+    !observation.runtimeVersion?.trim() || observation.runtimeVersion.length > 256 ||
+    !observation.sessionId?.trim() || observation.sessionId.length > 256 ||
+    !observation.turnId?.trim() || observation.turnId.length > 256 ||
+    observation.completed !== true || req.signal?.aborted ||
+    !observation.nativePolicy || typeof observation.nativePolicy !== "object" ||
+    Array.isArray(observation.nativePolicy) || Object.keys(observation.nativePolicy).length === 0 ||
+    !validIds(observation.toolIds, 4096) || !validIds(observation.connectedServers, 256) ||
+    !["connected-mcp-tools", "native-init-tools"].includes(observation.inventoryScope) ||
+    observation.nativeToolsEnumerated !== (observation.inventoryScope === "native-init-tools") ||
+    observation.requestedConfigDigest !== grant.canonicalConfigSha256 ||
+    !Array.isArray(observation.approvalEvents) || observation.approvalEvents.length > 256 ||
+    observation.approvalEvents.some((event) => !event.requestId?.trim() ||
+      event.requestId.length > 256 || !event.decision?.trim() || event.decision.length > 128) ||
+    grant.grantedToolIds.some((id) => !observation.toolIds.includes(id)) ||
+    grant.expectedServerConfigKeys.some((name) => !observation.connectedServers.includes(name)) ||
+    !WORKFORCE_SHA256_RE.test(observationDigest) ||
+    observationDigest !== workforceHostObservationDigest(payload)
+  ) throw new Error("workforce_host_observation_invalid");
+  return {
+    permissionPolicyDigest: grant.permissionPolicyDigest,
+    enforcementMode: "host-native",
+    status: "enforced",
+    approvalReceiptIds: [],
+    enforcementEvidence: {
+      runtimeKind,
+      runtimeVersion: observation.runtimeVersion,
+      sandboxMode: "host-native",
+      toolInventory: "host-observed",
+      disabledCapabilities: [],
+      ephemeral: false,
+      ignoredUserConfig: false,
+      ignoredRules: false,
+      toolInventoryDigest: grant.toolInventoryDigest,
+      grantedToolIds: [...grant.grantedToolIds],
+      hostObservation: structuredClone(observation),
     },
   };
 }

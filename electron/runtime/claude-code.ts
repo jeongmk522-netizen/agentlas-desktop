@@ -12,7 +12,7 @@ import type { Runner, RunnerRequest, RunnerEvents, RunnerResult , RunnerFailure 
 import {
   ensureChildCloseAfterExit,
   startCliHeartbeat,
-  workforceHostAuthorityEnforcement,
+  workforceObservedHostAuthorityEnforcement,
   workforceNativeToolEnforcement,
   workforceZeroToolsEnforcement,
   wrapSystemPrompt,
@@ -54,6 +54,7 @@ import {
 } from "../store/runtime-sessions";
 import { validSiteAgentAppMcpGrantTools } from "../site/agent-app-tool-policy";
 import { isAuthenticSystemTimeMcpLaunch } from "../mcp-tools/system-time-server";
+import { createClaudeWorkforceObservation } from "./claude-workforce-observation";
 
 /** Claude exposes file mutations as a typed tool_use input followed by a
  * tool_result. Admit only exact paths from known mutation tools; Main still
@@ -701,6 +702,17 @@ const runClaudeTurn = async (
       : req.permission === "write"
         ? ["--permission-mode", "acceptEdits"]
         : ["--disallowed-tools", ...READ_ONLY_DENIED_TOOLS];
+  const hostObservation = hostAuthorityWorkforce && runReq.workforceRuntimeToolGrant
+    ? createClaudeWorkforceObservation({
+        grant: runReq.workforceRuntimeToolGrant,
+        expectedSessionId: resumeSessionId,
+        expectedPermissionMode: runReq.browserOnly ? null
+          : req.permission === "full" ? "bypassPermissions"
+          : req.permission === "write" ? "acceptEdits" : null,
+        deniedTools: !runReq.browserOnly && req.permission !== "write" && req.permission !== "full"
+          ? READ_ONLY_DENIED_TOOLS : [],
+      })
+    : null;
 
   // 모델 선택 — opus/sonnet/haiku 별칭(또는 풀 ID). 미지정이면 Claude Code 설정 사용.
   const modelArgs = req.model && req.model.trim() ? ["--model", req.model.trim()] : [];
@@ -908,6 +920,9 @@ const runClaudeTurn = async (
     residencySupported &&
     !residencyDisabledFor(KIND, runEnv) &&
     !runReq.untrustedNoTools &&
+    // A pooled process does not repeat system/init for each turn. This
+    // Workforce call needs fresh native observations; existing pools stay intact.
+    !hostAuthorityWorkforce &&
     Boolean(runReq.chatId) &&
     Boolean(fingerprint);
   const poolKey =
@@ -1267,6 +1282,13 @@ const runClaudeTurn = async (
         usage?: { output_tokens?: number };
       };
     }): void {
+      if (hostObservation) {
+        hostObservation.observe(ev);
+        if (hostObservation.error) {
+          killCliTree(child, 250);
+          return;
+        }
+      }
       if (agentAppMcpInitFailed) return;
       const isAgentAppMcpInit = ev.type === "system" && ev.subtype === "init";
       if (
@@ -1530,6 +1552,10 @@ const runClaudeTurn = async (
         rejectRuntime(abortReasonError(req));
         return;
       }
+      if (hostObservation?.error) {
+        rejectRuntime(new Error(hostObservation.error));
+        return;
+      }
       /*
        * ★상주 턴이 `result` 를 못 봤다 — 세션이 죽었거나 프로토콜이 깨졌다. 이건 사용자의
        * 문제가 아니라 우리가 물려준 세션의 문제다. 조용히 버리고 기존 1회성 `-p --resume`
@@ -1569,6 +1595,15 @@ const runClaudeTurn = async (
         return;
       }
       if (code === 0) {
+        let observedHostEnforcement: RunnerResult["workforcePermissionEnforcement"];
+        if (hostObservation && !runnerFailure && !structuredRuntimeError) {
+          try {
+            observedHostEnforcement = workforceObservedHostAuthorityEnforcement(runReq, KIND, hostObservation.finish());
+          } catch (error) {
+            rejectRuntime(error);
+            return;
+          }
+        }
         // 표시 본문은 스트리밍 전사본(모든 assistant 메시지 \n-join) 우선 — result 이벤트의
         // finalText는 '마지막 메시지'만 담아, 이걸 우선하면 도구 사이 중간 해설이 완료 순간
         // 통째로 사라지고 인터리브 앵커가 전부 틀어진다. finalText는 델타 스트리밍이 전혀
@@ -1591,7 +1626,7 @@ const runClaudeTurn = async (
           tokens,
           observedUsage,
           workforcePermissionEnforcement: hostAuthorityWorkforce
-            ? workforceHostAuthorityEnforcement(runReq, KIND)
+            ? observedHostEnforcement
             : hasExactWorkforceMcpGrant
             ? workforceNativeToolEnforcement(
                 runReq,
@@ -1616,7 +1651,7 @@ const runClaudeTurn = async (
             tokens,
             observedUsage,
             workforcePermissionEnforcement: hostAuthorityWorkforce
-            ? workforceHostAuthorityEnforcement(runReq, KIND)
+            ? undefined
             : hasExactWorkforceMcpGrant
               ? workforceNativeToolEnforcement(
                   runReq,
@@ -1633,6 +1668,12 @@ const runClaudeTurn = async (
         }
         if (structuredRuntimeError) {
           rejectRuntime(structuredRuntimeError);
+          return;
+        }
+        if (hostAuthorityWorkforce) {
+          // A failed host invocation has no completed observation. Replaying
+          // automatically would create a different invocation and hide that gap.
+          rejectRuntime(new Error(`workforce_claude_host_observation_process_failed:${code}`));
           return;
         }
         if (runReq.untrustedNoTools) {

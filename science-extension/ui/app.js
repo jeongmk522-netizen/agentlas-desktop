@@ -5643,7 +5643,50 @@ const { stripAgentControlBlocks, stripStormbreakerContinueMarker, STORMBREAKER_C
         .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
         .replace(/\*([^*]+)\*/g, "<em>$1</em>");
     }).join("");
-    return manuscriptPreview(text, inline);
+    // Keep list structure and source order in chat. The manuscript fallback's
+    // flat-list buffer cannot represent indented children or ordered lists.
+    const output = [], prose = [], lists = [];
+    const flushProse = () => {
+      if (prose.some((row) => row.trim())) output.push(manuscriptPreview(prose.join("\n"), inline));
+      prose.length = 0;
+    };
+    const closeList = () => output.push(`</li></${lists.pop().tag}>`);
+    const flushLists = () => { while (lists.length) closeList(); };
+    let fence = false;
+    for (const rawRow of String(text).split(/\r?\n/)) {
+      const row = rawRow.replace(/^\t+/, (tabs) => "    ".repeat(tabs.length));
+      if (row.trim().startsWith("```")) {
+        flushLists();
+        prose.push(row);
+        fence = !fence;
+        continue;
+      }
+      if (fence) { prose.push(row); continue; }
+      const item = /^( *)([-+*]|\d{1,9}[.)])\s+(.+)$/.exec(row);
+      if (item) {
+        flushProse();
+        const indent = item[1].length, tag = /^\d/.test(item[2]) ? "ol" : "ul";
+        while (lists.length && lists[lists.length - 1].indent > indent) closeList();
+        if (lists.length && lists[lists.length - 1].indent === indent
+          && lists[lists.length - 1].tag !== tag) closeList();
+        if (lists.length && lists[lists.length - 1].indent === indent) output.push("</li><li>");
+        else {
+          const start = tag === "ol" ? ` start="${parseInt(item[2], 10)}"` : "";
+          output.push(`<${tag}${start}><li>`);
+          lists.push({ indent, tag });
+        }
+        output.push(inline(item[3]));
+      } else if (lists.length && row.trim() && /^\s/.test(row)
+        && row.length - row.trimStart().length > lists[lists.length - 1].indent) {
+        output.push(` ${inline(row.trim())}`);
+      } else {
+        flushLists();
+        prose.push(row);
+      }
+    }
+    flushLists();
+    flushProse();
+    return output.join("");
   }
 
   function compactChatMessage(message) {

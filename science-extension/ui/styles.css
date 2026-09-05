@@ -377,8 +377,9 @@ button { cursor: pointer; color: inherit; }
 .chatMessageContent.scienceChatMarkdown { white-space: normal; min-width: 0; }
 .scienceChatMarkdown > :first-child { margin-top: 0; }
 .scienceChatMarkdown > :last-child { margin-bottom: 0; }
-.scienceChatMarkdown p, .scienceChatMarkdown ul, .scienceChatMarkdown blockquote { margin: 0 0 12px; }
-.scienceChatMarkdown ul { padding-left: 20px; }
+.scienceChatMarkdown p, .scienceChatMarkdown ul, .scienceChatMarkdown ol, .scienceChatMarkdown blockquote { margin: 0 0 12px; }
+.scienceChatMarkdown ul, .scienceChatMarkdown ol { padding-left: 20px; }
+.scienceChatMarkdown li > ul, .scienceChatMarkdown li > ol { margin: 4px 0 0; }
 .scienceChatMarkdown li + li { margin-top: 4px; }
 .scienceChatMarkdown h1, .scienceChatMarkdown h2, .scienceChatMarkdown h3 { font-size: 14px; line-height: 1.5; margin: 16px 0 8px; }
 .scienceChatMarkdown code { font-size: .92em; overflow-wrap: anywhere; }

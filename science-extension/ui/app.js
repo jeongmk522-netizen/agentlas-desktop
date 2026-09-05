@@ -204,6 +204,152 @@ const scienceChatPresentation = (() => {
 })();
 const { stripAgentControlBlocks, stripStormbreakerContinueMarker, STORMBREAKER_CONTINUE_MARKER, STORMBREAKER_LONG_RUN_MARKER } = scienceChatPresentation;
 
+// COMPOSER_EVENT_SYNC_BEGIN
+const TERMINAL_TURN_STATUSES = new Set(["completed", "failed", "cancelled", "interrupted"]);
+
+function composerEventKey(event) {
+  return `${event.projectId}:${event.conversationId}:${event.turnId}`;
+}
+
+function sameComposerTurn(left, right) {
+  return left?.projectId === right?.projectId
+    && left?.conversationId === right?.conversationId
+    && left?.turnId === right?.turnId;
+}
+
+function isNewerComposerEvent(candidate, current) {
+  if (!current) return true;
+  if (!sameComposerTurn(candidate, current)) return true;
+  return Number(candidate.sequence) > Number(current.sequence);
+}
+
+/**
+ * Coalesce the high-frequency persisted composer event stream into receipt reads.
+ * The store remains the source of truth; this only prevents every tiny runtime-usage
+ * event from starting its own IPC read and terminal project hydration.
+ */
+function createComposerEventSync({
+  getCurrentScope,
+  readReceipt,
+  onProgress,
+  onTerminal,
+  onError,
+}) {
+  let disposed = false;
+  let draining = false;
+  let pendingEvent = null;
+  const receiptFailures = new Map();
+  const terminalFailures = new Map();
+  const hydratedTerminalTurns = new Set();
+
+  const isCurrentEvent = (event) => {
+    const scope = getCurrentScope();
+    return Boolean(scope
+      && event?.projectId === scope.projectId
+      && event.conversationId === scope.conversationId
+      && event.turnId === scope.turnId);
+  };
+
+  const queueLatest = (event) => {
+    if (!pendingEvent || isNewerComposerEvent(event, pendingEvent)) pendingEvent = event;
+  };
+
+  const trimTerminalHistory = () => {
+    if (hydratedTerminalTurns.size <= 128) return;
+    hydratedTerminalTurns.delete(hydratedTerminalTurns.values().next().value);
+  };
+
+  const drain = async () => {
+    if (disposed || draining) return;
+    draining = true;
+    try {
+      while (!disposed && pendingEvent) {
+        const event = pendingEvent;
+        pendingEvent = null;
+        if (!isCurrentEvent(event)) continue;
+
+        const key = composerEventKey(event);
+        let turn;
+        try {
+          turn = await readReceipt({
+            projectId: event.projectId,
+            conversationId: event.conversationId,
+            turnId: event.turnId,
+          });
+          receiptFailures.delete(key);
+        } catch (error) {
+          if (disposed || !isCurrentEvent(event)) continue;
+          const failures = (receiptFailures.get(key) || 0) + 1;
+          receiptFailures.set(key, failures);
+          if (failures === 1) {
+            queueLatest(event);
+          } else {
+            receiptFailures.delete(key);
+            onError(error, event);
+          }
+          continue;
+        }
+
+        if (disposed) continue;
+        const scope = getCurrentScope();
+        if (!scope || !turn
+          || turn.projectId !== scope.projectId
+          || turn.conversationId !== scope.conversationId
+          || turn.id !== scope.turnId
+          || turn.lastSequence < scope.lastSequence) continue;
+
+        if (pendingEvent && sameComposerTurn(pendingEvent, event)) {
+          if (Number(pendingEvent.sequence) > Number(turn.lastSequence)) continue;
+          pendingEvent = null;
+        }
+
+        if (!TERMINAL_TURN_STATUSES.has(turn.status)) {
+          onProgress(turn, event);
+          continue;
+        }
+
+        if (hydratedTerminalTurns.has(key)) continue;
+        hydratedTerminalTurns.add(key);
+        trimTerminalHistory();
+        try {
+          await onTerminal(turn, event);
+          terminalFailures.delete(key);
+        } catch (error) {
+          hydratedTerminalTurns.delete(key);
+          if (disposed || !isCurrentEvent(event)) continue;
+          const failures = (terminalFailures.get(key) || 0) + 1;
+          terminalFailures.set(key, failures);
+          if (failures === 1) queueLatest(event);
+          else {
+            terminalFailures.delete(key);
+            onError(error, event);
+          }
+        }
+      }
+    } finally {
+      draining = false;
+      if (!disposed && pendingEvent) void drain();
+    }
+  };
+
+  return {
+    push(event) {
+      if (disposed || !isCurrentEvent(event)) return false;
+      queueLatest(event);
+      void drain();
+      return true;
+    },
+    dispose() {
+      disposed = true;
+      pendingEvent = null;
+      receiptFailures.clear();
+      terminalFailures.clear();
+      hydratedTerminalTurns.clear();
+    },
+  };
+}
+// COMPOSER_EVENT_SYNC_END
+
 (() => {
   "use strict";
 
@@ -10425,31 +10571,40 @@ const { stripAgentControlBlocks, stripStormbreakerContinueMarker, STORMBREAKER_C
         render();
       });
     });
-    if (science.composer?.onEvent && !state.composerEventDispose) state.composerEventDispose = science.composer.onEvent((event) => {
-      if (!event || event.projectId !== state.selectedId || event.conversationId !== selectedConversation()?.id || !state.activeTurn || event.turnId !== state.activeTurn.id) return;
-      void science.composer.receipt({ projectId: event.projectId, conversationId: event.conversationId, turnId: event.turnId }).then((turn) => {
-        if (!turn || turn.id !== state.activeTurn?.id || turn.projectId !== state.selectedId
-          || turn.conversationId !== selectedConversation()?.id || turn.lastSequence < state.activeTurn.lastSequence) return;
-        state.activeTurn = turn;
-        if (["completed", "failed", "cancelled", "interrupted"].includes(turn.status)) {
+    if (science.composer?.onEvent && !state.composerEventDispose) {
+      const composerEventSync = createComposerEventSync({
+        getCurrentScope: () => state.activeTurn ? {
+          projectId: state.selectedId,
+          conversationId: selectedConversation()?.id,
+          turnId: state.activeTurn.id,
+          lastSequence: state.activeTurn.lastSequence,
+        } : null,
+        readReceipt: (input) => science.composer.receipt(input),
+        onProgress: (turn) => {
+          state.activeTurn = turn;
+          renderChatDock();
+        },
+        onTerminal: async (turn) => {
+          state.activeTurn = turn;
           const projectId = state.selectedId;
           recordRunFailure(composerTurnError(turn));
-          if (projectId) {
-            if (state.projectFolderOpen) void selectProject(projectId, { openFolder: true, preserveWorkspace: true });
-            else if (state.mode === "lab") void refreshConversationOnly(projectId).catch((error) => {
-              recordRunFailure(error);
-            });
-            else void selectProject(projectId, { preserveWorkspace: true });
-          }
-          return;
-        }
-        renderChatDock();
-      }).catch((error) => {
-        if (event.projectId !== state.selectedId || event.conversationId !== selectedConversation()?.id
-          || event.turnId !== state.activeTurn?.id || event.sequence <= state.activeTurn.lastSequence) return;
-        recordRunFailure(error);
+          if (!projectId) return;
+          if (state.projectFolderOpen) await selectProject(projectId, { openFolder: true, preserveWorkspace: true });
+          else if (state.mode === "lab") await refreshConversationOnly(projectId);
+          else await selectProject(projectId, { preserveWorkspace: true });
+        },
+        onError: (error, event) => {
+          if (event.projectId !== state.selectedId || event.conversationId !== selectedConversation()?.id
+            || event.turnId !== state.activeTurn?.id || event.sequence <= state.activeTurn.lastSequence) return;
+          recordRunFailure(error);
+        },
       });
-    });
+      const unsubscribe = science.composer.onEvent((event) => composerEventSync.push(event));
+      state.composerEventDispose = () => {
+        composerEventSync.dispose();
+        unsubscribe?.();
+      };
+    }
     state.projects = Array.isArray(bootstrap.projects) ? bootstrap.projects : [];
     try {
       setProjectLibrarySummaries(await science.projects.library());

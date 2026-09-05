@@ -1177,6 +1177,7 @@ button.manuscriptBinding:hover { border-color: var(--line-strong); background: v
 .runtimeQuestionOptions { display: grid; gap: 4px; }
 .runtimeQuestionPopover[data-compact="true"] .runtimeQuestionOptions { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .runtimeQuestionOptions > button { min-width: 0; min-height: 48px; display: grid; grid-template-columns: 24px minmax(0, 1fr); align-items: start; column-gap: 9px; row-gap: 2px; border: 0; border-radius: 12px; background: var(--science-surface-1); padding: 8px 12px; color: var(--science-ink); text-align: left; }
+.runtimeQuestionPopover[data-compact="true"] .runtimeQuestionOptions > button { align-items: center; padding: 12px 16px; }
 .runtimeQuestionOptions > button:hover, .runtimeQuestionOptions > button:focus-visible { background: var(--science-surface-2); outline: 0; box-shadow: 0 0 0 2px rgba(54, 53, 53, .14); }
 .runtimeQuestionOptions > button:disabled, .runtimeQuestionPopover > header button:disabled, .runtimeQuestionFreeText button:disabled { opacity: .5; cursor: default; }
 .runtimeQuestionOptions > button > span { width: 24px; height: 24px; display: grid; grid-row: 1 / span 2; place-items: center; border-radius: 50%; background: var(--science-surface-0); color: var(--grey-600); font-size: 11px; font-weight: 700; }

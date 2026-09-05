@@ -1,3 +1,4 @@
+import { isRuntimeCredentialUnavailable } from "./credential-access";
 import type {
   AgentRuntimeOverride,
   RuntimeRole,
@@ -206,6 +207,22 @@ export function effortForSelectedModel(
 }
 
 export function pickRunner(active: RuntimeStatus): { runner: Runner; label: string } | null {
+  if (isRuntimeCredentialUnavailable(active)) {
+    return {
+      label: `BYOK · ${active.backend}`,
+      runner: async (req) => ({
+        text: "",
+        failure: {
+          kind: "auth",
+          runtime: `byok:${active.backend}`,
+          source: "marker",
+          message: req.locale === "ko"
+            ? `${active.backend}의 저장된 API 키에 접근할 수 없습니다. 도움말 메뉴에서 해당 API 키 접근을 다시 시도할 수 있습니다.`
+            : `The saved ${active.backend} API key is unavailable. Use Help to retry access to this API key.`,
+        },
+      }),
+    };
+  }
   if (active.kind === "claude-code") return { runner: runClaudeCodeSlotted, label: RUNNER_LABEL["claude-code"] };
   if (active.kind === "codex") return { runner: runCodexSlotted, label: RUNNER_LABEL.codex };
   if (active.kind === "antigravity") {
@@ -351,6 +368,9 @@ function runtimeSelectionUnavailableReason(
   selection: Pick<import("../../shared/types").RuntimeSelection, "kind" | "model">,
 ): RuntimeChoice["fallbackReason"] | null {
   if (!runtime || !pickRunner(runtime)) return "runtime-unavailable";
+  // Preserve this selected identity and let its marker failure explain storage
+  // access. A display catalog or cached quota cannot justify a silent swap.
+  if (isRuntimeCredentialUnavailable(runtime)) return null;
   const model = selection.model?.trim();
   const modelListIsAuthoritative = runtime.kind === "byok"
     || LOCAL_AUTHORITATIVE_MODEL_KINDS.has(runtime.kind)
@@ -417,11 +437,15 @@ export function rolePriorityRuntimes(
     exclude?: RuntimeStatus[];
   } = {},
 ): RuntimeStatus[] {
+  // Unavailable credential storage requires explicit recovery of the selected key.
+  // Do not turn its marker failure into a run on another provider.
+  if (isRuntimeCredentialUnavailable(options.failedRuntime)) return [];
   const ownMembers = listModelRoleMembers(role);
   const inherited = role === "worker" && ownMembers.length === 0;
   const members = inherited ? listModelRoleMembers("orchestrator") : ownMembers;
   const excluded = options.exclude ?? [];
   const blocked = (candidate: RuntimeStatus): boolean => {
+    if (isRuntimeCredentialUnavailable(candidate)) return true;
     if (excluded.some((item) => sameRuntimeIdentity(candidate, item))) return true;
     if (
       options.failedRuntime
@@ -585,6 +609,7 @@ export function selectRuntimeForTargets(
     }
 
     for (const candidate of runtimes) {
+      if (isRuntimeCredentialUnavailable(candidate)) continue;
       const active = { ...candidate, active: true };
       if (runtimeSelectionUnavailableReason(active, runtimeStatusSelection(active))) continue;
       if (
@@ -605,7 +630,10 @@ export function selectRuntimeForTargets(
     return null;
   }
 
-  const active = rolePriorityRuntimes(runtimes, role)[0] ?? pickActive(runtimes, role);
+  const savedActive = pickActive(runtimes, role);
+  const active = isRuntimeCredentialUnavailable(savedActive)
+    ? savedActive
+    : rolePriorityRuntimes(runtimes, role)[0] ?? savedActive;
   if (!active) return null;
   return {
     active,

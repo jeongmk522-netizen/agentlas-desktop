@@ -47,7 +47,12 @@ export interface WorkforceToolMenuEntry {
   description: string;
   inputSchemaDigest: string;
   runtimeIds: string[];
-  selectiveEnforcement: "exact-tool-allowlist" | "host-native";
+  /**
+   * The actual Main enforcement path available to this exact runtime group.
+   * `host-broker` is Main's measured in-process dispatch ledger; it is never
+   * presented as a provider-native policy acknowledgement.
+   */
+  selectiveEnforcement: "exact-tool-allowlist" | "host-native" | "host-broker";
   status: "ready";
 }
 
@@ -215,12 +220,15 @@ function exactRoster(
 function workforceRuntimeInventory(runtimes: RuntimeStatus[]): {
   /** Legacy exact-tool rows remain Claude-only. */
   legacyRuntimeIds: string[];
-  /** Host-authority rows may use the observed native Codex adapter. */
+  /** Host-authority rows may use an observed native Claude or Codex adapter. */
   hostNativeRuntimeIds: string[];
+  /** Host-authority rows may use Main's actual in-process tool dispatcher. */
+  hostBrokerRuntimeIds: string[];
   runtimeVersions: Record<string, string | null>;
 } {
   const legacyRuntimeIds: string[] = [];
   const hostNativeRuntimeIds: string[] = [];
+  const hostBrokerRuntimeIds: string[] = [];
   const runtimeVersions: Record<string, string | null> = {};
   runtimes.forEach((runtime, index) => {
     // Keep the planner's runtime-N coordinates tied to its original candidate
@@ -232,9 +240,27 @@ function workforceRuntimeInventory(runtimes: RuntimeStatus[]): {
       hostNativeRuntimeIds.push(runtimeId);
     } else if (runtime.kind === "codex") {
       hostNativeRuntimeIds.push(runtimeId);
+    } else if (
+      // A detected BYOK row without readable credentials cannot reach Main's
+      // brokered provider turn. Leave its coordinate intact for selection
+      // diagnostics, but never advertise it as a broker-capable binding.
+      (runtime.kind !== "byok" || runtime.credentialAccess?.status !== "unavailable") && (
+        runtime.kind === "ollama" ||
+        runtime.kind === "lmstudio" ||
+        runtime.kind === "mlx" ||
+        // Keep this exact backend set in lockstep with selection.ts. Every row
+        // below reaches prepareMainToolLoop and Main dispatches the admitted MCP
+        // or builtin tool itself; no ACP/native-provider policy is claimed.
+        (runtime.kind === "byok" && [
+          "anthropic", "openai", "google", "upstage", "custom", "glm",
+          "kimi", "deepseek", "minimax", "xai", "openrouter",
+        ].includes(runtime.backend))
+      )
+    ) {
+      hostBrokerRuntimeIds.push(runtimeId);
     }
   });
-  return { legacyRuntimeIds, hostNativeRuntimeIds, runtimeVersions };
+  return { legacyRuntimeIds, hostNativeRuntimeIds, hostBrokerRuntimeIds, runtimeVersions };
 }
 
 async function probeWithAbort(
@@ -276,7 +302,7 @@ export async function prepareWorkforceToolMenu(input: {
       ? ["read", "write", "full"].includes(input.hostPermission ?? "")
       : row.policy.mcp.mode === "allowlist" && (input.hostPermission === "write" || input.hostPermission === "full")
   ) && (isHostAuthorityPolicy(row.policy)
-    ? runtimeInventory.hostNativeRuntimeIds.length > 0
+    ? runtimeInventory.hostNativeRuntimeIds.length > 0 || runtimeInventory.hostBrokerRuntimeIds.length > 0
     : runtimeInventory.legacyRuntimeIds.length > 0
   ));
   if (toolRows.length === 0) {
@@ -340,10 +366,18 @@ export async function prepareWorkforceToolMenu(input: {
     // A package-ceiling row never acquires Codex eligibility merely because a
     // host row exists elsewhere in the roster. The choice is per exact
     // slot/release/policy row and remains visible to planner validation.
-    const runtimeIds = hostAuthority
-      ? runtimeInventory.hostNativeRuntimeIds
-      : runtimeInventory.legacyRuntimeIds;
-    if (runtimeIds.length === 0) continue;
+    // Keep each evidence mode on disjoint runtime IDs. A planner's exact
+    // runtimeId then selects either a native observation or Main's broker
+    // ledger; it cannot silently relabel broker dispatch as host-native.
+    const runtimeGroups: Array<{
+      runtimeIds: string[];
+      selectiveEnforcement: WorkforceToolMenuEntry["selectiveEnforcement"];
+    }> = hostAuthority
+      ? [
+        { runtimeIds: runtimeInventory.hostNativeRuntimeIds, selectiveEnforcement: "host-native" },
+        { runtimeIds: runtimeInventory.hostBrokerRuntimeIds, selectiveEnforcement: "host-broker" },
+      ]
+      : [{ runtimeIds: runtimeInventory.legacyRuntimeIds, selectiveEnforcement: "exact-tool-allowlist" }];
     const candidateTools = hostAuthority
       ? [...new Set([...statuses].flatMap(([key, status]) => status.tools.map((tool) => `mcp__${key}__${tool.name}`)))].sort()
       : row.policy.mcp.allowedTools;
@@ -358,20 +392,23 @@ export async function prepareWorkforceToolMenu(input: {
       const matches = status.tools.filter((tool) => tool.name === rawToolName);
       if (matches.length !== 1) continue;
       const tool = matches[0];
-      entries.push({
-        slotId: row.slotId,
-        agentReleaseId: row.agentReleaseId,
-        permissionPolicyDigest: row.policyDigest,
-        provider: "mcp",
-        toolId,
-        serverId: server.id,
-        serverConfigKey: key,
-        description: boundedDescription(tool.description),
-        inputSchemaDigest: workforcePortableDigest(tool.inputSchema ?? {}),
-        runtimeIds: [...runtimeIds],
-        selectiveEnforcement: hostAuthority ? "host-native" : "exact-tool-allowlist",
-        status: "ready",
-      });
+      for (const group of runtimeGroups) {
+        if (group.runtimeIds.length === 0) continue;
+        entries.push({
+          slotId: row.slotId,
+          agentReleaseId: row.agentReleaseId,
+          permissionPolicyDigest: row.policyDigest,
+          provider: "mcp",
+          toolId,
+          serverId: server.id,
+          serverConfigKey: key,
+          description: boundedDescription(tool.description),
+          inputSchemaDigest: workforcePortableDigest(tool.inputSchema ?? {}),
+          runtimeIds: [...group.runtimeIds],
+          selectiveEnforcement: group.selectiveEnforcement,
+          status: "ready",
+        });
+      }
     }
   }
   entries.sort((left, right) => workforcePortableCanonicalJson(left).localeCompare(workforcePortableCanonicalJson(right)));
@@ -439,7 +476,9 @@ function validatePlannerBindings(input: {
         entry.permissionPolicyDigest === row.policyDigest &&
         entry.provider === binding.provider &&
         entry.toolId === binding.toolId &&
-        entry.selectiveEnforcement === (isHostAuthorityPolicy(row.policy) ? "host-native" : "exact-tool-allowlist") &&
+        (isHostAuthorityPolicy(row.policy)
+          ? entry.selectiveEnforcement === "host-native" || entry.selectiveEnforcement === "host-broker"
+          : entry.selectiveEnforcement === "exact-tool-allowlist") &&
         entry.runtimeIds.includes(runtimeId)
       ));
       if (matches.length !== 1) throw new Error("workforce_capability_binding_not_in_exact_inventory");

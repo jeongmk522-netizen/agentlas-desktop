@@ -793,6 +793,10 @@ export interface RuntimeCommand {
 }
 
 export interface RuntimeStatus {
+  /** Credential access is separate from runtime/model discovery; absence has no runtime row. */
+  credentialAccess?:
+    | { status: "available" }
+    | { status: "unavailable"; errorCode: "keychain_unavailable" | "credential_read_failed" };
   kind: RuntimeKind;
   backend: RuntimeBackend;
   /** CLI 경로 또는 "byok:<backend>" 또는 "ollama" */

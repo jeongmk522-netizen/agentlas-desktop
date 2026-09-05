@@ -1,5 +1,208 @@
 import * as THREE from "../vendor/three.module.min.js";
 import { formatScienceCell } from "./format-cell.js";
+// Generated presentation-only snapshot of shared/agent-control-blocks.ts and
+// the marker constants/stripper in electron/hephaestus/loop-engineering.ts.
+// Regenerate from those canonical sources; never change raw receipts or hashes.
+const scienceChatPresentation = (() => {
+  const exports = {};
+  "use strict";
+  Object.defineProperty(exports, "__esModule", { value: true });
+  exports.STORMBREAKER_LONG_RUN_MARKER = exports.STORMBREAKER_CONTINUE_MARKER = exports.AGENT_GOAL_COMPLETE_PREFIX = exports.AGENT_SURFACE_INTENT_MARKER = exports.AGENT_MULTIMODAL_MARKER = exports.AGENT_SURFACE_CLOSE = exports.AGENT_SURFACE_OPEN = exports.AGENT_FOLLOWUPS_CLOSE = exports.AGENT_FOLLOWUPS_OPEN = exports.AGENT_ASK_CLOSE = exports.AGENT_ASK_OPEN = exports.AGENT_CONTROL_HEADINGS = void 0;
+  exports.stripAgentIdentityBadges = stripAgentIdentityBadges;
+  exports.stripAgentControlBlocks = stripAgentControlBlocks;
+  exports.stripOrphanCodeFences = stripOrphanCodeFences;
+  exports.trimIncompleteControlTail = trimIncompleteControlTail;
+  exports.trimIncompleteMarkerTail = trimIncompleteMarkerTail;
+  exports.stripStormbreakerContinueMarker = stripStormbreakerContinueMarker;
+  exports.AGENT_CONTROL_HEADINGS = [
+      "## Memory Events",
+      "## Delegate",
+      "## Automation",
+  ];
+  exports.AGENT_ASK_OPEN = "<<agentlas-ask>>";
+  exports.AGENT_ASK_CLOSE = "<</agentlas-ask>>";
+  exports.AGENT_FOLLOWUPS_OPEN = "<<agentlas-one-followups>>";
+  exports.AGENT_FOLLOWUPS_CLOSE = "<</agentlas-one-followups>>";
+  exports.AGENT_SURFACE_OPEN = "<<agentlas-surface>>";
+  exports.AGENT_SURFACE_CLOSE = "<</agentlas-surface>>";
+  exports.AGENT_MULTIMODAL_MARKER = "<<agentlas-multimodal-setup>>";
+  exports.AGENT_SURFACE_INTENT_MARKER = "<<surface-intent>>";
+  exports.AGENT_GOAL_COMPLETE_PREFIX = "<<agentlas-goal-complete";
+  const IDENTITY_BADGE = /(^|\s)(?:\*\*)?\[\s*(?:[A-Z][A-Za-z .'-]{0,31}|[\u3131-\u318e\uac00-\ud7a3]{1,16})\s*\](?:\*\*)?(?=\s|$)/gu;
+  function stripAgentIdentityBadges(value) {
+      return value.replace(IDENTITY_BADGE, (match, prefix, offset, source) => {
+          const after = source.charAt(offset + match.length);
+          return (prefix === " " || prefix === "\t") && (after === " " || after === "\t") ? "" : prefix;
+      }).trim();
+  }
+  const PAIRED_BLOCKS = [
+      { probe: "<<agentlas-one-followups", open: exports.AGENT_FOLLOWUPS_OPEN, close: exports.AGENT_FOLLOWUPS_CLOSE },
+      { probe: "<<agentlas-ask", open: exports.AGENT_ASK_OPEN, close: exports.AGENT_ASK_CLOSE },
+      { probe: "<<agentlas-surface", open: exports.AGENT_SURFACE_OPEN, close: exports.AGENT_SURFACE_CLOSE },
+  ];
+  const GOAL_COMPLETE_RE = /<<agentlas-goal-complete(?::[\s\S]*?)?>>/g;
+  const FENCE_RE = /```(?:json)?\s*[\s\S]*?```/;
+  const TAIL_TOKENS = [
+      ...exports.AGENT_CONTROL_HEADINGS,
+      exports.AGENT_ASK_OPEN,
+      exports.AGENT_FOLLOWUPS_OPEN,
+      exports.AGENT_SURFACE_OPEN,
+      exports.AGENT_MULTIMODAL_MARKER,
+      exports.AGENT_SURFACE_INTENT_MARKER,
+      exports.AGENT_GOAL_COMPLETE_PREFIX,
+  ];
+  const BARE_MARKERS = [exports.AGENT_MULTIMODAL_MARKER, exports.AGENT_SURFACE_INTENT_MARKER];
+  const MIN_PARTIAL_TAIL = 4;
+  const DANGLING_HEADING_DROPS_TAIL = new Set([
+      "## Memory Events",
+  ]);
+  function headingHit(value, heading) {
+      const start = value.indexOf(heading);
+      if (start < 0)
+          return null;
+      const after = value.slice(start + heading.length);
+      const fence = after.match(FENCE_RE);
+      if (fence && fence.index != null) {
+          return { index: start, cutTo: start + heading.length + fence.index + fence[0].length };
+      }
+      return {
+          index: start,
+          cutTo: DANGLING_HEADING_DROPS_TAIL.has(heading) ? value.length : start + heading.length,
+      };
+  }
+  function pairedHit(value, block) {
+      const start = value.indexOf(block.probe);
+      if (start < 0)
+          return null;
+      if (!value.startsWith(block.open, start))
+          return { index: start, cutTo: value.length };
+      const end = value.indexOf(block.close, start + block.open.length);
+      return end < 0
+          ? { index: start, cutTo: value.length }
+          : { index: start, cutTo: end + block.close.length };
+  }
+  function stripAgentControlBlocks(value, options) {
+      let visible = value.replace(GOAL_COMPLETE_RE, "");
+      for (const marker of BARE_MARKERS)
+          visible = visible.split(marker).join("");
+      for (let guard = 0; guard < 64; guard += 1) {
+          let best = null;
+          for (const heading of exports.AGENT_CONTROL_HEADINGS) {
+              const hit = headingHit(visible, heading);
+              if (hit && (best === null || hit.index < best.index))
+                  best = hit;
+          }
+          for (const block of PAIRED_BLOCKS) {
+              const hit = pairedHit(visible, block);
+              if (hit && (best === null || hit.index < best.index))
+                  best = hit;
+          }
+          if (best === null)
+              break;
+          const next = visible.slice(0, best.index) + visible.slice(best.cutTo);
+          if (next === visible)
+              break;
+          visible = next;
+      }
+      visible = visible
+          .split(exports.AGENT_ASK_CLOSE)
+          .join("")
+          .split(exports.AGENT_FOLLOWUPS_CLOSE)
+          .join("")
+          .split(exports.AGENT_SURFACE_CLOSE)
+          .join("");
+      visible = failClosedOnRemainingControlToken(visible);
+      visible = stripTrailingMemoryTicketEnvelope(visible);
+      visible = options?.streaming ? trimIncompleteControlTail(visible) : trimIncompleteMarkerTail(visible);
+      visible = stripOrphanCodeFences(visible);
+      return visible.replace(/\n{3,}/g, "\n\n").trim();
+  }
+  const FENCE_LINE_RE = /^[ \t]*```[A-Za-z0-9_+.-]*[ \t]*$/;
+  const CLOSING_FENCE_LINE_RE = /^[ \t]*```[ \t]*$/;
+  function stripOrphanCodeFences(value) {
+      const lines = value.split("\n");
+      const out = [];
+      let index = 0;
+      while (index < lines.length) {
+          const line = lines[index];
+          if (!FENCE_LINE_RE.test(line)) {
+              out.push(line);
+              index += 1;
+              continue;
+          }
+          let close = index + 1;
+          while (close < lines.length && !CLOSING_FENCE_LINE_RE.test(lines[close]))
+              close += 1;
+          const bodyIsBlank = lines.slice(index + 1, close).every((body) => body.trim() === "");
+          if (close >= lines.length) {
+              if (!bodyIsBlank)
+                  out.push(...lines.slice(index));
+              break;
+          }
+          if (!bodyIsBlank)
+              out.push(...lines.slice(index, close + 1));
+          index = close + 1;
+      }
+      return out.join("\n");
+  }
+  function failClosedOnRemainingControlToken(value) {
+      let cut = value.length;
+      for (const token of TAIL_TOKENS) {
+          const index = value.indexOf(token);
+          if (index >= 0 && index < cut)
+              cut = index;
+      }
+      return cut === value.length ? value : value.slice(0, cut);
+  }
+  const TAIL_JSON_FENCE_RE = /(?:^|\n)```json\s*([\s\S]*?)```\s*$/i;
+  function stripTrailingMemoryTicketEnvelope(value) {
+      const match = value.match(TAIL_JSON_FENCE_RE);
+      if (!match || match.index == null)
+          return value;
+      try {
+          const data = JSON.parse(match[1].trim());
+          if (data?.schema_version === "agentlas.memory-ticket.v1" && Array.isArray(data.candidates)) {
+              return value.slice(0, match.index);
+          }
+      }
+      catch {
+      }
+      return value;
+  }
+  function trimIncompleteControlTail(value) {
+      return trimIncompleteTail(value, TAIL_TOKENS);
+  }
+  function trimIncompleteMarkerTail(value) {
+      return trimIncompleteTail(value, TAIL_TOKENS.filter((token) => token.startsWith("<<")));
+  }
+  function trimIncompleteTail(value, tokens) {
+      let cut = value.length;
+      for (const token of tokens) {
+          for (let length = Math.min(token.length - 1, value.length); length >= MIN_PARTIAL_TAIL; length -= 1) {
+              if (value.endsWith(token.slice(0, length))) {
+                  cut = Math.min(cut, value.length - length);
+                  break;
+              }
+          }
+      }
+      return cut === value.length ? value : value.slice(0, cut);
+  }
+  exports.STORMBREAKER_CONTINUE_MARKER = "<<stormbreaker-continue>>";
+  exports.STORMBREAKER_LONG_RUN_MARKER = "<<stormbreaker-long-run>>";
+  function stripStormbreakerContinueMarker(text) {
+      const escaped = exports.STORMBREAKER_CONTINUE_MARKER.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      const trimmed = text.trimEnd();
+      const tail = trimmed.split("\n").slice(-3).join("\n");
+      const shouldContinue = new RegExp(escaped).test(tail);
+      const cleaned = trimmed
+          .replace(new RegExp(`[ \\t]*${escaped}[ \\t]*`, "g"), "")
+          .replace(/\n{3,}/g, "\n\n")
+          .trim();
+      return { text: cleaned, shouldContinue };
+  }
+  return exports;
+})();
+const { stripAgentControlBlocks, stripStormbreakerContinueMarker, STORMBREAKER_CONTINUE_MARKER, STORMBREAKER_LONG_RUN_MARKER } = scienceChatPresentation;
 
 (() => {
   "use strict";
@@ -49,6 +252,7 @@ import { formatScienceCell } from "./format-cell.js";
   };
   let selectionEpoch = 0;
   let scopeLoadEpoch = 0;
+  let composerRequestEpoch = 0;
   let compareEpoch = 0;
   let workspacePersistChain = Promise.resolve();
   let workspacePersistError = null;
@@ -756,6 +960,7 @@ import { formatScienceCell } from "./format-cell.js";
       science.runs.list(projectId),
     ]);
     if (projectId !== state.selectedId || conversation.id !== selectedConversation()?.id) return;
+    if (attached?.turn && attached.turn.id === state.activeTurn?.id && attached.turn.lastSequence < state.activeTurn.lastSequence) return;
     state.messages = safeMessages;
     state.chatMessagesScope = JSON.stringify([projectId, conversation.id]);
     state.artifactContextsByMessage = new Map(messageArtifactRows.map(([messageId, contexts]) => [messageId, Array.isArray(contexts) ? contexts : []]));
@@ -4638,6 +4843,8 @@ import { formatScienceCell } from "./format-cell.js";
   async function openConversation(conversationId) {
     const conversation = state.conversations.find((item) => item.id === conversationId);
     if (!conversation || !state.selectedId) return;
+    composerRequestEpoch += 1;
+    state.composerSending = false;
     state.selectedConversationId = conversation.id;
     state.chatMessagesScope = null;
     state.activeTurn = null;
@@ -5473,11 +5680,35 @@ import { formatScienceCell } from "./format-cell.js";
     return `<section class="manuscriptDraftJobCard" data-manuscript-draft-status="${escapeHtml(job.status)}"><span>${heroIcon("book")}</span><div><strong>${escapeHtml(label)}</strong><p>${escapeHtml(detail)}</p></div></section>`;
   }
 
+  function scienceLiveResponseText(raw) {
+    let visible = stripStormbreakerContinueMarker(String(raw || "")).text.split(STORMBREAKER_LONG_RUN_MARKER).join("");
+    // The host owns the full marker constants. Hide unfinished streaming tails
+    // without changing the raw receipt or its hash.
+    for (const marker of [STORMBREAKER_CONTINUE_MARKER, STORMBREAKER_LONG_RUN_MARKER]) {
+      for (let length = marker.length - 1; length >= 4; length -= 1) {
+        if (visible.endsWith(marker.slice(0, length))) { visible = visible.slice(0, -length); break; }
+      }
+    }
+    return stripAgentControlBlocks(visible, { streaming: true });
+  }
+
+  function liveChatResponseMarkup() {
+    const turn = state.activeTurn;
+    if (!turn || turn.projectId !== state.selectedId || turn.conversationId !== selectedConversation()?.id
+      || !["queued", "running", "cancelling"].includes(turn.status) || !String(turn.partialText || "").trim()) return "";
+    // Receipt-backed progress is not a durable assistant message or a completed
+    // artifact. Keep it separate from message/citation bindings and scroll IDs.
+    if (turn.assistantMessageId && state.messages.some((message) => message.id === turn.assistantMessageId)) return "";
+    const visible = scienceLiveResponseText(turn.partialText);
+    if (!visible) return "";
+    return `<article class="chatMessage isAssistant" data-chat-turn-id="${escapeHtml(turn.id)}"><div class="chatMessageRole">Agentlas Science · ${uiCopy("응답 작성 중", "Response in progress")}</div><div class="chatMessageContent">${escapeHtml(visible)}</div></article>`;
+  }
+
   function chatThreadMarkup() {
     if (!chatMessagesReady()) return `<div class="chatDockEmpty" role="status">${uiCopy("대화를 불러오는 중…", "Loading conversation…")}</div>`;
     const messages = state.messages.length ? state.messages.map(compactChatMessage).join("") : `<div class="chatDockEmpty">This project conversation continues here.</div>`;
     const failure = state.mode !== "session" || state.currentDestination !== "overview" ? runFailureNotice() : "";
-    return `${messages}${failure}${manuscriptDraftJobMarkup()}${manuscriptProposalCardsMarkup()}`;
+    return `${messages}${liveChatResponseMarkup()}${failure}${manuscriptDraftJobMarkup()}${manuscriptProposalCardsMarkup()}`;
   }
 
   function manuscriptDraftJobPrompt(job) {
@@ -5650,10 +5881,65 @@ import { formatScienceCell } from "./format-cell.js";
     render();
   }
 
+  function applyStartedComposerReceipt(started, projectId, conversationId) {
+    const turn = started?.turn;
+    const message = started?.userMessage;
+    if (!turn || !message || turn.projectId !== projectId || turn.conversationId !== conversationId
+      || message.projectId !== projectId || message.conversationId !== conversationId
+      || turn.userMessageId !== message.id || message.role !== "user" || message.visibility !== "visible") {
+      throw new Error("science-composer-start-receipt-invalid");
+    }
+    // This is the committed message returned by Main, never optimistic user text.
+    state.messages = [...state.messages.filter((item) => item.id !== message.id), message]
+      .sort((left, right) => left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id));
+    state.activeTurn = turn;
+  }
+
   async function startComposerTurn(options = {}) {
     const project = selectedProject();
     const conversation = selectedConversation();
     if (!project || !conversation || state.composerSending || !chatMessagesReady()) return;
+    const requestEpoch = ++composerRequestEpoch;
+    const projectEpoch = selectionEpoch;
+    const isCurrent = () => requestEpoch === composerRequestEpoch && projectEpoch === selectionEpoch
+      && project.id === state.selectedId && conversation.id === selectedConversation()?.id;
+    let requestId = crypto.randomUUID();
+    let startInput = null;
+    const recoverFailure = async (reason) => {
+      if (!isCurrent()) return;
+      let recoveredReceiptTurn = null;
+      // A controller continuation can become the latest turn before this IPC
+      // response arrives. Replay the exact idempotency key, not a guessed latest
+      // turn, to recover the user's own committed request.
+      if (startInput) {
+        try {
+          const replayed = await science.composer.start(startInput);
+          if (!isCurrent()) return;
+          applyStartedComposerReceipt(replayed, project.id, conversation.id);
+          recoveredReceiptTurn = replayed.turn;
+        } catch {}
+      }
+      // Main may have committed a message/turn before dispatch or IPC failed.
+      // Recover it from the store instead of pretending the send never happened.
+      try { await refreshConversationOnly(project.id); } catch {}
+      if (!isCurrent()) return;
+      // The first refresh may have read messages/turn before dispatch settled
+      // while the remaining projections were still loading. Reattach after it
+      // so a dropped event during that window cannot leave a stale running UI.
+      try {
+        const attached = await science.composer.attach({ projectId: project.id, conversationId: conversation.id });
+        if (!isCurrent()) return;
+        if (attached?.turn?.requestId === requestId) {
+          if (state.activeTurn?.id !== attached.turn.id || attached.turn.lastSequence >= state.activeTurn.lastSequence) state.activeTurn = attached.turn;
+          if (["completed", "failed", "cancelled", "interrupted"].includes(state.activeTurn.status)) await refreshConversationOnly(project.id);
+        }
+      } catch {}
+      if (!isCurrent()) return;
+      state.composerSending = false;
+      const recovered = recoveredReceiptTurn || (state.activeTurn?.requestId === requestId ? state.activeTurn : null);
+      if (recovered) state.composerDraft = "";
+      recordRunFailure(recovered ? composerTurnError(recovered) : reason);
+    };
     const needsInitialRun = !options.forceAppend && state.messages.length === 1 && state.messages[0].role === "user" && !state.messages.some((message) => message.role === "assistant");
     const content = state.composerDraft.trim();
     const selectionContext = !needsInitialRun && state.mode === "manuscript" ? state.manuscriptSelectionContext : null;
@@ -5663,15 +5949,17 @@ import { formatScienceCell } from "./format-cell.js";
     state.composerError = "";
     renderChatDock();
     try {
-      const started = await science.composer.start({
-        requestId: crypto.randomUUID(),
+      startInput = {
+        requestId,
         projectId: project.id,
         conversationId: conversation.id,
         ...(needsInitialRun
           ? { mode: "existing-user-message", userMessageId: state.messages[0].id }
           : { mode: "append-user-message", content: runtimeContent }),
-      });
-      state.activeTurn = started.turn;
+      };
+      const started = await science.composer.start(startInput);
+      if (!isCurrent()) return;
+      applyStartedComposerReceipt(started, project.id, conversation.id);
       if (!needsInitialRun) state.composerDraft = "";
       state.composerSending = false;
       if (["completed", "failed", "cancelled", "interrupted"].includes(started.turn.status)) {
@@ -5681,6 +5969,7 @@ import { formatScienceCell } from "./format-cell.js";
       }
       renderChatDock();
     } catch (error) {
+      if (!isCurrent()) return;
       // A first question whose turn DIED has to be askable again. The record keeps one turn per
       // message, so re-running that message is refused -- and "Run first question" is the only
       // control a study that never started offers, so the study could not begin at all and nothing
@@ -5693,14 +5982,17 @@ import { formatScienceCell } from "./format-cell.js";
       const refusedAsUsed = String(error?.message ?? error).includes("science-user-message-already-used");
       if (refusedAsUsed && needsInitialRun && state.messages[0]?.content) {
         try {
-          const retried = await science.composer.start({
-            requestId: crypto.randomUUID(),
+          requestId = crypto.randomUUID();
+          startInput = {
+            requestId,
             projectId: project.id,
             conversationId: conversation.id,
             mode: "append-user-message",
             content: state.messages[0].content,
-          });
-          state.activeTurn = retried.turn;
+          };
+          const retried = await science.composer.start(startInput);
+          if (!isCurrent()) return;
+          applyStartedComposerReceipt(retried, project.id, conversation.id);
           state.composerSending = false;
           if (["completed", "failed", "cancelled", "interrupted"].includes(retried.turn.status)) {
             if (state.mode === "lab") await refreshConversationOnly(project.id);
@@ -5710,13 +6002,11 @@ import { formatScienceCell } from "./format-cell.js";
           renderChatDock();
           return;
         } catch (retryError) {
-          state.composerSending = false;
-          recordRunFailure(retryError);
+          await recoverFailure(retryError);
           return;
         }
       }
-      state.composerSending = false;
-      recordRunFailure(error);
+      await recoverFailure(error);
     }
   }
 
@@ -9620,7 +9910,8 @@ import { formatScienceCell } from "./format-cell.js";
     if (science.composer?.onEvent && !state.composerEventDispose) state.composerEventDispose = science.composer.onEvent((event) => {
       if (!event || event.projectId !== state.selectedId || event.conversationId !== selectedConversation()?.id || !state.activeTurn || event.turnId !== state.activeTurn.id) return;
       void science.composer.receipt({ projectId: event.projectId, conversationId: event.conversationId, turnId: event.turnId }).then((turn) => {
-        if (!turn || turn.id !== state.activeTurn?.id) return;
+        if (!turn || turn.id !== state.activeTurn?.id || turn.projectId !== state.selectedId
+          || turn.conversationId !== selectedConversation()?.id || turn.lastSequence < state.activeTurn.lastSequence) return;
         state.activeTurn = turn;
         if (["completed", "failed", "cancelled", "interrupted"].includes(turn.status)) {
           const projectId = state.selectedId;
@@ -9636,6 +9927,8 @@ import { formatScienceCell } from "./format-cell.js";
         }
         renderChatDock();
       }).catch((error) => {
+        if (event.projectId !== state.selectedId || event.conversationId !== selectedConversation()?.id
+          || event.turnId !== state.activeTurn?.id || event.sequence <= state.activeTurn.lastSequence) return;
         recordRunFailure(error);
       });
     });

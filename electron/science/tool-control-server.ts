@@ -2664,6 +2664,7 @@ export function dataTableShape(payload: unknown): { columns: Array<{ name: strin
     || record.columns.length < 1 || record.columns.length > 512 || !Array.isArray(record.rows)) return null;
   const columns = record.columns as Array<Record<string, unknown>>;
   const rows = record.rows as unknown[];
+  if (columns.some((column) => !column || typeof column !== "object" || Array.isArray(column))) return null;
   const domainShape = columns.some((column) => column?.id !== undefined) || rows.some(Array.isArray);
   if (domainShape) {
     const normalized = columns.map((column, index) => {

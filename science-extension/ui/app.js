@@ -640,7 +640,14 @@ function createComposerEventSync({
     ready: "실행 준비됨",
     "review-needed": "결과 검토 필요",
   };
+  const labDecisionStateLabelsEn = {
+    "input-needed": "Input required",
+    "human-decision-needed": "Researcher decision required",
+    ready: "Ready to run",
+    "review-needed": "Result review required",
+  };
   const labDecisionFreshnessLabels = { current: "현재 근거", stale: "근거 변경됨", superseded: "새 실험으로 대체됨" };
+  const labDecisionFreshnessLabelsEn = { current: "Current evidence", stale: "Evidence changed", superseded: "Superseded by a new experiment" };
   const labDecisionActionLabels = {
     "open-required-input": "필요 입력 준비",
     "answer-human-decision": "연구 방향 결정",
@@ -650,13 +657,28 @@ function createComposerEventSync({
     "refresh-stale-projection": "현재 근거 다시 확인",
     "open-superseding-context": "최신 실험 열기",
   };
+  const labDecisionActionLabelsEn = {
+    "open-required-input": "Prepare required inputs",
+    "answer-human-decision": "Choose research direction",
+    "inspect-approved-plan": "Open approved plan",
+    "review-result": "Review result and choose next action",
+    "follow-intent-next-action": "Next research action",
+    "refresh-stale-projection": "Refresh current evidence",
+    "open-superseding-context": "Open latest experiment",
+  };
 
   function labDecisionPanelMarkup(projection = labDecisionProjection(), { showAction = true } = {}) {
     if (!projection) return "";
     const mustSee = Array.isArray(projection.mustSee) ? projection.mustSee.slice(0, 3) : [];
     const actionEnabled = projection.action?.enabled === true && !state.labDecisionActionBusy;
     const expanded = state.expandedLabDecisions.has(projection.labId);
-    return `<section class="labDecisionPanel" data-lab-decision-projection="${escapeHtml(projection.projectionSha256)}" data-lab-decision-state="${escapeHtml(projection.state)}" data-lab-decision-freshness="${escapeHtml(projection.freshness?.status)}" data-expanded="${expanded}"><header><div><span>WHY THIS LAB NOW</span><strong>${escapeHtml(projection.currentDecision)}</strong></div><div class="labDecisionHeaderActions"><div class="labDecisionStatus"><span class="progressGlyph" data-fill="${{"input-needed":"0","human-decision-needed":"33","ready":"66","result-review-needed":"100"}[projection.state] || "0"}" aria-hidden="true"></span><em>${escapeHtml(labDecisionStateLabels[projection.state] || projection.state)}</em><span>${escapeHtml(labDecisionFreshnessLabels[projection.freshness?.status] || projection.freshness?.status)}</span></div><button type="button" data-action="toggle-lab-decision-details" data-lab-id="${escapeHtml(projection.labId)}" aria-expanded="${expanded}">${expanded ? "판단 기준 접기" : "판단 기준 보기"}</button></div></header><div class="labDecisionBody"><section><span>이 분석이 필요한 때</span><p>${escapeHtml(projection.researchIntent?.neededWhen || projection.action?.reason || "현재 프로젝트 결정을 위해 이 Lab의 근거가 필요합니다.")}</p><span class="labDecisionSubquestion">연구자가 이걸로 하려는 일</span><p>${escapeHtml(projection.researchIntent?.userGoal || projection.currentDecision)}</p></section><section><span>반드시 확인할 것</span><ol>${mustSee.map((item) => `<li>${escapeHtml(item.requirement)}</li>`).join("")}</ol></section><section class="labDecisionBoundary boundaryNote"><span>이 분석을 쓰면 안 되는 때</span><p>${escapeHtml(projection.researchIntent?.notWhen || projection.boundary)}</p><span class="labDecisionSubquestion">이 화면만으로 말할 수 없는 것</span><p>${escapeHtml(projection.boundary)}</p></section></div><footer><span>${escapeHtml(projection.action?.reason || "")} · Project v${escapeHtml(projection.basis?.project?.version || "-")} · <code title="${escapeHtml(projection.basis?.basisSha256 || "")}">${escapeHtml(String(projection.basis?.basisSha256 || "").slice(0, 12))}…</code></span>${showAction ? `<button type="button" data-action="lab-decision-primary" data-lab-decision-sha256="${escapeHtml(projection.projectionSha256)}" ${actionEnabled ? "" : "disabled"}>${escapeHtml(state.labDecisionActionBusy ? "현재 근거 확인 중…" : labDecisionActionLabels[projection.action?.kind] || projection.action?.action || "다음 동작")}</button>` : `<span class="labDecisionActionHint">아래의 한 동작으로 이어집니다.</span>`}</footer>${state.labDecisionActionError ? `<p class="labDecisionError" role="alert">${escapeHtml(state.labDecisionActionError)}</p>` : ""}</section>`;
+    const detailsId = `lab-decision-details-${projection.labId}`;
+    const compactDecision = uiCopy(
+      `${labLabel(projection.labId)}의 다음 연구 판단`,
+      `${labLabel(projection.labId)}: next research decision`,
+    );
+    const fullQuestion = projection.researchIntent?.userGoal || projection.currentDecision;
+    return `<section class="labDecisionPanel" data-lab-decision-projection="${escapeHtml(projection.projectionSha256)}" data-lab-decision-state="${escapeHtml(projection.state)}" data-lab-decision-freshness="${escapeHtml(projection.freshness?.status)}" data-expanded="${expanded}"><header><div><span>WHY THIS LAB NOW</span><strong>${escapeHtml(compactDecision)}</strong></div><div class="labDecisionHeaderActions"><div class="labDecisionStatus"><span class="progressGlyph" data-fill="${{"input-needed":"0","human-decision-needed":"33","ready":"66","result-review-needed":"100"}[projection.state] || "0"}" aria-hidden="true"></span><em>${escapeHtml(uiCopy(labDecisionStateLabels[projection.state], labDecisionStateLabelsEn[projection.state]) || projection.state)}</em><span>${escapeHtml(uiCopy(labDecisionFreshnessLabels[projection.freshness?.status], labDecisionFreshnessLabelsEn[projection.freshness?.status]) || projection.freshness?.status)}</span></div><button type="button" data-action="toggle-lab-decision-details" data-lab-id="${escapeHtml(projection.labId)}" aria-expanded="${expanded}" aria-controls="${escapeHtml(detailsId)}">${expanded ? uiCopy("전체 연구 질문 숨기기", "Hide full research question") : uiCopy("전체 연구 질문 보기", "View full research question")}</button></div></header><div class="labDecisionBody" id="${escapeHtml(detailsId)}"><section><span>${uiCopy("전체 연구 질문", "FULL RESEARCH QUESTION")}</span><p>${escapeHtml(fullQuestion)}</p>${projection.currentDecision !== fullQuestion ? `<span class="labDecisionSubquestion">${uiCopy("현재 판단 질문", "CURRENT DECISION")}</span><p>${escapeHtml(projection.currentDecision)}</p>` : ""}<span class="labDecisionSubquestion">${uiCopy("이 분석이 필요한 때", "WHEN THIS ANALYSIS IS NEEDED")}</span><p>${escapeHtml(projection.researchIntent?.neededWhen || projection.action?.reason || uiCopy("현재 프로젝트 결정을 위해 이 Lab의 근거가 필요합니다.", "This Lab's evidence is needed for the current project decision."))}</p></section><section><span>${uiCopy("반드시 확인할 것", "MUST VERIFY")}</span><ol>${mustSee.map((item) => `<li>${escapeHtml(item.requirement)}</li>`).join("")}</ol></section><section class="labDecisionBoundary boundaryNote"><span>${uiCopy("이 분석을 쓰면 안 되는 때", "DO NOT USE THIS ANALYSIS WHEN")}</span><p>${escapeHtml(projection.researchIntent?.notWhen || projection.boundary)}</p><span class="labDecisionSubquestion">${uiCopy("이 화면만으로 말할 수 없는 것", "WHAT THIS VIEW CANNOT ESTABLISH")}</span><p>${escapeHtml(projection.boundary)}</p></section></div><footer><span>${escapeHtml(projection.action?.reason || "")} · Project v${escapeHtml(projection.basis?.project?.version || "-")} · <code title="${escapeHtml(projection.basis?.basisSha256 || "")}">${escapeHtml(String(projection.basis?.basisSha256 || "").slice(0, 12))}…</code></span>${showAction ? `<button type="button" data-action="lab-decision-primary" data-lab-decision-sha256="${escapeHtml(projection.projectionSha256)}" ${actionEnabled ? "" : "disabled"}>${escapeHtml(state.labDecisionActionBusy ? uiCopy("현재 근거 확인 중…", "Checking current evidence…") : uiCopy(labDecisionActionLabels[projection.action?.kind], labDecisionActionLabelsEn[projection.action?.kind]) || projection.action?.action || uiCopy("다음 동작", "Next action"))}</button>` : `<span class="labDecisionActionHint">${uiCopy("아래의 한 동작으로 이어집니다.", "Continue with one of the actions below.")}</span>`}</footer>${state.labDecisionActionError ? `<p class="labDecisionError" role="alert">${escapeHtml(state.labDecisionActionError)}</p>` : ""}</section>`;
   }
   const labDecisionEmptyMarkup = (content) => {
     const projection = labDecisionProjection();
@@ -5976,11 +5998,11 @@ function createComposerEventSync({
       || (artifact.version.rendererId === "agentlas.d3-sky" && skyView === "astronomy-distance");
     const decisionPanel = labDecisionPanelMarkup();
     const chartPriority = Boolean(economicPayload && !inspectingHistory);
-    return `<section class="artifactWorkspace ${state.historyOpen ? "historyOpen" : ""} ${state.artifactComparison ? "compareOpen" : ""} ${spatialArtifact ? "spatialArtifact" : ""} ${spatial3dOpen ? "spatial3dOpen" : ""}" data-chart-priority="${chartPriority}"><header class="labWorkspaceHeader visuallyHidden"><span>${escapeHtml(labCapabilityLabel(state.selectedLabId))}</span><strong>아티팩트 보관소 · 작업공간</strong><span class="originVersion">${capability}</span><button data-action="back-session">${state.returnMessageId ? "대화의 아티팩트로" : "세션으로 돌아가기"}</button></header>${tabs ? `<nav class="artifactTabs" data-count="${escapeHtml(labArtifacts.length)}" aria-label="Lab 아티팩트">${tabs}</nav>` : ""}${originStrip}${statisticsLineage}${paleontologyLineage}${chartPriority ? "" : decisionPanel}<div class="labWorkGrid"><div class="figureColumn">
+    return `<section class="artifactWorkspace ${state.historyOpen ? "historyOpen" : ""} ${state.artifactComparison ? "compareOpen" : ""} ${spatialArtifact ? "spatialArtifact" : ""} ${spatial3dOpen ? "spatial3dOpen" : ""}" data-chart-priority="${chartPriority}"><header class="labWorkspaceHeader visuallyHidden"><span>${escapeHtml(labCapabilityLabel(state.selectedLabId))}</span><strong>아티팩트 보관소 · 작업공간</strong><span class="originVersion">${capability}</span><button data-action="back-session">${state.returnMessageId ? "대화의 아티팩트로" : "세션으로 돌아가기"}</button></header>${tabs ? `<nav class="artifactTabs" data-count="${escapeHtml(labArtifacts.length)}" aria-label="Lab 아티팩트">${tabs}</nav>` : ""}${originStrip}${statisticsLineage}${paleontologyLineage}<div class="labWorkGrid"><div class="figureColumn">
       ${canvas}
       <section class="artifactInterpretation"><div><div class="researchKicker">${inspectingHistory ? "과거 버전 의미 기록" : "Semantic layer"}</div><h2>${escapeHtml(activeVersion?.semantic?.title || (inspectingHistory ? `v${state.inspectedArtifactVersion} 기록을 불러오는 중…` : artifact.title))}</h2><p>${escapeHtml(activeVersion?.semantic?.summary || (inspectingHistory ? "현재 버전 정보로 대체하지 않고, 선택한 과거 버전의 검증이 끝날 때까지 기다립니다." : ""))}</p></div>${observations ? `<dl class="observationGrid">${observations}</dl>` : ""}</section>
       <div data-artifact-compare-host>${artifactCompareMarkup(artifact, history)}</div>
-    </div><aside class="versionRail" data-version-timeline aria-label="아티팩트 버전 기록"><header><span>버전 기록</span><div><strong>${escapeHtml(artifact.currentVersion)}개</strong><button data-action="open-compare" ${historyEntries.length < 2 ? "disabled" : ""}>비교</button></div></header><div class="versionRows">${timeline}</div><footer>저장된 버전만 기록됩니다. 과거 버전은 읽기 전용입니다.</footer></aside></div>${chartPriority ? decisionPanel : ""}</section>`;
+    </div><aside class="versionRail" data-version-timeline aria-label="아티팩트 버전 기록"><header><span>버전 기록</span><div><strong>${escapeHtml(artifact.currentVersion)}개</strong><button data-action="open-compare" ${historyEntries.length < 2 ? "disabled" : ""}>비교</button></div></header><div class="versionRows">${timeline}</div><footer>저장된 버전만 기록됩니다. 과거 버전은 읽기 전용입니다.</footer></aside></div>${decisionPanel}</section>`;
   }
 
   function errorState() {
@@ -6326,12 +6348,11 @@ function createComposerEventSync({
       const label = node?.kind === "heading" ? node.text : node?.kind ? `${node.kind[0].toUpperCase()}${node.kind.slice(1)} block` : "Manuscript selection";
       return `<div class="chatContextTokens manuscriptChatContext" aria-label="Pinned manuscript selection"><span title="${escapeHtml(context.selectedText)}">${heroIcon("book")}<strong>${escapeHtml(label)}</strong><em>“${escapeHtml(context.selectedText.slice(0, 86))}${context.selectedText.length > 86 ? "…" : ""}”</em><button data-action="clear-manuscript-selection" aria-label="Remove pinned manuscript selection">×</button></span></div>`;
     }
-    if (state.mode !== "lab" || !state.selectedLabId) return "";
-    const contexts = state.labContextsById.get(state.selectedLabId) || [];
-    const context = contexts.find((item) => item.artifact.id === state.selectedArtifactId) || contexts[0];
-    if (!context?.artifact) return "";
-    const artifact = context.artifact;
-    return `<div class="chatContextTokens" aria-label="현재 연구 채팅 컨텍스트"><span title="${escapeHtml(artifact.title)}">${heroIcon("book")}<strong>${escapeHtml(artifact.title)}</strong><em>v${escapeHtml(artifact.currentVersion)}</em></span><span>${heroIcon(labIcons[state.selectedLabId] || "grid")}<strong>${escapeHtml(labLabel(state.selectedLabId))}</strong></span></div>`;
+    // Lab and artifact context is already implicit in the active workspace tab. Repeating it as
+    // fixed chips above the composer competes with the result and looks like a user attachment.
+    // Keep only the removable manuscript-selection token above, because that one is explicitly
+    // pinned by the researcher and changes the next request.
+    return "";
   }
 
   function chatDockComposerMarkup() {

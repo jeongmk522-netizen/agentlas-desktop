@@ -74,6 +74,13 @@ assert.equal(actualTablePayload(badRow).cause, "science-data-table-domain-row-in
 const badCell = structuredClone(domainPayload);
 badCell.rows[0][1] = "9031";
 assert.equal(actualTablePayload(badCell).cause, "science-data-table-domain-cell-invalid");
+const malformedCanonicalColumn = {
+  schema: "agentlas.science-table/v1",
+  columns: [null],
+  rows: [],
+  profile: { rowCount: 0, columnCount: 1, nullCount: 0, formulaLikeCellCount: 0 },
+};
+assert.equal(actualTablePayload(malformedCanonicalColumn).cause, "science-data-table-dataset-shape-invalid");
 assert.match(appSource, /manuscriptTablePreviewMarkup[\s\S]*?const actual = actualTablePayload\(payload\)/u);
 assert.match(appSource, /surface\.dataset\.tablePayloadShape = actual\.sourceShape/u);
 
@@ -107,5 +114,6 @@ assert.deepEqual(dataTableShape(datasetPayload), {
 });
 assert.equal(dataTableShape(badRow), null);
 assert.equal(dataTableShape(badCell), null);
+assert.equal(dataTableShape(malformedCanonicalColumn), null);
 
-process.stdout.write("table-payload-dialects-contract: ok domain=2x9 dataset=1x2 preview-values=3 typed-negatives=2\n");
+process.stdout.write("table-payload-dialects-contract: ok domain=2x9 dataset=1x2 preview-values=3 typed-negatives=3\n");

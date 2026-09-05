@@ -3351,7 +3351,7 @@ const { stripAgentControlBlocks, stripStormbreakerContinueMarker, STORMBREAKER_C
   function manuscriptBlockPaperMarkup(manuscript, document) {
     if (!document) return `<article class="manuscriptBlockPaper manuscriptDocumentLoading" aria-busy="true">Loading the versioned manuscript…</article>`;
     return `<article class="manuscriptBlockPaper" data-manuscript-document-id="${escapeHtml(document.documentId)}" data-manuscript-document-sha256="${escapeHtml(document.documentSha256)}">
-      <header class="manuscriptDocumentTitle"><span>Research article · versioned blocks</span><h1>${escapeHtml(manuscript.title)}</h1><p>Every block has stable identity. Select text to ask Science, or use the margin to insert validated project output.</p></header>
+      <header class="manuscriptDocumentTitle"><span>Research article · draft v${escapeHtml(manuscript.currentVersion)}</span><h1>${escapeHtml(manuscript.title)}</h1></header>
       <div class="manuscriptBlocks">${manuscriptInsertSlotMarkup(null)}${(() => {
         // Journals number tables and figures in the order they appear, and the caption carries
         // that number. Computed here, once per render, because a node cannot know its own ordinal.
@@ -6028,16 +6028,8 @@ const { stripAgentControlBlocks, stripStormbreakerContinueMarker, STORMBREAKER_C
       ? uiCopy("연구 실행 중단됨", "Research run stopped")
       : loopPresentation?.attention
         ? loopPresentation.label
-        : needsInitialRun ? "저장된 첫 질문을 실행할 수 있습니다" : "Agent runtime 준비");
-    return `<footer class="composer${docked ? " dockedComposer" : ""}"><div class="composerBox"><textarea data-composer-input ${disabled || running || needsInitialRun ? "disabled" : ""} rows="2" aria-label="후속 질문" placeholder="후속 질문, 분석 또는 실험 요청">${escapeHtml(state.composerDraft)}</textarea><div class="composerBar"><div class="composerTools"><span class="composerStatus">${escapeHtml(status)}</span><button class="composerAttachButton" disabled title="첨부는 다음 단계에서 연결됩니다" aria-label="첨부 준비 중">${heroIcon("plus")}</button><span class="composerModePill">${heroIcon("sparkles")} Science</span></div><button class="sendButton" data-action="${running ? "cancel-turn" : "send-turn"}" ${sendDisabled ? "disabled" : ""} aria-label="${running ? "중단" : needsInitialRun ? "첫 질문 실행" : "보내기"}">${running ? "■" : "↑"}</button></div></div></footer>`;
-  }
-
-  function chatContextLabel() {
-    return state.mode === "lab" && state.selectedLabId
-      ? `${labLabel(state.selectedLabId)} Lab와 함께 보는 대화`
-      : state.mode === "manuscript"
-        ? `${manuscriptById(state.selectedManuscriptId)?.title || "Manuscript"} · exact manuscript context`
-        : "Research와 함께 보는 대화";
+        : needsInitialRun ? "저장된 첫 질문을 실행할 수 있습니다" : "");
+    return `<footer class="composer${docked ? " dockedComposer" : ""}"><div class="composerBox"><textarea data-composer-input ${disabled || running || needsInitialRun ? "disabled" : ""} rows="2" aria-label="후속 질문" placeholder="후속 질문, 분석 또는 실험 요청">${escapeHtml(state.composerDraft)}</textarea><div class="composerBar"><div class="composerTools">${status ? `<span class="composerStatus">${escapeHtml(status)}</span>` : ""}</div><button class="sendButton" data-action="${running ? "cancel-turn" : "send-turn"}" ${sendDisabled ? "disabled" : ""} aria-label="${running ? "중단" : needsInitialRun ? "첫 질문 실행" : "보내기"}">${running ? "■" : "↑"}</button></div></div></footer>`;
   }
 
   function chatContextTokensMarkup() {
@@ -6057,7 +6049,7 @@ const { stripAgentControlBlocks, stripStormbreakerContinueMarker, STORMBREAKER_C
   }
 
   function chatDockComposerMarkup() {
-    return `<div class="chatContextLine">${heroIcon("book")}<span>연구 컨텍스트: ${escapeHtml(chatContextLabel())}</span></div>${chatContextTokensMarkup()}${composer(true)}`;
+    return `${chatContextTokensMarkup()}${composer(true)}`;
   }
 
   function chatDock() {

@@ -46,7 +46,7 @@
      a panel or manuscript page is white, and only the preview stage behind that
      page is neutral grey. Keeping the roles separate prevents palette changes
      from leaking a paper colour into the app shell. */
-  --manuscript-stage-bg: #f3f3f3;
+  --manuscript-stage-bg: #f7f7f7;
   --manuscript-paper-bg: var(--surface);
   /* 280px: the wordmark lockup measures 212px at its approved size and the collapse
      control needs 38px more. The old 274px clipped it mid-word. */
@@ -350,10 +350,10 @@ button { cursor: pointer; color: inherit; }
 .workspaceCenter { min-width: 0; flex: 1; container: science-center / inline-size; }
 .workspaceSurface { min-height: 100%; height: 100%; }
 
-.chatDock { min-width: var(--science-chat-width); flex: 0 0 var(--science-chat-width); min-height: 0; padding: 16px 10px 16px 12px; background: var(--app-bg); }
+.chatDock { min-width: var(--science-chat-width); flex: 0 0 var(--science-chat-width); min-height: 0; padding: 0; background: var(--surface); border-left: 1px solid var(--line); }
 .workspace[data-workspace-mode="session"] .chatDock, .workspace[data-workspace-mode="manuscript"] .chatDock { min-width: var(--science-chat-width); flex-basis: var(--science-chat-width); }
-.workspace[data-workspace-mode="manuscript"] .chatDock { padding-top: 10px; }
-.chatDockFrame { height: 100%; min-height: 0; display: flex; flex-direction: column; overflow: hidden; border: 1px solid var(--line-strong); border-radius: 14px; background: var(--surface); box-shadow: 0 12px 30px rgba(32,32,28,.07), 0 1px 4px rgba(32,32,28,.035); }
+.workspace[data-workspace-mode="manuscript"] .chatDock { padding-top: 0; }
+.chatDockFrame { height: 100%; min-height: 0; display: flex; flex-direction: column; overflow: hidden; border: 0; border-radius: 0; background: var(--surface); box-shadow: none; }
 .chatDockHeader { flex: 0 0 auto; min-height: 68px; display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 12px 14px; border-bottom: 1px solid var(--line); background: var(--surface); }
 .chatPartner { min-width: 0; display: flex; align-items: center; gap: 9px; }
 .chatPartnerMark { width: 34px; height: 34px; display: grid; place-items: center; flex: 0 0 34px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface-muted); color: #252525; }
@@ -398,9 +398,6 @@ button { cursor: pointer; color: inherit; }
 .composer.dockedComposer .composerBox { width: 100%; max-width: none; margin: 0; border: 0; border-radius: 0; box-shadow: none; }
 .composer.dockedComposer textarea { min-height: 58px; height: 58px; padding: 14px 14px 6px; color: var(--ink); }
 .composer.dockedComposer .composerBar { min-height: 44px; padding: 4px 7px 7px; }
-.chatContextLine { min-height: 34px; display: flex; align-items: center; gap: 7px; margin: 9px 10px 7px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); padding: 0 10px; color: var(--muted); font-size: 12px; }
-.chatContextLine .uiIcon { width: 13px; height: 13px; flex: 0 0 13px; }
-.chatContextLine span:last-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .chatContextTokens { min-width: 0; display: flex; align-items: center; gap: 6px; margin: 0 10px 8px; overflow: hidden; }
 .chatContextTokens > span { min-width: 0; height: 31px; display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--line); border-radius: 9px; background: var(--surface); padding: 0 9px; color: var(--muted); font-size: 11px; }
 .chatContextTokens > span:first-child { flex: 1 1 auto; }
@@ -677,11 +674,7 @@ button { cursor: pointer; color: inherit; }
 .composerBar button { width: 34px; height: 34px; display: grid; place-items: center; flex: 0 0 34px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); }
 .composerBar button:disabled { cursor: not-allowed; opacity: .55; }
 .composerBar .sendButton { width: 38px; height: 38px; flex-basis: 38px; border-radius: 11px; background: var(--ink); color: white; border-color: var(--ink); font-size: 18px; }
-.composerAttachButton { order: 1; }
-.composerAttachButton .uiIcon { width: 15px; height: 15px; }
-.composerModePill { order: 2; height: 30px; display: inline-flex; align-items: center; gap: 6px; flex: 0 0 auto; border: 1px solid var(--line); border-radius: 9px; background: var(--surface); padding: 0 9px; color: var(--ink); font-weight: 650; }
-.composerModePill .uiIcon { width: 13px; height: 13px; }
-.composerStatus { order: 3; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.composerStatus { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 .manuscriptWorkspace { min-height: 0; height: 100%; display: flex; flex-direction: column; overflow: hidden; background: var(--surface); }
 .journalToolbar { min-height: 54px; flex: 0 0 54px; display: flex; align-items: center; gap: 0; overflow-x: auto; overflow-y: hidden; border-bottom: 1px solid var(--line); background: var(--surface); padding: 0 14px; scrollbar-width: none; }
@@ -2193,12 +2186,13 @@ button.manuscriptBinding:hover { border-color: var(--line-strong); background: v
   .experimentLoop > div:nth-child(2), .experimentLoop > div:nth-child(3) { display: block; border-left: 1px solid var(--line); padding-left: 11px; }
   .experimentActions { grid-column: 1 / -1; align-items: center; justify-content: flex-end; flex-wrap: nowrap; }
   .experimentLoop button { min-width: 88px; padding-right: 10px; padding-left: 10px; white-space: nowrap; }
-  .manuscriptWorkGrid { grid-template-columns: 132px minmax(0, 1fr); }
+  .manuscriptWorkGrid { grid-template-columns: minmax(0, 1fr); }
+  .manuscriptOutline { display: none; }
   .manuscriptInspector { display: none; }
   .manuscriptInspectorToggle { display: inline-flex; align-items: center; }
   .manuscriptWorkGrid[data-inspector-open="true"] .manuscriptInspector { position: absolute; z-index: 6; top: 0; right: 0; bottom: 0; width: min(286px, calc(100% - 44px)); display: block; border-left: 1px solid var(--line-strong); box-shadow: -18px 0 42px rgba(32,32,28,.14); }
   .manuscriptWorkGrid[data-inspector-open="true"] .manuscriptInspectorScrim { position: absolute; z-index: 5; inset: 0; display: block; border: 0; background: rgba(32,32,28,.09); padding: 0; }
-  .manuscriptCanvas { padding-left: 20px; padding-right: 20px; }
+  .manuscriptCanvas { padding-left: 18px; padding-right: 18px; }
   .journalToolbar { overflow: hidden; }
   .journalArticleType, .journalMetric { display: none !important; }
   .journalGuideline { flex: 1 1 auto !important; padding-left: 10px !important; padding-right: 10px !important; }
@@ -4231,7 +4225,7 @@ dl dd:empty::after {
   .railBrandWordmark strong { font-size: 18.4px; }
 }
 @media (max-width: 1180px) {
-  :root { --science-chat-width: 340px; --science-chat-width-compact: 320px; --rail-expanded: 244px; }
+  :root { --science-chat-width: 348px; --science-chat-width-compact: 348px; --rail-expanded: 244px; }
 }
 @media (max-width: 1100px) {
   .railBrandWordmark { display: none; }
@@ -4240,7 +4234,7 @@ dl dd:empty::after {
 @media (max-width: 1040px) {
   :root { --science-chat-width: 312px; --science-chat-width-compact: 300px; --rail-expanded: 224px; }
 }
-@media (max-width: 900px) {
+@media (max-width: 1480px) {
   /* 여기서부터는 줄여도 본문이 안 나온다. 사이드바를 아이콘만 남기고 접는다 --
      목적지는 아이콘으로 계속 닿을 수 있고, 본문은 읽을 수 있는 폭을 되찾는다. */
   .workspace, .workspace.drawerOpen { grid-template-columns: var(--rail-compact) minmax(0, 1fr); }
@@ -4249,6 +4243,8 @@ dl dd:empty::after {
   .workspace .railBrandWordmark,
   .workspace .railCollapseButton,
   .workspace .railBackButton,
+  .workspace .projectLibraryBack,
+  .workspace .railProjectIdentity,
   .workspace .recentProjectsSection,
   .workspace .currentProjectSection,
   .workspace .railDisclosure,
@@ -4278,7 +4274,10 @@ dl dd:empty::after {
   .workspace .projectWorkflowNav button { width: 40px; min-height: 40px; margin: 1px auto; padding: 0; justify-content: center; gap: 0; }
   .workspace .projectWorkflowNav button > .uiIcon { display: block; width: 18px; height: 18px; flex-basis: 18px; }
   .workspace .researcherCard { justify-content: center; padding-right: 0; padding-left: 0; }
-  :root { --science-chat-width: 288px; --science-chat-width-compact: 280px; --science-question-rail-width: var(--rail-compact); }
+  :root { --science-question-rail-width: var(--rail-compact); }
+}
+@media (max-width: 900px) {
+  :root { --science-chat-width: 288px; --science-chat-width-compact: 280px; }
 }
 
 /* Science-only owner token contract. Kept last so older component rules resolve to one
@@ -4479,7 +4478,7 @@ button:has(> span:only-child > .uiIcon:only-child) {
    grammar: content-width labels, a quiet selected surface, and no pill/black outline. */
 .workspaceTabFrame {
   min-width: 0;
-  max-width: 220px;
+  max-width: 260px;
   height: 28px;
   flex: 0 0 auto;
   align-items: center;
@@ -4512,6 +4511,7 @@ button:has(> span:only-child > .uiIcon:only-child) {
 
 .workspaceTabFrame[data-selected="true"] .workspaceTab { font-weight: 650; }
 .workspaceTabIcon { width: 14px; height: 14px; flex-basis: 14px; }
+.workspaceTabLabel { min-width: 68px; }
 .workspaceTabVersion { padding: 0; background: transparent; font-size: 11px; font-weight: 560; }
 .workspaceTabClose {
   width: 18px;
@@ -4548,6 +4548,28 @@ button:has(> span:only-child > .uiIcon:only-child) {
 .evidenceGraphState { margin-top: var(--science-space-from-56); }
 .evidenceGraphView { padding-bottom: var(--science-space-from-56); }
 .manuscriptPaperHost { padding-bottom: var(--science-space-from-56); }
+.manuscriptPaperHost {
+  padding: 24px clamp(16px, 4vw, 40px) 64px;
+  background: var(--manuscript-stage-bg);
+}
+.manuscriptPaperHost .manuscriptPaper {
+  width: min(210mm, 100%);
+  max-width: 210mm;
+  min-height: auto;
+  aspect-ratio: 210 / 297;
+  margin: 0 auto;
+  border: 1px solid var(--science-border-default);
+  background: var(--manuscript-paper-bg);
+  padding: clamp(42px, 7vw, 84px) clamp(34px, 7vw, 76px) 84px;
+  box-shadow: 0 1px 2px rgba(54, 53, 53, .04), 0 16px 38px rgba(54, 53, 53, .08);
+}
+.manuscriptBlockPaper {
+  width: min(720px, 100%);
+  min-height: auto;
+  aspect-ratio: 210 / 297;
+  background: var(--manuscript-paper-bg);
+  padding: clamp(42px, 6vw, 58px) clamp(34px, 7vw, 64px) 92px;
+}
 .analysisPlanView { margin-bottom: var(--science-space-from-56); }
 .answerColumn > h1 { overflow-wrap: anywhere; word-break: break-word; }
 .analysisPlanView h1 { max-width: 100%; overflow-wrap: anywhere; word-break: break-word; }

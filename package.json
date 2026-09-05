@@ -40,8 +40,6 @@
     "test:work-output-attachments": "node scripts/qa-work-output-attachments.cjs",
     "test:work-output-provenance": "node scripts/qa-work-output-provenance.cjs",
     "test:work-permission-scope": "electron scripts/qa-work-permission-scope.cjs",
-    "test:work-question-sheet-matrix": "node scripts/qa-work-question-sheet-matrix.cjs",
-    "test:work-question-sheet": "node scripts/qa-work-question-sheet.cjs",
     "test:work-reasoning-headline": "node scripts/qa-work-reasoning-headline.cjs",
     "test:work-reopened-outputs": "node scripts/qa-work-reopened-outputs.cjs",
     "test:work-responsive-rail": "node scripts/qa-work-responsive-rail.cjs",

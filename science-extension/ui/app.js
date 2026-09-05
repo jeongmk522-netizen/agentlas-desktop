@@ -217,7 +217,7 @@ const { stripAgentControlBlocks, stripStormbreakerContinueMarker, STORMBREAKER_C
   const state = {
     locale: "en",
     projects: [], selectedId: null, lifecycle: null, researchLoopInspection: null, conversations: [], selectedConversationId: null, messages: [], sources: [], sourceFigures: [], runs: [], artifacts: [], labs: [], workspaceLabBindings: [], labCatalog: [], labDecisionProjections: [], rendererPacks: [], manuscripts: [], claimLedger: null, journalProfiles: [], submissionExports: [], analysisSpecs: [], decisions: [],
-    artifactContextsByMessage: new Map(), labContextsById: new Map(), artifactHistoryById: new Map(), selectedLabId: null, selectedArtifactOriginVersion: null, inspectedArtifactVersion: null, inspectedArtifactContext: null, artifactComparison: null, draftHistoryGuard: null, labsExpanded: true, expandedLabGroups: new Set(["chemistry"]), expandedLabDecisions: new Set(), projectMenuOpen: false, projectFolderOpen: false, projectLibrarySummaries: new Map(), projectLibrarySummaryState: "loading", newProjectStep: "field", selectedResearchTemplateId: null, newProjectDraft: { title: "", question: "" }, historyOpen: false, railCollapsed: readRailCollapsed(),
+    artifactContextsByMessage: new Map(), labContextsById: new Map(), artifactHistoryById: new Map(), selectedLabId: null, selectedArtifactOriginVersion: null, inspectedArtifactVersion: null, inspectedArtifactContext: null, artifactComparison: null, draftHistoryGuard: null, labsExpanded: true, expandedLabGroups: new Set(["chemistry"]), expandedLabDecisions: new Set(), projectMenuOpen: false, projectFolderOpen: false, projectLibrarySummaries: new Map(), projectLibrarySummaryState: "loading", librarySearch: "", librarySelectedProjectId: null, projectFolderSelectedKey: null, newProjectStep: "field", selectedResearchTemplateId: null, newProjectDraft: { title: "", question: "" }, historyOpen: false, railCollapsed: readRailCollapsed(),
     blocksByMessage: new Map(), citationsByMessage: new Map(), evidenceById: new Map(), selectedSourceId: null, selectedArtifactId: null,
     evidenceGraph: null, evidenceGraphReviews: [], evidenceGraphLoading: false, evidenceGraphError: "", selectedEvidenceGraphNodeId: null, selectedEvidenceGraphCandidateId: null, evidenceGraphReviewSheet: false, evidenceGraphReviewDecision: "accepted", evidenceGraphReviewBusy: false, evidenceGraphReviewError: "", evidenceGraphPathAnchorId: null, evidenceGraphPath: null,
     mode: "session", drawer: null, modal: false, manuscriptModal: false, saving: false, loadingProject: false, projectError: "", activeVegaView: null, activeCytoscape: null, activeNumericSurface: null, activeJBrowseTarget: null, scrollByMode: { session: 0, lab: 0, manuscript: 0 }, returnMessageId: null,
@@ -258,6 +258,8 @@ const { stripAgentControlBlocks, stripStormbreakerContinueMarker, STORMBREAKER_C
   let workspacePersistError = null;
   let jbrowseRuntimePromise = null;
   let runtimeQuestionTimer = null;
+  let librarySearchTimer = null;
+  let librarySearchComposing = false;
   const uiCopy = (ko, en) => state.locale === "ko" ? ko : en;
   const domainLabels = {
     general: "인문·사회·융합", "life-science": "생명과학", chemistry: "화학", physics: "물리학",
@@ -1016,6 +1018,7 @@ const { stripAgentControlBlocks, stripStormbreakerContinueMarker, STORMBREAKER_C
   }
 
   async function selectProject(projectId, options = {}) {
+    state.librarySelectedProjectId = projectId;
     const switchingProject = state.selectedId !== projectId;
     const priorProjectId = state.selectedId;
     if (switchingProject && priorProjectId) {
@@ -6565,26 +6568,72 @@ const { stripAgentControlBlocks, stripStormbreakerContinueMarker, STORMBREAKER_C
     return `<section class="welcome"><div class="welcomeInner"><div class="welcomeLabel">Agentlas Science</div><h1>질문에서 검증 가능한 연구까지.</h1><p>대화, 근거, 실험, 시각 자료와 논문을 하나의 로컬 연구 기록으로 연결합니다. 아직 생성된 연구는 없습니다.</p><button class="startButton" data-action="new">새 연구 시작</button></div>${modal()}</section>`;
   }
 
-  function projectLibrary() {
-    const emptySummary = { fileCount: 0, dataCount: 0, analysisCount: 0, manuscriptCount: 0, pdfCount: 0 };
-    const cards = state.projects.map((project) => {
-      const hasSummary = state.projectLibrarySummaries.has(project.id);
-      const summary = state.projectLibrarySummaries.get(project.id) || emptySummary;
-      const folderState = !hasSummary ? "unavailable" : summary.pdfCount > 0 ? "complete" : Object.values(summary).some((count) => Number(count) > 0) ? "data" : "empty";
-      const template = researchTemplateById(project.researchTemplateId || project.initialLabId);
-      const fieldLabel = template ? researchTemplateLabel(template) : domainLabel(project.domain);
-      const metrics = hasSummary ? [
-        [uiCopy("파일", "Files"), summary.fileCount],
-        [uiCopy("데이터", "Data"), summary.dataCount],
-        [uiCopy("분석", "Analyses"), summary.analysisCount],
-        [uiCopy("원고", "Manuscripts"), summary.manuscriptCount],
-        ["PDF", summary.pdfCount],
-      ].map(([label, count]) => `<span><strong>${escapeHtml(count)}</strong><em>${escapeHtml(label)}</em></span>`).join("") : `<span class="libraryMetricUnavailable">${uiCopy("집계 불가", "Counts unavailable")}</span>`;
-      const folderAsset = folderState === "unavailable" ? "empty" : folderState;
-      return `<button class="libraryProjectCard projectButton" data-project-id="${escapeHtml(project.id)}" data-folder-state="${escapeHtml(folderState)}"><span class="libraryProjectFolder"><img src="./assets/research-templates/folder-${escapeHtml(folderAsset)}.png" alt=""></span><span class="libraryProjectCopy"><span class="libraryProjectMeta">${escapeHtml(fieldLabel)} · ${escapeHtml(formatDate(project.updatedAt))}</span><strong title="${escapeHtml(project.title)}">${escapeHtml(project.title)}</strong><em title="${escapeHtml(project.question)}">${escapeHtml(project.question)}</em><span class="libraryProjectMetrics">${metrics}</span></span><span class="libraryProjectArrow">${heroIcon("chevron-right")}</span></button>`;
+  const emptyProjectSummary = () => ({ fileCount: 0, dataCount: 0, analysisCount: 0, manuscriptCount: 0, pdfCount: 0 });
+
+  function projectSummary(projectId) {
+    return state.projectLibrarySummaries.get(projectId) || emptyProjectSummary();
+  }
+
+  function projectTemplate(project) {
+    return researchTemplateById(project?.researchTemplateId || project?.initialLabId);
+  }
+
+  function projectMetricMarkup(summary, compact = false, available = true) {
+    if (!available) {
+      const label = state.projectLibrarySummaryState === "loading"
+        ? uiCopy("집계 중", "Counting…")
+        : uiCopy("집계 불가", "Counts unavailable");
+      return `<span class="projectHubMetricUnavailable">${escapeHtml(label)}</span>`;
+    }
+    const items = [
+      [uiCopy("파일", "Files"), summary.fileCount],
+      [uiCopy("데이터", "Data"), summary.dataCount],
+      [uiCopy("분석", "Analyses"), summary.analysisCount],
+      [uiCopy("원고", "Manuscripts"), summary.manuscriptCount],
+      ["PDF", summary.pdfCount],
+    ];
+    const visible = compact ? items.slice(0, 3) : items;
+    return visible.map(([label, count]) => `<span><strong>${escapeHtml(count)}</strong><em>${escapeHtml(label)}</em></span>`).join("");
+  }
+
+  function projectHubSidebar(selectedProjectId, folderMode = false) {
+    const query = state.librarySearch.trim().toLocaleLowerCase();
+    const projects = state.projects.filter((project) => {
+      if (!query) return true;
+      const template = projectTemplate(project);
+      return [project.title, project.question, template ? researchTemplateLabel(template) : domainLabel(project.domain)].some((value) => String(value || "").toLocaleLowerCase().includes(query));
+    });
+    const projectLinks = projects.map((project) => {
+      const template = projectTemplate(project);
+      const asset = template?.id || "data-table";
+      return `<button type="button" data-action="${folderMode ? "open-sidebar-project" : "select-library-project"}" data-library-project-id="${escapeHtml(project.id)}" aria-current="${project.id === selectedProjectId ? "page" : "false"}"><img src="./assets/research-templates/${escapeHtml(asset)}.png" alt=""><span title="${escapeHtml(project.title)}">${escapeHtml(project.title)}</span></button>`;
     }).join("");
-    const projectCount = state.locale === "ko" ? `${state.projects.length}개 프로젝트` : `${state.projects.length} ${state.projects.length === 1 ? "project" : "projects"}`;
-    return `<section class="projectLibrary"><header class="projectLibraryTopbar"><button class="projectLibraryExit" data-action="back-to-work" aria-label="${uiCopy("Agentlas Work로 돌아가기", "Back to Agentlas Work")}">${heroIcon("chevron-right", "uiIcon isReverse")}<span>Agentlas Work</span></button><span class="projectLibraryBrand"><img src="./assets/agentlas-mark.png" alt=""><strong>Agentlas <em>Science*</em></strong></span><span class="projectLibraryCount">${escapeHtml(projectCount)}</span></header><main class="projectLibraryMain"><div class="projectLibraryHeading"><div><span>Research library</span><h1>${uiCopy("연구 보관함", "Research library")}</h1><p>${uiCopy("프로젝트 폴더를 열어 연구를 이어가거나, 새 연구를 시작하세요.", "Open a project folder to continue, or start a new study.")}</p></div><button class="primaryButton" data-action="new">${heroIcon("plus")}${uiCopy("새 연구", "New research")}</button></div><section class="libraryProjects"><header><h2>${uiCopy("프로젝트 폴더", "Project folders")}</h2><span>${escapeHtml(projectCount)}</span></header><div class="libraryProjectGrid">${cards || `<div class="libraryEmpty"><strong>${uiCopy("아직 연구 프로젝트가 없습니다.", "No research projects yet.")}</strong><span>${uiCopy("15개 연구 분야 중 하나를 골라 첫 프로젝트를 만들어 보세요.", "Choose one of 15 research fields to create your first project.")}</span><button class="secondaryButton" data-action="new">${uiCopy("새 연구 시작", "Start new research")}</button></div>`}</div></section></main>${modal()}</section>`;
+    return `<aside class="projectHubSidebar"><header><button class="projectHubBack" type="button" data-action="back-to-work" aria-label="${uiCopy("Agentlas Work로 돌아가기", "Back to Agentlas Work")}">${heroIcon("chevron-right", "uiIcon isReverse")}</button><span class="projectHubBrand"><img src="./assets/agentlas-mark.png" alt=""><strong>Agentlas <em>Science*</em></strong></span></header><label class="projectHubSideSearch">${heroIcon("search")}<input type="search" data-project-search="side" value="${escapeHtml(state.librarySearch)}" placeholder="${uiCopy("프로젝트 검색", "Search projects")}" aria-label="${uiCopy("프로젝트 검색", "Search projects")}"></label><nav class="projectHubPrimaryNav" aria-label="${uiCopy("연구 보관함 메뉴", "Research library menu")}"><button type="button" class="isActive" data-action="back-to-projects">${heroIcon("grid")}<span>${uiCopy("프로젝트", "Projects")}</span></button><button type="button" data-action="new">${heroIcon("plus")}<span>${uiCopy("새 연구", "New research")}</span></button></nav><section class="projectHubProjectList"><header><strong>${uiCopy("프로젝트", "Projects")}</strong><span>${escapeHtml(state.projects.length)}</span></header><div>${projectLinks || `<p>${uiCopy("아직 프로젝트가 없습니다.", "No projects yet.")}</p>`}</div></section></aside>`;
+  }
+
+  function projectLibrary() {
+    const query = state.librarySearch.trim().toLocaleLowerCase();
+    const filteredProjects = state.projects.filter((project) => {
+      if (!query) return true;
+      const template = projectTemplate(project);
+      return [project.title, project.question, template ? researchTemplateLabel(template) : domainLabel(project.domain)].some((value) => String(value || "").toLocaleLowerCase().includes(query));
+    });
+    const preferred = state.projects.find((project) => project.id === state.librarySelectedProjectId);
+    const selectedProject = (preferred && (!query || filteredProjects.some((project) => project.id === preferred.id))) ? preferred : filteredProjects[0] || null;
+    if (selectedProject && state.librarySelectedProjectId !== selectedProject.id) state.librarySelectedProjectId = selectedProject.id;
+    const cards = filteredProjects.map((project) => {
+      const summary = projectSummary(project.id);
+      const template = projectTemplate(project);
+      const fieldLabel = template ? researchTemplateLabel(template) : domainLabel(project.domain);
+      const asset = template?.id || "data-table";
+      return `<article class="projectHubCardWrap"><button class="projectHubCard" type="button" data-action="select-library-project" data-library-project-id="${escapeHtml(project.id)}" aria-pressed="${project.id === selectedProject?.id}"><img src="./assets/research-templates/${escapeHtml(asset)}.png" alt=""><span class="projectHubCardBody"><small>${escapeHtml(fieldLabel)}</small><strong title="${escapeHtml(project.title)}">${escapeHtml(project.title)}</strong><em title="${escapeHtml(project.question)}">${escapeHtml(project.question)}</em><span class="projectHubCardMetrics">${projectMetricMarkup(summary, true, state.projectLibrarySummaries.has(project.id))}</span></span></button><button class="projectHubCardMobileOpen" type="button" data-action="open-library-project" data-library-project-id="${escapeHtml(project.id)}">${uiCopy("프로젝트 폴더 열기", "Open project folder")}${heroIcon("chevron-right")}</button></article>`;
+    }).join("");
+    const shortcutFields = researchTemplates.map((template) => `<button type="button" data-research-template="${escapeHtml(template.id)}" title="${escapeHtml(researchTemplateDescription(template))}"><img src="./assets/research-templates/${escapeHtml(template.id)}.png" alt=""><span>${escapeHtml(researchTemplateLabel(template))}</span></button>`).join("");
+    const summary = selectedProject ? projectSummary(selectedProject.id) : emptyProjectSummary();
+    const selectedTemplate = projectTemplate(selectedProject);
+    const detail = selectedProject ? `<div class="projectHubDetailHero"><img src="./assets/research-templates/${escapeHtml(selectedTemplate?.id || "data-table")}.png" alt=""><span>${escapeHtml(selectedTemplate ? researchTemplateLabel(selectedTemplate) : domainLabel(selectedProject.domain))}</span></div><h2>${escapeHtml(selectedProject.title)}</h2><p>${escapeHtml(selectedProject.question)}</p><dl class="projectHubFacts"><div><dt>${uiCopy("업데이트", "Updated")}</dt><dd>${escapeHtml(formatDate(selectedProject.updatedAt))}</dd></div><div><dt>${uiCopy("분야", "Field")}</dt><dd>${escapeHtml(selectedTemplate ? researchTemplateLabel(selectedTemplate) : domainLabel(selectedProject.domain))}</dd></div></dl><div class="projectHubDetailMetrics">${projectMetricMarkup(summary, false, state.projectLibrarySummaries.has(selectedProject.id))}</div><div class="projectHubDetailActions"><button class="primaryButton" type="button" data-action="open-library-project" data-library-project-id="${escapeHtml(selectedProject.id)}">${uiCopy("프로젝트 폴더 열기", "Open project folder")}${heroIcon("chevron-right")}</button></div>` : `<div class="projectHubDetailEmpty">${heroIcon("folder")}<strong>${uiCopy("프로젝트를 선택하세요", "Select a project")}</strong><span>${uiCopy("실제 프로젝트 정보와 저장 항목 수가 여기에 표시됩니다.", "Project metadata and saved-item counts appear here.")}</span></div>`;
+    const projectCount = state.locale === "ko" ? `${filteredProjects.length}개 프로젝트` : `${filteredProjects.length} ${filteredProjects.length === 1 ? "project" : "projects"}`;
+    return `<section class="projectHub">${projectHubSidebar(selectedProject?.id || null)}<main class="projectHubMain"><header class="projectHubHeading"><div><span>Research library</span><h1>${uiCopy("연구 프로젝트", "Research projects")}</h1><p>${uiCopy("근거, 데이터, 분석과 원고가 연결된 프로젝트를 엽니다.", "Open projects that connect evidence, data, analysis, and manuscripts.")}</p></div><button class="primaryButton" type="button" data-action="new">${heroIcon("plus")}${uiCopy("새 연구", "New research")}</button></header><label class="projectHubMainSearch">${heroIcon("search")}<input type="search" data-project-search="main" value="${escapeHtml(state.librarySearch)}" placeholder="${uiCopy("이름, 질문 또는 분야로 검색", "Search by name, question, or field")}" aria-label="${uiCopy("연구 프로젝트 검색", "Search research projects")}"><span>${escapeHtml(projectCount)}</span></label><div class="projectHubGrid">${cards || `<div class="projectHubEmpty"><strong>${query ? uiCopy("검색 결과가 없습니다.", "No matching projects.") : uiCopy("아직 연구 프로젝트가 없습니다.", "No research projects yet.")}</strong><span>${query ? uiCopy("다른 이름이나 분야를 검색해 보세요.", "Try another project name or field.") : uiCopy("15개 연구 분야 중 하나를 골라 시작하세요.", "Choose one of 15 research fields to begin.")}</span>${query ? "" : `<button class="secondaryButton" type="button" data-action="new">${uiCopy("새 연구 시작", "Start new research")}</button>`}</div>`}</div><section class="projectHubShortcuts"><header><h2>${uiCopy("연구 분야 바로가기", "Research field shortcuts")}</h2><span>${uiCopy("15개 분야", "15 fields")}</span></header><div>${shortcutFields}</div></section></main><aside class="projectHubDetail" aria-label="${uiCopy("선택한 프로젝트 상세", "Selected project details")}"><header><span>${uiCopy("프로젝트 상세", "Project details")}</span></header>${detail}</aside>${modal()}</section>`;
   }
 
   function projectFolderRows() {
@@ -6670,18 +6719,18 @@ const { stripAgentControlBlocks, stripStormbreakerContinueMarker, STORMBREAKER_C
 
   function projectFolder(project) {
     const template = researchTemplateById(project.researchTemplateId || project.initialLabId);
-    const summary = state.projectLibrarySummaries.get(project.id) || { fileCount: 0, dataCount: 0, analysisCount: 0, manuscriptCount: 0, pdfCount: 0 };
-    const folderState = summary.pdfCount > 0 ? "complete" : Object.values(summary).some((count) => Number(count) > 0) ? "data" : "empty";
+    const summary = projectSummary(project.id);
     const rows = state.loadingProject ? [] : projectFolderRows();
-    const metrics = [[uiCopy("파일", "Files"), summary.fileCount], [uiCopy("데이터", "Data"), summary.dataCount], [uiCopy("분석", "Analyses"), summary.analysisCount], [uiCopy("원고", "Manuscripts"), summary.manuscriptCount], ["PDF", summary.pdfCount]]
-      .map(([label, count]) => `<span><strong>${escapeHtml(count)}</strong><em>${escapeHtml(label)}</em></span>`).join("");
-    const fileRows = rows.map((row) => `<button class="projectFolderRow" ${row.action} data-folder-item-key="${escapeHtml(row.key)}"><span class="projectFolderRowIcon">${heroIcon(row.icon)}</span><span class="projectFolderRowCopy"><strong title="${escapeHtml(row.title)}">${escapeHtml(row.title)}</strong><em>${escapeHtml(row.detail)}</em></span><span class="projectFolderRowKind">${escapeHtml(row.kind)}</span><span class="projectFolderRowSize">${escapeHtml(formatByteSize(row.byteSize))}</span><time>${escapeHtml(formatDate(row.stamp))}</time><span class="projectFolderRowArrow">${heroIcon("chevron-right")}</span></button>`).join("");
+    const selectedRow = rows.find((row) => row.key === state.projectFolderSelectedKey) || rows[0] || null;
+    if (selectedRow && state.projectFolderSelectedKey !== selectedRow.key) state.projectFolderSelectedKey = selectedRow.key;
+    const fileRows = rows.map((row) => `<button class="projectHubFileCard" type="button" data-action="select-project-folder-item" data-folder-item-key="${escapeHtml(row.key)}" aria-pressed="${row.key === selectedRow?.key}"><span class="projectHubFileIcon">${heroIcon(row.icon)}</span><span><small>${escapeHtml(row.kind)}</small><strong title="${escapeHtml(row.title)}">${escapeHtml(row.title)}</strong><em>${escapeHtml(row.detail)}</em></span><time>${escapeHtml(formatDate(row.stamp))}</time></button>`).join("");
     const body = state.loadingProject
-      ? `<div class="projectFolderEmpty" aria-live="polite"><strong>${uiCopy("프로젝트 내용을 불러오는 중…", "Loading project contents…")}</strong></div>`
+      ? `<div class="projectHubEmpty" aria-live="polite"><strong>${uiCopy("프로젝트 내용을 불러오는 중…", "Loading project contents…")}</strong></div>`
       : state.projectError
-        ? `<div class="projectFolderEmpty" role="alert"><strong>${escapeHtml(state.projectError)}</strong></div>`
-        : fileRows || `<div class="projectFolderEmpty"><strong>${uiCopy("아직 저장된 연구 내용이 없습니다.", "No research contents have been saved yet.")}</strong><span>${uiCopy("워크스페이스에서 출처를 추가하거나 Lab을 실행하면 이 폴더에 실제 기록이 나타납니다.", "Add a source or run a Lab in the workspace and its actual record will appear here.")}</span></div>`;
-    return `<section class="projectLibrary projectFolderView" data-project-folder-state="${escapeHtml(folderState)}"><header class="projectLibraryTopbar"><button class="projectLibraryExit" data-action="back-to-projects" aria-label="${uiCopy("연구 보관함으로 돌아가기", "Back to research library")}">${heroIcon("chevron-right", "uiIcon isReverse")}<span>${uiCopy("연구 보관함", "Research library")}</span></button><span class="projectLibraryBrand"><img src="./assets/agentlas-mark.png" alt=""><strong>Agentlas <em>Science*</em></strong></span><span class="projectLibraryCount">${escapeHtml(uiCopy("프로젝트 폴더", "Project folder"))}</span></header><main class="projectLibraryMain projectFolderMain"><section class="projectFolderHero"><span class="projectFolderHeroAsset"><img src="./assets/research-templates/folder-${escapeHtml(folderState)}.png" alt=""></span><div class="projectFolderHeroCopy"><span>${escapeHtml(template ? researchTemplateLabel(template) : domainLabel(project.domain))}</span><h1>${escapeHtml(project.title)}</h1><p>${escapeHtml(project.question)}</p><div class="libraryProjectMetrics projectFolderMetrics">${metrics}</div></div><button class="primaryButton" data-action="open-project-workspace">${uiCopy("워크스페이스 열기", "Open workspace")}${heroIcon("chevron-right")}</button></section><section class="projectFolderContents"><header><div><span>Project contents</span><h2>${uiCopy("저장된 연구 내용", "Saved research contents")}</h2></div><strong>${escapeHtml(uiCopy(`${rows.length}개 항목`, `${rows.length} ${rows.length === 1 ? "item" : "items"}`))}</strong></header><div class="projectFolderTable"><div class="projectFolderTableHead" aria-hidden="true"><span></span><span>${uiCopy("이름", "Name")}</span><span>${uiCopy("종류", "Type")}</span><span>${uiCopy("크기", "Size")}</span><span>${uiCopy("수정일", "Modified")}</span><span></span></div>${body}</div></section></main>${modal()}</section>`;
+        ? `<div class="projectHubEmpty" role="alert"><strong>${escapeHtml(state.projectError)}</strong></div>`
+        : fileRows || `<div class="projectHubEmpty"><strong>${uiCopy("아직 저장된 연구 내용이 없습니다.", "No research contents have been saved yet.")}</strong><span>${uiCopy("워크스페이스에서 출처를 추가하거나 Lab을 실행하면 실제 기록이 나타납니다.", "Add a source or run a Lab in the workspace to create a real record.")}</span></div>`;
+    const detail = selectedRow ? `<span class="projectHubDetailKind">${escapeHtml(selectedRow.kind)}</span><h2>${escapeHtml(selectedRow.title)}</h2><p>${escapeHtml(selectedRow.detail)}</p><dl class="projectHubFacts"><div><dt>${uiCopy("크기", "Size")}</dt><dd>${escapeHtml(formatByteSize(selectedRow.byteSize))}</dd></div><div><dt>${uiCopy("수정일", "Modified")}</dt><dd>${escapeHtml(formatDate(selectedRow.stamp))}</dd></div></dl><div class="projectHubDetailActions"><button class="primaryButton" type="button" ${selectedRow.action}>${uiCopy("작업공간에서 열기", "Open in workspace")}${heroIcon("chevron-right")}</button></div>` : `<div class="projectHubDetailEmpty">${heroIcon("folder")}<strong>${uiCopy("저장 항목이 없습니다", "No saved items")}</strong><span>${uiCopy("새 출처나 분석 결과가 저장되면 여기에 표시됩니다.", "Saved sources and results will appear here.")}</span></div>`;
+    return `<section class="projectHub projectHubFolder">${projectHubSidebar(project.id, true)}<main class="projectHubMain"><header class="projectHubHeading projectHubFolderHeading"><div><button class="projectHubInlineBack" type="button" data-action="back-to-projects">${heroIcon("chevron-right", "uiIcon isReverse")}${uiCopy("프로젝트", "Projects")}</button><span>${escapeHtml(template ? researchTemplateLabel(template) : domainLabel(project.domain))}</span><h1>${escapeHtml(project.title)}</h1><p>${escapeHtml(project.question)}</p></div><button class="primaryButton" type="button" data-action="open-project-workspace">${uiCopy("워크스페이스 열기", "Open workspace")}${heroIcon("chevron-right")}</button></header><div class="projectHubFolderMetrics">${projectMetricMarkup(summary, false, state.projectLibrarySummaries.has(project.id))}</div><section class="projectHubFiles"><header><h2>${uiCopy("저장된 연구 내용", "Saved research contents")}</h2><span>${escapeHtml(uiCopy(`${rows.length}개 항목`, `${rows.length} ${rows.length === 1 ? "item" : "items"}`))}</span></header><div class="projectHubFileGrid">${body}</div></section></main><aside class="projectHubDetail" aria-label="${uiCopy("선택한 항목 상세", "Selected item details")}"><header><span>${uiCopy("항목 상세", "Item details")}</span></header>${detail}</aside>${modal()}</section>`;
   }
 
   function workspace() {
@@ -8974,6 +9023,7 @@ const { stripAgentControlBlocks, stripStormbreakerContinueMarker, STORMBREAKER_C
     if (target.dataset.action === "back-to-projects") {
       const action = () => {
         rememberScroll();
+        if (state.selectedId) state.librarySelectedProjectId = state.selectedId;
         state.selectedId = null;
         state.projectFolderOpen = false;
         state.selectedConversationId = null;
@@ -8988,6 +9038,23 @@ const { stripAgentControlBlocks, stripStormbreakerContinueMarker, STORMBREAKER_C
         });
       };
       if (!guardArtifactDraftNavigation(action)) action();
+      return;
+    }
+    if (target.dataset.action === "select-library-project") {
+      state.librarySelectedProjectId = target.dataset.libraryProjectId || null;
+      render();
+      return;
+    }
+    if (target.dataset.action === "open-library-project" || target.dataset.action === "open-sidebar-project") {
+      const projectId = target.dataset.libraryProjectId;
+      if (!projectId) return;
+      const action = () => void selectProject(projectId, { openFolder: true });
+      if (!guardArtifactDraftNavigation(action)) action();
+      return;
+    }
+    if (target.dataset.action === "select-project-folder-item") {
+      state.projectFolderSelectedKey = target.dataset.folderItemKey || null;
+      render();
       return;
     }
     if (target.dataset.action === "open-project-workspace") {
@@ -9041,6 +9108,7 @@ const { stripAgentControlBlocks, stripStormbreakerContinueMarker, STORMBREAKER_C
     if (target.dataset.researchTemplate) {
       const template = researchTemplateById(target.dataset.researchTemplate);
       if (!template) return;
+      state.modal = true;
       state.selectedResearchTemplateId = template.id;
       state.newProjectStep = "details";
       render();
@@ -9560,7 +9628,47 @@ const { stripAgentControlBlocks, stripStormbreakerContinueMarker, STORMBREAKER_C
     if (artifact) void loadArtifactComparison(artifact, fromVersion, toVersion);
   });
 
+  function scheduleProjectSearchRender(projectSearch) {
+    const source = projectSearch.dataset.projectSearch || "main";
+    const value = projectSearch.value;
+    const selectionStart = projectSearch.selectionStart;
+    const selectionEnd = projectSearch.selectionEnd;
+    state.librarySearch = value;
+    if (librarySearchTimer) window.clearTimeout(librarySearchTimer);
+    librarySearchTimer = window.setTimeout(() => {
+      librarySearchTimer = null;
+      if (librarySearchComposing) return;
+      render();
+      requestAnimationFrame(() => {
+        const input = document.querySelector(`[data-project-search="${CSS.escape(source)}"]`);
+        if (!input) return;
+        input.focus();
+        if (selectionStart !== null && selectionEnd !== null) input.setSelectionRange(selectionStart, selectionEnd);
+      });
+    }, 120);
+  }
+
+  root.addEventListener("compositionstart", (event) => {
+    if (!event.target.closest("[data-project-search]")) return;
+    librarySearchComposing = true;
+    if (librarySearchTimer) window.clearTimeout(librarySearchTimer);
+    librarySearchTimer = null;
+  });
+
+  root.addEventListener("compositionend", (event) => {
+    const projectSearch = event.target.closest("[data-project-search]");
+    if (!projectSearch) return;
+    librarySearchComposing = false;
+    scheduleProjectSearchRender(projectSearch);
+  });
+
   root.addEventListener("input", (event) => {
+    const projectSearch = event.target.closest("[data-project-search]");
+    if (projectSearch) {
+      state.librarySearch = projectSearch.value;
+      if (!event.isComposing && !librarySearchComposing) scheduleProjectSearchRender(projectSearch);
+      return;
+    }
     const newProjectForm = event.target.closest("#new-project-form");
     if (newProjectForm) {
       const form = new FormData(newProjectForm);

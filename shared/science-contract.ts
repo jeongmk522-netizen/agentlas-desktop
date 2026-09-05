@@ -2246,6 +2246,16 @@ export interface ScienceAnalysisArtifactRef {
   contentSha256: string;
 }
 
+export interface ScienceAnalysisAcquisitionPlan {
+  strategy: "acquire-before-execution";
+  sources: Array<{
+    provider: string;
+    sourceRefs: string[];
+    retrievalPlan: string;
+    expectedArtifactKind: string;
+  }>;
+}
+
 export interface ScienceEstimand {
   population: string;
   treatmentOrExposure: string;
@@ -2308,6 +2318,12 @@ export interface ScienceAnalysisSpecDocument {
   };
   data: {
     inputs: ScienceAnalysisArtifactRef[];
+    /**
+     * Present on plans approved before collection. Execution still requires a successor plan whose
+     * `inputs` bind exact immutable artifact versions; this field specifies what may be acquired and
+     * never acts as an execution-time data binding by itself. Absent only on legacy v1 documents.
+     */
+    acquisition?: ScienceAnalysisAcquisitionPlan | null;
     outcomeVariables: string[];
     predictorVariables: string[];
     transformations: string[];

@@ -1093,6 +1093,12 @@ function normalizeStatisticsInput(input: ExecuteStatisticsAnalysisInput, store: 
       || spec.currentDocumentSha256 !== claimed.contentSha256 || spec.version.documentSha256 !== claimed.contentSha256) {
       throw new Error("science-statistics-analysis-plan-not-frozen-exact");
     }
+    if (spec.version.document.data.inputs.length === 0 && spec.version.document.data.acquisition?.sources.length) {
+      // An acquisition-only plan may authorize collection, but it intentionally does not identify
+      // the immutable bytes used by an analysis. After collection the director must propose and get
+      // approval for a successor plan whose exact inputs match this execution request.
+      throw new Error("science-statistics-execution-exact-input-plan-required");
+    }
     if (canonicalJson(inputArtifacts) !== canonicalJson(spec.version.document.data.inputs)) throw new Error("science-statistics-analysis-input-binding-mismatch");
     const model = spec.version.document.model as unknown as Record<string, unknown> | null;
     if (!model || scienceStatisticsSha256(model) !== claimed.modelSha256) throw new Error("science-statistics-analysis-model-binding-mismatch");

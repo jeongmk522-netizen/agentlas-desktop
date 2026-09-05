@@ -600,6 +600,29 @@ const ANALYSIS_ARTIFACT_REF_SCHEMA = {
   additionalProperties: false,
 } as const;
 
+const ANALYSIS_ACQUISITION_SCHEMA = {
+  type: "object",
+  properties: {
+    strategy: { const: "acquire-before-execution" },
+    sources: {
+      type: "array", minItems: 1, maxItems: 100,
+      items: {
+        type: "object",
+        properties: {
+          provider: { type: "string", minLength: 1, maxLength: 500 },
+          sourceRefs: { type: "array", minItems: 1, maxItems: 100, uniqueItems: true, items: { type: "string", minLength: 1, maxLength: 4_000 } },
+          retrievalPlan: { type: "string", minLength: 1, maxLength: 8_000 },
+          expectedArtifactKind: { type: "string", minLength: 1, maxLength: 500 },
+        },
+        required: ["provider", "sourceRefs", "retrievalPlan", "expectedArtifactKind"],
+        additionalProperties: false,
+      },
+    },
+  },
+  required: ["strategy", "sources"],
+  additionalProperties: false,
+} as const;
+
 const ANALYSIS_ESTIMAND_SCHEMA = {
   type: "object",
   properties: {
@@ -675,13 +698,19 @@ const ANALYSIS_DOCUMENT_SCHEMA = {
     data: {
       type: "object",
       properties: {
-        inputs: { type: "array", minItems: 1, maxItems: 100, items: ANALYSIS_ARTIFACT_REF_SCHEMA },
+        inputs: { type: "array", maxItems: 100, items: ANALYSIS_ARTIFACT_REF_SCHEMA },
+        acquisition: { oneOf: [{ type: "null" }, ANALYSIS_ACQUISITION_SCHEMA] },
         outcomeVariables: { type: "array", minItems: 1, maxItems: 200, uniqueItems: true, items: { type: "string", minLength: 1, maxLength: 500 } },
         predictorVariables: { type: "array", maxItems: 500, uniqueItems: true, items: { type: "string", minLength: 1, maxLength: 500 } },
         transformations: { type: "array", maxItems: 500, items: { type: "string", minLength: 1, maxLength: 8_000 } },
         exclusions: { type: "array", maxItems: 500, items: { type: "string", minLength: 1, maxLength: 8_000 } },
       },
-      required: ["inputs", "outcomeVariables", "predictorVariables", "transformations", "exclusions"], additionalProperties: false,
+      required: ["inputs", "acquisition", "outcomeVariables", "predictorVariables", "transformations", "exclusions"],
+      anyOf: [
+        { properties: { inputs: { type: "array", minItems: 1 } }, required: ["inputs"] },
+        { properties: { acquisition: ANALYSIS_ACQUISITION_SCHEMA }, required: ["acquisition"] },
+      ],
+      additionalProperties: false,
     },
     model: { oneOf: [{ type: "null" }, ANALYSIS_MODEL_SCHEMA] },
     missingData: {
@@ -1787,7 +1816,7 @@ const PLATFORM_TOOLS: McpTool[] = [
   {
     name: "propose_analysis_plan",
     route: "/v1/platform/analysis-plans/propose",
-    description: "Create the first immutable version of a confirmatory analysis plan bound to exact project artifact versions. `document` is never arbitrary JSON: it requires exactly schemaVersion,purpose,researchQuestion,population,estimand,design,data,model,missingData,multiplicity,requiredDiagnostics,sensitivityAnalyses,seed,runtimePolicy,expectedArtifacts. estimand is null or exactly {population,treatmentOrExposure,comparator,outcome,summaryMeasure,timeHorizon}. design is exactly {studyType,experimentalUnit,observationUnit,dependence}; dependence is exactly one of {kind:'unresolved'}, {kind:'independent'}, {kind:'repeated',subjectIdVariable,timeVariable}, {kind:'clustered',clusterVariables}, or {kind:'repeated-and-clustered',subjectIdVariable,timeVariable,clusterVariables}. data is exactly {inputs,outcomeVariables,predictorVariables,transformations,exclusions}; inputs use camelCase {artifactId,artifactVersion,contentSha256}, and outcomeVariables/predictorVariables are string arrays. model is null for domain-specific tools, otherwise exactly {family,formula,distribution,link,groupingVariables,randomEffects,rationale}, family lm|glm|mixed-effects|gee. expectedArtifacts items are exactly {role,title}, role result-table|figure|diagnostics|methods. If estimand or dependence is unresolved, include exactly one matching human decision draft; otherwise decisions must be empty. This creates a draft only and never records human approval or authorizes execution.",
+    description: "Create the first immutable version of a confirmatory analysis plan. `document` is never arbitrary JSON: it requires exactly schemaVersion,purpose,researchQuestion,population,estimand,design,data,model,missingData,multiplicity,requiredDiagnostics,sensitivityAnalyses,seed,runtimePolicy,expectedArtifacts. estimand is null or exactly {population,treatmentOrExposure,comparator,outcome,summaryMeasure,timeHorizon}. design is exactly {studyType,experimentalUnit,observationUnit,dependence}; dependence is exactly one of {kind:'unresolved'}, {kind:'independent'}, {kind:'repeated',subjectIdVariable,timeVariable}, {kind:'clustered',clusterVariables}, or {kind:'repeated-and-clustered',subjectIdVariable,timeVariable,clusterVariables}. data is exactly {inputs,acquisition,outcomeVariables,predictorVariables,transformations,exclusions}. When immutable project artifacts already exist, inputs must contain their exact camelCase {artifactId,artifactVersion,contentSha256} bindings and acquisition may be null. Before collection, inputs may be empty only when acquisition is exactly {strategy:'acquire-before-execution',sources:[{provider,sourceRefs,retrievalPlan,expectedArtifactKind}]}; sourceRefs identify the planned authoritative sources. An acquisition-only frozen plan authorizes collection, not analysis execution: after collection, propose a successor plan with exact input artifact bindings and obtain human approval again. model is null for domain-specific tools, otherwise exactly {family,formula,distribution,link,groupingVariables,randomEffects,rationale}, family lm|glm|mixed-effects|gee. expectedArtifacts items are exactly {role,title}, role result-table|figure|diagnostics|methods. If estimand or dependence is unresolved, include exactly one matching human decision draft; otherwise decisions must be empty. This creates a draft only and never records human approval or authorizes execution.",
     inputSchema: {
       type: "object",
       properties: {
@@ -1833,7 +1862,7 @@ const PLATFORM_TOOLS: McpTool[] = [
   {
     name: "freeze_analysis_plan",
     route: "/v1/platform/analysis-plans/freeze",
-    description: "Verify and bind an analysis plan that the researcher already approved in the Science UI. This tool cannot approve or mutate a draft: a draft fails with science-analysis-plan-human-approval-required. Re-list plans after the human acts, then pass the exact frozen version, content hash, and post-approval lock version.",
+    description: "Verify and bind an analysis plan that the researcher already approved in the Science UI. This tool cannot approve or mutate a draft: a draft fails with science-analysis-plan-human-approval-required. Re-list plans after the human acts, then pass the exact frozen version, content hash, and post-approval lock version. A frozen plan with data.acquisition but no exact data.inputs authorizes the prespecified collection step only; after collection, propose and obtain approval for a successor plan with exact immutable input artifact bindings before analysis execution.",
     inputSchema: {
       type: "object",
       properties: {

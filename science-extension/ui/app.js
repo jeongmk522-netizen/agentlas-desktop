@@ -1457,13 +1457,21 @@ const { stripAgentControlBlocks, stripStormbreakerContinueMarker, STORMBREAKER_C
     const estimand = document.estimand;
     const model = document.model;
     const decisions = state.decisions.filter((decision) => decision.analysisSpecId === plan.id && ["queued", "presented", "deferred"].includes(decision.status));
-    const reviewState = plan.status === "frozen" ? "사람 승인 완료"
-      : decisions.length ? `${decisions.length}개 설계 질문 응답 필요`
-        : plan.latestReview?.decision === "revise" ? "수정 요청 전달됨" : "계획 승인 필요";
+    const reviewState = plan.status === "frozen" ? uiCopy("사람 승인 완료", "Approved by researcher")
+      : decisions.length ? uiCopy(`${decisions.length}개 설계 질문 응답 필요`, `${decisions.length} design question${decisions.length === 1 ? "" : "s"} awaiting response`)
+        : plan.latestReview?.decision === "revise" ? uiCopy("수정 요청 전달됨", "Changes requested") : uiCopy("계획 승인 필요", "Plan approval required");
     const reviewAction = plan.status === "draft" && decisions.length === 0
-      ? `<button class="primaryButton analysisPlanReviewButton" data-action="open-analysis-plan-review">정확한 계획 검토</button>` : "";
+      ? `<button class="primaryButton analysisPlanReviewButton" data-action="open-analysis-plan-review">${uiCopy("계획 검토", "Review plan")}</button>` : "";
     const values = (items, empty = "정의되지 않음") => Array.isArray(items) && items.length ? items.join(", ") : empty;
-    return `<section class="analysisPlanView" data-analysis-plan-id="${escapeHtml(plan.id)}" data-analysis-plan-version="${escapeHtml(plan.currentVersion)}" data-analysis-plan-sha256="${escapeHtml(plan.currentDocumentSha256)}"><header><div><span>PLAN & PROTOCOLS · EXACT VERSION</span><h1>${escapeHtml(plan.title)}</h1><p>${escapeHtml(document.researchQuestion || project.question)}</p></div><div class="analysisPlanIdentity"><em data-status="${escapeHtml(plan.status)}">${escapeHtml(plan.status)}</em><strong>v${escapeHtml(plan.currentVersion)}</strong><code title="${escapeHtml(plan.currentDocumentSha256)}">${escapeHtml(plan.currentDocumentSha256.slice(0, 12))}…</code>${reviewAction}</div></header><div class="analysisPlanGrid"><section><span>Estimand</span>${estimand ? `<dl><div><dt>Population</dt><dd>${escapeHtml(estimand.population)}</dd></div><div><dt>Exposure</dt><dd>${escapeHtml(estimand.treatmentOrExposure)}</dd></div><div><dt>Comparator</dt><dd>${escapeHtml(estimand.comparator || "없음")}</dd></div><div><dt>Outcome</dt><dd>${escapeHtml(estimand.outcome)}</dd></div><div><dt>Measure</dt><dd>${escapeHtml(estimand.summaryMeasure)}</dd></div></dl>` : `<p>연구자가 estimand를 아직 확정하지 않았습니다.</p>`}</section><section><span>Design & dependence</span><dl><div><dt>Study</dt><dd>${escapeHtml(document.design?.studyType || "미정")}</dd></div><div><dt>Observation unit</dt><dd>${escapeHtml(document.design?.observationUnit || "미정")}</dd></div><div><dt>Dependence</dt><dd>${escapeHtml(document.design?.dependence?.kind || "unresolved")}</dd></div><div><dt>Inputs</dt><dd>${escapeHtml(document.data?.inputs?.length || 0)} exact artifact version(s)</dd></div></dl></section><section><span>Model</span>${model ? `<dl><div><dt>Family</dt><dd>${escapeHtml(model.family)}</dd></div><div><dt>Formula</dt><dd><code>${escapeHtml(model.formula)}</code></dd></div><div><dt>Distribution / link</dt><dd>${escapeHtml(`${model.distribution || "—"} / ${model.link || "—"}`)}</dd></div><div><dt>Rationale</dt><dd>${escapeHtml(model.rationale)}</dd></div></dl>` : `<p>이 계획은 도메인별 실행 도구가 모형 계약을 소유하므로 model=null을 명시했습니다.</p>`}</section><section><span>Validity checks</span><dl><div><dt>Diagnostics</dt><dd>${escapeHtml(values(document.requiredDiagnostics))}</dd></div><div><dt>Sensitivity</dt><dd>${escapeHtml(values(document.sensitivityAnalyses))}</dd></div><div><dt>Missing data</dt><dd>${escapeHtml(document.missingData?.strategy || "unresolved")}</dd></div><div><dt>Multiplicity</dt><dd>${escapeHtml(document.multiplicity?.strategy || "unresolved")}</dd></div></dl></section></div><footer><div><span>Human review</span><strong>${escapeHtml(reviewState)}</strong></div><div><span>Expected outputs</span><strong>${escapeHtml(values(document.expectedArtifacts?.map((item) => item.title), "등록 없음"))}</strong></div><div><span>Runtime boundary</span><strong>${escapeHtml(`${document.runtimePolicy?.network || "deny"} network · ${document.runtimePolicy?.maxWallTimeMinutes || "-"} min`)}</strong></div></footer></section>`;
+    const exactInputCount = Array.isArray(document.data?.inputs) ? document.data.inputs.length : 0;
+    const acquisitionSourceCount = Array.isArray(document.data?.acquisition?.sources) ? document.data.acquisition.sources.length : 0;
+    const inputBindingSummary = exactInputCount
+      ? uiCopy(`정확한 아티팩트 버전 ${exactInputCount}개`, `${exactInputCount} exact artifact version${exactInputCount === 1 ? "" : "s"}`)
+      : acquisitionSourceCount
+        ? uiCopy(`사전 수집 출처 ${acquisitionSourceCount}개 · 분석 전 정확한 입력 재승인 필요`, `${acquisitionSourceCount} preregistered source${acquisitionSourceCount === 1 ? "" : "s"} · exact inputs require approval before analysis`)
+        : uiCopy("입력 데이터 또는 수집 계획 없음", "No input data or acquisition plan");
+    const modelBoundary = uiCopy("분석 실행 단계에서 해당 도구가 모형을 확정합니다.", "The analysis tool will define the model when the analysis runs.");
+    return `<section class="analysisPlanView" data-analysis-plan-id="${escapeHtml(plan.id)}" data-analysis-plan-version="${escapeHtml(plan.currentVersion)}" data-analysis-plan-sha256="${escapeHtml(plan.currentDocumentSha256)}"><header><div><span>PLAN & PROTOCOLS · EXACT VERSION</span><h1>${escapeHtml(plan.title)}</h1><p>${escapeHtml(document.researchQuestion || project.question)}</p></div><div class="analysisPlanIdentity"><em data-status="${escapeHtml(plan.status)}">${escapeHtml(plan.status)}</em><strong>v${escapeHtml(plan.currentVersion)}</strong><code title="${escapeHtml(plan.currentDocumentSha256)}">${escapeHtml(plan.currentDocumentSha256.slice(0, 12))}…</code>${reviewAction}</div></header><div class="analysisPlanGrid"><section><span>Estimand</span>${estimand ? `<dl><div><dt>Population</dt><dd>${escapeHtml(estimand.population)}</dd></div><div><dt>Exposure</dt><dd>${escapeHtml(estimand.treatmentOrExposure)}</dd></div><div><dt>Comparator</dt><dd>${escapeHtml(estimand.comparator || "없음")}</dd></div><div><dt>Outcome</dt><dd>${escapeHtml(estimand.outcome)}</dd></div><div><dt>Measure</dt><dd>${escapeHtml(estimand.summaryMeasure)}</dd></div></dl>` : `<p>연구자가 estimand를 아직 확정하지 않았습니다.</p>`}</section><section><span>Design & dependence</span><dl><div><dt>Study</dt><dd>${escapeHtml(document.design?.studyType || "미정")}</dd></div><div><dt>Observation unit</dt><dd>${escapeHtml(document.design?.observationUnit || "미정")}</dd></div><div><dt>Dependence</dt><dd>${escapeHtml(document.design?.dependence?.kind || "unresolved")}</dd></div><div><dt>Inputs</dt><dd>${escapeHtml(inputBindingSummary)}</dd></div></dl></section><section><span>Model</span>${model ? `<dl><div><dt>Family</dt><dd>${escapeHtml(model.family)}</dd></div><div><dt>Formula</dt><dd><code>${escapeHtml(model.formula)}</code></dd></div><div><dt>Distribution / link</dt><dd>${escapeHtml(`${model.distribution || "—"} / ${model.link || "—"}`)}</dd></div><div><dt>Rationale</dt><dd>${escapeHtml(model.rationale)}</dd></div></dl>` : `<p>${escapeHtml(modelBoundary)}</p>`}</section><section><span>Validity checks</span><dl><div><dt>Diagnostics</dt><dd>${escapeHtml(values(document.requiredDiagnostics))}</dd></div><div><dt>Sensitivity</dt><dd>${escapeHtml(values(document.sensitivityAnalyses))}</dd></div><div><dt>Missing data</dt><dd>${escapeHtml(document.missingData?.strategy || "unresolved")}</dd></div><div><dt>Multiplicity</dt><dd>${escapeHtml(document.multiplicity?.strategy || "unresolved")}</dd></div></dl></section></div><footer><div><span>Human review</span><strong>${escapeHtml(reviewState)}</strong></div><div><span>Expected outputs</span><strong>${escapeHtml(values(document.expectedArtifacts?.map((item) => item.title), "등록 없음"))}</strong></div><div><span>Runtime boundary</span><strong>${escapeHtml(`${document.runtimePolicy?.network || "deny"} network · ${document.runtimePolicy?.maxWallTimeMinutes || "-"} min`)}</strong></div></footer></section>`;
   }
 
   // Approving or rejecting a hypothesis is reserved for a person: the agent-visible tool refuses
@@ -2097,7 +2105,10 @@ const { stripAgentControlBlocks, stripStormbreakerContinueMarker, STORMBREAKER_C
   const ANALYSIS_RUN_EXACT_RECHECK_LIMIT = 20;
   const RESULTS_VALIDATION_LOOKUP_LIMIT = 60;
   const runResultShortHash = (value) => (value ? `${String(value).slice(0, 12)}…` : "—");
-  const analysisRunStatusLabels = { running: "실행 중", succeeded: "성공", failed: "실패", cancelled: "취소됨" };
+  const analysisRunStatusLabels = {
+    running: ["실행 중", "Running"], succeeded: ["성공", "Succeeded"],
+    failed: ["실패", "Failed"], cancelled: ["취소됨", "Cancelled"],
+  };
   const analysisRunOutputs = (run) => (Array.isArray(run?.outputs) ? run.outputs : []);
   const analysisRunBoundOutputs = (run) => (Array.isArray(run?.outputs) ? run.outputs : []).filter((output) => output?.artifactId);
   const analysisRunSucceededWithoutOutput = (run) => run?.status === "succeeded" && analysisRunOutputs(run).length === 0;
@@ -2136,7 +2147,7 @@ const { stripAgentControlBlocks, stripStormbreakerContinueMarker, STORMBREAKER_C
     const planSpec = plan ? analysisSpecById(plan.analysisSpecId) : null;
     const planLine = plan
       ? `${planSpec?.title || plan.analysisSpecId} · v${plan.version} · ${runResultShortHash(plan.contentSha256)}`
-      : "고정된 분석계획 없음 — 이 실행은 사전 등록된 계획 아래에서 돌지 않았습니다.";
+      : uiCopy("고정된 분석계획 없음 — 이 실행은 사전 등록된 계획 아래에서 돌지 않았습니다.", "No pinned analysis plan — this run was not executed under a preregistered plan.");
     const inputCount = (Array.isArray(run?.inputs) ? run.inputs : []).length;
     const outputs = analysisRunOutputs(run);
     const boundOutputs = analysisRunBoundOutputs(run);
@@ -2144,10 +2155,10 @@ const { stripAgentControlBlocks, stripStormbreakerContinueMarker, STORMBREAKER_C
       const artifact = artifactsById.get(output.artifactId) || null;
       const boundVersion = Number(output.artifactVersion);
       const binding = !artifact
-        ? "이 프로젝트의 아티팩트 목록에 없습니다. 결과를 열 수 없습니다."
+        ? uiCopy("이 프로젝트의 아티팩트 목록에 없습니다. 결과를 열 수 없습니다.", "This result is not in the project's artifact list and cannot be opened.")
         : Number(artifact.currentVersion) === boundVersion
-          ? "현재 버전이 이 실행이 계산한 그 버전입니다."
-          : `아티팩트가 v${artifact.currentVersion}로 갱신됐습니다. 지금 열리는 결과는 이 실행이 계산한 버전이 아닙니다.`;
+          ? uiCopy("현재 버전이 이 실행이 계산한 그 버전입니다.", "The current artifact version is the exact version produced by this run.")
+          : uiCopy(`아티팩트가 v${artifact.currentVersion}로 갱신됐습니다. 지금 열리는 결과는 이 실행이 계산한 버전이 아닙니다.`, `The artifact is now v${artifact.currentVersion}. The version currently opened is not the version produced by this run.`);
       return `<li class="analysisRunOutput" data-artifact-id="${escapeHtml(output.artifactId)}" data-artifact-version="${escapeHtml(boundVersion)}" data-output-current="${Boolean(artifact && Number(artifact.currentVersion) === boundVersion)}">
         <strong>${escapeHtml(artifact?.title || output.artifactId)}</strong>
         <span>${escapeHtml(artifact?.kind || output.mimeType || "unknown")} · v${escapeHtml(boundVersion)} · <code title="${escapeHtml(output.sha256)}">${escapeHtml(runResultShortHash(output.sha256))}</code></span>
@@ -2155,8 +2166,8 @@ const { stripAgentControlBlocks, stripStormbreakerContinueMarker, STORMBREAKER_C
       </li>`;
     }).join("");
     const manifestRows = outputs.filter((output) => !output?.artifactId).map((output) => `<li class="analysisRunManifestOutput" data-output-role="${escapeHtml(output?.role || "")}">
-      <strong>${escapeHtml(output?.role || "저장 결과")}</strong>
-      <span title="${escapeHtml(output?.mimeType || "형식 미기록")}">${escapeHtml(output?.mimeType || "형식 미기록")}</span>
+      <strong>${escapeHtml(output?.role || uiCopy("저장 결과", "Stored result"))}</strong>
+      <span title="${escapeHtml(output?.mimeType || uiCopy("형식 미기록", "Format not recorded"))}">${escapeHtml(output?.mimeType || uiCopy("형식 미기록", "Format not recorded"))}</span>
       <span>${escapeHtml(acquisitionBytes(output?.byteSize))}</span>
       <code title="${escapeHtml(output?.sha256 || "")}">${escapeHtml(runResultShortHash(output?.sha256))}</code>
     </li>`).join("");
@@ -2164,43 +2175,43 @@ const { stripAgentControlBlocks, stripStormbreakerContinueMarker, STORMBREAKER_C
     return `<article class="analysisRun" data-run-id="${escapeHtml(run.id)}" data-run-status="${escapeHtml(status)}" data-run-outputless="${Boolean(outputless)}">
       <header>
         <strong>${escapeHtml(`${run.toolId ?? "unknown"} ${run.toolVersion ?? ""}`.trim())}</strong>
-        <span>${escapeHtml(analysisRunStatusLabels[status] || status)} · ${escapeHtml(run.runtime ?? "unknown")}</span>
+        <span>${escapeHtml(analysisRunStatusLabels[status] ? uiCopy(...analysisRunStatusLabels[status]) : status)} · ${escapeHtml(run.runtime ?? "unknown")}</span>
         <code title="${escapeHtml(run.id)}">${escapeHtml(runResultShortHash(run.id))}</code>
       </header>
       <dl class="analysisRunFacts">
-        <div><dt>분석계획</dt><dd>${escapeHtml(planLine)}</dd></div>
-        <div><dt>입력</dt><dd>${escapeHtml(`${inputCount}개 · 매니페스트 ${runResultShortHash(run.inputManifestSha256)}`)}</dd></div>
-        <div><dt>출력 매니페스트</dt><dd>${escapeHtml(run.outputManifestSha256 ? runResultShortHash(run.outputManifestSha256) : "없음")}</dd></div>
-        <div><dt>시작 · 종료</dt><dd>${escapeHtml(`${run.startedAt ?? "—"} · ${run.finishedAt || "진행 중"}`)}</dd></div>
+        <div><dt>${uiCopy("분석계획", "Analysis plan")}</dt><dd>${escapeHtml(planLine)}</dd></div>
+        <div><dt>${uiCopy("입력", "Inputs")}</dt><dd>${escapeHtml(uiCopy(`${inputCount}개 · 매니페스트 ${runResultShortHash(run.inputManifestSha256)}`, `${inputCount} · manifest ${runResultShortHash(run.inputManifestSha256)}`))}</dd></div>
+        <div><dt>${uiCopy("출력 매니페스트", "Output manifest")}</dt><dd>${escapeHtml(run.outputManifestSha256 ? runResultShortHash(run.outputManifestSha256) : uiCopy("없음", "None"))}</dd></div>
+        <div><dt>${uiCopy("시작 · 종료", "Started · finished")}</dt><dd>${escapeHtml(`${run.startedAt ?? "—"} · ${run.finishedAt || uiCopy("진행 중", "In progress")}`)}</dd></div>
       </dl>
       ${run.summary ? `<p class="analysisRunSummary">${escapeHtml(run.summary)}</p>` : ""}
       ${boundOutputs.length
         ? `<ul class="analysisRunOutputs">${outputRows}</ul>`
         : ""}
-      ${manifestRows ? `<div class="analysisRunManifest"><strong>저장된 결과 매니페스트 ${escapeHtml(outputs.length - boundOutputs.length)}개</strong><ul>${manifestRows}</ul><p>실행 결과는 보존됐지만 과학 아티팩트로 투영되지는 않았습니다. 그림·표·원고에는 아직 연결할 수 없습니다.</p></div>` : ""}
-      ${outputless ? `<p class="analysisRunUnbound" role="alert"><strong>성공으로 기록됐지만 출력이 없습니다.</strong><span>정확한 실행 기록을 다시 읽어 확인했습니다. 출력 매니페스트 항목이 하나도 없어 이 실행은 결과로 셀 수 없습니다. 출력이 필요한 실행이었다면 다시 실행해야 합니다.</span></p>` : ""}
+      ${manifestRows ? `<div class="analysisRunManifest"><strong>${uiCopy(`저장된 결과 매니페스트 ${outputs.length - boundOutputs.length}개`, `Stored result manifests: ${outputs.length - boundOutputs.length}`)}</strong><ul>${manifestRows}</ul><p>${uiCopy("실행 결과는 보존됐지만 과학 아티팩트로 투영되지는 않았습니다. 그림·표·원고에는 아직 연결할 수 없습니다.", "The run result is preserved, but it has not been projected into a scientific artifact. It cannot yet be linked to a figure, table, or manuscript.")}</p></div>` : ""}
+      ${outputless ? `<p class="analysisRunUnbound" role="alert"><strong>${uiCopy("성공으로 기록됐지만 출력이 없습니다.", "The run is marked as succeeded, but it has no output.")}</strong><span>${uiCopy("정확한 실행 기록을 다시 읽어 확인했습니다. 출력 매니페스트 항목이 하나도 없어 이 실행은 결과로 셀 수 없습니다. 출력이 필요한 실행이었다면 다시 실행해야 합니다.", "The exact run record was checked again. With no output-manifest entries, this run cannot count as a result. If output was expected, run it again.")}</span></p>` : ""}
     </article>`;
   }
 
   function analysisRunsView(project) {
-    if (state.loadingProject) return `<div class="loadingState" aria-live="polite">프로젝트 기록을 불러오는 중…</div>`;
+    if (state.loadingProject) return `<div class="loadingState" aria-live="polite">${uiCopy("프로젝트 기록을 불러오는 중…", "Loading project records…")}</div>`;
     if (state.projectError) return errorState();
     const loaded = state.analysisRunsProjectId === state.selectedId;
     const runs = loaded && Array.isArray(state.analysisRuns) ? state.analysisRuns : [];
     const artifactsById = new Map((Array.isArray(state.analysisRunArtifacts) ? state.analysisRunArtifacts : []).map((artifact) => [artifact.id, artifact]));
     const outputlessCount = runs.filter(analysisRunSucceededWithoutOutput).length;
     const body = !loaded
-      ? `<div class="loadingState" aria-live="polite">실행 기록을 불러오는 중…</div>`
+      ? `<div class="loadingState" aria-live="polite">${uiCopy("실행 기록을 불러오는 중…", "Loading run records…")}</div>`
       : state.analysisRunsError
         ? ""
         : runs.length === 0
-          ? `<div class="emptyCopy pageEmpty"><strong>아직 실행된 분석이 없습니다.</strong><p>분석계획 화면에서 계획을 고정한 뒤 연구 채팅에서 실행을 요청하면, 어떤 계획 아래 무엇이 돌았고 무엇을 만들었는지가 여기에 기록됩니다.</p></div>`
+          ? `<div class="emptyCopy pageEmpty"><strong>${uiCopy("아직 실행된 분석이 없습니다.", "No analyses have run yet.")}</strong><p>${uiCopy("분석계획 화면에서 계획을 고정한 뒤 연구 채팅에서 실행을 요청하면, 어떤 계획 아래 무엇이 돌았고 무엇을 만들었는지가 여기에 기록됩니다.", "Pin a plan in Analysis Plans, then request a run in Research Chat. This page will record which plan ran, what it used, and what it produced.")}</p></div>`
           : runs.map((run) => analysisRunRow(run, artifactsById)).join("");
     return `<section class="researchView analysisRunsView" data-research-destination="analysis-runs"><div class="answerColumn">
-      <div class="researchKicker"><span>${escapeHtml(domainLabel(project.domain))}</span> · <span>분석 실행</span></div>
+      <div class="researchKicker"><span>${escapeHtml(domainLabel(project.domain))}</span> · <span>${uiCopy("분석 실행", "Analysis runs")}</span></div>
       <h1>${escapeHtml(project.title)}</h1>
-      ${state.analysisRunsError ? `<div class="errorCopy" role="alert">${escapeHtml(`실행 기록을 불러오지 못했습니다. ${state.analysisRunsError}`)}</div>` : ""}
-      ${loaded && runs.length ? `<div class="analysisRunsSummary"><span>전체 <strong>${escapeHtml(runs.length)}</strong></span><span>성공 <strong>${escapeHtml(runs.filter((run) => run.status === "succeeded").length)}</strong></span><span>실패·취소 <strong>${escapeHtml(runs.filter((run) => run.status === "failed" || run.status === "cancelled").length)}</strong></span><span data-alert="${outputlessCount > 0}">출력 없는 성공 <strong>${escapeHtml(outputlessCount)}</strong></span></div>` : ""}
+      ${state.analysisRunsError ? `<div class="errorCopy" role="alert">${escapeHtml(uiCopy(`실행 기록을 불러오지 못했습니다. ${state.analysisRunsError}`, `Could not load run records. ${state.analysisRunsError}`))}</div>` : ""}
+      ${loaded && runs.length ? `<div class="analysisRunsSummary"><span>${uiCopy("전체", "Total")} <strong>${escapeHtml(runs.length)}</strong></span><span>${uiCopy("성공", "Succeeded")} <strong>${escapeHtml(runs.filter((run) => run.status === "succeeded").length)}</strong></span><span>${uiCopy("실패·취소", "Failed or cancelled")} <strong>${escapeHtml(runs.filter((run) => run.status === "failed" || run.status === "cancelled").length)}</strong></span><span data-alert="${outputlessCount > 0}">${uiCopy("출력 없는 성공", "Succeeded without output")} <strong>${escapeHtml(outputlessCount)}</strong></span></div>` : ""}
       ${body}
     </div></section>`;
   }
@@ -6267,14 +6278,43 @@ const { stripAgentControlBlocks, stripStormbreakerContinueMarker, STORMBREAKER_C
     state.analysisPlanReviewError = "";
   }
 
+  function analysisPlanReviewMissingReasons(document) {
+    const reasons = [];
+    if (!document?.estimand) reasons.push(uiCopy("분석 대상과 측정값", "estimand and outcome measure"));
+    if (!document?.design || document.design.dependence?.kind === "unresolved") reasons.push(uiCopy("반복·군집 구조", "dependence structure"));
+    if (!document?.missingData || document.missingData.strategy === "unresolved") reasons.push(uiCopy("결측값 처리", "missing-data strategy"));
+    if (!document?.multiplicity || document.multiplicity.strategy === "unresolved") reasons.push(uiCopy("다중 비교 처리", "multiplicity strategy"));
+    if (!Array.isArray(document?.requiredDiagnostics) || document.requiredDiagnostics.length === 0) reasons.push(uiCopy("필수 진단", "required diagnostics"));
+    const inputs = Array.isArray(document?.data?.inputs) ? document.data.inputs : [];
+    const plannedSources = Array.isArray(document?.data?.acquisition?.sources) ? document.data.acquisition.sources : [];
+    if (inputs.length === 0 && plannedSources.length === 0) reasons.push(uiCopy("고정된 입력 데이터 또는 사전 수집 계획", "pinned input data or a preregistered acquisition plan"));
+    return reasons;
+  }
+
   function analysisPlanReviewSheet() {
     if (!state.analysisPlanReviewSheet) return "";
     const plan = reviewableAnalysisPlan();
     if (!plan) return "";
     const document = plan.version?.document || {};
     const inputs = Array.isArray(document.data?.inputs) ? document.data.inputs : [];
-    const inputRows = inputs.map((item) => `<li><strong>${escapeHtml(item.artifactId)} · v${escapeHtml(item.artifactVersion)}</strong><code title="${escapeHtml(item.contentSha256)}">${escapeHtml(String(item.contentSha256).slice(0, 16))}…</code></li>`).join("");
-    return `<div class="chatQuestionScrim analysisPlanReviewScrim" role="presentation"><form class="bottomSheet analysisPlanReviewSheet" id="analysis-plan-review-form" role="dialog" aria-modal="true" aria-labelledby="analysis-plan-review-title" data-analysis-plan-id="${escapeHtml(plan.id)}" data-analysis-plan-version="${escapeHtml(plan.currentVersion)}" data-analysis-plan-sha256="${escapeHtml(plan.currentDocumentSha256)}" data-analysis-plan-lock-version="${escapeHtml(plan.lockVersion)}"><header><div><span>Human authorization · exact analysis plan</span><h2 id="analysis-plan-review-title">이 분석계획을 그대로 고정할까요?</h2></div><button type="button" data-action="close-analysis-plan-review" aria-label="분석계획 검토를 나중에 하기">×</button></header><div class="analysisPlanReviewBody"><section class="analysisPlanReviewIdentity"><strong>${escapeHtml(plan.title)}</strong><dl><div><dt>Plan ID</dt><dd><code>${escapeHtml(plan.id)}</code></dd></div><div><dt>Version</dt><dd>v${escapeHtml(plan.currentVersion)}</dd></div><div><dt>Content</dt><dd><code>${escapeHtml(plan.currentDocumentSha256)}</code></dd></div><div><dt>Lock</dt><dd>${escapeHtml(plan.lockVersion)}</dd></div></dl></section><section class="analysisPlanReviewSummary"><div><span>Research question</span><strong>${escapeHtml(document.researchQuestion || "정의되지 않음")}</strong></div><div><span>Estimand</span><strong>${escapeHtml(document.estimand ? `${document.estimand.population} · ${document.estimand.outcome} · ${document.estimand.summaryMeasure}` : "미해결")}</strong></div><div><span>Design</span><strong>${escapeHtml(`${document.design?.studyType || "미정"} · ${document.design?.dependence?.kind || "unresolved"}`)}</strong></div><div><span>Model boundary</span><strong>${escapeHtml(document.model ? `${document.model.family} · ${document.model.formula}` : "도메인 실행 도구가 소유 (model=null)")}</strong></div></section><section class="analysisPlanReviewInputs"><span>Exact input artifacts</span><ul>${inputRows}</ul></section><label class="decisionRationale"><span>검토 의견 <em>수정 요청 시 필수</em></span><textarea name="rationale" maxlength="8000" rows="3" placeholder="승인 근거 또는 수정할 내용을 구체적으로 적어 주세요."></textarea></label><div class="analysisPlanReviewBoundary"><strong>AI 추천은 승인으로 간주되지 않습니다.</strong><span>승인은 지금 화면의 ID · version · content hash · lock에만 유효하며, 성공하면 같은 트랜잭션에서 frozen 상태가 됩니다.</span></div><div class="formError" role="alert">${escapeHtml(state.analysisPlanReviewError)}</div></div><footer><button class="secondaryButton" type="submit" name="decision" value="revise" ${state.analysisPlanReviewBusy ? "disabled" : ""}>수정 요청</button><button class="primaryButton" type="submit" name="decision" value="approve" ${state.analysisPlanReviewBusy ? "disabled" : ""}>${state.analysisPlanReviewBusy ? "저장 중…" : "이 exact plan 승인"}</button></footer></form></div>`;
+    const plannedSources = Array.isArray(document.data?.acquisition?.sources) ? document.data.acquisition.sources : [];
+    const missingReasons = analysisPlanReviewMissingReasons(document);
+    const inputRows = inputs.length
+      ? inputs.map((item) => `<li><strong>${escapeHtml(item.artifactId)} · v${escapeHtml(item.artifactVersion)}</strong><code title="${escapeHtml(item.contentSha256)}">${escapeHtml(String(item.contentSha256).slice(0, 16))}…</code></li>`).join("")
+      : plannedSources.length
+        ? plannedSources.map((source) => `<li class="analysisPlanReviewInputPlanned"><strong>${escapeHtml(source.provider)}</strong><span>${escapeHtml(source.expectedArtifactKind)}</span><span>${escapeHtml(source.retrievalPlan)}</span><code title="${escapeHtml(source.sourceRefs.join("\n"))}">${escapeHtml(uiCopy(`공식 출처 ${source.sourceRefs.length}개`, `${source.sourceRefs.length} source reference${source.sourceRefs.length === 1 ? "" : "s"}`))}</code></li>`).join("")
+        : `<li class="analysisPlanReviewInputEmpty"><strong>${uiCopy("입력 데이터나 수집 계획이 없습니다.", "No input data or acquisition plan is defined.")}</strong><span>${uiCopy("수정 요청을 보내 정확한 입력 아티팩트 또는 공식 출처·수집 방법을 계획에 추가하세요.", "Request changes to add exact input artifacts or a plan with authoritative sources and a retrieval method.")}</span></li>`;
+    const question = document.researchQuestion || uiCopy("정의되지 않음", "Not defined");
+    const estimand = document.estimand
+      ? `${document.estimand.population} · ${document.estimand.outcome} · ${document.estimand.summaryMeasure}`
+      : uiCopy("아직 정하지 않음", "Not defined yet");
+    const design = `${document.design?.studyType || uiCopy("미정", "Not set")} · ${document.design?.dependence?.kind || uiCopy("미정", "Not set")}`;
+    const model = document.model
+      ? `${document.model.family} · ${document.model.formula}`
+      : uiCopy("분석 실행 단계에서 해당 도구가 모형을 확정합니다.", "The analysis tool will define the model when the analysis runs.");
+    const incomplete = missingReasons.length
+      ? `<div class="analysisPlanReviewIncomplete" role="status"><strong>${uiCopy("승인 전에 계획을 보완해야 합니다.", "This plan needs changes before it can be approved.")}</strong><span>${escapeHtml(missingReasons.join(" · "))}</span></div>` : "";
+    return `<div class="chatQuestionScrim analysisPlanReviewScrim" role="presentation"><form class="bottomSheet analysisPlanReviewSheet" id="analysis-plan-review-form" role="dialog" aria-modal="true" aria-labelledby="analysis-plan-review-title" data-analysis-plan-id="${escapeHtml(plan.id)}" data-analysis-plan-version="${escapeHtml(plan.currentVersion)}" data-analysis-plan-sha256="${escapeHtml(plan.currentDocumentSha256)}" data-analysis-plan-lock-version="${escapeHtml(plan.lockVersion)}"><header><div><span>${uiCopy("사람 승인 · 현재 분석계획", "Human approval · current analysis plan")}</span><h2 id="analysis-plan-review-title">${uiCopy("이 분석계획을 승인하시겠습니까?", "Approve this analysis plan?")}</h2></div><button type="button" data-action="close-analysis-plan-review" aria-label="${uiCopy("분석계획 검토를 나중에 하기", "Review this analysis plan later")}">×</button></header><div class="analysisPlanReviewBody">${incomplete}<section class="analysisPlanReviewIdentity"><strong>${escapeHtml(plan.title)}</strong><dl><div><dt>${uiCopy("계획 ID", "Plan ID")}</dt><dd><code>${escapeHtml(plan.id)}</code></dd></div><div><dt>${uiCopy("버전", "Version")}</dt><dd>v${escapeHtml(plan.currentVersion)}</dd></div><div><dt>${uiCopy("콘텐츠 해시", "Content hash")}</dt><dd><code>${escapeHtml(plan.currentDocumentSha256)}</code></dd></div><div><dt>${uiCopy("변경 잠금", "Change lock")}</dt><dd>${escapeHtml(plan.lockVersion)}</dd></div></dl></section><section class="analysisPlanReviewSummary"><div><span>${uiCopy("연구 질문", "Research question")}</span><strong>${escapeHtml(question)}</strong></div><div><span>${uiCopy("분석 대상", "Estimand")}</span><strong>${escapeHtml(estimand)}</strong></div><div><span>${uiCopy("연구 설계", "Study design")}</span><strong>${escapeHtml(design)}</strong></div><div><span>${uiCopy("모형 설정", "Model setup")}</span><strong>${escapeHtml(model)}</strong></div></section><section class="analysisPlanReviewInputs"><span>${uiCopy(inputs.length ? "고정된 입력 데이터" : "사전 수집 계획", inputs.length ? "Pinned input data" : "Preregistered acquisition plan")}</span><ul>${inputRows}</ul></section><label class="decisionRationale"><span>${uiCopy("검토 의견", "Review note")} <em>${uiCopy("수정 요청 시 필수", "Required when requesting changes")}</em></span><textarea name="rationale" maxlength="8000" rows="3" placeholder="${uiCopy("승인 근거 또는 수정할 내용을 구체적으로 적어 주세요.", "Describe your approval rationale or the changes needed.")}"></textarea></label><div class="analysisPlanReviewBoundary"><strong>${uiCopy("승인은 AI 추천과 별개입니다.", "Your approval is separate from any AI recommendation.")}</strong><span>${uiCopy("승인하면 현재 버전과 해시가 고정됩니다. 수집 계획만 있는 경우에는 수집 후 정확한 입력 버전을 묶은 후속 계획을 다시 승인해야 분석을 실행할 수 있습니다.", "Approval pins the current version and hash. If this plan contains only an acquisition plan, analysis can run only after a successor plan binds the exact collected input versions and is approved again.")}</span></div><div class="formError" role="alert">${escapeHtml(state.analysisPlanReviewError)}</div></div><footer><button class="secondaryButton" type="submit" name="decision" value="revise" ${state.analysisPlanReviewBusy ? "disabled" : ""}>${uiCopy("수정 요청", "Request changes")}</button><button class="primaryButton" type="submit" name="decision" value="approve" ${state.analysisPlanReviewBusy || missingReasons.length ? "disabled" : ""} title="${missingReasons.length ? escapeHtml(uiCopy("필수 항목을 먼저 보완하세요.", "Complete the required plan fields first.")) : ""}">${state.analysisPlanReviewBusy ? uiCopy("저장 중…", "Saving…") : uiCopy("계획 승인", "Approve plan")}</button></footer></form></div>`;
   }
 
   function researchContractApprovalSheet() {
@@ -9620,8 +9660,19 @@ const { stripAgentControlBlocks, stripStormbreakerContinueMarker, STORMBREAKER_C
       const form = new FormData(event.target);
       const rationale = String(form.get("rationale") || "").trim() || null;
       if (!plan || !projectId || state.analysisPlanReviewBusy) return;
+      if (decision === "approve") {
+        const missingReasons = analysisPlanReviewMissingReasons(plan.version?.document || {});
+        if (missingReasons.length) {
+          state.analysisPlanReviewError = uiCopy(
+            `승인 전에 다음 항목을 보완해야 합니다: ${missingReasons.join(" · ")}`,
+            `Complete these items before approval: ${missingReasons.join(" · ")}`,
+          );
+          render();
+          return;
+        }
+      }
       if (decision === "revise" && !rationale) {
-        state.analysisPlanReviewError = "수정할 내용을 적어 주세요.";
+        state.analysisPlanReviewError = uiCopy("수정할 내용을 적어 주세요.", "Describe the changes you need.");
         render();
         return;
       }
@@ -9647,15 +9698,25 @@ const { stripAgentControlBlocks, stripStormbreakerContinueMarker, STORMBREAKER_C
         state.analysisPlanReviewSheet = false;
         state.analysisPlanReviewDismissedKey = null;
         const exact = `analysis_spec_id=${result.analysisSpec.id}, version=${result.analysisSpec.currentVersion}, content_sha256=${result.analysisSpec.currentDocumentSha256}`;
+        const acquisitionOnly = result.analysisSpec.version.document.data.inputs.length === 0
+          && Boolean(result.analysisSpec.version.document.data.acquisition?.sources.length);
         state.composerDraft = decision === "approve"
-          ? `사람이 화면에서 ${exact}를 승인했고 immutable approval receipt ${result.receipt.id}가 저장되었습니다. 최신 research lifecycle을 다시 읽고 이 frozen exact plan만 결합해 허용된 다음 단계로 진행하세요. 계획을 다시 쓰거나 채팅 문구를 승인으로 추론하지 마세요.`
-          : `사람이 화면에서 ${exact}의 수정을 요청했습니다. 수정 의견: ${rationale}\n\n현재 draft를 승인 또는 freeze하지 말고, 이 의견을 반영한 새 exact analysis plan을 제안한 뒤 다시 사람 검토를 요청하세요.`;
+          ? acquisitionOnly
+            ? `사람이 화면에서 ${exact}의 사전 수집 계획을 승인했고 immutable approval receipt ${result.receipt.id}가 저장되었습니다. 이 승인은 data.acquisition에 적힌 출처와 수집 방법만 허용합니다. 분석은 실행하지 마세요. 수집 후 실제 아티팩트 ID, 버전, content hash를 data.inputs에 묶은 후속 계획을 제안하고 다시 사람 승인을 요청하세요.`
+            : `사람이 화면에서 ${exact}를 승인했고 immutable approval receipt ${result.receipt.id}가 저장되었습니다. 최신 research lifecycle을 다시 읽고 이 frozen exact plan만 결합해 허용된 다음 단계로 진행하세요. 계획을 다시 쓰거나 채팅 문구를 승인으로 추론하지 마세요.`
+          : `사람이 화면에서 ${exact}의 수정을 요청했습니다. 수정 의견: ${rationale}\n\n현재 draft를 승인 또는 freeze하지 마세요. 아직 입력 아티팩트가 없다면 data.inputs=[]와 함께 data.acquisition={strategy:"acquire-before-execution",sources:[{provider,sourceRefs,retrievalPlan,expectedArtifactKind}]}를 작성하세요. 수집이 끝난 뒤에는 실제 아티팩트 ID, 버전, content hash를 data.inputs에 묶은 후속 계획이 다시 사람 승인을 받아야 합니다. 이 의견을 반영한 새 analysis plan을 제안한 뒤 검토를 요청하세요.`;
         routed = true;
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
-        state.analysisPlanReviewError = /science-analysis-version-conflict/.test(message)
-          ? "검토 중 계획 버전이 바뀌었습니다. 자동 승인하지 않았습니다. 최신 계획을 다시 확인해 주세요."
-          : message;
+        if (/science-analysis-version-conflict/.test(message)) {
+          state.analysisPlanReviewError = uiCopy("검토 중 계획 버전이 바뀌었습니다. 자동 승인하지 않았습니다. 최신 계획을 다시 확인해 주세요.", "The plan changed while you were reviewing it. It was not approved. Review the latest version.");
+        } else if (/science-analysis-spec-incomplete/.test(message)) {
+          const missingReasons = analysisPlanReviewMissingReasons(plan.version?.document || {});
+          state.analysisPlanReviewError = uiCopy(
+            `계획을 승인하지 않았습니다. 다음 항목을 보완하세요: ${missingReasons.join(" · ")}`,
+            `The plan was not approved. Complete these items: ${missingReasons.join(" · ")}`,
+          );
+        } else state.analysisPlanReviewError = message;
       } finally {
         state.analysisPlanReviewBusy = false;
         render();

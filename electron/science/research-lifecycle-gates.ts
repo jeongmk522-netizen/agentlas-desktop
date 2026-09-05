@@ -238,6 +238,12 @@ export function assertScienceResearchLifecyclePhaseGate(input: AssertScienceRese
     if (unresolved.length) throw new Error("science-research-lifecycle-plan-decision-gate-blocked");
     requireEvidenceSha256(preconditions.evidenceSha256, plan.currentDocumentSha256, "science-research-lifecycle-plan-gate-blocked");
     if (edge === "analysis_plan_frozen->execution") {
+      if (plan.version.document.data.inputs.length === 0) {
+        // A frozen acquisition plan commits the study to sources and retrieval rules before the
+        // bytes exist. It cannot authorize analysis: execution requires a separately approved
+        // successor plan bound to exact immutable artifact versions.
+        throw new Error("science-research-lifecycle-exact-input-plan-required");
+      }
       // Freezing a plan and authorizing its execution are different acts, and this edge used to
       // run a check identical to the one before it on identical evidence, so it authorized
       // nothing. What it has to establish is the thing prespecification exists for: that the plan

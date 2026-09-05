@@ -980,6 +980,14 @@ button.manuscriptBinding:hover { border-color: var(--line-strong); background: v
 .analysisPlanReviewInputs li { min-width: 0; display: flex; align-items: center; justify-content: space-between; gap: 12px; border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; }
 .analysisPlanReviewInputs li strong { min-width: 0; overflow: hidden; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
 .analysisPlanReviewInputs li code { flex: 0 0 auto; color: var(--muted); font-size: 8px; }
+.analysisPlanReviewInputs .analysisPlanReviewInputEmpty { display: grid; justify-content: stretch; gap: 4px; border-style: dashed; padding: 11px 12px; }
+.analysisPlanReviewInputs .analysisPlanReviewInputEmpty strong { overflow: visible; color: var(--ink); font-size: 11px; text-overflow: clip; white-space: normal; }
+.analysisPlanReviewInputEmpty span { color: var(--muted); font-size: 11px; line-height: 1.5; }
+.analysisPlanReviewInputs .analysisPlanReviewInputPlanned { display: grid; grid-template-columns: minmax(120px, auto) minmax(0, 1fr) auto; justify-content: stretch; gap: 4px 12px; align-items: baseline; }
+.analysisPlanReviewInputPlanned > span:last-of-type { grid-column: 1 / -1; color: var(--muted); font-size: 11px; line-height: 1.5; }
+.analysisPlanReviewIncomplete { display: grid; gap: 4px; margin-bottom: 14px; border-left: 3px solid var(--notice-ink); background: var(--surface-subtle); padding: 10px 12px; }
+.analysisPlanReviewIncomplete strong { color: var(--notice-ink); font-size: 12px; }
+.analysisPlanReviewIncomplete span { color: var(--muted); font-size: 11px; line-height: 1.5; }
 .analysisPlanReviewSheet .decisionRationale { display: block; margin-top: 14px; }
 .analysisPlanReviewSheet .decisionRationale textarea { width: 100%; box-sizing: border-box; }
 .analysisPlanReviewBoundary { display: grid; gap: 4px; margin-top: 12px; border-left: 3px solid var(--ink); background: var(--surface-subtle); padding: 10px 12px; }

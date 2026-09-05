@@ -3325,7 +3325,10 @@ function normalizeScienceAnalysisDocument(value: unknown): ScienceAnalysisSpecDo
   const seed = safeJsonRecord(record.seed, 4 * 1024, "analysis-seed");
   const runtimePolicy = safeJsonRecord(record.runtimePolicy, 8 * 1024, "analysis-runtime-policy");
   if (!hasExactKeys(design, ["studyType", "experimentalUnit", "observationUnit", "dependence"])) throw new Error("science-analysis-design-invalid");
-  if (!hasExactKeys(data, ["inputs", "outcomeVariables", "predictorVariables", "transformations", "exclusions"])) throw new Error("science-analysis-data-invalid");
+  const legacyDataKeys = ["inputs", "outcomeVariables", "predictorVariables", "transformations", "exclusions"];
+  const acquisitionDataKeys = [...legacyDataKeys, "acquisition"];
+  const hasAcquisitionField = Object.prototype.hasOwnProperty.call(data, "acquisition");
+  if (!hasExactKeys(data, hasAcquisitionField ? acquisitionDataKeys : legacyDataKeys)) throw new Error("science-analysis-data-invalid");
   if (!hasExactKeys(missingData, ["strategy", "rationale"]) || !["unresolved", "complete-case", "multiple-imputation", "model-based", "not-applicable"].includes(String(missingData.strategy))) throw new Error("science-analysis-missing-data-invalid");
   if (!hasExactKeys(multiplicity, ["strategy", "families", "rationale"]) || !["unresolved", "none", "fdr", "fwer"].includes(String(multiplicity.strategy))) throw new Error("science-analysis-multiplicity-invalid");
   if (!hasExactKeys(seed, ["algorithm", "value"]) || seed.algorithm !== "fixed") throw new Error("science-analysis-seed-invalid");
@@ -3338,6 +3341,28 @@ function normalizeScienceAnalysisDocument(value: unknown): ScienceAnalysisSpecDo
     return { artifactId: String(item.artifactId), artifactVersion: safePositiveInteger(item.artifactVersion, 1, Number.MAX_SAFE_INTEGER, "analysis-input-version"), contentSha256: safeSha256(item.contentSha256, "analysis-input-content-sha256") };
   });
   if (new Set(inputs.map((item) => `${item.artifactId}:${item.artifactVersion}`)).size !== inputs.length) throw new Error("science-analysis-input-duplicate");
+  let acquisition: ScienceAnalysisSpecDocument["data"]["acquisition"] = undefined;
+  if (hasAcquisitionField) {
+    if (data.acquisition === null) acquisition = null;
+    else {
+      const acquisitionRecord = safeJsonRecord(data.acquisition, 256 * 1024, "analysis-acquisition");
+      if (!hasExactKeys(acquisitionRecord, ["strategy", "sources"]) || acquisitionRecord.strategy !== "acquire-before-execution") throw new Error("science-analysis-acquisition-invalid");
+      const sourcesRaw = Array.isArray(acquisitionRecord.sources) ? acquisitionRecord.sources : null;
+      if (!sourcesRaw || sourcesRaw.length < 1 || sourcesRaw.length > 100) throw new Error("science-analysis-acquisition-sources-invalid");
+      const sources = sourcesRaw.map((entry) => {
+        const item = safeJsonRecord(entry, 16 * 1024, "analysis-acquisition-source");
+        if (!hasExactKeys(item, ["provider", "sourceRefs", "retrievalPlan", "expectedArtifactKind"])) throw new Error("science-analysis-acquisition-source-invalid");
+        return {
+          provider: safeText(item.provider, 500, "analysis-acquisition-provider"),
+          sourceRefs: safeTextList(item.sourceRefs, 100, 4_000, "analysis-acquisition-source-ref"),
+          retrievalPlan: safeText(item.retrievalPlan, 8_000, "analysis-acquisition-retrieval-plan"),
+          expectedArtifactKind: safeText(item.expectedArtifactKind, 500, "analysis-acquisition-artifact-kind"),
+        };
+      });
+      if (sources.some((source) => source.sourceRefs.length < 1)) throw new Error("science-analysis-acquisition-source-ref-required");
+      acquisition = { strategy: "acquire-before-execution", sources };
+    }
+  }
   const studyType = String(design.studyType ?? "") as ScienceAnalysisSpecDocument["design"]["studyType"];
   if (!["randomized-experiment", "observational", "quasi-experiment", "simulation"].includes(studyType)) throw new Error("science-analysis-study-type-invalid");
   let model: ScienceAnalysisSpecDocument["model"] = null;
@@ -3372,6 +3397,7 @@ function normalizeScienceAnalysisDocument(value: unknown): ScienceAnalysisSpecDo
     design: { studyType, experimentalUnit: nullableAnalysisText(design.experimentalUnit, 500, "analysis-experimental-unit"), observationUnit: safeText(design.observationUnit, 500, "analysis-observation-unit"), dependence: normalizeScienceDependence(design.dependence) },
     data: {
       inputs,
+      ...(hasAcquisitionField ? { acquisition } : {}),
       outcomeVariables: safeTextList(data.outcomeVariables, 100, 240, "analysis-outcome-variable"),
       predictorVariables: safeTextList(data.predictorVariables, 200, 240, "analysis-predictor-variable", 0),
       transformations: safeTextList(data.transformations, 200, 2_000, "analysis-transformation", 0),
@@ -18801,6 +18827,7 @@ export class ScienceStore {
     if (!UUID_RE.test(String(input.projectId ?? ""))) throw new Error("science-project-id-invalid");
     const title = safeText(input.title, 500, "analysis-title");
     const document = normalizeScienceAnalysisDocument(input.document);
+    if (document.data.inputs.length === 0 && !document.data.acquisition?.sources.length) throw new Error("science-analysis-input-plan-required");
     const drafts = Array.isArray(input.decisions) ? input.decisions.map(normalizeScienceDecisionDraft) : null;
     if (!drafts || drafts.length > 3 || new Set(drafts.map((draft) => draft.decisionKey)).size !== drafts.length) throw new Error("science-analysis-decisions-invalid");
     if ((document.estimand === null) !== drafts.some((draft) => draft.decisionKey === "analysis.estimand")) throw new Error("science-analysis-estimand-decision-mismatch");
@@ -18989,10 +19016,15 @@ export class ScienceStore {
         const openDecisions = this.listDecisionRequests(input.projectId, analysisSpec.id, ["queued", "presented", "deferred"]);
         if (openDecisions.length) throw new Error("science-analysis-open-decision");
         const document = analysisSpec.version.document;
-        if (!document.estimand || document.design.dependence.kind === "unresolved" || document.missingData.strategy === "unresolved"
-          || document.multiplicity.strategy === "unresolved" || document.requiredDiagnostics.length === 0 || document.data.inputs.length === 0) {
-          throw new Error("science-analysis-spec-incomplete");
-        }
+        const incomplete = [
+          ...(!document.estimand ? ["estimand"] : []),
+          ...(document.design.dependence.kind === "unresolved" ? ["dependence"] : []),
+          ...(document.missingData.strategy === "unresolved" ? ["missing-data"] : []),
+          ...(document.multiplicity.strategy === "unresolved" ? ["multiplicity"] : []),
+          ...(document.requiredDiagnostics.length === 0 ? ["diagnostics"] : []),
+          ...(document.data.inputs.length === 0 && !document.data.acquisition?.sources.length ? ["inputs-or-acquisition"] : []),
+        ];
+        if (incomplete.length) throw new Error(`science-analysis-spec-incomplete:${incomplete.join(",")}`);
         this.validateAnalysisDocumentReferences(input.projectId, document);
       }
       const now = new Date().toISOString();

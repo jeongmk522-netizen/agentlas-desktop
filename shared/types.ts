@@ -1,5 +1,6 @@
 // Main 프로세스 ↔ Renderer 간 공유 타입.
 // renderer/lib/types.ts에서 re-export.
+import type { CredentialRecoveryFailure, CredentialRecoveryResult } from "./credential-recovery";
 import type {
   MultimodalProvider,
   MultimodalProviderStatus,
@@ -1045,7 +1046,9 @@ export interface BorrowedAgentProfile {
  */
 export interface EnvVarMeta {
   key: string;
-  hasValue: boolean;
+  /** null means access was unavailable; false means confirmed missing. */
+  hasValue: boolean | null;
+  credentialAccess?: "available" | "unavailable";
   /** 저장된 값의 마스킹 미리보기 (메인에서 생성, 전체 평문 아님). 미저장이면 null. */
   preview?: string | null;
   /** 이 env를 요구하는 설치된 에이전트들 (없으면 사용자가 직접 추가한 free-form) */
@@ -6874,6 +6877,12 @@ export interface AgentlasIpc {
     saveApiKey: (backend: RuntimeBackend, key: string) => Promise<void>;
     hasApiKey: (backend: RuntimeBackend) => Promise<boolean>;
     deleteApiKey: (backend: RuntimeBackend) => Promise<void>;
+  };
+  credentialRecovery: {
+    /** Read failure metadata only; never probes the credential backend. */
+    list: () => Promise<CredentialRecoveryFailure[]>;
+    /** One explicit attempt at the exact Main-issued resource handle. */
+    retry: (retryToken: string) => Promise<CredentialRecoveryResult>;
   };
   /** 글로벌 env vault — 에이전트들이 공유하는 외부 API 키.
    *  값은 macOS Keychain에 저장, renderer는 metadata만 받음.

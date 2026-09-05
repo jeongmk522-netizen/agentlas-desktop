@@ -338,6 +338,10 @@ const api: AgentlasIpc = {
     preview: (key: string) => ipcRenderer.invoke("env:preview", key),
     remove: (key: string) => ipcRenderer.invoke("env:remove", key),
   },
+  credentialRecovery: {
+    list: () => ipcRenderer.invoke("credentialRecovery:list"),
+    retry: (retryToken: string) => ipcRenderer.invoke("credentialRecovery:retry", retryToken),
+  },
   multimodal: {
     listProviders: () => ipcRenderer.invoke("multimodal:listProviders"),
     getSettings: () => ipcRenderer.invoke("multimodal:getSettings"),

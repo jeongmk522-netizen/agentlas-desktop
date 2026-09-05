@@ -10,6 +10,8 @@
 import keytar from "keytar";
 import { createHash, randomUUID } from "node:crypto";
 import type { RuntimeBackend } from "../../shared/types";
+import type { CredentialRecoveryFailure, CredentialRecoveryResult } from "../../shared/credential-recovery";
+import { readCredentialRecoveryRecords, type CredentialRecoveryResource } from "./recovery-state";
 import {
   requireConfiguredInstallIdentity,
 } from "../install-identity";
@@ -19,6 +21,7 @@ import {
   keychainListAccounts,
   keychainSet,
   retryKeychainReadFromUser,
+  retryKeychainListFromUser,
 } from "./keychain-host";
 
 const BYOK_PREFIX = "byok:";
@@ -30,7 +33,11 @@ const memoryVault = new Map<string, string>();
 const keychainCache = new Map<string, string | null>();
 const passwordReads = new Map<string, Promise<string | null>>();
 const passwordOperations = new Map<string, Promise<unknown>>();
-const userPasswordRetries = new Map<string, Promise<void>>();
+const userPasswordRetries = new Map<string, Promise<string | null>>();
+type RecoveryToken = { resource: CredentialRecoveryResource; generation: string; consumed: boolean; pending?: Promise<CredentialRecoveryResult> };
+const recoveryTokens = new Map<string, RecoveryToken>();
+const resourceTokens = new Map<string, string>();
+const userListRetries = new Map<string, Promise<string[]>>();
 let envKeyCache: string[] | null = null;
 let envKeyCacheService: string | null = null;
 let envKeyRead: Promise<string[]> | null = null;
@@ -127,18 +134,106 @@ export function retryCredentialReadFromUser(kind: "api" | "env" | "secret", name
   if (USE_MEMORY_VAULT) return Promise.resolve();
   const account = `${kind === "api" ? BYOK_PREFIX : kind === "env" ? ENV_PREFIX : SECRET_PREFIX}${name}`;
   const service = keychainService();
+  return retryAccountFromUser(service, account).then(() => {});
+}
+
+function retryAccountFromUser(service: string, account: string): Promise<string | null> {
   const key = passwordKey(service, account);
   const current = userPasswordRetries.get(key);
   if (current) return current;
   passwordReads.delete(key);
   const started = queuePasswordOperation(key, async () => {
-    keychainCache.delete(key);
     const value = await retryKeychainReadFromUser(service, account, () => keytar.getPassword(service, account));
     keychainCache.set(key, value);
+    return value;
   });
   userPasswordRetries.set(key, started);
   void started.then(() => { if (userPasswordRetries.get(key) === started) userPasswordRetries.delete(key); },
     () => { if (userPasswordRetries.get(key) === started) userPasswordRetries.delete(key); });
+  return started;
+}
+
+function recoveryResourceKey(resource: CredentialRecoveryResource): string {
+  return JSON.stringify([resource.service, resource.operation, resource.account]);
+}
+
+function recoveryDisplay(resource: CredentialRecoveryResource): Pick<CredentialRecoveryFailure, "kind" | "operation" | "name"> | null {
+  if (resource.operation === "list") return { kind: "env", operation: "list", name: null };
+  for (const [prefix, kind] of [[BYOK_META_PREFIX, "api-metadata"], [BYOK_PREFIX, "api"], [ENV_PREFIX, "env"], [SECRET_PREFIX, "secret"]] as const) {
+    if (resource.account.startsWith(prefix)) {
+      return { kind, operation: "read", name: resource.account.slice(prefix.length).replace(/[\u0000-\u001f\u007f]/g, "").slice(0, 256) };
+    }
+  }
+  return null;
+}
+
+/** Lists only previously failed/incomplete resources, without native discovery. */
+export async function listCredentialRecoveryFailures(): Promise<CredentialRecoveryFailure[]> {
+  if (USE_MEMORY_VAULT) return [];
+  const records = await readCredentialRecoveryRecords();
+  const out: CredentialRecoveryFailure[] = [];
+  for (const record of records) {
+    const display = recoveryDisplay(record.resource);
+    if (!display) continue;
+    const key = recoveryResourceKey(record.resource);
+    let retryToken = resourceTokens.get(key);
+    let entry = retryToken ? recoveryTokens.get(retryToken) : undefined;
+    if (!entry?.pending && (!entry || entry.consumed || entry.generation !== record.generation)) {
+      if (retryToken) recoveryTokens.delete(retryToken);
+      retryToken = randomUUID();
+      entry = { resource: { ...record.resource }, generation: record.generation, consumed: false };
+      recoveryTokens.set(retryToken, entry);
+      resourceTokens.set(key, retryToken);
+    }
+    out.push({ ...display, retryToken: retryToken!, status: entry?.pending ? "retrying" : "unavailable", errorCode: record.errorCode });
+  }
+  return out.sort((a, b) => `${a.kind}:${a.operation}:${a.name ?? ""}`.localeCompare(`${b.kind}:${b.operation}:${b.name ?? ""}`));
+}
+
+function retryEnvListFromUser(service: string): Promise<string[]> {
+  const current = userListRetries.get(service);
+  if (current) return current;
+  const started = retryKeychainListFromUser(service, async () => (await keytar.findCredentials(service)).map((item) => item.account))
+    .then((accounts) => {
+      const keys = accounts.filter((account) => account.startsWith(ENV_PREFIX)).map((account) => account.slice(ENV_PREFIX.length));
+      if (keychainService() === service) { envKeyCacheService = service; envKeyCache = keys; }
+      return keys;
+    });
+  userListRetries.set(service, started);
+  void started.then(() => { if (userListRetries.get(service) === started) userListRetries.delete(service); },
+    () => { if (userListRetries.get(service) === started) userListRetries.delete(service); });
+  return started;
+}
+
+/** The renderer supplies a Main-issued handle, never a namespace or account. */
+export function retryCredentialRecoveryFromUser(retryToken: string): Promise<CredentialRecoveryResult> {
+  const entry = typeof retryToken === "string" ? recoveryTokens.get(retryToken) : undefined;
+  if (!entry || entry.consumed && !entry.pending) return Promise.resolve({ status: "invalid-token" });
+  if (entry.pending) return entry.pending;
+  entry.consumed = true;
+  const started = Promise.resolve().then(async (): Promise<CredentialRecoveryResult> => {
+    if (keychainService() !== entry.resource.service) return { status: "invalid-token" };
+    const current = (await readCredentialRecoveryRecords()).find((record) => recoveryResourceKey(record.resource) === recoveryResourceKey(entry.resource));
+    if (!current || current.generation !== entry.generation) return { status: "invalid-token" };
+    if (entry.resource.operation === "list") {
+      await retryEnvListFromUser(entry.resource.service);
+      return { status: "restored" };
+    }
+    const value = await retryAccountFromUser(entry.resource.service, entry.resource.account);
+    return {
+      status: value ? "restored" : "missing",
+      ...(entry.resource.account.startsWith(ENV_PREFIX) ? {
+        env: { key: entry.resource.account.slice(ENV_PREFIX.length), hasValue: !!value, preview: value ? maskSecret(value) : null },
+      } : {}),
+    };
+  }).catch((): CredentialRecoveryResult => ({ status: "unavailable" }));
+  entry.pending = started;
+  void started.then(() => {
+    entry.pending = undefined;
+    const key = recoveryResourceKey(entry.resource);
+    if (resourceTokens.get(key) === retryToken) resourceTokens.delete(key);
+    recoveryTokens.delete(retryToken);
+  });
   return started;
 }
 

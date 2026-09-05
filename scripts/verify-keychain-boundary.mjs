@@ -212,6 +212,12 @@ function loadIsolatedKeychainHost({ keytarAvailable, responses = [] }) {
     require(specifier) {
       if (specifier === "node:child_process") return { execFile: fakeExecFile };
       if (specifier === "node:module") return { createRequire: fakeCreateRequire };
+      // This boundary suite verifies native-call envelopes, not persistence.
+      // Keep disk/identity access out of its VM; persistence has separate
+      // actual-source tests with isolated storage and process fixtures.
+      if (specifier === "./recovery-state") return {
+        runWithCredentialRecovery: async (_resource, _explicit, run) => run(),
+      };
       throw new Error(`isolated verifier refused unexpected module: ${specifier}`);
     },
   });

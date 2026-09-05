@@ -69,10 +69,13 @@ import {
   hasApiKey,
   hasEnvVar,
   listEnvKeys,
+  listCredentialRecoveryFailures,
+  retryCredentialRecoveryFromUser,
   previewEnvVar,
   saveApiKey,
   setEnvVar,
 } from "./secrets/vault";
+import { collectEnvStatus } from "./secrets/env-status";
 import { userDataPath, userDataDir } from "./runtime-paths";
 import { configuredIdentity } from "./install-identity";
 import {
@@ -2952,10 +2955,17 @@ export function registerIpcHandlers(): void {
   });
 
   // ── env vault (글로벌 외부 API 키) ──────────────────────
+  ipcMain.handle("credentialRecovery:list", (event) => {
+    assertTrustedSitePublishIpcSender(event);
+    return listCredentialRecoveryFailures();
+  });
+  ipcMain.handle("credentialRecovery:retry", (event, retryToken: unknown) => {
+    assertTrustedSitePublishIpcSender(event);
+    if (typeof retryToken !== "string" || retryToken.length > 128) return { status: "invalid-token" };
+    return retryCredentialRecoveryFromUser(retryToken);
+  });
   ipcMain.handle("env:list", async () => {
-    // 1) keychain에 저장된 env keys
-    const stored = await listEnvKeys();
-    // 2) 설치된 에이전트들의 envRequirements
+    // Gather known requirements before touching credential storage.
     const agents = listInstalledAgents();
     type Aggregated = {
       hasValue: boolean;
@@ -3017,22 +3027,10 @@ export function registerIpcHandlers(): void {
       });
       map.set(req.key, entry);
     }
-    // 사용자가 직접 추가한 키도 포함 (요구하는 에이전트 없음)
-    for (const k of stored) {
-      if (!map.has(k)) map.set(k, { hasValue: true, requiredBy: [] });
-    }
-    // hasValue + 마스킹 미리보기를 한 번에 체크 (병렬). 미리보기는 메인에서 생성 — 전체 값 X.
-    const keys = [...map.keys()];
-    const values = await Promise.all(keys.map((k) => hasEnvVar(k)));
-    const previews = await Promise.all(
-      keys.map((k, i) => (values[i] ? previewEnvVar(k) : Promise.resolve(null))),
+    return collectEnvStatus(
+      [...map].map(([key, entry]) => ({ key, requiredBy: entry.requiredBy })),
+      { listKeys: listEnvKeys, hasValue: hasEnvVar, preview: previewEnvVar },
     );
-    return keys.map((key, i) => ({
-      key,
-      hasValue: values[i],
-      preview: previews[i] ?? null,
-      requiredBy: map.get(key)!.requiredBy,
-    }));
   });
   ipcMain.handle("env:set", (_e, key: string, value: string) => setEnvVar(key, value));
   ipcMain.handle("env:has", (_e, key: string) => hasEnvVar(key));

@@ -20,6 +20,7 @@
 // 여기서 상한을 걸면 사용자가 프롬프트를 읽는 동안 정상 요청이 취소된다.
 import { execFile } from "node:child_process";
 import { createRequire } from "node:module";
+import { runWithCredentialRecovery } from "./recovery-state";
 
 export type KeychainCredential = { account: string };
 
@@ -36,15 +37,15 @@ function requestKey(operation: string, service: string, account: string): string
   return JSON.stringify([operation, service, account]);
 }
 
-function sharedNativeRequest<T>(operation: string, service: string, account: string, run: () => Promise<T>): Promise<T> {
+function sharedNativeRequest<T>(operation: "read" | "list", service: string, account: string, run: () => Promise<T>, explicit = false): Promise<T> {
   const key = requestKey(operation, service, account);
   const current = nativeRequests.get(key);
   if (current) return current as Promise<T>;
-  if (failedRequests.has(key)) return Promise.reject(new KeychainUnavailableError(operation, account || null, "automatic retry suppressed", true));
-  const started = Promise.resolve().then(run);
+  if (failedRequests.has(key) && !explicit) return Promise.reject(new KeychainUnavailableError(operation, account || null, "automatic retry suppressed", true));
+  const started = Promise.resolve().then(() => runWithCredentialRecovery({ operation, service, account }, explicit, run));
   nativeRequests.set(key, started);
   void started.then(
-    () => { if (nativeRequests.get(key) === started) nativeRequests.delete(key); },
+    () => { failedRequests.delete(key); if (nativeRequests.get(key) === started) nativeRequests.delete(key); },
     () => {
       failedRequests.add(key);
       if (nativeRequests.get(key) === started) nativeRequests.delete(key);
@@ -183,6 +184,7 @@ export async function keychainGet(
   service: string,
   account: string,
   direct: () => Promise<string | null>,
+  explicit = false,
 ): Promise<string | null> {
   return sharedNativeRequest("read", service, account, async () => {
     if (keychainPromptsAreAnswerable()) {
@@ -192,7 +194,7 @@ export async function keychainGet(
     const result = await runKeychainChild("get", service, account, null);
     if (result.error) throw new KeychainUnavailableError("read", account, result.error);
     return result.value ?? null;
-  });
+  }, explicit);
 }
 
 /** Call only from a deliberate user retry for this exact credential. Passive
@@ -203,9 +205,7 @@ export function retryKeychainReadFromUser(
   account: string,
   direct: () => Promise<string | null>,
 ): Promise<string | null> {
-  const key = requestKey("read", service, account);
-  if (!nativeRequests.has(key)) failedRequests.delete(key);
-  return keychainGet(service, account, direct);
+  return keychainGet(service, account, direct, true);
 }
 
 /** 쓰기·삭제는 실패를 삼키지 않는다 — 저장했다고 착각하는 쪽이 더 나쁘다. */
@@ -215,11 +215,13 @@ export async function keychainSet(
   value: string,
   direct: () => Promise<void>,
 ): Promise<void> {
-  if (keychainPromptsAreAnswerable()) await direct();
-  else {
-    const result = await runKeychainChild("set", service, account, value);
-    if (result.error) throw new KeychainUnavailableError("write", account, result.error);
-  }
+  await runWithCredentialRecovery({ operation: "read", service, account }, true, async () => {
+    if (keychainPromptsAreAnswerable()) await direct();
+    else {
+      const result = await runKeychainChild("set", service, account, value);
+      if (result.error) throw new KeychainUnavailableError("write", account, result.error);
+    }
+  });
   failedRequests.delete(requestKey("read", service, account));
 }
 
@@ -228,11 +230,13 @@ export async function keychainDelete(
   account: string,
   direct: () => Promise<void>,
 ): Promise<void> {
-  if (keychainPromptsAreAnswerable()) await direct();
-  else {
-    const result = await runKeychainChild("delete", service, account, null);
-    if (result.error) throw new KeychainUnavailableError("delete", account, result.error);
-  }
+  await runWithCredentialRecovery({ operation: "read", service, account }, true, async () => {
+    if (keychainPromptsAreAnswerable()) await direct();
+    else {
+      const result = await runKeychainChild("delete", service, account, null);
+      if (result.error) throw new KeychainUnavailableError("delete", account, result.error);
+    }
+  });
   failedRequests.delete(requestKey("read", service, account));
 }
 
@@ -240,6 +244,7 @@ export async function keychainDelete(
 export async function keychainListAccounts(
   service: string,
   direct: () => Promise<string[]>,
+  explicit = false,
 ): Promise<string[]> {
   return sharedNativeRequest("list", service, "", async () => {
     if (keychainPromptsAreAnswerable()) {
@@ -249,5 +254,10 @@ export async function keychainListAccounts(
     const result = await runKeychainChild("find", service, "", null);
     if (result.error) throw new KeychainUnavailableError("list", null, result.error);
     return result.accounts ?? [];
-  });
+  }, explicit);
+}
+
+/** Explicit retry of the list operation only; credential read latches remain. */
+export function retryKeychainListFromUser(service: string, direct: () => Promise<string[]>): Promise<string[]> {
+  return keychainListAccounts(service, direct, true);
 }

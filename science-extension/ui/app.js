@@ -1520,8 +1520,9 @@ const { stripAgentControlBlocks, stripStormbreakerContinueMarker, STORMBREAKER_C
     // human-only, so a study stops here until someone acts -- and "three cards, some already
     // decided" is not something a reader should have to work out by counting.
     const pending = rows.filter((item) => item && item.status !== "approved" && item.status !== "rejected").length;
+    const waitingLabel = uiCopy(`${pending}건이 당신의 결정을 기다립니다.`, `${pending} ${pending === 1 ? "hypothesis awaits" : "hypotheses await"} your decision.`);
     const waitingNotice = pending
-      ? `<div class="researcherWaiting" role="status" data-pending-decisions="${escapeHtml(String(pending))}"><span class="stateGlyph" data-state="awaiting-human" aria-hidden="true"></span><strong>${escapeHtml(String(pending))}건이 당신의 결정을 기다립니다.</strong><p>연구는 이 결정 없이 다음 단계로 가지 않습니다. 승인하거나 기각해 주세요.</p></div>`
+      ? `<div class="researcherWaiting" role="status" data-pending-decisions="${escapeHtml(String(pending))}"><span class="stateGlyph" data-state="awaiting-human" aria-hidden="true"></span><strong>${escapeHtml(waitingLabel)}</strong><p>연구는 이 결정 없이 다음 단계로 가지 않습니다. 승인하거나 기각해 주세요.</p></div>`
       : "";
     return `<section class="researchView hypothesesView" data-research-destination="hypotheses" data-waiting-on="${pending ? "researcher" : "none"}"><div class="answerColumn">
       <div class="researchKicker"><span>${escapeHtml(domainLabel(project.domain))}</span> · <span>가설</span></div>

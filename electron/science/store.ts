@@ -700,6 +700,13 @@ function safeText(value: unknown, maximum: number, field: string): string {
   return normalized;
 }
 
+function safeTurnEventDelta(value: unknown): string {
+  // A stream fragment is not a label: leading/trailing whitespace, CRLF, and
+  // whitespace-only chunks are part of the provider's exact response bytes.
+  if (typeof value !== "string" || value.length === 0 || value.length > 65_536) throw new Error("science-turn-event-delta-invalid");
+  return value;
+}
+
 function safeStatisticsCategory(value: unknown, maximum: number, field: string): string {
   if (typeof value === "number") {
     if (!Number.isSafeInteger(value)) throw new Error(`science-${field}-invalid`);
@@ -10280,7 +10287,7 @@ export class ScienceStore {
     const sourceSequence = hasAnySourceIdentity ? safePositiveInteger(input.sourceSequence, 1, Number.MAX_SAFE_INTEGER, "turn-source-sequence") : null;
     const sourceEventSha256 = hasAnySourceIdentity ? safeSha256(input.sourceEventSha256, "turn-source-event-sha256") : null;
     const payload = safeJsonRecord(input.payload, 256 * 1024, "turn-event-payload");
-    const delta = input.delta == null ? null : safeText(input.delta, 65_536, "turn-event-delta");
+    const delta = input.delta == null ? null : safeTurnEventDelta(input.delta);
     if (input.kind === "partial" && delta === null) throw new Error("science-turn-partial-delta-required");
     if (input.kind !== "partial" && delta !== null) throw new Error("science-turn-event-delta-forbidden");
     const inputSha256 = sha256Json({ projectId: input.projectId, conversationId: input.conversationId, turnId: input.turnId, sequence, kind: input.kind, code, sourceDeliveryId, sourceRunEventId, sourceSequence, sourceEventSha256, payload, delta });

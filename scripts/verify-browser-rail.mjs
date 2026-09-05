@@ -63,6 +63,11 @@ if (catalog) {
 // 2) mcp-config 가 실행 키마다 프로필을 파지 않는다.
 const mcpConfig = read("electron/mcp-tools/mcp-config.ts");
 if (mcpConfig) {
+  const wrapperSource = mcpConfig.match(/const MCP_CHILD_ENV_WRAPPER = `([\s\S]*?)`;/)?.[1] ?? "";
+  const operationalKeyBody = wrapperSource.match(/const OPERATIONAL_KEYS = \[([\s\S]*?)\];/)?.[1] ?? "";
+  const operationalKeys = new Set(
+    [...operationalKeyBody.matchAll(/"([A-Z][A-Z0-9_()]*)"/g)].map((match) => match[1]),
+  );
   check(
     "agent-browser-host-is-headless",
     /AGENTLAS_CDP_HEADLESS:\s*"1"/.test(mcpConfig),
@@ -70,8 +75,11 @@ if (mcpConfig) {
   );
   check(
     "mcp-wrapper-preserves-browser-headless",
-    /"AGENTLAS_BROWSER_APPROVAL_FILE",\s*"AGENTLAS_CDP_HEADLESS"/.test(mcpConfig),
-    "MCP 자식 환경 래퍼가 AGENTLAS_CDP_HEADLESS를 제거합니다. 설정에만 값을 넣어도 실제 Chrome은 외부 창으로 열립니다.",
+    operationalKeys.has("AGENTLAS_BROWSER_APPROVAL_FILE")
+      && operationalKeys.has("AGENTLAS_CDP_AUTO_STOP")
+      && operationalKeys.has("AGENTLAS_CDP_HEADLESS")
+      && /for \(const key of OPERATIONAL_KEYS\) \{[\s\S]*?Object\.keys\(process\.env\)[\s\S]*?env\[key\] = value;[\s\S]*?\}/.test(wrapperSource),
+    "MCP 자식 환경 래퍼가 approval/auto-stop/headless 키를 운영 키 집합에서 실제 자식 env로 복사하지 않습니다.",
   );
   check(
     "mcp-config-no-per-key-profile",
@@ -138,13 +146,20 @@ check(
 );
 check(
   "one-browser-shell-matches-native-controls",
-  /browserTabBar/.test(oneActivityTimeline)
-    && /browserNavigationBar/.test(oneActivityTimeline)
-    && /normalizedBrowserAddress/.test(oneActivityTimeline)
-    && /action: "back"/.test(oneActivityTimeline)
-    && /action: "forward"/.test(oneActivityTimeline)
-    && /action: "reload"/.test(oneActivityTimeline)
-    && /action: "navigate"/.test(oneActivityTimeline),
+  /styles\.browserTabBar/.test(oneActivityTimeline)
+    && /role="tablist"/.test(oneActivityTimeline)
+    && /styles\.browserNewTab/.test(oneActivityTimeline)
+    && /styles\.browserNavigationBar/.test(oneActivityTimeline)
+    && /styles\.browserAddressForm/.test(oneActivityTimeline)
+    && /const runNavigationAction = async \(action: "back" \| "forward" \| "reload"\)/.test(oneActivityTimeline)
+    && /\{ kind: "navigation", action \}/.test(oneActivityTimeline)
+    && /runNavigationAction\("back"\)/.test(oneActivityTimeline)
+    && /runNavigationAction\("forward"\)/.test(oneActivityTimeline)
+    && /runNavigationAction\("reload"\)/.test(oneActivityTimeline)
+    && /const navigateFromAddress = async/.test(oneActivityTimeline)
+    && /normalizedBrowserAddress\(address\)/.test(oneActivityTimeline)
+    && /action: "navigate", url/.test(oneActivityTimeline)
+    && /navigateFromAddress\(\)/.test(oneActivityTimeline),
   "One Browser 레일에 탭, 주소창, 뒤로, 앞으로, 새로고침 중 하나가 빠졌습니다. 단순 이미지 프레임이 아니라 실제 인앱 브라우저 셸이어야 합니다.",
 );
 check(
@@ -182,8 +197,13 @@ if (launcher) {
   }
   check(
     "launcher-refuses-downgrade",
-    /installed !== null && installed > BROWSER_CDP_LAUNCHER_CONTRACT/.test(launcher),
-    "materializeBrowserCdpLauncher 가 더 높은 계약을 덮어씁니다. 다운그레이드는 사용자가 눈치채지 못하는 동작 변경입니다.",
+    /if \(!hasUsableLauncherRuntimeBindings\(LAUNCHER_SOURCE\)\) return false;/.test(launcher)
+      && /if \(installedWriter === BROWSER_CDP_LAUNCHER_WRITER\) \{[\s\S]*?if \(!hasUsableLauncherRuntimeBindings\(existing\)\) return true;[\s\S]*?if \(!candidateIsPackaged\) return false;[\s\S]*?\}/.test(launcher)
+      && /if \(installed === null \|\| installed < BROWSER_CDP_LAUNCHER_CONTRACT\) return true;/.test(launcher)
+      && /if \(installed > BROWSER_CDP_LAUNCHER_CONTRACT\) return false;/.test(launcher)
+      && /return installedWriter === BROWSER_CDP_LAUNCHER_WRITER;/.test(launcher)
+      && /if \(!shouldReplaceBrowserCdpLauncher\(existing\)\) \{[\s\S]{0,500}?return dest;/.test(launcher),
+    "materializeBrowserCdpLauncher 가 candidate/runtime health, same-writer recovery, healthy higher contract 보존, 다른 writer 보존 중 하나를 잃었습니다.",
   );
   check(
     "launcher-defaults-agent-browser-headless",

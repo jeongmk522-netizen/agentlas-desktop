@@ -5,7 +5,12 @@
 //   사용자가 챗에서 답하면 후속 user 메시지가 쌓여 마지막이 더 이상 assistant가 아니게 되므로 자동 해소된다.
 // fence 포맷은 renderer/lib/ask-question.ts와 동일: <<agentlas-ask>>{json}<</agentlas-ask>>.
 import { createHash } from "node:crypto";
-import type { CommittedQuestionAnswer, PendingConfirmation } from "../../shared/types";
+import type {
+  CommittedQuestionAnswer,
+  McpInvocationRequest,
+  PendingConfirmation,
+  QuestionContinuationOptions,
+} from "../../shared/types";
 import { extractAskFences } from "../../shared/ask-fence-flatten";
 import { getLastChatMessage, listRecentChats } from "../store/chats";
 import { getDb } from "../store/db";
@@ -25,6 +30,95 @@ const claimedQuestionMessages = new Set<string>();
 const ANSWER_RECEIPT_KIND = "question_answer_committed";
 const SNOOZE_RECEIPT_KIND = "question_answer_snoozed";
 const answerReceiptRunId = (chatId: string): string => `confirm:${chatId}`;
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+interface DurableQuestionContinuation {
+  runId: string;
+  requestHash: string;
+  request: McpInvocationRequest;
+}
+
+function questionContinuationRunId(chatId: string, sourceMessageId: string): string {
+  const chars = createHash("sha256").update(`${chatId}\0${sourceMessageId}`).digest("hex").slice(0, 32).split("");
+  chars[12] = "5";
+  chars[16] = ((Number.parseInt(chars[16], 16) & 0x3) | 0x8).toString(16);
+  const value = chars.join("");
+  return `${value.slice(0, 8)}-${value.slice(8, 12)}-${value.slice(12, 16)}-${value.slice(16, 20)}-${value.slice(20)}`;
+}
+
+function normalizeContinuationOptions(value?: QuestionContinuationOptions): QuestionContinuationOptions {
+  const runtimeSelectionJson = value?.runtimeSelection ? JSON.stringify(value.runtimeSelection) : "";
+  if (runtimeSelectionJson.length > 700) throw new Error("Decision continuation runtime selection is too large");
+  const runtimeSelection = runtimeSelectionJson
+    ? JSON.parse(runtimeSelectionJson) as QuestionContinuationOptions["runtimeSelection"]
+    : undefined;
+  return {
+    ...(value?.locale === "ko" || value?.locale === "en" ? { locale: value.locale } : {}),
+    ...(value?.permissions === "read" || value?.permissions === "write" || value?.permissions === "full"
+      ? { permissions: value.permissions }
+      : {}),
+    ...(value?.sessionRouting === true ? { sessionRouting: true } : {}),
+    ...(runtimeSelection ? { runtimeSelection } : {}),
+  };
+}
+
+function continuationRequest(
+  chatId: string,
+  reply: string,
+  options?: QuestionContinuationOptions,
+): McpInvocationRequest {
+  const normalized = normalizeContinuationOptions(options);
+  return {
+    chatId,
+    userPrompt: reply,
+    locale: normalized.locale,
+    permissions: normalized.permissions,
+    sessionRouting: normalized.sessionRouting,
+    runtimeSelection: normalized.runtimeSelection,
+  };
+}
+
+function continuationRequestHash(request: McpInvocationRequest): string {
+  return createHash("sha256").update(JSON.stringify(request)).digest("hex");
+}
+
+function continuationReplyChunks(reply: string): string[] {
+  return reply.match(/[\s\S]{1,200}/g) ?? [];
+}
+
+function payloadContinuationReply(payload: Record<string, unknown>): string {
+  if (Array.isArray(payload.continuationReplyChunks)) {
+    const chunks = payload.continuationReplyChunks.filter((item): item is string => typeof item === "string");
+    if (chunks.length > 0) return chunks.join("").slice(0, 4_000);
+  }
+  return typeof payload.reply === "string" ? payload.reply : "";
+}
+
+function payloadContinuationOptions(payload: Record<string, unknown>): QuestionContinuationOptions {
+  let runtimeSelection: QuestionContinuationOptions["runtimeSelection"];
+  if (typeof payload.continuationRuntimeSelectionJson === "string") {
+    try {
+      const parsed = JSON.parse(payload.continuationRuntimeSelectionJson) as unknown;
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+        runtimeSelection = parsed as QuestionContinuationOptions["runtimeSelection"];
+      }
+    } catch {
+      // Invalid binding fails hash verification below.
+    }
+  }
+  return normalizeContinuationOptions({
+    ...(payload.continuationLocale === "ko" || payload.continuationLocale === "en"
+      ? { locale: payload.continuationLocale }
+      : {}),
+    ...(payload.continuationPermissions === "read"
+      || payload.continuationPermissions === "write"
+      || payload.continuationPermissions === "full"
+      ? { permissions: payload.continuationPermissions }
+      : {}),
+    ...(payload.continuationSessionRouting === true ? { sessionRouting: true } : {}),
+    ...(runtimeSelection ? { runtimeSelection } : {}),
+  });
+}
 
 function approvalEventId(sourceMessageId: string): string {
   const digest = createHash("sha256").update(sourceMessageId).digest("hex").slice(0, 32);
@@ -96,8 +190,11 @@ export function listCommittedQuestionAnswers(chatId: string): CommittedQuestionA
         if (typeof payload.sourceMessageId !== "string" || !payload.sourceMessageId) continue;
         out.push({
           sourceMessageId: payload.sourceMessageId,
-          reply: typeof payload.reply === "string" ? payload.reply : "",
+          reply: payloadContinuationReply(payload),
           ts: row.ts,
+          ...(typeof payload.continuationRunId === "string" && UUID_RE.test(payload.continuationRunId)
+            ? { continuationRunId: payload.continuationRunId }
+            : {}),
         });
       } catch {
         // 손상된 영수증 하나가 목록 전체를 죽여선 안 된다.
@@ -131,7 +228,8 @@ export function commitPendingConfirmationAnswer(
   chatId: string,
   reply: string,
   sourceMessageId?: string,
-): { chatId: string; sourceMessageId: string } {
+  continuation?: QuestionContinuationOptions,
+): { chatId: string; sourceMessageId: string; continuationRunId: string } {
   const last = getLastChatMessage(chatId);
   if (
     !last ||
@@ -151,19 +249,36 @@ export function commitPendingConfirmationAnswer(
     // The renderer can lose the IPC reply after Main committed it. Retrying the
     // exact answer is acknowledgement recovery, not a second user decision.
     if (existing.reply !== normalizedReply) throw new Error("This question answer was already accepted");
-    claimedQuestionMessages.add(`${chatId}\0${last.id}`);
-    return { chatId, sourceMessageId: last.id };
+    if (existing.continuationRunId) {
+      claimedQuestionMessages.add(`${chatId}\0${last.id}`);
+      return { chatId, sourceMessageId: last.id, continuationRunId: existing.continuationRunId };
+    }
   }
-  if (claimedQuestionMessages.has(`${chatId}\0${last.id}`)) {
+  if (!existing && claimedQuestionMessages.has(`${chatId}\0${last.id}`)) {
     throw new Error("This question answer was already accepted");
   }
+  const continuationRunId = questionContinuationRunId(chatId, last.id);
+  const request = continuationRequest(chatId, normalizedReply, continuation);
+  const normalizedContinuation = normalizeContinuationOptions(continuation);
   // Unlike the Mobile helper's best-effort diagnostic write, Desktop commit is
   // an acknowledgement boundary: never close the sheet without durable bytes.
   recordRunEvent({
     runId: answerReceiptRunId(chatId),
     kind: ANSWER_RECEIPT_KIND,
     chatId,
-    payload: { sourceMessageId: last.id, reply: normalizedReply },
+    payload: {
+      sourceMessageId: last.id,
+      reply: normalizedReply,
+      continuationReplyChunks: continuationReplyChunks(normalizedReply),
+      continuationRunId,
+      continuationLocale: normalizedContinuation.locale,
+      continuationPermissions: normalizedContinuation.permissions,
+      continuationSessionRouting: normalizedContinuation.sessionRouting,
+      continuationRuntimeSelectionJson: normalizedContinuation.runtimeSelection
+        ? JSON.stringify(normalizedContinuation.runtimeSelection)
+        : undefined,
+      continuationRequestHash: continuationRequestHash(request),
+    },
   });
   claimedQuestionMessages.add(`${chatId}\0${last.id}`);
   invalidatePendingConfirmationsCache();
@@ -187,7 +302,48 @@ export function commitPendingConfirmationAnswer(
       ],
     });
   }
-  return { chatId, sourceMessageId: last.id };
+  return { chatId, sourceMessageId: last.id, continuationRunId };
+}
+
+/** Main-only exact request bound to the accepted source question and answer. */
+export function getCommittedQuestionContinuation(
+  chatId: string,
+  sourceMessageId: string,
+  reply: string,
+): DurableQuestionContinuation | null {
+  if (!chatId || !sourceMessageId || !reply.trim()) return null;
+  const rows = getDb()
+    .prepare("SELECT payload_json FROM run_events WHERE run_id = ? AND kind = ? ORDER BY seq DESC LIMIT 100")
+    .all(answerReceiptRunId(chatId), ANSWER_RECEIPT_KIND) as Array<{ payload_json: string }>;
+  for (const row of rows) {
+    let payload: Record<string, unknown>;
+    try { payload = JSON.parse(row.payload_json) as Record<string, unknown>; } catch { continue; }
+    const normalizedReply = reply.trim().slice(0, 4_000);
+    if (payload.sourceMessageId !== sourceMessageId || payloadContinuationReply(payload) !== normalizedReply) continue;
+    if (typeof payload.continuationRunId !== "string" || !UUID_RE.test(payload.continuationRunId)) return null;
+    const request = continuationRequest(chatId, normalizedReply, payloadContinuationOptions(payload));
+    if (
+      typeof payload.continuationRequestHash !== "string"
+      || payload.continuationRequestHash !== continuationRequestHash(request)
+    ) return null;
+    return {
+      runId: payload.continuationRunId,
+      requestHash: payload.continuationRequestHash,
+      request: { ...request, runId: payload.continuationRunId },
+    };
+  }
+  return null;
+}
+
+/** A not-yet-started intent may run only while its exact Decision is still current. */
+export function committedQuestionContinuationIsCurrent(chatId: string, sourceMessageId: string): boolean {
+  const last = getLastChatMessage(chatId);
+  return Boolean(
+    last
+    && last.id === sourceMessageId
+    && last.role === "assistant"
+    && firstQuestion(last.text),
+  );
 }
 
 /**

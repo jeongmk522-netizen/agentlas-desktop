@@ -4916,6 +4916,25 @@ export interface CommittedQuestionAnswer {
   reply: string;
   /** 확정 시각(ISO). */
   ts: string;
+  /** Main-derived exact-once run reserved for this source question + reply. */
+  continuationRunId?: string;
+}
+
+/** Closed renderer input captured with the committed answer and reused verbatim on recovery. */
+export interface QuestionContinuationOptions {
+  locale?: "ko" | "en";
+  permissions?: "read" | "write" | "full";
+  sessionRouting?: boolean;
+  runtimeSelection?: RuntimeSelection;
+}
+
+export interface QuestionContinuationReceipt {
+  chatId: string;
+  sourceMessageId: string;
+  runId: string;
+  status: "started" | "already-running" | "already-terminal" | "rejected";
+  runStatus?: InvocationRunReceipt["status"];
+  reasonCode?: "invalid-intent" | "chat-busy" | "admission-closed" | "start-rejected";
 }
 
 /** electron-updater의 자동 업데이트 상태. main → renderer로 broadcast. */
@@ -6751,9 +6770,16 @@ export interface AgentlasIpc {
   /** 확인 요청 — 에이전트가 챗에서 사용자 결정을 기다리는 채팅 목록(미답변 질문 fence 기준). */
   confirm: {
     listPending: () => Promise<PendingConfirmation[]>;
-    /** 답변 제출 수락을 durable 영수증으로 확정 — 실행 분기와 무관하게 질문을 해소한다. */
-    commitAnswer: (input: { chatId: string; reply: string; sourceMessageId?: string }) =>
-      Promise<{ chatId: string; sourceMessageId: string }>;
+    /** 답변과 그 exact continuation request를 한 durable intent로 확정한다. */
+    commitAnswer: (input: {
+      chatId: string;
+      reply: string;
+      sourceMessageId?: string;
+      continuation?: QuestionContinuationOptions;
+    }) => Promise<{ chatId: string; sourceMessageId: string; continuationRunId: string }>;
+    /** Main이 저장된 request만 사용해 exact-once continuation을 시작하거나 재확인한다. */
+    continueAnswer: (input: { chatId: string; sourceMessageId: string; reply: string }) =>
+      Promise<QuestionContinuationReceipt>;
     /** 정확한 현재 Decision만 24시간 미룬다. 실행·승인 상태는 바꾸지 않는다. */
     snooze: (input: { chatId: string; sourceMessageId: string; resumeAt: string }) =>
       Promise<{ chatId: string; sourceMessageId: string; snoozedUntil: string }>;

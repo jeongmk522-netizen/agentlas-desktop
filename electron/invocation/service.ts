@@ -25,6 +25,10 @@ import { resolveDesktopRuntimeAdapter } from "../long-run/runtime-adapters";
 import { runMcpInvocation, type InvocationExecutionContext } from "../mcp/client";
 import { applyFinalDisplayBackstop } from "../mcp/final-display-backstop";
 import { extractAskFences } from "../../shared/ask-fence-flatten";
+import {
+  committedQuestionContinuationIsCurrent,
+  getCommittedQuestionContinuation,
+} from "../confirm";
 import { deriveGoalAcceptanceCriteria, ensureGoalLedgerGoal } from "../mcp/goal-ledger";
 import { resolveDesktopWorkforceGoalId } from "../mcp/workforce-goal-continuity";
 import {
@@ -152,6 +156,7 @@ import type {
   AgentlasUserDecisionRequest,
   McpInvocationEvent,
   McpInvocationRequest,
+  QuestionContinuationReceipt,
   RuntimeSelection,
 } from "../../shared/types";
 
@@ -216,6 +221,8 @@ interface RunRecord {
   goal: string;
   pendingQuestion: boolean;
   userDecisionRequest?: AgentlasUserDecisionRequest;
+  questionContinuationSourceMessageId?: string;
+  questionContinuationRequestHash?: string;
   settlementPublished: boolean;
   longRunProjection?: DesktopLongRunInvocationProjection;
   automaticGoalId?: string;
@@ -626,6 +633,13 @@ export function invocationEventPromotesTask(event: McpInvocationEvent): boolean 
     invocationEventRequestsDecision(event);
 }
 
+function isRetryableDecisionStoreError(error: unknown): boolean {
+  const code = error && typeof error === "object" && "code" in error
+    ? String((error as { code?: unknown }).code ?? "")
+    : "";
+  return code === "SQLITE_BUSY" || code === "SQLITE_LOCKED" || code === "SQLITE_PROTOCOL";
+}
+
 export function attachOneSurfaceProjection(
   event: McpInvocationEvent,
   chatId: string,
@@ -725,6 +739,128 @@ export class InvocationService {
     return [...new Set([...this.activeRuns.entries()].map(([runId]) => runId).concat([...this.pendingGoalVerifications.keys()]))];
   }
 
+  /**
+   * Start only the request Main sealed with the accepted Decision. The caller
+   * supplies no runtime or permission fields here, so remount/replay cannot
+   * widen the original continuation. A stable run id collapses response-loss
+   * retries onto the existing live/durable run.
+   */
+  async continueCommittedQuestion(
+    chatId: string,
+    sourceMessageId: string,
+    reply: string,
+  ): Promise<QuestionContinuationReceipt> {
+    let intent;
+    try {
+      intent = getCommittedQuestionContinuation(chatId, sourceMessageId, reply);
+    } catch (error) {
+      if (!isRetryableDecisionStoreError(error)) {
+        return { chatId, sourceMessageId, runId: "", status: "rejected", reasonCode: "invalid-intent" };
+      }
+      await new Promise<void>((resolve) => setTimeout(resolve, 150));
+      try { intent = getCommittedQuestionContinuation(chatId, sourceMessageId, reply); } catch {
+        return { chatId, sourceMessageId, runId: "", status: "rejected", reasonCode: "start-rejected" };
+      }
+    }
+    if (!intent) {
+      return { chatId, sourceMessageId, runId: "", status: "rejected", reasonCode: "invalid-intent" };
+    }
+    const live = this.activeRuns.get(intent.runId);
+    if (live) {
+      const exact = live.chatId === chatId
+        && live.questionContinuationSourceMessageId === sourceMessageId
+        && live.questionContinuationRequestHash === intent.requestHash;
+      return exact
+        ? { chatId, sourceMessageId, runId: intent.runId, status: "already-running", runStatus: "running" }
+        : { chatId, sourceMessageId, runId: intent.runId, status: "rejected", reasonCode: "invalid-intent" };
+    }
+    const existing = getInvocationRunReceipt(intent.runId);
+    if (existing) {
+      const bound = existing.chatId === chatId && Boolean(getDb().prepare(
+        `SELECT 1 AS found FROM run_events
+          WHERE run_id = ? AND kind = 'invoke_started'
+            AND json_extract(payload_json, '$.questionContinuationSourceMessageId') = ?
+            AND json_extract(payload_json, '$.questionContinuationRequestHash') = ?
+          LIMIT 1`,
+      ).get(intent.runId, sourceMessageId, intent.requestHash));
+      if (!bound) {
+        return { chatId, sourceMessageId, runId: intent.runId, status: "rejected", reasonCode: "invalid-intent" };
+      }
+      // With no matching in-memory owner, a start-only receipt is already
+      // projected as `interrupted` by the ledger. Never replay it after a host
+      // crash: the provider may have performed a side effect before the crash.
+      return {
+        chatId,
+        sourceMessageId,
+        runId: intent.runId,
+        status: "already-terminal",
+        runStatus: existing.status,
+      };
+    }
+    if (!committedQuestionContinuationIsCurrent(chatId, sourceMessageId)) {
+      return { chatId, sourceMessageId, runId: intent.runId, status: "rejected", reasonCode: "invalid-intent" };
+    }
+    if (!this.acceptingStarts) {
+      return { chatId, sourceMessageId, runId: intent.runId, status: "rejected", reasonCode: "admission-closed" };
+    }
+    if (this.activeChatIds().includes(chatId)) {
+      return { chatId, sourceMessageId, runId: intent.runId, status: "rejected", reasonCode: "chat-busy" };
+    }
+
+    const tryStart = (): QuestionContinuationReceipt => {
+      const started = this.start(intent.request, undefined, undefined, {
+        sourceMessageId,
+        requestHash: intent.requestHash,
+      });
+      if (started.runId !== intent.runId) {
+        return { chatId, sourceMessageId, runId: intent.runId, status: "rejected", reasonCode: "invalid-intent" };
+      }
+      return { chatId, sourceMessageId, runId: intent.runId, status: "started", runStatus: "running" };
+    };
+    try {
+      return tryStart();
+    } catch (error) {
+      // Only machine-coded transient SQLite admission failures receive one
+      // bounded retry. Permission, billing, cancellation, and provider errors
+      // either have a durable terminal receipt or are returned without retry.
+      if (isRetryableDecisionStoreError(error)) {
+        await new Promise<void>((resolve) => setTimeout(resolve, 150));
+        let raced: InvocationRunReceipt | null;
+        try { raced = getInvocationRunReceipt(intent.runId); } catch {
+          return { chatId, sourceMessageId, runId: intent.runId, status: "rejected", reasonCode: "start-rejected" };
+        }
+        if (raced) {
+          let bound = false;
+          try {
+            bound = raced.chatId === chatId && Boolean(getDb().prepare(
+              `SELECT 1 AS found FROM run_events
+                WHERE run_id = ? AND kind = 'invoke_started'
+                  AND json_extract(payload_json, '$.questionContinuationSourceMessageId') = ?
+                  AND json_extract(payload_json, '$.questionContinuationRequestHash') = ?
+                LIMIT 1`,
+            ).get(intent.runId, sourceMessageId, intent.requestHash));
+          } catch {
+            return { chatId, sourceMessageId, runId: intent.runId, status: "rejected", reasonCode: "start-rejected" };
+          }
+          if (!bound) {
+            return { chatId, sourceMessageId, runId: intent.runId, status: "rejected", reasonCode: "invalid-intent" };
+          }
+          return {
+            chatId,
+            sourceMessageId,
+            runId: intent.runId,
+            status: raced.status === "running" || raced.status === "cancelling"
+              ? "already-running"
+              : "already-terminal",
+            runStatus: raced.status,
+          };
+        }
+        try { return tryStart(); } catch { /* bounded: never loop */ }
+      }
+      return { chatId, sourceMessageId, runId: intent.runId, status: "rejected", reasonCode: "start-rejected" };
+    }
+  }
+
   openAppAdmission(): void {
     this.acceptingStarts = true;
   }
@@ -761,6 +897,8 @@ export class InvocationService {
      * 원격 대화형 채널(telegram 등)은 반드시 넘긴다.
      */
     executionContext?: InvocationExecutionContext,
+    /** Main-only exact Decision continuation binding; never accepted over IPC. */
+    questionContinuation?: { sourceMessageId: string; requestHash: string },
   ): InvocationStartResult {
     if (!this.acceptingStarts) throw new Error("desktop_execution_admission_closed");
     if ([...this.pendingGoalVerifications.values()].some((record) => record.chatId === req.chatId)) throw new Error("goal_verification_pending");
@@ -1075,6 +1213,12 @@ export class InvocationService {
       oneMode: requestedOneMode,
       goal: invocationRequest.userPrompt.slice(0, 4_000),
       pendingQuestion: false,
+      ...(questionContinuation
+        ? {
+            questionContinuationSourceMessageId: questionContinuation.sourceMessageId,
+            questionContinuationRequestHash: questionContinuation.requestHash,
+          }
+        : {}),
       settlementPublished: false,
       observableStepSequence: 0,
       ...(executionContext?.source ? { executionSource: executionContext.source } : {}),
@@ -1173,6 +1317,8 @@ export class InvocationService {
             synchronousAskSurface: executionContext?.source === "mobile"
               ? "durable-decision"
               : undefined,
+            questionContinuationSourceMessageId: questionContinuation?.sourceMessageId,
+            questionContinuationRequestHash: questionContinuation?.requestHash,
             oneTaskKindRef: oneTaskKindRef ?? undefined,
             oneParticipantVersionBindings,
             oneTeamPreflightProposalId: preparedOneTeamPreflight?.proposalId,

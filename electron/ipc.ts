@@ -2701,12 +2701,50 @@ export function registerIpcHandlers(): void {
 
   // ── confirm (확인 요청 — 챗에서 사용자 결정 대기) ────────
   ipcMain.handle("confirm:listPending", () => listPendingConfirmations());
-  ipcMain.handle("confirm:commitAnswer", (_e, input: { chatId?: unknown; reply?: unknown; sourceMessageId?: unknown }) =>
-    commitPendingConfirmationAnswer(
-      typeof input?.chatId === "string" ? input.chatId : "",
-      typeof input?.reply === "string" ? input.reply : "",
+  ipcMain.handle("confirm:commitAnswer", (_e, input: {
+    chatId?: unknown;
+    reply?: unknown;
+    sourceMessageId?: unknown;
+    continuation?: unknown;
+  }) => {
+    const raw = input?.continuation && typeof input.continuation === "object" && !Array.isArray(input.continuation)
+      ? input.continuation as Record<string, unknown>
+      : undefined;
+    const chatId = typeof input?.chatId === "string" ? input.chatId : "";
+    const reply = typeof input?.reply === "string" ? input.reply : "";
+    const sealed = raw ? rendererInvocationRequest({
+      chatId,
+      userPrompt: reply,
+      ...(raw.locale === "ko" || raw.locale === "en" ? { locale: raw.locale } : {}),
+      ...(raw.permissions === "read" || raw.permissions === "write" || raw.permissions === "full"
+        ? { permissions: raw.permissions }
+        : {}),
+      ...(raw.sessionRouting === true ? { sessionRouting: true } : {}),
+      ...(raw.runtimeSelection && typeof raw.runtimeSelection === "object" && !Array.isArray(raw.runtimeSelection)
+        ? { runtimeSelection: raw.runtimeSelection as RuntimeSelection }
+        : {}),
+    }) : undefined;
+    return commitPendingConfirmationAnswer(
+      chatId,
+      reply,
       typeof input?.sourceMessageId === "string" ? input.sourceMessageId : undefined,
-    ));
+      sealed ? {
+        locale: sealed.locale,
+        permissions: sealed.permissions,
+        sessionRouting: sealed.sessionRouting,
+        runtimeSelection: sealed.runtimeSelection,
+      } : undefined,
+    );
+  });
+  ipcMain.handle("confirm:continueAnswer", (_e, input: {
+    chatId?: unknown;
+    sourceMessageId?: unknown;
+    reply?: unknown;
+  }) => invocationService.continueCommittedQuestion(
+    typeof input?.chatId === "string" ? input.chatId : "",
+    typeof input?.sourceMessageId === "string" ? input.sourceMessageId : "",
+    typeof input?.reply === "string" ? input.reply : "",
+  ));
   ipcMain.handle("confirm:committedAnswers", (_e, chatId: unknown) =>
     listCommittedQuestionAnswers(typeof chatId === "string" ? chatId : ""));
   ipcMain.handle("confirm:snooze", (_e, input: { chatId?: unknown; sourceMessageId?: unknown; resumeAt?: unknown }) =>

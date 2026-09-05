@@ -1163,10 +1163,13 @@ function attachMcpStepsToLatestAgent(messages: StreamMessage[], steps: StreamSte
 async function fetchCommittedReplies(
   api: ReturnType<typeof ipc>,
   chatId: string,
-): Promise<Map<string, string>> {
+): Promise<Map<string, { reply: string; continuationRunId?: string }>> {
   try {
     const rows = await api?.confirm?.committedAnswers?.(chatId);
-    return new Map((rows ?? []).map((row) => [row.sourceMessageId, row.reply]));
+    return new Map((rows ?? []).map((row) => [row.sourceMessageId, {
+      reply: row.reply,
+      continuationRunId: row.continuationRunId,
+    }]));
   } catch {
     return new Map();
   }
@@ -1174,16 +1177,22 @@ async function fetchCommittedReplies(
 
 function restoreAnsweredQuestions(
   messages: StreamMessage[],
-  committedReplies?: Map<string, string>,
+  committedReplies?: Map<string, { reply: string; continuationRunId?: string }>,
 ): StreamMessage[] {
   return messages.map((msg, i) => {
     if (!msg.questions || msg.questions.length === 0) return msg;
     // Last assistant question + committed receipt means Main accepted the
     // choice but no continuation user turn became durable. Reopen with the
     // exact saved reply instead of losing it or inventing a second answer.
-    const committedReply = committedReplies?.get(msg.id)?.trim() ?? "";
+    const committed = committedReplies?.get(msg.id);
+    const committedReply = committed?.reply.trim() ?? "";
     if (i >= messages.length - 1) {
-      return committedReply ? { ...msg, pendingCommittedReply: committedReply } : msg;
+      return committedReply ? {
+        ...msg,
+        pendingCommittedReply: committedReply,
+        pendingContinuationRunId: committed?.continuationRunId,
+        pendingContinuationAutoResume: Boolean(committed?.continuationRunId),
+      } : msg;
     }
     const nextUser = i >= messages.length - 1
       ? undefined
@@ -1619,6 +1628,19 @@ function ChatPage() {
   const [agentScreen, setAgentScreen] = useState<{ mode: "browser" | "computer" } | null>(null);
   const [questionCommitPending, setQuestionCommitPending] = useState(false);
   const questionCommitPendingRef = useRef<string | null>(null);
+  const continuationResumeAttemptsRef = useRef(new Set<string>());
+  const continuationTransportRetryableRef = useRef(new Set<string>());
+  const [continuationReconnectEpoch, setContinuationReconnectEpoch] = useState(0);
+  useEffect(() => { continuationResumeAttemptsRef.current.clear(); }, [chatId]);
+  useEffect(() => {
+    const onOnline = () => {
+      if (continuationTransportRetryableRef.current.size === 0) return;
+      continuationResumeAttemptsRef.current.clear();
+      setContinuationReconnectEpoch((value) => value + 1);
+    };
+    window.addEventListener("online", onOnline);
+    return () => window.removeEventListener("online", onOnline);
+  }, []);
   // 세션 recap — 자리를 비운 사이 도착한 에이전트 응답 한 줄 요약(있을 때만 배너).
   const [recap, setRecap] = useState<{ summary: string; count: number } | null>(null);
   const [defaultRunFolder, setDefaultRunFolder] = useState<string | null>(null);
@@ -2452,6 +2474,8 @@ function ChatPage() {
                 ? ev.userDecisionRequest?.sourceMessageId ?? msg.questionSourceMessageId
                 : undefined,
               pendingCommittedReply: undefined,
+              pendingContinuationRunId: undefined,
+              pendingContinuationAutoResume: undefined,
             };
           }),
         );
@@ -2549,6 +2573,8 @@ function ChatPage() {
               questions: undefined,
               questionSourceMessageId: undefined,
               pendingCommittedReply: undefined,
+              pendingContinuationRunId: undefined,
+              pendingContinuationAutoResume: undefined,
             }];
           });
         setMessages((current) => {
@@ -3370,6 +3396,8 @@ function ChatPage() {
         /** Current session roster first; Agent Hub/Cloud only when the model identifies a capability gap. */
         sessionRouting?: boolean;
         stormbreakerMode?: boolean;
+        /** Main-owned exact Decision continuation; never used by ordinary sends. */
+        decisionContinuation?: { sourceMessageId: string; runId: string };
       },
     ) => {
       const api = ipc();
@@ -3455,9 +3483,10 @@ function ChatPage() {
         if (!duplicate) effectiveTaskForceTargets.push(target);
       }
       transcriptRevisionRef.current += 1;
+      const userMessageId = uid();
       setMessages((m) => [
         ...m,
-        { id: uid(), role: "user" as const, text: visiblePrompt, imageDataUrls, chatFiles: attachedChatFiles },
+        { id: userMessageId, role: "user" as const, text: visiblePrompt, imageDataUrls, chatFiles: attachedChatFiles },
         {
           id: placeholderId,
           role: "agent",
@@ -3520,7 +3549,7 @@ function ChatPage() {
 
       // runId를 렌더러가 먼저 생성하고 invoke 왕복 전에 구독한다(subscribe-before-trigger) —
       // 런타임이 즉시 emit하는 초기 이벤트도 절대 놓치지 않아 스트리밍/최종 답변이 라이브로 뜬다.
-      const runId = crypto.randomUUID();
+      const runId = opts?.decisionContinuation?.runId ?? crypto.randomUUID();
       runIdRef.current = runId;
       lastRunIdRef.current = runId;
       partialTextRef.current = "";
@@ -3530,27 +3559,67 @@ function ChatPage() {
       // 이벤트 처리는 consumeEvent로 추출됨 — 재접속(attach) 경로와 동일 로직 공유.
       subscribeRun(runId, placeholderId);
       try {
-        // locale을 동봉 — main이 emit하는 상태/오류 메시지가 사용자 언어로 나오도록.
-        await api.invoke.run({
-          runId,
-          chatId: chat.id,
-          userPrompt: invocationPrompt,
-          images,
-          locale,
-          permissions: opts?.permissions ?? DEFAULT_PERMISSION,
-          planMode: opts?.planMode,
-          goalMode: opts?.goalMode,
-          appsGenerateMode: opts?.appsGenerateMode,
-          borrowAgents: effectiveBorrowAgents,
-          taskForceTargets: effectiveTaskForceTargets.length > 0 ? effectiveTaskForceTargets : undefined,
-          pipelineStages: opts?.pipelineStages,
-          routerAgent: opts?.routerAgent,
-          // Project Work is orchestrated by default: attached tools first,
-          // Network recruitment only for a real capability/tool gap.
-          sessionRouting: project ? true : opts?.sessionRouting,
-          stormbreakerMode: opts?.stormbreakerMode,
-          runtimeSelection: chat.runtimeSelection ?? undefined,
-        });
+        if (opts?.decisionContinuation) {
+          const continuationInput = {
+            chatId: chat.id,
+            sourceMessageId: opts.decisionContinuation.sourceMessageId,
+            reply: invocationPrompt,
+          };
+          let continued;
+          try {
+            continued = await api.confirm.continueAnswer(continuationInput);
+          } catch {
+            // One response-loss reconciliation only. Main owns the stable run
+            // id/hash, so this cannot mint a second execution.
+            continued = await api.confirm.continueAnswer(continuationInput).catch(() => null);
+            if (!continued) {
+              continuationTransportRetryableRef.current.add(runId);
+              throw new Error("decision_continuation_transport_unavailable");
+            }
+          }
+          if (!continued || continued.runId !== runId || continued.status === "rejected") {
+            continuationTransportRetryableRef.current.delete(runId);
+            throw new Error(continued?.reasonCode ?? "decision_continuation_rejected");
+          }
+          continuationTransportRetryableRef.current.delete(runId);
+          if (continued.status === "already-terminal") {
+            subRef.current?.();
+            subRef.current = null;
+            setMessages((messages) => messages.filter((message) => (
+              message.id !== userMessageId && message.id !== placeholderId
+            )));
+            setBusy(false);
+            setCancelPending(false);
+            runIdRef.current = null;
+            lastRunIdRef.current = runId;
+            setSessionNotice(locale === "ko"
+              ? `답변은 이미 전달됐으며 후속 실행은 ${continued.runStatus ?? "종료"} 상태입니다. 자동으로 다시 실행하지 않았습니다.`
+              : `The answer was already delivered and its follow-up is ${continued.runStatus ?? "settled"}. It was not run again automatically.`);
+            return true;
+          }
+        } else {
+          // locale을 동봉 — main이 emit하는 상태/오류 메시지가 사용자 언어로 나오도록.
+          await api.invoke.run({
+            runId,
+            chatId: chat.id,
+            userPrompt: invocationPrompt,
+            images,
+            locale,
+            permissions: opts?.permissions ?? DEFAULT_PERMISSION,
+            planMode: opts?.planMode,
+            goalMode: opts?.goalMode,
+            appsGenerateMode: opts?.appsGenerateMode,
+            borrowAgents: effectiveBorrowAgents,
+            taskForceTargets: effectiveTaskForceTargets.length > 0 ? effectiveTaskForceTargets : undefined,
+            pipelineStages: opts?.pipelineStages,
+            routerAgent: opts?.routerAgent,
+            // Project Work is orchestrated by default: attached tools first,
+            // Network recruitment only for a real capability/tool gap.
+            sessionRouting: project ? true : opts?.sessionRouting,
+            stormbreakerMode: opts?.stormbreakerMode,
+            runtimeSelection: chat.runtimeSelection ?? undefined,
+          });
+        }
         // runId 도착 전에 Stop을 눌렀다면(레이스) 구독을 건 직후 즉시 취소 — abort 종료 이벤트를 수신해 busy 해제.
         if (cancelRequestedRef.current) requestRunCancellation(runId);
         return true;
@@ -3558,6 +3627,19 @@ function ChatPage() {
         // invoke 실패 — 미리 건 구독을 정리해 유령 리스너가 남지 않게 한다.
         subRef.current?.();
         subRef.current = null;
+        if (opts?.decisionContinuation) {
+          // Main rejected the continuation or its transport was unavailable.
+          // Keep the durable Decision card as the only retry surface; an
+          // optimistic user row here would look like a second accepted answer.
+          setMessages((messages) => messages.filter((message) => (
+            message.id !== userMessageId && message.id !== placeholderId
+          )));
+          setBusy(false);
+          setCancelPending(false);
+          runIdRef.current = null;
+          lastRunIdRef.current = runId;
+          return false;
+        }
         setMessages((m) =>
           m.map((msg) =>
             msg.id === placeholderId
@@ -3756,29 +3838,68 @@ function ChatPage() {
       setSessionNotice(null);
       const perms = perQuestion.map((p) => inferPermissionFromAnswer(p.answers)).find(Boolean);
       try {
+        let receipt: { chatId: string; sourceMessageId: string; continuationRunId: string } | null = null;
         try {
           // The exact current question must be durably accepted before either the
           // answered UI or the follow-up run changes. A stale/mismatched receipt
           // leaves the sheet and every typed answer intact.
-          const receipt = await api.confirm.commitAnswer({ chatId, reply, sourceMessageId });
+          receipt = await api.confirm.commitAnswer({
+            chatId,
+            reply,
+            sourceMessageId,
+            continuation: {
+              locale,
+              permissions: perms ?? DEFAULT_PERMISSION,
+              sessionRouting: project ? true : undefined,
+              runtimeSelection: chat?.runtimeSelection ?? undefined,
+            },
+          });
           if (!receipt || receipt.chatId !== chatId || receipt.sourceMessageId !== sourceMessageId) {
             throw new Error("question_commit_receipt_mismatch");
           }
         } catch {
-          setSessionNotice(locale === "ko"
-            ? "이 질문의 답변을 저장하지 못했습니다. 질문과 입력은 그대로이므로 다시 시도해 주세요."
-            : "The answer was not saved for this exact question. The question and your input are unchanged; try again.");
-          return;
+          // IPC can lose its response after Main commits. Recover only the
+          // exact same source+reply+Main run binding; never infer acceptance.
+          const recovered = (await api.confirm.committedAnswers(chatId).catch(() => []))
+            .find((item) => item.sourceMessageId === sourceMessageId
+              && item.reply === reply.trim().slice(0, 4_000)
+              && Boolean(item.continuationRunId));
+          if (recovered?.continuationRunId) {
+            receipt = { chatId, sourceMessageId, continuationRunId: recovered.continuationRunId };
+          } else {
+            setSessionNotice(locale === "ko"
+              ? "이 질문의 답변을 저장하지 못했습니다. 질문과 입력은 그대로이므로 다시 시도해 주세요."
+              : "The answer was not saved for this exact question. The question and your input are unchanged; try again.");
+            return;
+          }
         }
         window.dispatchEvent(new Event("agentlas:attention-refresh"));
-        const sent = await send(reply, { permissions: perms ?? DEFAULT_PERMISSION }).catch(() => false);
+        const sent = await send(reply, {
+          permissions: perms ?? DEFAULT_PERMISSION,
+          decisionContinuation: {
+            sourceMessageId,
+            runId: receipt.continuationRunId,
+          },
+        }).catch(() => false);
         if (!sent) {
+          const retryable = receipt?.continuationRunId
+            ? continuationTransportRetryableRef.current.has(receipt.continuationRunId)
+            : false;
           setMessages((messages) => messages.map((message) => message.id === messageId
-            ? { ...message, pendingCommittedReply: reply }
+            ? {
+                ...message,
+                pendingCommittedReply: reply,
+                pendingContinuationRunId: receipt?.continuationRunId,
+                pendingContinuationAutoResume: retryable,
+              }
             : message));
-          setSessionNotice(locale === "ko"
-            ? "답변은 저장됐지만 후속 작업은 시작하지 못했습니다. 저장된 선택으로 다시 제출할 수 있습니다."
-            : "The answer was saved, but the follow-up did not start. You can resubmit the saved choice.");
+          setSessionNotice(retryable
+            ? (locale === "ko"
+              ? "답변은 안전하게 저장됐습니다. 연결이 복구되면 같은 실행으로 자동 재개합니다."
+              : "Your answer is safely saved. It will resume with the same run when the connection recovers.")
+            : (locale === "ko"
+              ? "답변은 안전하게 저장됐지만 후속 실행은 시작되지 않았습니다. 자동으로 다시 실행하지 않았습니다."
+              : "Your answer is safely saved, but the follow-up did not start. It was not run again automatically."));
           return;
         }
         setMessages((m) =>
@@ -3787,6 +3908,8 @@ function ChatPage() {
               ? {
                   ...msg,
                   pendingCommittedReply: undefined,
+                  pendingContinuationRunId: undefined,
+                  pendingContinuationAutoResume: undefined,
                   questions: msg.questions?.map((q) => {
                     const hit = perQuestion.find((p) => p.questionId === q.id);
                     if (hit && hit.answers.length) return { ...q, answer: hit.answers };
@@ -3805,7 +3928,7 @@ function ChatPage() {
     },
     // send는 동일 useCallback에 의존
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [busy, chatId, locale, send],
+    [busy, chat, chatId, locale, project, send],
   );
 
   /** 질문 시트 × 닫기 — 이 배치의 미답 질문을 잠가("—") 시트를 접는다. 전송 없음. */
@@ -3837,12 +3960,66 @@ function ChatPage() {
               sourceMessageId: m.questionSourceMessageId ?? m.id,
               questions: unanswered,
               initialReply: m.pendingCommittedReply,
+              continuationRunId: m.pendingContinuationRunId,
+              autoResume: m.pendingContinuationAutoResume,
             }
           : null;
       }
     }
     return null;
   }, [messages]);
+
+  // A committed answer is a durable intent, not a renderer-local button
+  // state. After remount, resume it once through Main's exact run binding.
+  useEffect(() => {
+    const reply = pendingQuestionSheet?.initialReply?.trim();
+    const continuationRunId = pendingQuestionSheet?.continuationRunId;
+    if (!reply || !continuationRunId || pendingQuestionSheet?.autoResume === false || busy || questionCommitPending) return;
+    const key = `${chatId}\0${pendingQuestionSheet.sourceMessageId}\0${continuationRunId}`;
+    if (continuationResumeAttemptsRef.current.has(key)) return;
+    continuationResumeAttemptsRef.current.add(key);
+    const parsed = parseQuestionBatchReply(reply);
+    const permissions = inferPermissionFromAnswer(parsed?.flatMap((item) => item.answers) ?? [reply])
+      ?? DEFAULT_PERMISSION;
+    void (async () => {
+      const api = ipc();
+      if (!api) return;
+      const resumed = await send(reply, {
+        permissions,
+        decisionContinuation: {
+          sourceMessageId: pendingQuestionSheet.sourceMessageId,
+          runId: continuationRunId,
+        },
+      }).catch(() => false);
+      if (!resumed) {
+        const retryable = continuationTransportRetryableRef.current.has(continuationRunId);
+        setMessages((messages) => messages.map((message) => message.id === pendingQuestionSheet.messageId
+          ? { ...message, pendingContinuationAutoResume: retryable }
+          : message));
+        setSessionNotice(retryable
+          ? (locale === "ko"
+            ? "저장된 답변의 연결이 아직 복구되지 않았습니다. 연결 복구 시 같은 실행으로 한 번 더 확인합니다."
+            : "The saved answer is still offline. It will reconcile once more with the same run after reconnection.")
+          : (locale === "ko"
+            ? "저장된 답변의 후속 실행은 시작되지 않았습니다. 자동으로 다시 실행하지 않았습니다."
+            : "The saved answer's follow-up did not start. It was not run again automatically."));
+        return;
+      }
+      setMessages((messages) => messages.map((message) => {
+        if (message.id !== pendingQuestionSheet.messageId) return message;
+        return {
+          ...message,
+          pendingCommittedReply: undefined,
+          pendingContinuationRunId: undefined,
+          pendingContinuationAutoResume: undefined,
+          questions: message.questions?.map((question) => {
+            const answers = parsed?.find((item) => item.question === question.question.trim())?.answers;
+            return { ...question, answer: answers?.length ? answers : ["✓"] };
+          }),
+        };
+      }));
+    })();
+  }, [busy, chatId, continuationReconnectEpoch, pendingQuestionSheet, questionCommitPending, send]);
 
   const handleSurfaceAction = useCallback(
     async (activeSurface: WorkbenchSurface, action: AgentlasSurfaceAction) => {

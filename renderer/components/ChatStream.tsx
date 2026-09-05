@@ -112,6 +112,10 @@ export interface StreamMessage {
   questionSourceMessageId?: string;
   /** Durable answer accepted before its continuation run began; used only to retry. */
   pendingCommittedReply?: string;
+  /** Main-reserved run identity for the pending committed continuation. */
+  pendingContinuationRunId?: string;
+  /** A transport loss may auto-resume; typed rejection deliberately may not. */
+  pendingContinuationAutoResume?: boolean;
   /** 생성 토큰 수 — "N tokens" 표시 (Claude Code 스타일) */
   tokens?: number;
   /** 라이브 누적 토큰(usage 이벤트, 단조 증가) — final 전 실시간 "N tokens" 표시 */

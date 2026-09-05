@@ -261,8 +261,20 @@ const api: AgentlasIpc = {
   },
   confirm: {
     listPending: () => ipcRenderer.invoke("confirm:listPending"),
-    commitAnswer: (input: { chatId: string; reply: string; sourceMessageId?: string }) =>
+    commitAnswer: (input: {
+      chatId: string;
+      reply: string;
+      sourceMessageId?: string;
+      continuation?: {
+        locale?: "ko" | "en";
+        permissions?: "read" | "write" | "full";
+        sessionRouting?: boolean;
+        runtimeSelection?: unknown;
+      };
+    }) =>
       ipcRenderer.invoke("confirm:commitAnswer", input),
+    continueAnswer: (input: { chatId: string; sourceMessageId: string; reply: string }) =>
+      ipcRenderer.invoke("confirm:continueAnswer", input),
     snooze: (input: { chatId: string; sourceMessageId: string; resumeAt: string }) =>
       ipcRenderer.invoke("confirm:snooze", input),
     committedAnswers: (chatId: string) => ipcRenderer.invoke("confirm:committedAnswers", chatId),

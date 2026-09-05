@@ -18,7 +18,7 @@ import {
   startLongRunWorkerAttempt,
   transitionLongRun,
 } from "../store/long-runs";
-import { completeChatGoalContract } from "../store/chat-goals";
+import { completeChatGoalContract, getChatGoalRevision } from "../store/chat-goals";
 import { prepareInvocationAutomaticGoal } from "./automatic-goal";
 import { DesktopLongRunInvocationProjection } from "../long-run/invocation-projection";
 import { resolveDesktopRuntimeAdapter } from "../long-run/runtime-adapters";
@@ -671,6 +671,7 @@ export class InvocationService {
   private readonly eventListeners = new Set<InvocationEventListener>();
   private readonly activeChatsListeners = new Set<ActiveChatsListener>();
   private readonly settledListeners = new Set<InvocationSettledListener>();
+  private readonly pendingGoalVerifications = new Map<string, RunRecord>();
   private readonly steerQueues = new Map<string, QueuedSteer[]>();
   private acceptingStarts = true;
 
@@ -699,11 +700,11 @@ export class InvocationService {
   }
 
   activeChatIds(): string[] {
-    return this.activeRuns.activeChatIds();
+    return [...new Set([...this.activeRuns.activeChatIds(), ...[...this.pendingGoalVerifications.values()].map((record) => record.chatId)])];
   }
 
   activeRunIds(): string[] {
-    return [...this.activeRuns.entries()].map(([runId]) => runId);
+    return [...new Set([...this.activeRuns.entries()].map(([runId]) => runId).concat([...this.pendingGoalVerifications.keys()]))];
   }
 
   openAppAdmission(): void {
@@ -744,6 +745,7 @@ export class InvocationService {
     executionContext?: InvocationExecutionContext,
   ): InvocationStartResult {
     if (!this.acceptingStarts) throw new Error("desktop_execution_admission_closed");
+    if ([...this.pendingGoalVerifications.values()].some((record) => record.chatId === req.chatId)) throw new Error("goal_verification_pending");
     const incoming = req as OneInvocationRequest;
     const {
       oneProfileContext: _untrustedOneProfileContext,
@@ -1439,6 +1441,11 @@ export class InvocationService {
       if (goalInvocationProjection) record.longRunProjection = goalInvocationProjection;
     };
     refreshGoalProjection();
+    if (goalLongRun && getChatGoalRevision(goalLongRun.goalId) && !executionContext && !runWorkspaceBinding && goalLongRun.surface !== "science") {
+      record.automaticGoalId = goalLongRun.goalId;
+      const remaining = Date.parse(goalLongRun.budget.wallclockDeadline ?? "") - Date.now();
+      if (Number.isFinite(remaining)) record.automaticGoalDeadline = setTimeout(() => this.cancelWithReason(runId, new Error("automatic_goal_time_budget")), Math.max(1, remaining));
+    }
     let goalControllerAttemptId: string | null = null;
     let goalControllerAttemptSettled = false;
     const bindGoalControllerAttempt = (selection: RuntimeSelection): void => {
@@ -2039,9 +2046,12 @@ export class InvocationService {
           // The client records only a verification request. The independent
           // judge starts here, after invoke_completed/mcp_final and the result
           // receipt are durable, so model prose can never outrun host evidence.
+          this.pendingGoalVerifications.set(runId, record);
+          this.publishActiveChats();
           void import("../long-run/verifier")
             .then(({ verifyGoalCompletionClaim }) => verifyGoalCompletionClaim({
               goalId: completionClaim.goalId!,
+              signal: controller.signal,
               outcomeText: result.finalText?.trim() || "Completion claimed without result text.",
               evidence: completionClaim.evidence,
               invocationRunId: runId,
@@ -2065,6 +2075,13 @@ export class InvocationService {
                   transitionLongRun({ runId: current.id, to: "blocked", actorKind: "host", reason: "verification_unavailable" });
                 }
               }
+            })
+            .finally(() => {
+              this.pendingGoalVerifications.delete(runId);
+              this.publishActiveChats();
+              if (record.automaticGoalDeadline) clearTimeout(record.automaticGoalDeadline);
+              this.settleAutomaticGoalInterruption(record);
+              this.drainSteerQueue(record.chatId);
             });
         }
       })
@@ -2146,20 +2163,9 @@ export class InvocationService {
         }
       })
       .finally(() => {
-        if (record.automaticGoalDeadline) clearTimeout(record.automaticGoalDeadline);
+        if (record.automaticGoalDeadline && !this.pendingGoalVerifications.has(runId)) clearTimeout(record.automaticGoalDeadline);
         settleGoalControllerAttempt(false);
-        if (record.automaticGoalId && controller.signal.aborted) {
-          try {
-            const current = getLongRunByGoalId(record.automaticGoalId);
-            if (current && ["pausing", "cancelling"].includes(current.status)) {
-              const next = transitionLongRun({ runId: current.id, to: current.status === "cancelling" ? "cancelled" : "paused", actorKind: "host", reason: controller.signal.reason instanceof Error && controller.signal.reason.message === "automatic_goal_time_budget" ? "budget" : "user" });
-              if (next.status === "cancelled") {
-                completeChatGoalContract(next.goalId, "cancelled");
-                if (getChat(chat.id)?.goalId === next.goalId) setChatGoalBinding(chat.id, null);
-              }
-            }
-          } catch { /* The durable requested stop remains non-admitting. */ }
-        }
+        if (!this.pendingGoalVerifications.has(runId)) this.settleAutomaticGoalInterruption(record);
         if (!terminalObserved) {
           canonicalTask = trySetTaskStatus(
             runReq.chatId,
@@ -2252,6 +2258,21 @@ export class InvocationService {
     }
   }
 
+  private settleAutomaticGoalInterruption(record: RunRecord): void {
+    if (!record.automaticGoalId || !record.controller.signal.aborted) return;
+    try {
+      const current = getLongRunByGoalId(record.automaticGoalId);
+      if (current && ["pausing", "cancelling"].includes(current.status)) {
+        const next = transitionLongRun({ runId: current.id, to: current.status === "cancelling" ? "cancelled" : "paused", actorKind: "host",
+          reason: record.controller.signal.reason instanceof Error && record.controller.signal.reason.message === "automatic_goal_time_budget" ? "budget" : "user" });
+        if (next.status === "cancelled") {
+          completeChatGoalContract(next.goalId, "cancelled");
+          if (getChat(record.chatId)?.goalId === next.goalId) setChatGoalBinding(record.chatId, null);
+        }
+      }
+    } catch { /* Requested stop remains durable and non-admitting. */ }
+  }
+
   cancel(runId: string): "requested" | "already-requested" | "not-found" {
     return this.cancelWithReason(runId, new Error("stopped_by_user"));
   }
@@ -2260,7 +2281,7 @@ export class InvocationService {
     runId: string,
     reason: Error,
   ): "requested" | "already-requested" | "not-found" {
-    const record = this.activeRuns.get(runId);
+    const record = this.activeRuns.get(runId) ?? this.pendingGoalVerifications.get(runId);
     if (record?.automaticGoalId) {
       try {
         const goal = getLongRunByGoalId(record.automaticGoalId);
@@ -2278,7 +2299,12 @@ export class InvocationService {
       this.steerQueues.delete(record.chatId);
       cancelQueuedSteersForChat(record.chatId);
     }
-    const result = this.activeRuns.requestCancelWithReason(runId, reason);
+    let result = this.activeRuns.requestCancelWithReason(runId, reason);
+    if (result === "not-found" && record && this.pendingGoalVerifications.has(runId)) {
+      result = record.controller.signal.aborted ? "already-requested" : "requested";
+      record.cancelRequestedAt ??= new Date().toISOString();
+      record.controller.abort(reason);
+    }
     if (result === "requested") {
       if (record) {
         const sequence = nextObservableSequence(record);
@@ -2429,7 +2455,7 @@ export class InvocationService {
 
   attach(chatId: string): InvocationAttachResult | null {
     let found: InvocationAttachResult | null = null;
-    for (const [runId, record] of this.activeRuns.entries()) {
+    for (const [runId, record] of new Map([...this.pendingGoalVerifications, ...this.activeRuns.entries()])) {
       if (record.chatId === chatId) {
         found = {
           runId,
@@ -2447,7 +2473,7 @@ export class InvocationService {
   }
 
   receipt(runId: string): InvocationRunReceipt | null {
-    const record = this.activeRuns.get(runId);
+    const record = this.activeRuns.get(runId) ?? this.pendingGoalVerifications.get(runId);
     const durable = getInvocationRunReceipt(runId);
     if (!record) return durable;
     return {
@@ -2466,7 +2492,7 @@ export class InvocationService {
   }
 
   latestReceipt(chatId: string): InvocationRunReceipt | null {
-    for (const [runId, record] of this.activeRuns.entries()) {
+    for (const [runId, record] of new Map([...this.pendingGoalVerifications, ...this.activeRuns.entries()])) {
       if (record.chatId === chatId) return this.receipt(runId);
     }
     return getLatestInvocationRunReceipt(chatId);
@@ -2624,7 +2650,7 @@ export class InvocationService {
   }
 
   private drainSteerQueue(chatId: string): void {
-    if ([...this.activeRuns.entries()].some(([, record]) => record.chatId === chatId)) return;
+    if (this.activeChatIds().includes(chatId)) return;
     const queue = this.steerQueues.get(chatId);
     if (!queue?.length) return;
     const next = queue.shift();

@@ -177,6 +177,7 @@ import {
 } from "./mcp/workforce-goal-continuity";
 import { resolveRunKeyElicitation } from "./mcp/run-key-elicitation";
 import { invocationService } from "./invocation/service";
+import { queueAutomaticGoalResume } from "./invocation/automatic-goal";
 // ── Hephaestus 엔진 브리지 — 데스크탑↔엔진 연결은 전부 electron/hephaestus/* 에서만 일어난다. ──
 import { hepAuthLogin, hepAuthStatus } from "./hephaestus/commands";
 import { hephaestusAvailable, hephaestusDoctor, hephaestusRoot, readHephaestusUpdateJournal, runHephaestusRuntimeUpdate } from "./hephaestus/engine";
@@ -4071,7 +4072,18 @@ export function registerIpcHandlers(): void {
       throw new Error("long_run_resume_version_conflict");
     }
     const continuation = findAutomationByGoalId(chat.goalId);
-    if (!continuation) throw new Error("long_run_resume_dispatch_unavailable");
+    if (!continuation) {
+      if (invocationService.activeChatIds().includes(id)) throw new Error("auto_goal_resume_chat_busy");
+      const { request, queued } = queueAutomaticGoalResume(id, expectedVersion);
+      try {
+        confirmDesktopLongRunResumeDispatched(queued.id);
+        invocationService.start(request);
+      } catch (error) {
+        failDesktopLongRunResumeDispatch(queued.id, error instanceof Error ? error.message : String(error));
+        throw error;
+      }
+      return getGoalLedgerGoal(chat.goalId, getChatWorkingFolder(id));
+    }
     const queued = resumeDesktopLongRunManually(context.runId, expectedVersion);
     try {
       if (!continuation.enabled) toggleAutomation(continuation.id, true);

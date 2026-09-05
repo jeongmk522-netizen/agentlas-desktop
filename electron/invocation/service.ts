@@ -593,6 +593,14 @@ function recordManifestArtifactEvidence(
   }
 }
 
+export function invocationEventRequestsDecision(event: McpInvocationEvent): boolean {
+  if (event.kind !== "final") return false;
+  // Display hygiene removes ask fences. The Main-only durable body retains
+  // them for state transitions and is stripped before publishing the event.
+  const body = event.durableTextForVerification ?? event.text;
+  return typeof body === "string" && body.includes("<<agentlas-ask");
+}
+
 export function invocationEventPromotesTask(event: McpInvocationEvent): boolean {
   // Runtime progress is transported as a status-only `tool-use` event too
   // (for example, "Calling Claude Code CLI..."). That is not user work and
@@ -605,7 +613,7 @@ export function invocationEventPromotesTask(event: McpInvocationEvent): boolean 
     event.kind === "surface" ||
     (Boolean(event.agentId) && (event.phase === "delegate" || (event.tier ?? 1) > 1)) ||
     event.phase === "delegate" ||
-    (event.kind === "final" && typeof event.text === "string" && event.text.includes("<<agentlas-ask"));
+    invocationEventRequestsDecision(event);
 }
 
 export function attachOneSurfaceProjection(
@@ -1596,8 +1604,7 @@ export class InvocationService {
             event = { ...event, text: stripPermissionEscalationMarker(durableFinal.text) };
           }
         }
-        const terminalRequestsDecision = event.kind === "final" &&
-          (event.text ?? "").includes("<<agentlas-ask");
+        const terminalRequestsDecision = invocationEventRequestsDecision(event);
         if (terminalRequestsDecision) record.pendingQuestion = true;
         if (!taskMaterialized && (invocationEventPromotesTask(event) || terminalRequestsDecision)) {
           tryRecordRunEvent({

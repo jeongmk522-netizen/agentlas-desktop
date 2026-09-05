@@ -175,7 +175,8 @@
     "verify:one-composer-surface": "node scripts/verify-one-composer-surface.mjs",
     "gate:audio-picker-absent": "node scripts/gate-audio-picker-absent.cjs",
     "verify:pinned-lookup": "node scripts/verify-pinned-lookup-shape.mjs",
-    "verify:seat-migration": "npm run build:electron && node scripts/verify-seat-migration.cjs"
+    "verify:seat-migration": "npm run build:electron && node scripts/verify-seat-migration.cjs",
+    "gate:colour-tokens": "node scripts/gate-colour-tokens.cjs"
   },
   "dependencies": {
     "@file-viewer/preset-lite": "^2.3.0",

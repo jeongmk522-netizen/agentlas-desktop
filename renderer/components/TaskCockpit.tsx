@@ -4846,9 +4846,9 @@ function ChatPage() {
   return (
     <div className="task-cockpit-shell" style={{ display: "flex", height: "100%", width: "100%", minWidth: 0, overflow: "hidden" }}>
       {/* ★대화 영역은 One 과 같이 흰 면 위에 놓는다(2026-09-04 실측).
-          예전에는 이 열이 투명이라 페이지 배경(#fcfcfc)이 그대로 비쳤고, 작성창만 흰
-          카드로 떠 보였다. One 은 workspace 전체가 #fff 라 대화가 한 장의 면 위에 앉는다.
-          같은 뜻의 토큰(--paper, #ffffff)을 쓴다 — 다크 테마에서도 함께 따라간다. */}
+          예전에는 이 열이 투명이라 페이지 배경(--paper-2)이 그대로 비쳤고, 작성창만 흰
+          카드로 떠 보였다. One 은 workspace 전체가 흰 면이라 대화가 한 장의 면 위에 앉는다.
+          같은 뜻의 토큰(--paper)을 쓴다 — 다크 테마에서도 함께 따라간다. */}
       <div
         className="task-cockpit-main"
         style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0, background: "var(--paper)" }}

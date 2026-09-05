@@ -1575,14 +1575,14 @@ function ChatInputComponent({
         {(fileGrants.length > 0 || pastedTexts.length > 0) && (
           <div style={{ display: "flex", flexWrap: "wrap", gap: 6, padding: "0 4px 6px" }}>
             {fileGrants.map((g, i) => (
-              <span key={`${g.grant.scope.token}:${i}`} title={g.grant.path} style={{ display: "inline-flex", alignItems: "center", gap: 6, maxWidth: 240, padding: "4px 9px", borderRadius: 999, border: "1px solid var(--paper-edge, #d8d8d8)", background: "var(--paper-2, #f4f4f5)", fontSize: 12 }}>
+              <span key={`${g.grant.scope.token}:${i}`} title={g.grant.path} style={{ display: "inline-flex", alignItems: "center", gap: 6, maxWidth: 240, padding: "4px 9px", borderRadius: 999, border: "1px solid var(--paper-edge, var(--paper-edge-strong))", background: "var(--paper-2, var(--paper-2))", fontSize: 12 }}>
                 <span aria-hidden="true">{g.kind === "directory" ? "📁" : "📎"}</span>
                 <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{g.name}</span>
                 <button type="button" aria-label={locale === "ko" ? "첨부 제거" : "Remove attachment"} onClick={() => setFileGrants((a) => a.filter((_, j) => j !== i))} style={{ border: 0, background: "transparent", cursor: "pointer", padding: 0, lineHeight: 1, opacity: 0.6 }}>×</button>
               </span>
             ))}
             {pastedTexts.map((p, i) => (
-              <span key={`t${i}`} title={p.text.slice(0, 300)} style={{ display: "inline-flex", alignItems: "center", gap: 6, maxWidth: 240, padding: "4px 9px", borderRadius: 999, border: "1px solid var(--paper-edge, #d8d8d8)", background: "var(--paper-2, #f4f4f5)", fontSize: 12 }}>
+              <span key={`t${i}`} title={p.text.slice(0, 300)} style={{ display: "inline-flex", alignItems: "center", gap: 6, maxWidth: 240, padding: "4px 9px", borderRadius: 999, border: "1px solid var(--paper-edge, var(--paper-edge-strong))", background: "var(--paper-2, var(--paper-2))", fontSize: 12 }}>
                 <span aria-hidden="true">📝</span>
                 <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.name}</span>
                 <button type="button" aria-label={locale === "ko" ? "텍스트 제거" : "Remove text"} onClick={() => setPastedTexts((a) => a.filter((_, j) => j !== i))} style={{ border: 0, background: "transparent", cursor: "pointer", padding: 0, lineHeight: 1, opacity: 0.6 }}>×</button>

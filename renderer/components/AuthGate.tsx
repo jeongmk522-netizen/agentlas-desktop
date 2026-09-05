@@ -66,8 +66,8 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
         style={{
           position: "fixed",
           inset: 0,
-          background: "#06080B",
-          color: "#EEF5F2",
+          background: "var(--black)",
+          color: "var(--white-soft)",
           display: "grid",
           placeItems: "center",
           textAlign: "center",

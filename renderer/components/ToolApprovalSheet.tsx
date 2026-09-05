@@ -80,13 +80,13 @@ export function ToolApprovalSheet() {
         .tab-pill {
           display: inline-flex; align-items: center; gap: 8px;
           padding: 8px 12px; border-radius: 999px;
-          border: 1px solid var(--one-sheet-primary, #2f6f4f);
-          background: var(--surface, #fff); color: #24312b; font-size: 13px; cursor: pointer;
+          border: 1px solid var(--accent-strong);
+          background: var(--paper); color: var(--ink); font-size: 13px; cursor: pointer;
           box-shadow: 0 6px 20px rgba(0, 0, 0, 0.12);
         }
-        .tab-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--one-sheet-primary, #2f6f4f); }
+        .tab-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--accent-strong); }
         .tab-cards {
-          background: var(--surface, #fff); border-radius: 14px; padding: 4px 8px;
+          background: var(--paper); border-radius: 14px; padding: 4px 8px;
           box-shadow: 0 10px 30px rgba(0, 0, 0, 0.16); max-height: 60vh; overflow: auto;
         }
         @media (max-width: 600px) {

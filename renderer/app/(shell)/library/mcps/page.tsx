@@ -243,8 +243,8 @@ export default function LibraryMcpsPage() {
             borderRadius: 999,
             fontSize: 12.5,
             fontWeight: 600,
-            background: "#303532",
-            color: "#fff",
+            background: "var(--black)",
+            color: "var(--white)",
             border: "1px solid transparent",
             display: "inline-flex",
             alignItems: "center",
@@ -368,7 +368,7 @@ export default function LibraryMcpsPage() {
                           borderRadius: 999,
                           border: "1px solid var(--paper-edge)",
                           background: server.enabled ? "rgba(86,161,74,0.16)" : "var(--paper-2)",
-                          color: server.enabled ? "#2f6b2a" : "var(--ink-soft)",
+                          color: server.enabled ? "var(--ok)" : "var(--ink-soft)",
                         }}
                       >
                         {server.enabled ? t("mcps.on") : t("mcps.off")}

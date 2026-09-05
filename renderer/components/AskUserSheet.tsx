@@ -106,8 +106,8 @@ export function AskUserSheet() {
         .aus-card {
           padding: 14px 16px;
           border-radius: 14px;
-          background: var(--rd-bg, #14151a);
-          color: var(--rd-ink, #f3f4f8);
+          background: var(--rd-bg);
+          color: var(--rd-ink);
           border: 1px solid var(--rd-hair, rgba(255, 255, 255, 0.12));
           box-shadow: 0 16px 44px rgba(0, 0, 0, 0.34);
           display: flex;
@@ -115,8 +115,8 @@ export function AskUserSheet() {
           gap: 10px;
         }
         .aus-one .aus-card {
-          background: #fffdf9;
-          color: #20251f;
+          background: var(--one-toast-bg);
+          color: var(--one-toast-ink);
           border-color: rgba(40, 48, 39, 0.12);
           box-shadow: 0 16px 44px rgba(28, 35, 27, 0.18);
         }
@@ -130,12 +130,12 @@ export function AskUserSheet() {
           font-weight: 600;
           padding: 3px 8px;
           border-radius: 999px;
-          background: rgba(120, 170, 255, 0.16);
-          color: #9dc0ff;
+          background: var(--info-soft);
+          color: var(--info);
         }
         .aus-one .aus-tag {
-          background: rgba(60, 110, 60, 0.12);
-          color: #3f6b3f;
+          background: var(--accent-soft);
+          color: var(--accent-strong);
         }
         .aus-by {
           font-size: 11.5px;
@@ -191,8 +191,8 @@ export function AskUserSheet() {
           padding: 8px 12px;
           border-radius: 9px;
           border: none;
-          background: #4d7fd6;
-          color: #fff;
+          background: var(--accent);
+          color: var(--white);
           font-size: 12.5px;
           cursor: pointer;
         }

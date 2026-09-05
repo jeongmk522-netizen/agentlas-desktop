@@ -994,7 +994,7 @@ const Bubble = memo(function Bubble({
                 borderRadius: 12,
                 border: "1px solid var(--accent)",
                 background: "var(--accent)",
-                color: "var(--on-accent, #fff)",
+                color: "var(--on-accent, var(--white))",
                 fontWeight: 700,
                 fontSize: 13,
                 boxShadow: "var(--neu-raised)",
@@ -1969,7 +1969,7 @@ const QuestionBlock = memo(function QuestionBlock({
       style={{
         border: "1px solid color-mix(in srgb, var(--accent) 20%, var(--paper-edge))",
         borderRadius: 8,
-        background: "linear-gradient(180deg, #fff 0%, var(--fill-1) 100%)",
+        background: "linear-gradient(180deg, var(--paper) 0%, var(--fill-1) 100%)",
         padding: 14,
         display: "flex",
         flexDirection: "column",
@@ -1985,7 +1985,7 @@ const QuestionBlock = memo(function QuestionBlock({
             fontSize: 11,
             fontFamily: "var(--font-mono)",
             color: "var(--accent)",
-            background: "color-mix(in srgb, var(--accent) 10%, #fff)",
+            background: "color-mix(in srgb, var(--accent) 10%, var(--paper))",
             padding: "2px 7px",
             borderRadius: 999,
             fontWeight: 750,
@@ -2022,7 +2022,7 @@ const QuestionBlock = memo(function QuestionBlock({
                   ? "1px solid color-mix(in srgb, var(--accent) 56%, var(--paper-edge))"
                   : "1px solid transparent",
                 background: selected
-                  ? "linear-gradient(135deg, color-mix(in srgb, var(--accent) 14%, #fff), color-mix(in srgb, var(--amber-deep) 8%, #fff))"
+                  ? "linear-gradient(135deg, color-mix(in srgb, var(--accent) 14%, var(--paper)), color-mix(in srgb, var(--amber-deep) 8%, var(--paper)))"
                   : "var(--paper-2)",
                 boxShadow: selected ? "0 8px 18px color-mix(in srgb, var(--accent) 14%, transparent)" : "none",
                 opacity: dim ? 0.45 : 1,
@@ -2043,7 +2043,7 @@ const QuestionBlock = memo(function QuestionBlock({
                     ? "1px solid var(--accent)"
                     : "1px solid var(--paper-edge)",
                   background: selected ? "var(--accent)" : "var(--paper)",
-                  color: selected ? "#fff" : "var(--ink-soft)",
+                  color: selected ? "var(--white)" : "var(--ink-soft)",
                   fontFamily: "var(--font-mono)",
                   fontSize: 11,
                   fontWeight: 800,
@@ -2414,7 +2414,7 @@ function WorkingPanel({
           role="status"
           style={{
             marginLeft: 26,
-            color: liveState.tone === "stale" ? "#b42318" : "var(--amber-deep)",
+            color: liveState.tone === "stale" ? "var(--danger)" : "var(--amber-deep)",
             fontSize: 11.5,
             lineHeight: 1.45,
           }}
@@ -2592,10 +2592,10 @@ function ToolActivityCard({
           style={{
             ...toolPre,
             background: step.resultIsError
-              ? "color-mix(in srgb, #fef3f2 78%, var(--paper) 22%)"
-              : "color-mix(in srgb, #f0fdf4 72%, var(--paper) 28%)",
-            borderColor: step.resultIsError ? "#fecdca" : "#bbf7d0",
-            color: step.resultIsError ? "#7a271a" : "#14532d",
+              ? "color-mix(in srgb, var(--danger-soft) 78%, var(--paper) 22%)"
+              : "color-mix(in srgb, var(--ok-soft) 72%, var(--paper) 28%)",
+            borderColor: step.resultIsError ? "var(--danger-soft)" : "var(--ok-soft)",
+            color: step.resultIsError ? "var(--danger)" : "var(--ok)",
           }}
         >
           {step.result}
@@ -2730,7 +2730,7 @@ function ToolRow({ step, current }: { step: StreamStep; current?: boolean }) {
         {hasResult && (
           <span
             style={{
-              color: step.resultIsError ? "#b42318" : "#15803d",
+              color: step.resultIsError ? "var(--danger)" : "var(--ok)",
               fontSize: 11,
               fontWeight: 700,
               flexShrink: 0,
@@ -2757,8 +2757,8 @@ function ToolRow({ step, current }: { step: StreamStep; current?: boolean }) {
             onClick={() => setResultOpen((v) => !v)}
             style={{
               ...toolMiniButton,
-              color: resultOpen ? (step.resultIsError ? "#b42318" : "#15803d") : "var(--muted-deep)",
-              borderColor: resultOpen ? (step.resultIsError ? "#fecdca" : "#bbf7d0") : "var(--paper-edge)",
+              color: resultOpen ? (step.resultIsError ? "var(--danger)" : "var(--ok)") : "var(--muted-deep)",
+              borderColor: resultOpen ? (step.resultIsError ? "var(--danger-soft)" : "var(--ok-soft)") : "var(--paper-edge)",
             }}
           >
             {step.resultIsError ? t("chatstream.tool_error") : t("chatstream.tool_result")}
@@ -2781,10 +2781,10 @@ function ToolRow({ step, current }: { step: StreamStep; current?: boolean }) {
           style={{
             ...toolPre,
             background: step.resultIsError
-              ? "color-mix(in srgb, #fef3f2 78%, var(--paper) 22%)"
-              : "color-mix(in srgb, #f0fdf4 72%, var(--paper) 28%)",
-            borderColor: step.resultIsError ? "#fecdca" : "#bbf7d0",
-            color: step.resultIsError ? "#7a271a" : "#14532d",
+              ? "color-mix(in srgb, var(--danger-soft) 78%, var(--paper) 22%)"
+              : "color-mix(in srgb, var(--ok-soft) 72%, var(--paper) 28%)",
+            borderColor: step.resultIsError ? "var(--danger-soft)" : "var(--ok-soft)",
+            color: step.resultIsError ? "var(--danger)" : "var(--ok)",
           }}
         >
           {step.result}
@@ -3054,14 +3054,14 @@ function toolActivityEyebrow(view: ToolViewModel, locale: "ko" | "en"): string {
 
 function toolTone(group: ToolGroup, isError: boolean): { accent: string; bg: string; border: string } {
   if (isError) {
-    return { accent: "#b42318", bg: "#fef3f2", border: "#fecdca" };
+    return { accent: "var(--danger)", bg: "var(--danger-soft)", border: "var(--danger-soft)" };
   }
   const tones: Record<ToolGroup, { accent: string; bg: string; border: string }> = {
-    command: { accent: "#2563eb", bg: "#eff6ff", border: "#bfdbfe" },
-    read: { accent: "#0f766e", bg: "#ecfdf5", border: "#99f6e4" },
-    edit: { accent: "#b45309", bg: "#fffbeb", border: "#fde68a" },
-    search: { accent: "#7c3aed", bg: "#f5f3ff", border: "#ddd6fe" },
-    other: { accent: "#475569", bg: "#f8fafc", border: "#cbd5e1" },
+    command: { accent: "var(--info)", bg: "var(--info-soft)", border: "var(--info-soft)" },
+    read: { accent: "var(--info)", bg: "var(--ok-soft)", border: "var(--ok-soft)" },
+    edit: { accent: "var(--warn)", bg: "var(--warn-soft)", border: "var(--warn-soft)" },
+    search: { accent: "var(--purple-deep)", bg: "var(--purple-soft)", border: "var(--purple-soft)" },
+    other: { accent: "var(--info)", bg: "var(--info-soft)", border: "var(--info-soft)" },
   };
   return tones[group];
 }
@@ -3137,8 +3137,8 @@ function ChatNoticeRow({ notice }: { notice: ChatNotice }) {
   }
   const tone = {
     info: { fg: "var(--accent)", icon: "ⓘ" },
-    success: { fg: "#2f7d4f", icon: "✓" },
-    warning: { fg: "#9a6700", icon: "!" },
+    success: { fg: "var(--ok)", icon: "✓" },
+    warning: { fg: "var(--warn)", icon: "!" },
     error: { fg: "var(--red-deep)", icon: "×" },
   }[notice.level];
   const expandable = Boolean(notice.details || notice.code);

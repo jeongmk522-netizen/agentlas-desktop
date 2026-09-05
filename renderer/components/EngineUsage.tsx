@@ -132,7 +132,7 @@ function UsageBar({ w, ko }: { w: UsageWindow; ko: boolean }) {
     );
   }
   const warn = pct >= WARN_PCT;
-  const fill = warn ? "var(--red-deep, #c0392b)" : "var(--accent)";
+  const fill = warn ? "var(--red-deep, var(--danger))" : "var(--accent)";
   // 월 크레딧(유료 초과분)엔 resets_at이 없어 마지막 칸이 늘 비어 있었다 —
   // %만 남으면 "얼마가 청구되는지"가 사라지므로, 어댑터가 계산해 둔
   // used/limit/통화를 그 칸에 그대로 보여준다.

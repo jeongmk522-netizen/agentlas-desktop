@@ -1,11 +1,11 @@
 .page {
-  --science-surface-0: #FFFFFF;
-  --science-surface-1: #F7F7F7;
-  --science-surface-2: #EFEFEF;
-  --science-border-subtle: #E8E8E8;
-  --science-border-default: #DDDDDD;
-  --science-border-strong: #CFCFCF;
-  --science-ink: #363535;
+  --science-surface-0: var(--paper);
+  --science-surface-1: var(--paper-2);
+  --science-surface-2: var(--paper-3);
+  --science-border-subtle: var(--paper-3);
+  --science-border-default: var(--paper-edge);
+  --science-border-strong: var(--muted);
+  --science-ink: var(--ink);
   --science-radius-card: 16px;
   --science-radius-control: 12px;
   --science-radius-button-l: 24px;
@@ -41,7 +41,7 @@
 
 .title {
   overflow: hidden;
-  color: #69706b;
+  color: var(--muted-deep);
   font-size: 11.5px;
   text-align: center;
   text-overflow: ellipsis;
@@ -51,7 +51,7 @@
 .status {
   max-width: 220px;
   overflow: hidden;
-  color: #69706b;
+  color: var(--muted-deep);
   font-size: 11px;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -91,7 +91,7 @@
 
 .fallbackCard p {
   margin: 9px 0 18px;
-  color: #69706b;
+  color: var(--muted-deep);
   font-size: 13px;
   line-height: 1.6;
 }
@@ -101,8 +101,8 @@
   padding: 0 16px;
   border: 0;
   border-radius: var(--science-radius-button-m);
-  background: var(--science-ink);
-  color: var(--science-surface-0);
+  background: var(--black);
+  color: var(--white);
   font: inherit;
   font-size: 16px;
   font-weight: 600;

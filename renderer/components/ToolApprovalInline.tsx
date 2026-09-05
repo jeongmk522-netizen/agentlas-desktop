@@ -195,7 +195,7 @@ export function ToolApprovalCard({
           padding: compact ? "12px 14px" : "16px 18px",
           borderRadius: 14,
           border: "1px solid color-mix(in srgb, currentColor 18%, transparent)",
-          background: "color-mix(in srgb, var(--surface, #fff) 94%, currentColor 6%)",
+          background: "color-mix(in srgb, var(--surface, var(--paper)) 94%, currentColor 6%)",
           opacity: 0.78,
         }}
       >

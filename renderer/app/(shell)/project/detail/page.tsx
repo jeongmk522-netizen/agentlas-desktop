@@ -152,12 +152,12 @@ function ProjectOntologyPanel({
         </span>
       ) : null}
       {status?.error ? (
-        <span role="status" style={{ display: "block", marginTop: 6, fontSize: 11.5, color: "var(--danger, #9a4e45)", overflowWrap: "anywhere" }}>
+        <span role="status" style={{ display: "block", marginTop: 6, fontSize: 11.5, color: "var(--danger, var(--danger))", overflowWrap: "anywhere" }}>
           {status.error}
         </span>
       ) : null}
       {note ? (
-        <span style={{ display: "block", marginTop: 6, fontSize: 11.5, color: "var(--danger, #9a4e45)" }} role="status">{note}</span>
+        <span style={{ display: "block", marginTop: 6, fontSize: 11.5, color: "var(--danger, var(--danger))" }} role="status">{note}</span>
       ) : null}
       <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 10 }}>
         {status?.state === "failed" || !status?.memoryDir ? (
@@ -843,7 +843,7 @@ function ProjectPage() {
                       type="button"
                       onClick={() => void importExternalSession(session)}
                       disabled={Boolean(externalSessionImporting)}
-                      style={{ minWidth: 104, minHeight: 44, padding: "0 14px", borderRadius: 9, background: "var(--accent)", color: "#fff", fontSize: 12, fontWeight: 750, opacity: externalSessionImporting && !busy ? .48 : 1 }}
+                      style={{ minWidth: 104, minHeight: 44, padding: "0 14px", borderRadius: 9, background: "var(--accent)", color: "var(--white)", fontSize: 12, fontWeight: 750, opacity: externalSessionImporting && !busy ? .48 : 1 }}
                     >
                       {busy ? (locale === "ko" ? "가져오는 중…" : "Importing…") : (locale === "ko" ? "이 프로젝트로 가져오기" : "Import into this project")}
                     </button>

@@ -92,7 +92,7 @@ export function KeyStatusBanner({
       : (ko ? "사용량 한도에 근접했습니다." : "Approaching usage limit.");
     const detail = [summary, affected].filter(Boolean).join(" · ");
     return (
-      <div role="status" style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0, padding: "4px 12px", background: "#fff", color: "var(--ink-soft)", fontSize: 11, lineHeight: "20px" }}>
+      <div role="status" style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0, padding: "4px 12px", background: "var(--paper)", color: "var(--ink-soft)", fontSize: 11, lineHeight: "20px" }}>
         <span title={detail} style={{ minWidth: 0, flex: 1, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{detail}</span>
         <button type="button" onClick={() => navigate("/dashboard")} style={{ flexShrink: 0, border: 0, background: "transparent", color: "inherit", padding: "2px 4px", font: "inherit", cursor: "pointer" }}>
           {ko ? "사용량 확인" : "Check usage"}

@@ -1706,7 +1706,7 @@ function ChatPage() {
            찍어 만든 경로는 실행 폴더를 잘못 고른 "만든 적 없는 파일"일 수 있다. */
         const recordedPaths = [...toolPaths, ...outputToolPaths];
         const textPreviews = linkedFileArtifactsInText(text, mediaBasePaths)
-          .filter((file) => !shadowsToolRecordedPath(file.path, recordedPaths))
+          .filter((file) => !shadowsToolRecordedPath(file.path, recordedPaths, file.href))
           .map((file) => workspacePreviewFromLinkedFile(file));
         const toolPreviews = toolPaths
           .map((filePath) => workspacePreviewFromLinkedFile(linkedFileArtifactFromPath(filePath)));

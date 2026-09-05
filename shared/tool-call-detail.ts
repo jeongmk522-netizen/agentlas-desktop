@@ -611,17 +611,34 @@ export function formatToolRunSummary(summary: ToolRunSummary, locale: "ko" | "en
 export function shadowsToolRecordedPath(
   candidatePath: string | undefined | null,
   toolPaths: readonly string[],
+  sourceReference?: string | undefined | null,
 ): boolean {
   if (!candidatePath) return false;
-  const canonical = (value: string) => (value.startsWith("/private/") ? value.slice("/private".length) : value);
+  const canonical = (value: string) => {
+    const normalized = value.replaceAll("\\", "/");
+    // macOS exposes only these root paths through their shorter aliases. Do not
+    // collapse arbitrary `/private/*` paths (for example `/private/Users`).
+    if (["/private/tmp", "/private/var", "/private/etc"].some((root) => (
+      normalized === root || normalized.startsWith(`${root}/`)
+    ))) return normalized.slice("/private".length);
+    return normalized;
+  };
   const baseName = (value: string) => canonical(value).split("/").pop() ?? "";
   const candidate = canonical(candidatePath);
   const candidateName = baseName(candidatePath);
   if (!candidateName) return false;
-  let shadowed = false;
   for (const toolPath of toolPaths) {
     if (canonical(toolPath) === candidate) return false;
-    if (baseName(toolPath) === candidateName) shadowed = true;
   }
-  return shadowed;
+
+  // Once prose names a directory, absolute path, or file URL, that reference
+  // is an independent claim. Basename equality cannot erase it. Only a bare
+  // filename loses its folder and is guessed against the renderer's base-path
+  // candidates, which is the duplicate this guard is allowed to suppress.
+  if (sourceReference !== undefined) {
+    const reference = sourceReference?.trim().replace(/^<|>$/g, "") ?? "";
+    if (!reference || /[\\/]/.test(reference) || /^[a-z][a-z0-9+.-]*:/i.test(reference)) return false;
+  }
+
+  return toolPaths.some((toolPath) => baseName(toolPath) === candidateName);
 }

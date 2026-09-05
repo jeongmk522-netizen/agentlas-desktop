@@ -35,7 +35,7 @@ import { formatScienceCell } from "./format-cell.js";
     decisionBusy: false, decisionError: "", labDecisionActionBusy: false, labDecisionActionError: "",
     resultReviewSheet: false, resultReviewInspection: null, resultReviewBusy: false, resultReviewError: "", resultReviewStale: false, resultReviewOpener: null, resultReviewDraft: { verdict: "", trigger: "", rationale: "" },
     researchContract: null, researchContractSheet: false, researchContractBusy: false, researchContractError: "", researchContractDismissedKey: null,
-    scopeProject: null, scopeContract: null, scopeLoading: false, scopeError: "",
+    scopeLoading: false, scopeError: "",
     logbookRevisions: [], logbookLoading: false, logbookError: "",
     submissionArchiveProfiles: [], submissionArchiveExports: [], submissionArchiveLoading: false, submissionArchiveError: "",
     datasetImportBusy: false, datasetImportError: "", tablePageByArtifact: new Map(), statisticsViewByArtifact: new Map(), paleontologyViewByArtifact: new Map(),
@@ -48,6 +48,7 @@ import { formatScienceCell } from "./format-cell.js";
     activeRendererIdentity: null, activeRendererInstance: null, activeRendererPhase: null, activeRendererVisible: null, rendererObserver: null, rendererAbort: null, rendererStatusDispose: null, artifactChangeDispose: null, inlineVegaViews: [], inlinePreviewUrls: [], compareVegaViews: [], comparePreviewUrls: [], activeSpatialScene: null,
   };
   let selectionEpoch = 0;
+  let scopeLoadEpoch = 0;
   let compareEpoch = 0;
   let workspacePersistChain = Promise.resolve();
   let workspacePersistError = null;
@@ -216,6 +217,22 @@ import { formatScienceCell } from "./format-cell.js";
   const evidenceGraphKindLabel = (kind) => String(kind || "node").split("-").map((part) => part ? part[0].toUpperCase() + part.slice(1) : "").join(" ");
   const researchContractKey = (contract) => contract?.id && Number.isSafeInteger(contract?.version) ? `${contract.id}:v${contract.version}` : null;
   function applyResearchContractSnapshot(project, contract, { openDraft = true } = {}) {
+    if ((project?.id && project.id !== state.selectedId) || (contract?.projectId && contract.projectId !== state.selectedId)) return;
+    const currentProject = state.projects.find((item) => item.id === state.selectedId);
+    const currentContract = state.researchContract;
+    // A read started before approval may finish after its authoritative receipt.
+    // It must not roll the project back or turn that same approved version into a draft.
+    if (project && currentProject && project.version < currentProject.version) return;
+    if (contract && currentContract?.projectId === state.selectedId) {
+      if (contract.version < currentContract.version) return;
+      if (contract.id === currentContract.id && contract.version === currentContract.version
+        && currentContract.status === "approved" && contract.status === "draft") return;
+    }
+    // Accepting a fresher receipt also invalidates older pending Scope reads,
+    // including their error/loading callbacks, not just their successful payloads.
+    scopeLoadEpoch += 1;
+    state.scopeLoading = false;
+    state.scopeError = "";
     if (project?.id) state.projects = [project, ...state.projects.filter((item) => item.id !== project.id)];
     state.researchContract = contract || null;
     const isDraft = contract?.projectId === state.selectedId && contract?.status === "draft";
@@ -824,8 +841,6 @@ import { formatScienceCell } from "./format-cell.js";
     state.claimLedger = null;
     state.journalProfiles = [];
     state.submissionExports = [];
-    state.scopeProject = null;
-    state.scopeContract = null;
     state.scopeLoading = false;
     state.scopeError = "";
     state.logbookRevisions = [];
@@ -1559,26 +1574,26 @@ import { formatScienceCell } from "./format-cell.js";
 
   async function loadScope(projectId) {
     if (!projectId) return;
+    const loadEpoch = ++scopeLoadEpoch;
+    const projectEpoch = selectionEpoch;
+    const isCurrent = () => projectId === state.selectedId && projectEpoch === selectionEpoch && loadEpoch === scopeLoadEpoch;
     state.scopeLoading = true;
     try {
       const [scopeProject, contract] = await Promise.all([
         science.projects.get(projectId),
         science.researchContracts.get(projectId),
       ]);
-      if (projectId !== state.selectedId) return;
-      state.scopeProject = scopeProject || null;
-      state.scopeContract = contract || null;
+      if (!isCurrent()) return;
+      state.scopeLoading = false;
       state.scopeError = "";
       // Keep the approval sheet reading the same contract Scope shows, but never pop it open on
       // arrival: the researcher opens it from the button below.
       applyResearchContractSnapshot(scopeProject, contract, { openDraft: false });
+      render();
     } catch (error) {
-      if (projectId !== state.selectedId) return;
-      state.scopeProject = null;
-      state.scopeContract = null;
+      if (!isCurrent()) return;
+      state.scopeLoading = false;
       state.scopeError = `연구 계약을 불러오지 못했습니다. (${String(error?.message ?? error)})`;
-    } finally {
-      if (projectId === state.selectedId) state.scopeLoading = false;
       render();
     }
   }
@@ -1586,8 +1601,10 @@ import { formatScienceCell } from "./format-cell.js";
   function scopeView(project) {
     if (state.loadingProject) return `<div class="loadingState" aria-live="polite">프로젝트 기록을 불러오는 중…</div>`;
     if (state.projectError) return errorState();
-    const contract = state.scopeContract && state.scopeContract.projectId === state.selectedId ? state.scopeContract : null;
-    const scopeProject = state.scopeProject && state.scopeProject.id === state.selectedId ? state.scopeProject : project;
+    // Scope and the approval sheet must render the same accepted snapshot.
+    // A second Scope-only copy stayed at "draft" after a successful approval.
+    const contract = state.researchContract?.projectId === state.selectedId ? state.researchContract : null;
+    const scopeProject = state.projects.find((item) => item.id === state.selectedId) || project;
     const criteria = (items, empty) => Array.isArray(items) && items.length
       ? `<ul class="scopeList">${items.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>`
       : `<p class="scopeEmpty">${escapeHtml(empty)}</p>`;
@@ -1608,8 +1625,8 @@ import { formatScienceCell } from "./format-cell.js";
           <div><dt>승인 시각</dt><dd>${escapeHtml(contract.approvedAt ? studyRecordStamp(contract.approvedAt) : "아직 승인되지 않았습니다")}</dd></div>
         </dl></section>
         ${contract.status === "draft"
-          ? `<div class="scopeApproval"><p>이 계약은 아직 사람의 승인을 기다리는 초안입니다. 승인하면 이 목표와 중단 기준으로 연구가 시작됩니다.</p><button class="primaryButton" data-action="open-research-contract-sheet">계약 v${escapeHtml(contract.version)} 검토·승인</button></div>`
-          : ""}
+          ? `<div class="scopeApproval"><p>${uiCopy("이 계약은 아직 사람의 승인을 기다리는 초안입니다. 승인 후 연구 채팅에서 이 목표와 중단 기준에 맞춰 다음 작업을 요청할 수 있습니다.", "This contract awaits your approval. After approval, you can request the next step in the research chat under this objective and these stop criteria.")}</p><button class="primaryButton" data-action="open-research-contract-sheet">계약 v${escapeHtml(contract.version)} 검토·승인</button></div>`
+          : contract.status === "approved" ? `<div class="scopeApproval"><p>${uiCopy("계약이 승인되었습니다. 연구를 계속하려면 연구 채팅에 다음 작업을 요청하세요. 승인만으로 중단한 실행을 다시 시작하지는 않습니다.", "Contract approved. To continue, request the next step in the research chat. Approval alone does not restart a stopped run.")}</p></div>` : ""}
       </div>`
       : `<div class="emptyCopy"><strong>아직 연구 계약이 없습니다.</strong><p>연구 채팅에서 첫 질문을 보내면 목표와 중단 기준을 담은 계약 초안이 만들어지고, 여기에서 승인할 수 있습니다.</p></div>`;
     return `<section class="researchView scopeView" data-research-destination="scope"><div class="answerColumn">
@@ -2129,7 +2146,7 @@ import { formatScienceCell } from "./format-cell.js";
           return `<strong>${uiCopy("이번 실행에서 완성된 연구 응답은 없습니다.", "This run produced no completed research response.")}</strong>${state.researchContract?.status === "draft" ? `<p>${uiCopy("연구 계약은 아직 승인 대기 중입니다. 위의 초안에서 목표와 중단 기준을 확인하세요.", "The research contract still awaits approval. Review its objective and stop criteria in the draft above.")}</p>` : ""}`;
         }
         if (state.researchContract?.status === "draft") {
-          return `<strong><span class="stateGlyph" data-state="awaiting-human" aria-hidden="true"></span>이 연구는 아직 시작되지 않았습니다.</strong><p>연구 계약을 승인하면 시작됩니다. 위의 초안에서 목표와 중단 기준을 확인해 주세요.</p>`;
+          return `<strong><span class="stateGlyph" data-state="awaiting-human" aria-hidden="true"></span>이 연구는 아직 시작되지 않았습니다.</strong><p>${uiCopy("위의 초안에서 목표와 중단 기준을 확인하고 승인하세요. 이후 연구 채팅에 다음 작업을 요청할 수 있습니다.", "Review and approve the objective and stop criteria in the draft above. Then request the next step in the research chat.")}</p>`;
         }
         if (state.activeTurn && ["queued", "running", "cancelling"].includes(state.activeTurn.status)) {
           return `<strong><span class="stateGlyph" data-state="progress" aria-hidden="true"></span>연구 에이전트가 실행 중입니다.</strong><p>결과가 나오는 대로 답변 블록, 주장, 정확한 출처 인용이 이 기록에 추가됩니다.</p>`;

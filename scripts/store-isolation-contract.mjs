@@ -43,7 +43,9 @@ assert.match(fn, /AGENTLAS_STORE_PATH/, "an explicit store path must still win")
 //      비패키지 실행을 격리" 로 넓히고 userData 접근을 userDataPath() 헬퍼로 옮기자
 //      이 게이트는 **더 안전해진 코드를 실패로 판정**하며 그대로 깨져 있었다.
 //      낱말이 아니라 "격리되는가 / 마지막에 오는가" 를 본다.
-assert.match(fn, /app\.isPackaged/, "packaged apps must not be treated as script runs");
+// 2026-09-05: the packaged daemon has no importable Electron module, so the guard is
+// isPackagedRuntime() (which also reads the injected user-data proof) — accept either spelling.
+assert.match(fn, /isPackagedRuntime\(\)|app\.isPackaged/, "packaged apps must not be treated as script runs");
 assert.match(fn, /tmpdir\(\)/, "an unpackaged run without an explicit path must go to a temp store");
 
 // 4. And it says so, because a silent redirect is its own kind of trap.

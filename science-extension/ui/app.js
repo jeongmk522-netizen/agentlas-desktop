@@ -667,7 +667,7 @@ function createComposerEventSync({
       if (name === "reset") { applyReset(); return; }
       if (name === "zoom-in") { fitLocked = false; applyScale(scale * 1.2); return; }
       if (name === "zoom-out") { fitLocked = false; applyScale(scale / 1.2); return; }
-      if (name === "toggle-pan") { persistentPan = !persistentPan; panMode = persistentPan || temporarySpacePan; updateStatus(); }
+      if (name === "toggle-pan") { persistentPan = !persistentPan; panMode = persistentPan || temporarySpacePan; updateStatus(); rememberViewport(); }
     };
     toolbar?.querySelectorAll("[data-artifact-view-action]").forEach((button) => {
       const listener = () => action(button.dataset.artifactViewAction);

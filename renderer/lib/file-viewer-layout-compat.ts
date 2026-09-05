@@ -29,9 +29,10 @@ export function installPresentationLayoutCompatibility(host: HTMLElement): Prese
 
   const apply = (): boolean => {
     if (disposed) return true;
-    // FileViewer attaches its owned open root directly to its React container.
-    // Looking only there avoids repeated full-document walks for large files.
-    const viewerHost = host.firstElementChild;
+    // FileViewer attaches its owned open root to one direct React child. The
+    // Agentlas toolbar is a sibling, so inspect only direct children rather
+    // than walking the full document for large files.
+    const viewerHost = Array.from(host.children).find((child) => child instanceof HTMLElement && child.shadowRoot);
     const root = viewerHost instanceof HTMLElement ? viewerHost.shadowRoot : null;
     const shell = root?.querySelector<HTMLElement>(".pptx-viewer-shell");
     const slideshowButton = shell?.querySelector<HTMLElement>(".pptx-slideshow-button");

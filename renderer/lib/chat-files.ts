@@ -44,6 +44,7 @@ export interface ChatFileSnapshotResult {
 export interface ChatFilesBridge {
   snapshot: (input: { chatId: string; files: ChatFileDraft[] }) => Promise<ChatFileSnapshotResult>;
   listGroup: (input: { chatId: string; groupId: string }) => Promise<StoredChatFile[]>;
+  openExternal: (input: { chatId: string; groupId: string; id: string; sha256: string }) => Promise<{ ok: boolean; message?: string }>;
 }
 
 export function chatFilesBridge(): ChatFilesBridge | null {

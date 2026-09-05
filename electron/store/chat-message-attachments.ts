@@ -49,6 +49,14 @@ export type StoredChatFile = {
 };
 
 const CHAT_FILE_ID_RE = ATTACHMENT_ID_RE;
+const EXTERNALLY_OPENABLE_CHAT_FILE_EXTENSIONS = new Set([
+  ".png", ".jpg", ".jpeg", ".gif", ".webp", ".avif", ".svg",
+  ".pdf", ".rtf", ".docx", ".xlsx", ".pptx", ".odt", ".ods", ".odp",
+  ".pages", ".numbers", ".key", ".hwp", ".hwpx",
+  ".zip", ".gz", ".tgz", ".tar", ".bz2", ".7z", ".rar",
+  ".mp3", ".mpeg", ".wav", ".m4a", ".aac", ".flac", ".ogg", ".oga", ".opus", ".weba", ".mid", ".midi",
+  ".mp4", ".mov", ".webm", ".m4v", ".ogv",
+]);
 const MAX_DIRECTORY_ENTRIES = 512;
 const MAX_RELATIVE_PATH_BYTES = 768;
 const O_NOFOLLOW = typeof fs.constants.O_NOFOLLOW === "number" ? fs.constants.O_NOFOLLOW : 0;
@@ -480,6 +488,51 @@ export function listChatFileSnapshot(input: { chatId: string; groupId: string })
       ...(manifest ? { manifest } : {}),
     };
   });
+}
+
+/**
+ * Resolve an immutable chat-file snapshot for an explicit OS-open request.
+ * Renderer input is only an identity claim: Main rechecks the complete
+ * chat/group/file/digest binding and returns bytes, never the original path.
+ */
+export function readChatFileSnapshotForExternalOpen(input: unknown): { name: string; mediaType: string; bytes: Buffer; size: number; sha256: string } | null {
+  if (
+    !input
+    || typeof input !== "object"
+    || !("chatId" in input)
+    || !("groupId" in input)
+    || !("id" in input)
+    || !("sha256" in input)
+    || typeof input.chatId !== "string"
+    || input.chatId.length < 1
+    || input.chatId.length > 256
+    || typeof input.groupId !== "string"
+    || typeof input.id !== "string"
+    || typeof input.sha256 !== "string"
+    || !CHAT_FILE_ID_RE.test(input.groupId)
+    || !CHAT_FILE_ID_RE.test(input.id)
+    || !/^[a-f0-9]{64}$/iu.test(input.sha256)
+  ) return null;
+  ensureChatFileSnapshotTables();
+  const row = getDb().prepare(`SELECT name, media_type, size_bytes, sha256, data
+      FROM chat_file_items
+     WHERE chat_id = ? AND group_id = ? AND id = ? AND sha256 = ? AND kind = 'file'`)
+    .get(input.chatId, input.groupId, input.id, input.sha256) as {
+      name: string; media_type: string; size_bytes: number; sha256: string; data: Buffer | null;
+    } | undefined;
+  if (
+    !row
+    || !Buffer.isBuffer(row.data)
+    || row.data.length !== row.size_bytes
+    || row.data.length < 1
+    || row.data.length > ONE_ATTACHMENT_LIMITS.maxFileBytes
+    || safeChatFileName(row.name, "attachment") !== row.name
+  ) return null;
+  const extension = path.extname(row.name).toLowerCase();
+  if (!EXTERNALLY_OPENABLE_CHAT_FILE_EXTENSIONS.has(extension) || MEDIA_BY_EXTENSION[extension] !== row.media_type) return null;
+  const digest = createHash("sha256").update(row.data).digest("hex");
+  if (digest !== row.sha256 || digest !== input.sha256.toLowerCase()) return null;
+  return { name: row.name, mediaType: row.media_type, bytes: Buffer.from(row.data), size: row.size_bytes, sha256: row.sha256 };
 }
 
 export function readChatMessageAttachment(id: string): {

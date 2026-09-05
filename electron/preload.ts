@@ -1053,6 +1053,7 @@ contextBridge.exposeInMainWorld("agentlasFiles", {
   chatFiles: {
     snapshot: (input: unknown) => ipcRenderer.invoke("chatFiles:snapshot", input),
     listGroup: (input: unknown) => ipcRenderer.invoke("chatFiles:listGroup", input),
+    openExternal: (input: unknown) => ipcRenderer.invoke("chatFiles:openExternal", input),
   },
   grantForFile: async (file: File): Promise<FsPathGrant | null> => {
     try {

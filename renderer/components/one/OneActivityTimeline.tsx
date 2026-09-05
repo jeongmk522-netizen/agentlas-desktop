@@ -48,7 +48,7 @@ import type { OnePermissionMode } from "./OneComposerControls";
 import { OneComputerHistory } from "./OneComputerHistory";
 import { McpResultPreview } from "../McpResultPreview";
 import { ChatFileTabs, nextFileTabSelection } from "../ChatFileExperience";
-import { CHAT_FILE_OPEN_EVENT, formatChatFileSize, isChatFileItem, type ChatFileItem } from "@/lib/chat-files";
+import { CHAT_FILE_OPEN_EVENT, chatFilesBridge, formatChatFileSize, isChatFileItem, type ChatFileItem } from "@/lib/chat-files";
 import styles from "./OneActivityTimeline.module.css";
 
 const ONE_OUTPUT_SECTIONS_STORAGE_KEY = "agentlas.one.output-sections.v1";
@@ -593,7 +593,7 @@ function ArtifactOpenViewer({ target, locale, wide }: { target: OneArtifactOpenR
     : <LiveOutputViewer source={capability.capabilityUrl} name={target.label} kind={liveKindForCapability(capability)} mimeType={capability.mimeType} size={capability.sizeBytes} locale={locale} fill placement="sidebar" />;
 }
 
-function ChatFileOpenViewer({ file, locale }: { file: ChatFileItem; locale: "ko" | "en" }) {
+function ChatFileOpenViewer({ file, locale, onExpand }: { file: ChatFileItem; locale: "ko" | "en"; onExpand?: () => void }) {
   const preview = file.viewer;
   const liveKinds = new Set<LiveOutputKind>(["image", "video", "audio", "pdf", "document", "spreadsheet", "presentation", "archive"]);
   const liveKind = liveKinds.has(preview.viewerKind as LiveOutputKind) ? preview.viewerKind as LiveOutputKind : null;
@@ -601,7 +601,7 @@ function ChatFileOpenViewer({ file, locale }: { file: ChatFileItem; locale: "ko"
     ? (locale === "ko" ? "폴더" : "Folder")
     : (file.name.trim().match(/\.([a-z0-9]+)$/iu)?.[1]?.toUpperCase() ?? preview.viewerKind.toUpperCase());
   return <div data-chat-file-viewer="true" data-chat-file-tab-id={file.tabId} style={{ display: "flex", flexDirection: "column", minHeight: 0, height: "100%" }}>
-    <div data-chat-file-header="true" style={{ display: "grid", gap: 2, padding: "8px 10px", borderBottom: "1px solid var(--paper-edge)", fontSize: 10.5, color: "var(--muted-deep)" }}>
+    {!liveKind && <div data-chat-file-header="true" style={{ display: "grid", gap: 2, padding: "8px 10px", borderBottom: "1px solid var(--paper-edge)", fontSize: 10.5, color: "var(--muted-deep)" }}>
       <strong style={{ color: "var(--ink)", overflowWrap: "anywhere" }}>{file.name}</strong>
       <span>{file.kind === "directory" ? kindLabel : `${formatChatFileSize(file.size)} · ${kindLabel}`}</span>
       <details data-chat-file-info="true" style={{ marginTop: 2 }}>
@@ -614,12 +614,30 @@ function ChatFileOpenViewer({ file, locale }: { file: ChatFileItem; locale: "ko"
           <span>{locale === "ko" ? "탭 ID" : "Tab ID"}: {file.tabId}</span>
         </div>
       </details>
-    </div>
-    <div style={{ minHeight: 0, flex: 1, overflow: "auto" }}>
+    </div>}
+    <div style={{ minHeight: 0, flex: 1, overflow: liveKind ? "hidden" : "auto" }}>
       {file.kind === "directory" || ["markdown", "json", "text"].includes(preview.viewerKind) ? (
         <pre style={{ margin: 0, padding: 12, fontFamily: "var(--font-mono)", fontSize: 11.5, lineHeight: 1.55, whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>{preview.content || (locale === "ko" ? "내용을 읽을 수 없습니다." : "The file content is unavailable.")}</pre>
       ) : liveKind && file.fileUrl ? (
-        <LiveOutputViewer source={file.fileUrl} name={file.name} kind={liveKind} mimeType={file.mediaType} size={file.size} locale={locale} fill placement="sidebar" />
+        <LiveOutputViewer
+          source={file.fileUrl}
+          name={file.name}
+          kind={liveKind}
+          mimeType={file.mediaType}
+          size={file.size}
+          locale={locale}
+          fill
+          placement="sidebar"
+          onExpand={onExpand}
+          onOpenExternal={file.kind === "file" ? async () => {
+            const bridge = chatFilesBridge();
+            if (!bridge?.openExternal) throw new Error("chat-file-open-unavailable");
+            const result = await bridge.openExternal({ chatId: file.chatId, groupId: file.groupId, id: file.id, sha256: file.sha256 });
+            if (!result.ok) throw new Error(result.message || "chat-file-open-failed");
+          } : undefined}
+          openExternalHint={locale === "ko" ? "검증된 읽기 전용 임시 사본 열기" : "Open a verified, temporary read-only copy"}
+          fileInfo={{ sha256: file.sha256, binding: `${file.chatId}/${file.groupId}/${file.id}`, tabId: file.tabId }}
+        />
       ) : (
         <div role="alert" style={{ padding: 16, fontSize: 12, color: "var(--red-deep)" }}>
           {locale === "ko" ? "이 형식은 인앱 미리보기를 지원하지 않습니다. 원본 경로를 저장하지 않아 Finder 열기는 제공되지 않습니다." : "This format has no in-app preview. Finder is unavailable because the original path is not retained."}
@@ -1957,7 +1975,11 @@ export function OneActivityArtifactRail({
             onSelect={selectChatFileTab}
             onClose={closeChatFileTab}
           />}
-          {activeChatFile && <ChatFileOpenViewer file={activeChatFile} locale={locale} />}
+          {activeChatFile && <ChatFileOpenViewer
+            file={activeChatFile}
+            locale={locale}
+            onExpand={onResize || onRequestReadableWidth ? () => (onRequestReadableWidth ?? onResize)?.(maxWidth) : undefined}
+          />}
           {!activeChatFile && openedArtifact && <>
             <button type="button" className={styles.artifactBackButton} onClick={() => { setOpenedArtifact(null); onRestorePreferredWidth?.(); }}>
               <IconArrowLeft size={13} /> {locale === "ko" ? "결과로 돌아가기" : "Back to result"}

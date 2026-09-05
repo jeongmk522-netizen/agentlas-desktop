@@ -4,7 +4,7 @@ import { app, BrowserWindow, dialog, ipcMain, shell } from "electron";
 import { copyImageSource, saveImageSource } from "./media/image-actions";
 import { checkComputerUsePermissions } from "./mac-permissions";
 import type { IpcMainInvokeEvent } from "electron";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -409,7 +409,7 @@ import {
   setChatWorkingFolder,
   unarchiveChat,
 } from "./store/chats";
-import { listChatFileSnapshot, persistChatFileSnapshot } from "./store/chat-message-attachments";
+import { listChatFileSnapshot, persistChatFileSnapshot, readChatFileSnapshotForExternalOpen } from "./store/chat-message-attachments";
 import {
   completeGoalLedgerGoal,
   deriveGoalAcceptanceCriteria,
@@ -2380,6 +2380,40 @@ export function registerIpcHandlers(): void {
   // arbitrary path into a durable chat file.
   ipcMain.handle("chatFiles:snapshot", (_e, input: unknown) => persistChatFileSnapshot(input as Parameters<typeof persistChatFileSnapshot>[0]));
   ipcMain.handle("chatFiles:listGroup", (_e, input: unknown) => listChatFileSnapshot(input as Parameters<typeof listChatFileSnapshot>[0]));
+  ipcMain.handle("chatFiles:openExternal", async (_e, input: unknown): Promise<{ ok: boolean; message?: string }> => {
+    let root = "";
+    try {
+      const file = readChatFileSnapshotForExternalOpen(input);
+      if (!file) return { ok: false, message: "The exact chat file binding or document type is unavailable." };
+      root = fs.realpathSync.native(fs.mkdtempSync(path.join(app.getPath("temp"), "agentlas-chat-open-")));
+      fs.chmodSync(root, 0o700);
+      const destination = path.join(root, path.basename(file.name));
+      const flags = fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL
+        | (typeof fs.constants.O_NOFOLLOW === "number" ? fs.constants.O_NOFOLLOW : 0);
+      const fd = fs.openSync(destination, flags, 0o600);
+      try {
+        fs.writeFileSync(fd, file.bytes);
+        fs.fsyncSync(fd);
+        fs.fchmodSync(fd, 0o400);
+      } finally {
+        fs.closeSync(fd);
+      }
+      const written = fs.lstatSync(destination, { bigint: true });
+      const writtenDigest = createHash("sha256").update(fs.readFileSync(destination)).digest("hex");
+      if (!written.isFile() || written.isSymbolicLink() || written.nlink !== 1n || written.size !== BigInt(file.size) || writtenDigest !== file.sha256) {
+        throw new Error("The temporary file failed its integrity check.");
+      }
+      const message = await shell.openPath(destination);
+      if (message) throw new Error(message);
+      // The OS owns the temporary-directory lifetime after a successful open.
+      // Keeping the verified copy read-only avoids silently discarding edits on
+      // an arbitrary timer while still preventing it from becoming an export.
+      return { ok: true };
+    } catch (error) {
+      if (root) fs.rm(root, { recursive: true, force: true }, () => undefined);
+      return { ok: false, message: error instanceof Error ? error.message : String(error) };
+    }
+  });
   // 클립보드 이미지는 경로가 없다 — main이 내용을 비공개 파일로 고정하고 같은 등급의
   // capability를 돌려준다. 그래야 붙여넣기가 드롭·파일선택과 같은 첨부 경로를 탄다.
   ipcMain.handle("fs:grantPastedImage", (_e, input: unknown) =>

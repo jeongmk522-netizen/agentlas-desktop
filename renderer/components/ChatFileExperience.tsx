@@ -1,6 +1,6 @@
 "use client";
 
-import type { KeyboardEvent } from "react";
+import { useEffect, useRef, type KeyboardEvent } from "react";
 import { IconClose, IconFileUp, IconFolder } from "./Icon";
 import type { ChatFileItem } from "@/lib/chat-files";
 import { formatChatFileSize } from "@/lib/chat-files";
@@ -66,6 +66,13 @@ export function ChatFileTabs({
   onSelect: (id: string) => void;
   onClose: (id: string) => void;
 }) {
+  const listRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!activeId) return;
+    const active = Array.from(listRef.current?.querySelectorAll<HTMLElement>("[data-file-tab-id]") ?? [])
+      .find((tab) => tab.dataset.fileTabId === activeId);
+    active?.scrollIntoView({ block: "nearest", inline: "nearest" });
+  }, [activeId, tabs.length]);
   if (tabs.length === 0) return null;
   const moveWithKeyboard = (event: KeyboardEvent<HTMLButtonElement>, index: number) => {
     let next = index;
@@ -79,9 +86,9 @@ export function ChatFileTabs({
     const controls = event.currentTarget.closest('[role="tablist"]')?.querySelectorAll<HTMLButtonElement>('[role="tab"]');
     controls?.[next]?.focus();
   };
-  return <div className={styles.tabs} role="tablist" aria-label={locale === "ko" ? "열린 파일" : "Open files"} data-chat-file-tabs="true">
+  return <div ref={listRef} className={styles.tabs} role="tablist" aria-label={locale === "ko" ? "열린 파일" : "Open files"} data-chat-file-tabs="true">
     {tabs.map((tab, index) => (
-      <span key={tab.id} className={styles.tab} data-active={tab.id === activeId ? "true" : "false"}>
+      <span key={tab.id} className={styles.tab} data-file-tab-id={tab.id} data-active={tab.id === activeId ? "true" : "false"}>
         <button
           type="button"
           role="tab"

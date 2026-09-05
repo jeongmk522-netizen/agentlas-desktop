@@ -284,6 +284,15 @@ export function ChatRightPanel({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTab, onRequestReadableWidth, onResizeWidth, outputIdentity, outputKind]);
 
+  const expandFilePreview = useCallback(() => {
+    const requestWidth = onRequestReadableWidth ?? onResizeWidth;
+    if (!requestWidth) return;
+    const maxWidth = typeof window === "undefined"
+      ? 960
+      : Math.max(560, Math.min(1280, window.innerWidth - 420));
+    requestWidth(maxWidth);
+  }, [onRequestReadableWidth, onResizeWidth]);
+
   function beginResize(event: ReactPointerEvent<HTMLDivElement>) {
     if (!onResizeWidth) return;
     event.preventDefault();
@@ -498,7 +507,7 @@ export function ChatRightPanel({
           ) : showFilePreview ? (
             <div style={{ display: "flex", flexDirection: "column", minHeight: 0, height: "100%" }}>
               <ChatFileTabs tabs={fileTabs} activeId={activeFileTabId} locale={ko ? "ko" : "en"} onSelect={selectFileTab} onClose={closeFileTab} />
-              <div style={{ minWidth: 0, minHeight: 0, flex: 1, display: "flex", flexDirection: "column" }}><FileViewer file={filePreview} /></div>
+              <div style={{ minWidth: 0, minHeight: 0, flex: 1, display: "flex", flexDirection: "column" }}><FileViewer file={filePreview} onExpand={onResizeWidth || onRequestReadableWidth ? expandFilePreview : undefined} /></div>
             </div>
           ) : showWorkbench ? (
             <WorkbenchPanel
@@ -1062,7 +1071,7 @@ function FileUnavailableState({ ko, explicit = false }: { ko: boolean; explicit?
   );
 }
 
-function FileViewer({ file }: { file: WorkspaceFilePreview }) {
+function FileViewer({ file, onExpand }: { file: WorkspaceFilePreview; onExpand?: () => void }) {
   const { locale } = useT();
   const ko = locale === "ko";
   const codePreview = isCodeFilePreview(file);
@@ -1105,6 +1114,15 @@ function FileViewer({ file }: { file: WorkspaceFilePreview }) {
             fill
             placement="sidebar"
             imageActions={file.viewerKind === "image"}
+            onOpenExternal={openableExternalTarget(file) ? async () => {
+              const target = openableExternalTarget(file);
+              const bridge = ipc();
+              if (!target || !bridge) throw new Error("file-open-unavailable");
+              const result = await bridge.fs.openPath(target);
+              if (!result.ok) throw new Error(result.message || "file-open-failed");
+            } : undefined}
+            openExternalHint={ko ? "시스템 기본 앱에서 원본 대상 열기" : "Open the original target in the system default app"}
+            onExpand={onExpand}
           />
         ) : isTextualViewerKind(file.viewerKind) && !file.content ? (
           /* ★내용이 없으면 **백지 대신 이유를 말한다.** 헤더만 뜨고 본문이 비어 있는
@@ -1172,6 +1190,15 @@ function externalOpenTargets(file: WorkspaceFilePreview): string[] {
     if (value && !out.includes(value)) out.push(value);
   }
   return out;
+}
+
+function openableExternalTarget(file: WorkspaceFilePreview): string | null {
+  return externalOpenTargets(file).find((target) => (
+    /^https?:\/\//iu.test(target)
+    || /^file:\/\//iu.test(target)
+    || /^agentlas:\/\/localfile\//iu.test(target)
+    || /^(?:\/|[A-Za-z]:[\\/])/u.test(target)
+  )) ?? null;
 }
 
 function previewMeta(file: WorkspaceFilePreview, ko: boolean): string {

@@ -395,12 +395,29 @@ if (process.env.AGENTLAS_CHAT_FILE_QA_SEED === "1") {
       assert.equal(await page.evaluate(() => localStorage.getItem("agentlas.chat.right_panel_width")), "320", "Work temporary file width must not overwrite a 320px preference");
       const workComposerAlignment = await page.evaluate(() => {
         const folderRow = document.querySelector('[data-chat-folder-row="true"]');
+        const folderControl = document.querySelector('[data-project-folder-trigger="true"]');
         const composer = document.querySelector(".chat-input-shell");
-        if (!(folderRow instanceof HTMLElement) || !(composer instanceof HTMLElement)) return null;
-        return { folderLeft: folderRow.getBoundingClientRect().left, composerLeft: composer.getBoundingClientRect().left };
+        const input = document.querySelector('[data-chat-input="true"]');
+        if (
+          !(folderRow instanceof HTMLElement)
+          || !(folderControl instanceof HTMLElement)
+          || !(composer instanceof HTMLElement)
+          || !(input instanceof HTMLElement)
+        ) return null;
+        const inputStyle = getComputedStyle(input);
+        const inputTextLeft = input.getBoundingClientRect().left
+          + Number.parseFloat(inputStyle.borderLeftWidth || "0")
+          + Number.parseFloat(inputStyle.paddingLeft || "0");
+        return {
+          folderRowLeft: folderRow.getBoundingClientRect().left,
+          composerLeft: composer.getBoundingClientRect().left,
+          folderControlLeft: folderControl.getBoundingClientRect().left,
+          inputTextLeft,
+        };
       });
       assert.ok(workComposerAlignment, "Work folder row and composer must both be rendered");
-      assert.ok(Math.abs(workComposerAlignment.folderLeft - workComposerAlignment.composerLeft) <= 1, `Work folder row and composer left edges must align: ${JSON.stringify(workComposerAlignment)}`);
+      assert.ok(Math.abs(workComposerAlignment.folderRowLeft - workComposerAlignment.composerLeft) <= 1, `Work folder row and composer outer edges must align: ${JSON.stringify(workComposerAlignment)}`);
+      assert.ok(Math.abs(workComposerAlignment.folderControlLeft - workComposerAlignment.inputTextLeft) <= 1, `Work folder control and composer text must visibly align: ${JSON.stringify(workComposerAlignment)}`);
       await page.screenshot({ path: path.join(proofDir, "work-file-readable-from-320.png"), fullPage: true });
       while (await workCloseButtons.count()) {
         const before = await workCloseButtons.count();

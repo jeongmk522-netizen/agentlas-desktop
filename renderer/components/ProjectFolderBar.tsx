@@ -123,6 +123,7 @@ export function ProjectFolderBar({ chatId, onChanged, onOpenPanel, reloadToken }
     <div ref={rootRef} style={{ position: "relative", display: "inline-flex" }} aria-busy={busy}>
       <button
         ref={triggerRef}
+        data-project-folder-trigger="true"
         type="button"
         onClick={() => setOpen((v) => !v)}
         disabled={!chatId || busy}

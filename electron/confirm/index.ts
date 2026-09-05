@@ -5,11 +5,13 @@
 //   사용자가 챗에서 답하면 후속 user 메시지가 쌓여 마지막이 더 이상 assistant가 아니게 되므로 자동 해소된다.
 // fence 포맷은 renderer/lib/ask-question.ts와 동일: <<agentlas-ask>>{json}<</agentlas-ask>>.
 import { createHash } from "node:crypto";
-import type {
-  CommittedQuestionAnswer,
-  McpInvocationRequest,
-  PendingConfirmation,
-  QuestionContinuationOptions,
+import {
+  QUESTION_CONTINUATION_REPLY_MAX_BYTES,
+  QUESTION_CONTINUATION_REPLY_MAX_LENGTH,
+  type CommittedQuestionAnswer,
+  type McpInvocationRequest,
+  type PendingConfirmation,
+  type QuestionContinuationOptions,
 } from "../../shared/types";
 import { extractAskFences } from "../../shared/ask-fence-flatten";
 import { getLastChatMessage, listRecentChats } from "../store/chats";
@@ -31,6 +33,9 @@ const ANSWER_RECEIPT_KIND = "question_answer_committed";
 const SNOOZE_RECEIPT_KIND = "question_answer_snoozed";
 const answerReceiptRunId = (chatId: string): string => `confirm:${chatId}`;
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const SHA256_RE = /^[a-f0-9]{64}$/;
+const CANONICAL_REPLY_FIELD = "continuationReplyCanonicalBase64";
+const CANONICAL_REPLY_MAX_BASE64_LENGTH = Math.ceil(QUESTION_CONTINUATION_REPLY_MAX_BYTES / 3) * 4;
 
 interface DurableQuestionContinuation {
   runId: string;
@@ -82,16 +87,45 @@ function continuationRequestHash(request: McpInvocationRequest): string {
   return createHash("sha256").update(JSON.stringify(request)).digest("hex");
 }
 
-function continuationReplyChunks(reply: string): string[] {
-  return reply.match(/[\s\S]{1,200}/g) ?? [];
+function continuationReplySha256(reply: string): string {
+  return createHash("sha256").update(reply, "utf8").digest("hex");
 }
 
 function payloadContinuationReply(payload: Record<string, unknown>): string {
+  if (Object.hasOwn(payload, CANONICAL_REPLY_FIELD)) {
+    const encoded = payload[CANONICAL_REPLY_FIELD];
+    if (
+      typeof encoded !== "string"
+      || encoded.length > CANONICAL_REPLY_MAX_BASE64_LENGTH
+      || typeof payload.continuationReplySha256 !== "string"
+      || !SHA256_RE.test(payload.continuationReplySha256)
+    ) return "";
+    const bytes = Buffer.from(encoded, "base64");
+    if (
+      bytes.length < 1
+      || bytes.length > QUESTION_CONTINUATION_REPLY_MAX_BYTES
+      || bytes.toString("base64") !== encoded
+    ) return "";
+    const reply = bytes.toString("utf8");
+    if (
+      reply.length < 1
+      || reply.length > QUESTION_CONTINUATION_REPLY_MAX_LENGTH
+      || !Buffer.from(reply, "utf8").equals(bytes)
+      || continuationReplySha256(reply) !== payload.continuationReplySha256
+    ) return "";
+    return reply;
+  }
+  // Read compatibility for receipts written before the canonical Main-only
+  // field existed. New writes never duplicate user text into these diagnostic
+  // reply/chunk fields.
   if (Array.isArray(payload.continuationReplyChunks)) {
     const chunks = payload.continuationReplyChunks.filter((item): item is string => typeof item === "string");
-    if (chunks.length > 0) return chunks.join("").slice(0, 4_000);
+    const reply = chunks.join("");
+    if (reply.length > 0 && reply.length <= QUESTION_CONTINUATION_REPLY_MAX_LENGTH) return reply;
   }
-  return typeof payload.reply === "string" ? payload.reply : "";
+  return typeof payload.reply === "string" && payload.reply.length <= QUESTION_CONTINUATION_REPLY_MAX_LENGTH
+    ? payload.reply
+    : "";
 }
 
 function payloadContinuationOptions(payload: Record<string, unknown>): QuestionContinuationOptions {
@@ -181,16 +215,29 @@ export function listCommittedQuestionAnswers(chatId: string): CommittedQuestionA
   if (!chatId) return [];
   try {
     const rows = getDb()
-      .prepare("SELECT ts, payload_json FROM run_events WHERE run_id = ? AND kind = ? ORDER BY seq ASC")
-      .all(answerReceiptRunId(chatId), ANSWER_RECEIPT_KIND) as Array<{ ts: string; payload_json: string }>;
+      .prepare("SELECT ts, chat_id, payload_json FROM run_events WHERE run_id = ? AND kind = ? ORDER BY seq ASC")
+      .all(answerReceiptRunId(chatId), ANSWER_RECEIPT_KIND) as Array<{ ts: string; chat_id: string | null; payload_json: string }>;
     const out: CommittedQuestionAnswer[] = [];
     for (const row of rows) {
       try {
         const payload = JSON.parse(row.payload_json) as Record<string, unknown>;
-        if (typeof payload.sourceMessageId !== "string" || !payload.sourceMessageId) continue;
+        if (row.chat_id !== chatId || typeof payload.sourceMessageId !== "string" || !payload.sourceMessageId) continue;
+        const reply = payloadContinuationReply(payload);
+        if (Object.hasOwn(payload, CANONICAL_REPLY_FIELD)) {
+          if (
+            !reply
+            || typeof payload.continuationRunId !== "string"
+            || !UUID_RE.test(payload.continuationRunId)
+            || payload.continuationRunId !== questionContinuationRunId(chatId, payload.sourceMessageId)
+            || typeof payload.continuationRequestHash !== "string"
+            || !SHA256_RE.test(payload.continuationRequestHash)
+            || continuationRequestHash(continuationRequest(chatId, reply, payloadContinuationOptions(payload)))
+              !== payload.continuationRequestHash
+          ) continue;
+        }
         out.push({
           sourceMessageId: payload.sourceMessageId,
-          reply: payloadContinuationReply(payload),
+          reply,
           ts: row.ts,
           ...(typeof payload.continuationRunId === "string" && UUID_RE.test(payload.continuationRunId)
             ? { continuationRunId: payload.continuationRunId }
@@ -216,7 +263,10 @@ export function recordCommittedAnswerReceipt(
     runId: answerReceiptRunId(chatId),
     kind: ANSWER_RECEIPT_KIND,
     chatId,
-    payload: { sourceMessageId, reply: reply.slice(0, 4_000) },
+    // Mobile already owns the accepted invocation/user turn. Keep only a
+    // diagnostic equality digest here; raw answer bytes are neither needed nor
+    // exposed through the broadly readable run ledger.
+    payload: { sourceMessageId, replySha256: continuationReplySha256(reply) },
   });
 }
 
@@ -240,8 +290,11 @@ export function commitPendingConfirmationAnswer(
   ) {
     throw new Error("Question is stale or no longer pending");
   }
-  const normalizedReply = reply.trim().slice(0, 4_000);
+  const normalizedReply = reply.trim();
   if (!normalizedReply) throw new Error("Decision response is empty");
+  if (normalizedReply.length > QUESTION_CONTINUATION_REPLY_MAX_LENGTH) {
+    throw new Error(`Decision response exceeds the ${QUESTION_CONTINUATION_REPLY_MAX_LENGTH} character limit`);
+  }
   const existing = listCommittedQuestionAnswers(chatId)
     .filter((receipt) => receipt.sourceMessageId === last.id)
     .at(-1);
@@ -268,8 +321,8 @@ export function commitPendingConfirmationAnswer(
     chatId,
     payload: {
       sourceMessageId: last.id,
-      reply: normalizedReply,
-      continuationReplyChunks: continuationReplyChunks(normalizedReply),
+      [CANONICAL_REPLY_FIELD]: Buffer.from(normalizedReply, "utf8").toString("base64"),
+      continuationReplySha256: continuationReplySha256(normalizedReply),
       continuationRunId,
       continuationLocale: normalizedContinuation.locale,
       continuationPermissions: normalizedContinuation.permissions,
@@ -311,16 +364,26 @@ export function getCommittedQuestionContinuation(
   sourceMessageId: string,
   reply: string,
 ): DurableQuestionContinuation | null {
-  if (!chatId || !sourceMessageId || !reply.trim()) return null;
+  const normalizedReply = reply.trim();
+  if (
+    !chatId
+    || !sourceMessageId
+    || !normalizedReply
+    || normalizedReply.length > QUESTION_CONTINUATION_REPLY_MAX_LENGTH
+  ) return null;
   const rows = getDb()
-    .prepare("SELECT payload_json FROM run_events WHERE run_id = ? AND kind = ? ORDER BY seq DESC LIMIT 100")
-    .all(answerReceiptRunId(chatId), ANSWER_RECEIPT_KIND) as Array<{ payload_json: string }>;
+    .prepare("SELECT chat_id, payload_json FROM run_events WHERE run_id = ? AND kind = ? ORDER BY seq DESC LIMIT 100")
+    .all(answerReceiptRunId(chatId), ANSWER_RECEIPT_KIND) as Array<{ chat_id: string | null; payload_json: string }>;
   for (const row of rows) {
+    if (row.chat_id !== chatId) continue;
     let payload: Record<string, unknown>;
     try { payload = JSON.parse(row.payload_json) as Record<string, unknown>; } catch { continue; }
-    const normalizedReply = reply.trim().slice(0, 4_000);
     if (payload.sourceMessageId !== sourceMessageId || payloadContinuationReply(payload) !== normalizedReply) continue;
     if (typeof payload.continuationRunId !== "string" || !UUID_RE.test(payload.continuationRunId)) return null;
+    if (
+      Object.hasOwn(payload, CANONICAL_REPLY_FIELD)
+      && payload.continuationRunId !== questionContinuationRunId(chatId, sourceMessageId)
+    ) return null;
     const request = continuationRequest(chatId, normalizedReply, payloadContinuationOptions(payload));
     if (
       typeof payload.continuationRequestHash !== "string"
@@ -476,6 +539,12 @@ export function claimPendingConfirmationAnswer(
     !firstQuestion(last.text)
   ) {
     throw new Error("Question is stale or no longer pending");
+  }
+  // A successful Mobile admission seals a digest-only receipt after claiming.
+  // On process restart the in-memory claim set is empty, so consult that
+  // durable source binding before admitting the same irreversible Decision.
+  if (listCommittedQuestionAnswers(chatId).some((receipt) => receipt.sourceMessageId === sourceMessageId)) {
+    throw new Error("This question answer was already accepted");
   }
   claimedQuestionMessages.add(key);
   invalidatePendingConfirmationsCache();

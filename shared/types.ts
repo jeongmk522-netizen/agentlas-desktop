@@ -4912,13 +4912,22 @@ export interface PendingConfirmation {
 export interface CommittedQuestionAnswer {
   /** 답한 질문을 소유한 assistant 메시지 id. */
   sourceMessageId: string;
-  /** 제출 당시의 답장 본문(원장 정책에 따라 800자 절단·시크릿 마스킹). */
+  /**
+   * Desktop continuation restore에만 반환되는 제출 당시 답장 본문.
+   * Mobile 진단 영수증에는 원문이 없으므로 빈 문자열일 수 있다.
+   */
   reply: string;
   /** 확정 시각(ISO). */
   ts: string;
   /** Main-derived exact-once run reserved for this source question + reply. */
   continuationRunId?: string;
 }
+
+/** Full formatted Decision reply limit, including every question/selection prefix. */
+export const QUESTION_CONTINUATION_REPLY_MAX_LENGTH = 250_000;
+
+/** Conservative UTF-8 ceiling for the canonical Decision reply stored by Main. */
+export const QUESTION_CONTINUATION_REPLY_MAX_BYTES = 1_000_000;
 
 /** Closed renderer input captured with the committed answer and reused verbatim on recovery. */
 export interface QuestionContinuationOptions {

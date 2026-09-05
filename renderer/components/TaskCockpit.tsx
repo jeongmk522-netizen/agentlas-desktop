@@ -3862,7 +3862,7 @@ function ChatPage() {
           // exact same source+reply+Main run binding; never infer acceptance.
           const recovered = (await api.confirm.committedAnswers(chatId).catch(() => []))
             .find((item) => item.sourceMessageId === sourceMessageId
-              && item.reply === reply.trim().slice(0, 4_000)
+              && item.reply === reply.trim()
               && Boolean(item.continuationRunId));
           if (recovered?.continuationRunId) {
             receipt = { chatId, sourceMessageId, continuationRunId: recovered.continuationRunId };
@@ -5191,7 +5191,9 @@ function ChatPage() {
         style={{
           width: "min(calc(100% - 32px), 740px)",
           margin: "0 auto",
-          paddingTop: 6,
+          // Align the visible folder control with the textarea's text inset,
+          // not merely with the composer's outer border.
+          padding: "6px 0 0 18px",
           display: "flex",
           alignItems: "center",
           gap: 8,

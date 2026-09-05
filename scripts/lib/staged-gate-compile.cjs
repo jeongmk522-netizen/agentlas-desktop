@@ -75,12 +75,13 @@ function compile(target) {
     if (!options) {
       const config = ts.parseConfigFileTextToJson("electron/tsconfig.json", readIndexed("electron/tsconfig.json").toString());
       if (config.error || config.config.extends || config.config.references) throw new Error("UNSUPPORTED_INDEXED_TSCONFIG");
-      const converted = ts.convertCompilerOptionsFromJson(config.config.compilerOptions, root);
+      const converted = ts.convertCompilerOptionsFromJson(config.config.compilerOptions, path.join(root, "electron"));
       if (converted.errors.length || converted.options.module !== ts.ModuleKind.CommonJS) throw new Error("UNSUPPORTED_INDEXED_TSCONFIG");
       options = { ...converted.options, sourceMap: false, declaration: false, incremental: false };
     }
-    const result = ts.transpileModule(bytes.toString(), { compilerOptions: options, fileName: source, reportDiagnostics: true });
-    if (result.diagnostics?.some((item) => item.category === ts.DiagnosticCategory.Error)) throw new Error(`INDEXED_TS_EMIT_FAILED: ${source}`);
+    const result = ts.transpileModule(bytes.toString(), { compilerOptions: options, fileName: path.join(root, source), reportDiagnostics: true });
+    const errors = result.diagnostics?.filter((item) => item.category === ts.DiagnosticCategory.Error) || [];
+    if (errors.length) throw new Error(`INDEXED_TS_EMIT_FAILED: ${source} (${errors.map((item) => `TS${item.code}`).join(",")})`);
     output = Buffer.from(result.outputText);
   }
   fs.mkdirSync(path.dirname(destination), { recursive: true });

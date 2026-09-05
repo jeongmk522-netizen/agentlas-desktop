@@ -3775,8 +3775,11 @@ export function registerIpcHandlers(): void {
   }): ToolApprovalConsentBinding => {
     const actor = getAuthenticatedActorIds();
     const install = configuredIdentity();
-    const rawWorkspace = ask.cwd?.trim()
-      ? path.resolve(ask.cwd.trim())
+    // Keep the supplied path bytes intact before canonicalizing `.`/`..`.
+    // Unix permits leading/trailing spaces in a directory name; trimming here
+    // would let two distinct workspaces inherit the same durable consent.
+    const rawWorkspace = ask.cwd && ask.cwd.length > 0
+      ? path.resolve(ask.cwd)
       : ask.chatId
         ? `chat:${ask.chatId}`
         : `desktop:${install?.userDataNamespace ?? "Agentlas"}`;

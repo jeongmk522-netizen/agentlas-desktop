@@ -335,6 +335,7 @@ function createComposerEventSync({
   return {
     push(event) {
       if (disposed || !isCurrentEvent(event)) return false;
+      if (hydratedTerminalTurns.has(composerEventKey(event))) return false;
       queueLatest(event);
       void drain();
       return true;
@@ -10603,7 +10604,7 @@ function createComposerEventSync({
         },
         onError: (error, event) => {
           if (event.projectId !== state.selectedId || event.conversationId !== selectedConversation()?.id
-            || event.turnId !== state.activeTurn?.id || event.sequence <= state.activeTurn.lastSequence) return;
+            || event.turnId !== state.activeTurn?.id) return;
           recordRunFailure(error);
         },
       });

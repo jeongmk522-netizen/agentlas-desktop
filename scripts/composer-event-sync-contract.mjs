@@ -46,8 +46,9 @@ const turn = (lastSequence, status = "running", overrides = {}) => ({ id: "t", p
   await tick();
   assert.equal(reads, 1, "a receipt covering the latest queued sequence removes the redundant read");
   assert.equal(hydrates, 1, "a terminal turn hydrates exactly once");
-  sync.push(event(1432));
+  assert.equal(sync.push(event(1432)), false, "later events for a hydrated terminal turn are rejected before another receipt read");
   await tick();
+  assert.equal(reads, 1, "a hydrated terminal turn does not issue another receipt read");
   assert.equal(hydrates, 1, "later events for an already hydrated terminal turn cannot hydrate again");
 }
 
@@ -136,5 +137,33 @@ const turn = (lastSequence, status = "running", overrides = {}) => ({ id: "t", p
   assert.equal(hydrateAttempts, 2, "one transient terminal hydration failure is retried");
   assert.equal(successfulHydrates, 1, "terminal hydration succeeds exactly once");
 }
+
+{
+  let scope = { projectId: "p", conversationId: "c", turnId: "t", lastSequence: 0 };
+  let hydrateAttempts = 0;
+  const errors = [];
+  const sync = createComposerEventSync({
+    getCurrentScope: () => scope,
+    readReceipt: async () => turn(1, "completed"),
+    onProgress: () => assert.fail("completed receipt must not render as progress"),
+    onTerminal: async (receipt) => {
+      scope = { ...scope, lastSequence: receipt.lastSequence };
+      hydrateAttempts += 1;
+      throw new Error("permanent-hydration-failure");
+    },
+    onError: (error, failedEvent) => {
+      if (failedEvent.projectId !== scope.projectId || failedEvent.conversationId !== scope.conversationId
+        || failedEvent.turnId !== scope.turnId) return;
+      errors.push(error.message);
+    },
+  });
+  sync.push(event(1));
+  await tick();
+  assert.equal(hydrateAttempts, 2, "terminal hydration is attempted only once plus one retry");
+  assert.deepEqual(errors, ["permanent-hydration-failure"], "a permanent terminal hydration failure remains visible after the turn sequence advances");
+}
+
+const appOnError = appSource.slice(appSource.indexOf("onError: (error, event) => {"), appSource.indexOf("      });", appSource.indexOf("onError: (error, event) => {")));
+assert.doesNotMatch(appOnError, /event\.sequence\s*<=/, "the production wiring must not hide terminal hydration failures after updating activeTurn");
 
 console.log("composer-event-sync-contract: ok");

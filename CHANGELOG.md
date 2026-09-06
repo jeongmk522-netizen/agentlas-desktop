@@ -6,6 +6,10 @@ This source update reconciles the newest Desktop, One, Work, and Science runtime
 changes without treating local QA material as public release content. Release
 artifacts and update feeds remain separate acceptance gates.
 
+This release binds Agentlas OS v1.2.40 at 0c29abdb9505df32b61522861a17bbc537de5263.
+Its public runtime asset `hephaestus-runtime-v1.2.40.tar.gz` is pinned at SHA-256 `f07527e45fa6be4538898a60e05e5113a72d2de2c61e2e021c1163954c5ba8c2`.
+Source readiness does not prove a public installer or update feed; the Releases page stays the authority.
+
 - One keeps an attached image visible while a new conversation is created and
   renders the image separately from the accompanying chat text.
 - One and Work preserve per-conversation execution identity across stop, retry,

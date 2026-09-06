@@ -6371,13 +6371,17 @@ export type CloudAgentSetPricesResult =
  * bought explicitly for 1..30 days. While active, calls to that slug cost 0.
  */
 export interface AgentLeaseQuote {
-  /** False when signed out or the server could not be reached. */
+  /** False when the account is signed out or the server could not be reached. */
   ok: boolean;
   active: boolean;
   leasedUntil: string | null;
   perDayCredits: number | null;
   /** False → the creator does not sell long-term leases for this agent. */
   leaseOffered: boolean;
+  /** Machine-readable reason when the quote could not be used. */
+  code?: "signed_out" | "network" | "http" | "invalid_slug" | "lease_not_offered" | string;
+  /** Safe, user-facing explanation; never includes response payloads. */
+  message?: string;
 }
 
 export type AgentLeasePurchaseResult =
@@ -7264,7 +7268,7 @@ export interface AgentlasIpc {
   };
   agentLeases: {
     quote: (slug: string) => Promise<AgentLeaseQuote>;
-    purchase: (input: { slug: string; days: number }) => Promise<AgentLeasePurchaseResult>;
+    purchase: (input: { slug: string; days: number; idempotencyKey?: string }) => Promise<AgentLeasePurchaseResult>;
     /** Cached (~60s) list of this account's leases; active ones call at 0 credits. */
     list: () => Promise<AgentLeaseRow[]>;
   };

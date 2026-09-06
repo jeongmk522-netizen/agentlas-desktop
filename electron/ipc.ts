@@ -4055,8 +4055,8 @@ export function registerIpcHandlers(): void {
   ipcMain.handle("agentLeases:quote", (_e, slug: string) => getAgentLeaseQuote(String(slug || "")));
   ipcMain.handle(
     "agentLeases:purchase",
-    (_e, input: { slug: string; days: number }) =>
-      purchaseAgentLease({ slug: String(input?.slug || ""), days: Number(input?.days) }),
+    (_e, input: { slug: string; days: number; idempotencyKey?: string }) =>
+      purchaseAgentLease({ slug: String(input?.slug || ""), days: Number(input?.days), idempotencyKey: input?.idempotencyKey }),
   );
   ipcMain.handle("agentLeases:list", () => listAgentLeasesCached());
 

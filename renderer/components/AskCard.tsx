@@ -30,6 +30,8 @@ export function AskCard({
   onChoose,
   onClose,
   footer,
+  freeText,
+  onFreeTextChange,
   children,
   locale = "ko",
   "data-testid": testId,
@@ -44,11 +46,20 @@ export function AskCard({
    * 언제나 빠져나갈 길이 있어야 한다는 규칙을 이 줄이 지킨다.
    */
   footer?: { placeholder: string; skipLabel: string; onSkip: (freeText: string) => void };
+  /** Optional controlled value for drafts that outlive this card instance. */
+  freeText?: string;
+  /** Called whenever the free-text input changes in controlled mode. */
+  onFreeTextChange?: (value: string) => void;
   children?: ReactNode;
   locale?: "ko" | "en";
   "data-testid"?: string;
 }) {
-  const [freeText, setFreeText] = useState("");
+  const [internalFreeText, setInternalFreeText] = useState("");
+  const currentFreeText = freeText ?? internalFreeText;
+  const updateFreeText = (value: string) => {
+    if (freeText === undefined) setInternalFreeText(value);
+    onFreeTextChange?.(value);
+  };
 
   return (
     <section className={styles.card} role="group" aria-label={title} data-ask-card="true" data-testid={testId}>
@@ -76,7 +87,7 @@ export function AskCard({
             data-active={option.active ? "true" : "false"}
             data-ask-option={option.id}
             disabled={option.disabled}
-            onClick={() => onChoose(option.id, freeText.trim())}
+            onClick={() => onChoose(option.id, currentFreeText.trim())}
           >
             <span className={styles.index} aria-hidden="true">{index + 1}</span>
             <span className={styles.optionText}>
@@ -96,18 +107,18 @@ export function AskCard({
           <span className={styles.footerMark} aria-hidden="true">✎</span>
           <input
             className={styles.footerInput}
-            value={freeText}
+            value={currentFreeText}
             placeholder={footer.placeholder}
-            onChange={(event) => setFreeText(event.target.value)}
+            onChange={(event) => updateFreeText(event.target.value)}
             onKeyDown={(event) => {
               if (event.key === "Enter" && !event.nativeEvent.isComposing && event.nativeEvent.keyCode !== 229) {
                 event.preventDefault();
-                const answer = freeText.trim();
+                const answer = currentFreeText.trim();
                 if (answer) footer.onSkip(answer);
               }
             }}
           />
-          <button type="button" className={styles.skip} onClick={() => footer.onSkip(freeText.trim())}>
+          <button type="button" className={styles.skip} onClick={() => footer.onSkip(currentFreeText.trim())}>
             {footer.skipLabel}
           </button>
         </div>

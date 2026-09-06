@@ -11,6 +11,7 @@ import { useEffect, useRef, useState } from "react";
 import { usePathname } from "next/navigation";
 import { useT } from "@/lib/i18n";
 import { AskCard } from "@/components/AskCard";
+import { clearAskUserDraft, loadAskUserDraft, saveAskUserDraft } from "@/lib/ask-user-draft";
 import { ipc, ipcEvents } from "@/lib/ipc";
 import type { AskUserRequestEvent } from "@/lib/types";
 
@@ -28,16 +29,21 @@ export function AskUserSheet() {
     pending: boolean;
     error?: "unavailable" | "ended";
   } | null>(null);
+  const [draftValue, setDraftValue] = useState("");
   const [now, setNow] = useState(() => Date.now());
   const req = queue[0] ?? null;
+  const currentRequestIdRef = useRef<string | null>(null);
+  currentRequestIdRef.current = req?.requestId ?? null;
 
   useEffect(() => {
     const events = ipcEvents();
     if (!events?.onAskUser) return;
     const unsubscribe = events.onAskUser((r) => {
       if (r.expiresAt <= Date.now()) {
+        clearAskUserDraft(r);
         liveRequestsRef.current.delete(r.requestId);
         attemptsRef.current.delete(r.requestId);
+        if (currentRequestIdRef.current === r.requestId) setDraftValue("");
       } else {
         liveRequestsRef.current.add(r.requestId);
       }
@@ -57,13 +63,19 @@ export function AskUserSheet() {
   }, []);
 
   useEffect(() => {
-    if (!req) return;
+    if (!req) {
+      setDraftValue("");
+      return;
+    }
+    setDraftValue(loadAskUserDraft(req) ?? "");
     setNow(Date.now());
     const tick = window.setInterval(() => setNow(Date.now()), 1_000);
     const remaining = Math.max(0, req.expiresAt - Date.now());
     const expire = window.setTimeout(() => {
       liveRequestsRef.current.delete(req.requestId);
       attemptsRef.current.delete(req.requestId);
+      clearAskUserDraft(req);
+      if (currentRequestIdRef.current === req.requestId) setDraftValue("");
       setQueue((current) => current.filter((item) => item.requestId !== req.requestId));
     }, remaining);
     return () => {
@@ -86,6 +98,8 @@ export function AskUserSheet() {
       const accepted = await api.confirm.submitAskUserAnswer(requestId, value);
       if (attemptsRef.current.get(requestId) !== attempt || !liveRequestsRef.current.has(requestId)) return;
       if (accepted === true) {
+        clearAskUserDraft(req);
+        setDraftValue("");
         liveRequestsRef.current.delete(requestId);
         setQueue((current) => current.filter((item) => item.requestId !== requestId));
       } else {
@@ -110,9 +124,15 @@ export function AskUserSheet() {
     if (!attemptsRef.current.has(req.requestId)) void answer(null);
     liveRequestsRef.current.delete(req.requestId);
     attemptsRef.current.delete(req.requestId);
+    clearAskUserDraft(req);
+    setDraftValue("");
     setQueue((current) => current.filter((item) => item.requestId !== req.requestId));
   };
   const currentSubmission = submission?.requestId === req.requestId ? submission : null;
+  const updateDraft = (value: string) => {
+    setDraftValue(value);
+    if (req.allowFreeText) saveAskUserDraft(req, value);
+  };
 
   const secondsLeft = Math.max(0, Math.ceil((req.expiresAt - now) / 1_000));
 
@@ -134,6 +154,8 @@ export function AskUserSheet() {
             active: currentSubmission ? currentSubmission.value === option.label : index === 0,
             disabled: currentSubmission?.pending,
           }))}
+          freeText={draftValue}
+          onFreeTextChange={updateDraft}
           onChoose={(id) => { void answer(id); }}
           onClose={dismiss}
           footer={req.allowFreeText

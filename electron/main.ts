@@ -8,7 +8,6 @@
 // - sandbox: true (renderer는 sandboxed)
 // - 모든 Node API는 preload → ipc 경로로만 노출
 import { startInstallBeacon } from "./install-beacon";
-import { scienceStatisticsMethodCatalogue } from "./science/statistics-method-catalogue";
 import {
   app,
   autoUpdater as electronAutoUpdater,
@@ -178,29 +177,29 @@ import {
   scienceStore,
   scienceToolGateway,
   shutdownScienceRuntimeForAppClose,
-} from "./science/runtime";
+  configureScienceServiceAvailability, retryFailedScienceServiceLoad,
+  scienceStatisticsMethodCatalogue, createScienceDatasetIngestionService, scienceSchemaVersion,
+} from "./science/lazy-services";
 import type {
   MaterializeScienceEvidenceGraphInferenceInput,
   ProposeScienceEvidenceGraphInferenceInput,
   RefreshScienceEvidenceGraphInput,
   ReviewScienceEvidenceGraphInferenceInput,
 } from "../shared/science-evidence-graph";
-import { ScienceDatasetIngestionService } from "./science/dataset-ingestion";
-import { SCIENCE_SCHEMA_VERSION } from "./science/store";
-import { scienceLabDecisionProjectionsForProject } from "./science/lab-decision-projection-service";
-import { inspectScienceEpisodeResultReview, recordScienceEpisodeResultReview } from "./science/result-review-service";
-import { commitScienceVegaEdit, parseScienceVegaEditInput } from "./science/vega-editor";
+import { scienceLabDecisionProjectionsForProject } from "./science/lazy-services";
+import { inspectScienceEpisodeResultReview, recordScienceEpisodeResultReview } from "./science/lazy-services";
+import { commitScienceVegaEdit, parseScienceVegaEditInput } from "./science/lazy-services";
 import {
   renderScienceStatisticsFigurePdf,
   renderScienceStatisticsFigurePng,
   renderScienceStatisticsFigureSvg,
   renderScienceStatisticsFigureSvgPreviewPng,
   renderScienceStatisticsFigureTiff,
-} from "./science/statistics-figure-export";
-import { validateScienceNumericSurfacePngBytes } from "./science/numeric-surface-export";
-import { validateScienceResidueInteraction } from "./science/protein-residue-validator";
-import { draftManuscript } from "./science/manuscript";
-import { inspectScienceManuscriptDepth } from "./science/manuscript/depth-preflight";
+} from "./science/lazy-services";
+import { validateScienceNumericSurfacePngBytes } from "./science/lazy-services";
+import { validateScienceResidueInteraction } from "./science/lazy-services";
+import { draftManuscript } from "./science/lazy-services";
+import { inspectScienceManuscriptDepth } from "./science/lazy-services";
 import type {
   ReviseScienceHypothesisInput,
   ScienceManuscriptBinding,
@@ -239,6 +238,10 @@ import type { ProductExtensionPermission } from "../shared/product-extension";
 import type { ScienceComposerStartInput } from "./science/conversation-service";
 
 const activeScienceChemistryCommits = new Set<string>();
+configureScienceServiceAvailability(() => {
+  const status = scienceExtensionStatus();
+  return status.phase === "installed" && status.enabled;
+});
 import {
   SCIENCE_RENDERER_REQUEST_SCHEMA,
   SCIENCE_RESIDUE_INTERACTION_SCHEMA,
@@ -1566,6 +1569,7 @@ app.whenReady().then(async () => {
     const leaseId = scienceViewLeaseId(rawLeaseId);
     const window = BrowserWindow.fromWebContents(event.sender);
     if (!window || window.isDestroyed()) return { id: "agentlas-science", leaseId, state: "error", errorCode: "owner-window-missing", errorMessage: "The Desktop window is unavailable." };
+    retryFailedScienceServiceLoad();
     return openScienceExtensionView({
       ownerId: event.sender.id,
       leaseId,
@@ -1643,7 +1647,7 @@ app.whenReady().then(async () => {
     return {
       extensionId: status.id,
       extensionVersion: status.version ?? "0.0.0",
-      schemaVersion: SCIENCE_SCHEMA_VERSION,
+      schemaVersion: scienceSchemaVersion(),
       locale: currentUiLocale(),
       projects: scienceStore().listProjects(),
       rendererPacks: scienceRendererPackStatuses(),
@@ -1890,7 +1894,7 @@ app.whenReady().then(async () => {
     const selected = owner ? await dialog.showOpenDialog(owner, options) : await dialog.showOpenDialog(options);
     if (selected.canceled || selected.filePaths.length !== 1) return { canceled: true };
     const store = scienceStore();
-    const imported = await new ScienceDatasetIngestionService(store).importFile(selected.filePaths[0], {
+    const imported = await createScienceDatasetIngestionService(store).importFile(selected.filePaths[0], {
       requestId: String(record.requestId ?? ""),
       projectId: String(record.projectId ?? ""),
       conversationId: String(record.conversationId ?? ""),

@@ -117,6 +117,7 @@ contextBridge.exposeInMainWorld("agentlasScience", Object.freeze({
   sources: Object.freeze({
     list: (projectId: string) => ipcRenderer.invoke("science:sources:list", { extensionId, projectId }),
     get: (projectId: string, sourceId: string) => ipcRenderer.invoke("science:sources:get", { extensionId, projectId, sourceId }),
+    getVersion: (projectId: string, sourceVersionId: string) => ipcRenderer.invoke("science:sources:get", { extensionId, projectId, sourceVersionId }),
   }),
   datasets: Object.freeze({
     importCsv: (input: unknown) => ipcRenderer.invoke("science:datasets:importCsv", { extensionId, input }),

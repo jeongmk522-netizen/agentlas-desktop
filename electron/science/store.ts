@@ -13033,6 +13033,16 @@ export class ScienceStore {
     return this.verifiedSourceFromRow({ ...row, current_version: row.resolved_version });
   }
 
+  getSourceVersionByIdForProject(projectId: string, sourceVersionId: string): ScienceSource | null {
+    if (!UUID_RE.test(projectId) || !UUID_RE.test(sourceVersionId)) return null;
+    const row = this.db.prepare(`SELECT s.*, v.id AS version_id, v.version AS resolved_version, v.access_state, v.content_sha256,
+      v.mime_type, v.asset_ref, v.retrieved_at, v.retrieval_method, v.license, v.created_at AS version_created_at
+      FROM sources s JOIN source_versions v ON v.source_id = s.id
+      WHERE s.project_id = ? AND v.id = ?`).get(projectId, sourceVersionId) as Record<string, unknown> | undefined;
+    if (!row) return null;
+    return this.verifiedSourceFromRow({ ...row, current_version: row.resolved_version });
+  }
+
   getVerifiedJsonDatabaseSourceVersionForTool(projectId: string, sourceId: string, sourceVersionId: string): { source: ScienceSource; bytes: Buffer } {
     const source = this.getSourceVersionForProject(projectId, sourceId, sourceVersionId);
     if (!source || source.kind !== "database-record" || source.version.accessState === "metadata-only"

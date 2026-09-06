@@ -10318,7 +10318,7 @@ function createComposerEventSync({
       if (!result.evidence) throw new Error(uiCopy("현재 프로젝트에서 정확한 evidence span을 찾지 못했습니다.", "The exact evidence span is not available in this project."));
       if (!result.citation) throw new Error(uiCopy("evidence span은 찾았지만 프로젝트의 정확한 인용 연결을 찾지 못했습니다.", "The evidence span exists, but its exact project citation link was not found."));
       const citation = result.citation;
-      const source = await science.sources.get(lookup.projectId, citation.sourceId);
+      const source = await science.sources.getVersion(lookup.projectId, result.evidence.sourceVersionId);
       if (!lookup.isCurrent()) return;
       if (!source || source.projectId !== lookup.projectId || source.id !== citation.sourceId || source.version?.id !== result.evidence.sourceVersionId) {
         throw new Error(uiCopy("정확한 출처 기록을 현재 프로젝트에서 찾지 못했습니다.", "The exact source record is not available in this project."));
@@ -10348,17 +10348,10 @@ function createComposerEventSync({
         && item.version?.sourceId === item.id
         && item.version?.id === canonicalRef.id
         && item.version?.version === canonicalRef.version;
-      let source = state.sources.find(exactVersion) || null;
-      if (!source) {
-        const sources = await science.sources.list(lookup.projectId);
-        if (!lookup.isCurrent()) return;
-        source = (Array.isArray(sources) ? sources : []).find(exactVersion) || null;
-      }
-      if (!source) throw new Error(uiCopy("정확한 source version을 현재 프로젝트에서 찾지 못했습니다.", "The exact source version is not available in this project."));
-      const exact = await science.sources.get(lookup.projectId, source.id);
+      let source = await science.sources.getVersion(lookup.projectId, canonicalRef.id);
       if (!lookup.isCurrent()) return;
-      if (!exact || !exactVersion(exact)) throw new Error(uiCopy("정확한 source version을 현재 프로젝트에서 찾지 못했습니다.", "The exact source version is not available in this project."));
-      source = exact;
+      if (!source) throw new Error(uiCopy("정확한 source version을 현재 프로젝트에서 찾지 못했습니다.", "The exact source version is not available in this project."));
+      if (!exactVersion(source)) throw new Error(uiCopy("정확한 source version을 현재 프로젝트에서 찾지 못했습니다.", "The exact source version is not available in this project."));
       state.sources = [...state.sources.filter((item) => item.id !== source.id), source];
       state.selectedSourceId = source.id;
       state.drawer = { kind: "source", id: source.id };

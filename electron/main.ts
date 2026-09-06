@@ -2042,6 +2042,11 @@ app.whenReady().then(async () => {
     assertScienceSender(event, input);
     const projectId = input && typeof input === "object" && "projectId" in input ? String((input as { projectId?: unknown }).projectId ?? "") : "";
     const sourceId = input && typeof input === "object" && "sourceId" in input ? String((input as { sourceId?: unknown }).sourceId ?? "") : "";
+    const sourceVersionId = input && typeof input === "object" && "sourceVersionId" in input ? String((input as { sourceVersionId?: unknown }).sourceVersionId ?? "") : "";
+    if (input && typeof input === "object" && "sourceVersionId" in input) {
+      const source = scienceStore().getSourceVersionByIdForProject(projectId, sourceVersionId);
+      return source && (!sourceId || source.id === sourceId) ? source : null;
+    }
     return scienceStore().getSourceForProject(projectId, sourceId);
   });
   ipcMain.handle("science:datasets:importCsv", async (event, envelope: unknown) => {

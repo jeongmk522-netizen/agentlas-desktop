@@ -1110,6 +1110,9 @@ async function runCodexResidentTurn(input: {
   let estChars = 0;
   let lastEmit = 0;
   let turnId = "";
+  let confirmedTurnId = "";
+  let turnRequestInFlight = false;
+  const pendingModelReroutes = new Map<string, { fromModel: string; toModel: string }>();
   /*
    * 사용량은 알림 콜백에서 채워진다 — 홀더 객체에 담는다(let 변수는 TS 흐름 분석이
    * 콜백 대입을 못 봐서 항상 null 로 좁혀진다).
@@ -1149,17 +1152,30 @@ async function runCodexResidentTurn(input: {
     events.onPartial(bodyText());
   };
 
+  const rejectModelReroute = (fromModel: unknown, toModel: unknown): void => {
+    const acknowledged = session.modelAcknowledgement;
+    modelSelectionError = new CodexModelSelectionError(
+      "rerouted",
+      `Codex rerouted the explicitly requested model from ${String(fromModel ?? acknowledged?.model ?? req.model)} to ${String(toModel ?? "unknown")}.`,
+    );
+    broken = true;
+    settleTurn?.("completed");
+  };
+
   const onNotification = (method: string, params: any): void => {
     switch (method) {
       case "model/rerouted": {
-        const acknowledged = session.modelAcknowledgement;
-        if (req.model && params?.threadId === session.threadId) {
-          modelSelectionError = new CodexModelSelectionError(
-            "rerouted",
-            `Codex rerouted the explicitly requested model from ${String(params?.fromModel ?? acknowledged?.model ?? req.model)} to ${String(params?.toModel ?? "unknown")}.`,
-          );
-          broken = true;
-          settleTurn?.("completed");
+        const reroutedTurnId = params?.turnId;
+        if (!req.model || params?.threadId !== session.threadId
+          || typeof reroutedTurnId !== "string" || !reroutedTurnId
+          || reroutedTurnId.length > 256 || /[\r\n\x00]/.test(reroutedTurnId)) break;
+        if (confirmedTurnId) {
+          if (reroutedTurnId === confirmedTurnId) rejectModelReroute(params?.fromModel, params?.toModel);
+        } else if (turnRequestInFlight) {
+          pendingModelReroutes.set(reroutedTurnId, {
+            fromModel: String(params?.fromModel ?? req.model),
+            toModel: String(params?.toModel ?? "unknown"),
+          });
         }
         break;
       }
@@ -1168,8 +1184,10 @@ async function runCodexResidentTurn(input: {
         break;
       case "turn/started":
         // 이 자리는 exec 경로와 같은 의미다 — 모델이 생각을 시작했다는 가장 이른 신호.
-        if (typeof params?.turn?.id === "string" && !turnId) turnId = params.turn.id;
-        openThinking();
+        if (typeof params?.turn?.id === "string" && params?.threadId === session.threadId
+          && ((confirmedTurnId && params.turn.id === confirmedTurnId) || (!confirmedTurnId && turnRequestInFlight))) {
+          openThinking();
+        }
         break;
       case "item/started": {
         const item = params?.item;
@@ -1555,10 +1573,25 @@ async function runCodexResidentTurn(input: {
     const settled = new Promise<"completed" | "closed">((resolve) => {
       settleTurn = (reason) => { settleTurn = null; resolve(reason); };
     });
-    const started = await session.conn.request("turn/start", turnParams, { timeoutMs: 120_000, signal: req.signal });
+    let started: any;
+    turnRequestInFlight = true;
+    try {
+      started = await session.conn.request("turn/start", turnParams, { timeoutMs: 120_000, signal: req.signal });
+    } finally {
+      turnRequestInFlight = false;
+    }
     workforceObservation?.startTurn(started);
-    if (typeof started?.turn?.id === "string") turnId = started.turn.id;
+    if (typeof started?.turn?.id === "string") {
+      turnId = started.turn.id;
+      confirmedTurnId = started.turn.id;
+    }
+    const bufferedReroute = confirmedTurnId ? pendingModelReroutes.get(confirmedTurnId) : undefined;
+    pendingModelReroutes.clear();
+    if (bufferedReroute) {
+      rejectModelReroute(bufferedReroute.fromModel, bufferedReroute.toModel);
+    }
     events.onStatus(`[runtime-session] ${continuing ? "resumed" : "created"} kind=${KIND}`);
+    if (modelSelectionError) throw modelSelectionError;
     const reason = await settled;
     closeThinking();
 

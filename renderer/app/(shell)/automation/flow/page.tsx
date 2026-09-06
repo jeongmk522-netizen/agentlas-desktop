@@ -110,6 +110,21 @@ function isCurrentAutomationRunSnapshot(
   return Boolean(snapshot && snapshot.automationId === automationId);
 }
 
+type RunSnapshotReadResult = {
+  snapshot: WorkflowRunSnapshot | null;
+  accepted: boolean;
+  owner: Automation;
+  generation: number;
+  error?: unknown;
+};
+
+type PendingRunSnapshotRead = {
+  owner: Automation;
+  generation: number;
+  requestId: number;
+  promise: Promise<RunSnapshotReadResult>;
+};
+
 /** 좌/우 패널 접힘 상태 — 화면을 다시 열어도 사용자가 정한 레이아웃을 유지한다. */
 const PANEL_STATE_KEY = "agentlas.automation.flow.panels";
 
@@ -289,6 +304,127 @@ function AutomationFlowPage() {
     setNodeFailures({});
     setRunStartedAt(null);
   }, []);
+  const runStatesRef = useRef<Record<string, WorkflowNodeRunState>>({});
+  /**
+   * All latestRun readers share this owner/generation. A live node-state event,
+   * an explicit refresh, or a new run can make an already-started read stale;
+   * polling itself does not advance the generation because overlapping poll
+   * ticks would otherwise keep invalidating every useful response.
+   */
+  const runSnapshotOwnerRef = useRef<Automation | null>(null);
+  const runSnapshotGenerationRef = useRef(0);
+  const runSnapshotRequestRef = useRef(0);
+  const runSnapshotPendingRef = useRef<PendingRunSnapshotRead | null>(null);
+
+  const claimRunSnapshotOwner = useCallback((owner: Automation) => {
+    if (runSnapshotOwnerRef.current !== owner) {
+      runSnapshotOwnerRef.current = owner;
+      runSnapshotGenerationRef.current += 1;
+      // An old owner's request cannot be cancelled, but it must never be
+      // reused by the new owner. Its completion is rejected by its token.
+      runSnapshotPendingRef.current = null;
+    }
+    return runSnapshotGenerationRef.current;
+  }, []);
+
+  const invalidateRunSnapshotReads = useCallback((owner: Automation) => {
+    if (runSnapshotOwnerRef.current !== owner) return false;
+    runSnapshotGenerationRef.current += 1;
+    return true;
+  }, []);
+
+  /**
+   * Read the latest run through one shared gate. Automatic reads coalesce onto
+   * the in-flight request; force reads advance the generation first so the
+   * previous response cannot overwrite a newer user/live transition.
+   */
+  const readLatestRunForView = useCallback((
+    owner: Automation,
+    force = false,
+  ): Promise<RunSnapshotReadResult> => {
+    const api = ipc();
+    if (!api || runSnapshotOwnerRef.current !== owner) {
+      return Promise.resolve({
+        snapshot: null,
+        accepted: false,
+        owner,
+        generation: -1,
+      });
+    }
+
+    if (force) runSnapshotGenerationRef.current += 1;
+    const generation = runSnapshotGenerationRef.current;
+    const pending = runSnapshotPendingRef.current;
+    if (!force && pending && pending.owner === owner && pending.generation === generation) {
+      return pending.promise;
+    }
+
+    const requestId = ++runSnapshotRequestRef.current;
+    const isCurrent = () => runSnapshotOwnerRef.current === owner
+      && runSnapshotGenerationRef.current === generation;
+    const promise = api.automations.latestRun(owner.id)
+      .then((snapshot) => ({ snapshot, accepted: isCurrent(), owner, generation }))
+      .catch((error) => ({ snapshot: null, accepted: isCurrent(), owner, generation, error }))
+      .finally(() => {
+        if (runSnapshotPendingRef.current?.requestId === requestId) {
+          runSnapshotPendingRef.current = null;
+        }
+      });
+    runSnapshotPendingRef.current = { owner, generation, requestId, promise };
+    return promise;
+  }, []);
+
+  const isCurrentRunSnapshotRead = useCallback((owner: Automation, result: RunSnapshotReadResult) => (
+    result.accepted
+    && !result.error
+    && result.owner === owner
+    && runSnapshotOwnerRef.current === owner
+    && runSnapshotGenerationRef.current === result.generation
+  ), []);
+
+  const applyLatestRunToView = useCallback((owner: Automation, result: RunSnapshotReadResult) => {
+    if (!isCurrentRunSnapshotRead(owner, result)) return false;
+    const snap = result.snapshot;
+    if (!snap) {
+      clearRunSnapshot();
+      return true;
+    }
+    if (!isCurrentAutomationRunSnapshot(snap, owner.id)) return false;
+    const next = snap.nodeStates ?? {};
+    // Keep the current object when a poll observes no state change so the
+    // React Flow overlay does not rebuild on every tick.
+    setRunStates((prev) => {
+      const prevKeys = Object.keys(prev);
+      const nextKeys = Object.keys(next);
+      if (prevKeys.length === nextKeys.length && nextKeys.every((key) => prev[key] === next[key])) {
+        return prev;
+      }
+      return next;
+    });
+    applySnapshotFailures(snap.nodeFailures);
+    setRunStartedAt(snap.startedAt);
+    return true;
+  }, [applySnapshotFailures, clearRunSnapshot, isCurrentRunSnapshotRead]);
+
+  const noteLiveRunStateArrival = useCallback((owner: Automation, nodeId: string, nodeState: WorkflowNodeRunState) => {
+    if (runSnapshotOwnerRef.current !== owner) return;
+    if (runStatesRef.current[nodeId] === nodeState) return;
+    runStatesRef.current = { ...runStatesRef.current, [nodeId]: nodeState };
+    runSnapshotGenerationRef.current += 1;
+  }, []);
+
+  // The rendered automation owns the run view. A late continuation from a
+  // previous automation may invalidate this owner, but it can never reclaim it.
+  useEffect(() => {
+    if (!automation) return;
+    claimRunSnapshotOwner(automation);
+    return () => {
+      if (runSnapshotOwnerRef.current !== automation) return;
+      runSnapshotOwnerRef.current = null;
+      runSnapshotGenerationRef.current += 1;
+      runSnapshotPendingRef.current = null;
+    };
+  }, [automation, claimRunSnapshotOwner]);
   // 자연어로 그래프를 고치는 제안 — 적용 전까지는 저장된 그래프를 건드리지 않는다.
   const [architectDraft, setArchitectDraft] = useState("");
   const [architectBusy, setArchitectBusy] = useState(false);
@@ -304,7 +440,6 @@ function AutomationFlowPage() {
     needsApproval: boolean;
     rationale?: string;
   } | null>(null);
-  const runStatesRef = useRef<Record<string, WorkflowNodeRunState>>({});
   /**
    * 지금 실제로 도는가 — 라이브 노드 상태가 진실이다.
    * `running`(내가 방금 눌렀나)만 보면 앱을 껐다 켰거나 스케줄러가 시작한 실행에는
@@ -542,20 +677,13 @@ function AutomationFlowPage() {
     const events = ipcEvents();
     let cancelled = false;
     // 초기 하이드레이트.
-    void api?.automations.latestRun(automation.id).then((snap) => {
+    if (api) void readLatestRunForView(automation).then((result) => {
       if (cancelled) return;
-      if (!snap) {
-        clearRunSnapshot();
-        return;
-      }
-      if (!isCurrentAutomationRunSnapshot(snap, automation.id)) return;
-      setRunStates(snap.nodeStates);
-      applySnapshotFailures(snap.nodeFailures);
-      setRunStartedAt(snap.startedAt);
+      applyLatestRunToView(automation, result);
     });
-    if (!events) return;
-    const channel = api?.automations.liveRunChannel(automation.id);
-    if (!channel) return;
+    if (!api || !events) return () => { cancelled = true; };
+    const channel = api.automations.liveRunChannel(automation.id);
+    if (!channel) return () => { cancelled = true; };
     const off = events.on(channel, (ev) => {
       // ★들어온 사실을 그대로 한 줄씩 남긴다 — 요약하지 않는다. 요약은 상태줄이 한다.
       const pushActivity = (text: string, tone: "run" | "done" | "fail" | "info") => {
@@ -571,6 +699,7 @@ function AutomationFlowPage() {
         setActivity((prev) => [...prev, { id, at: Date.now(), nodeId, label, text, tone }].slice(-400));
       };
       if (ev.nodeId && ev.nodeState) {
+        noteLiveRunStateArrival(automation, ev.nodeId as string, ev.nodeState as WorkflowNodeRunState);
         setRunStates((prev) => ({ ...prev, [ev.nodeId as string]: ev.nodeState as WorkflowNodeRunState }));
         const stateText: Record<string, string> = {
           running: locale === "en" ? "started" : "시작",
@@ -622,7 +751,7 @@ function AutomationFlowPage() {
       cancelled = true;
       off();
     };
-  }, [automation, applySnapshotFailures, clearRunSnapshot]);
+  }, [automation, applyLatestRunToView, ipcEvents, noteLiveRunStateArrival, readLatestRunForView]);
 
   /* ★실행이 끝났는데 화면이 왜 멈췄는지 말을 못 하던 자리.
      라이브 이벤트는 `nodeState: "failed"` 만 실어 오고, **사유는 실려 오지 않는다** —
@@ -636,27 +765,10 @@ function AutomationFlowPage() {
     if (!api) return;
     let cancelled = false;
     const pull = () => {
-      void api.automations.latestRun(automation.id).then((snap) => {
+      void readLatestRunForView(automation).then((result) => {
         if (cancelled) return;
-        if (!snap) {
-          clearRunSnapshot();
-          return;
-        }
-        if (!isCurrentAutomationRunSnapshot(snap, automation.id)) return;
-        const next = snap.nodeStates;
-        // 무변경 틱마다 새 객체를 넣으면 노드/엣지 재구성 이펙트가 3초마다
-        // 캔버스 전체를 다시 그린다 — 값이 같으면 이전 참조를 유지한다.
-        setRunStates((prev) => {
-          const prevKeys = Object.keys(prev);
-          const nextKeys = Object.keys(next);
-          if (prevKeys.length === nextKeys.length && nextKeys.every((k) => prev[k] === next[k])) {
-            return prev;
-          }
-          return next;
-        });
-        applySnapshotFailures(snap.nodeFailures);
-        setRunStartedAt(snap.startedAt);
-      }).catch(() => undefined);
+        applyLatestRunToView(automation, result);
+      });
     };
     if (liveRunning) {
       // 숨은 창에서는 스냅샷 폴을 멈추고, 다시 보이면 즉시 한 번 당긴다.
@@ -673,7 +785,7 @@ function AutomationFlowPage() {
     // 마지막 노드 이벤트와 커널의 마무리 쓰기 사이에 틈이 있다 — 끝난 뒤 한 번 더.
     const id = window.setTimeout(pull, 1_200);
     return () => { cancelled = true; window.clearTimeout(id); };
-  }, [automation, applySnapshotFailures, clearRunSnapshot, liveRunning]);
+  }, [automation, applyLatestRunToView, liveRunning, readLatestRunForView]);
 
   // runStates가 바뀔 때마다 노드 data.runState 주입(캔버스가 테두리/펄스로 애니메이션).
   useEffect(() => {
@@ -1351,6 +1463,7 @@ function AutomationFlowPage() {
       // A fresh run must be visibly distinct before Main accepts it. If the
       // safety gate rejects it, the catch path hydrates the durable failure
       // back into this view instead of hiding that record.
+      invalidateRunSnapshotReads(automation);
       setRunStates(Object.fromEntries((automation.graph?.nodes ?? []).map((node) => [node.id, "pending" as const])));
       setNodeProgress({});
       setNodeFailures({});
@@ -1489,6 +1602,9 @@ function AutomationFlowPage() {
         return true;
       }
     };
+    // A run request is a state-changing boundary. Reads started before it may
+    // still resolve, but they must not roll the view back to the old run.
+    invalidateRunSnapshotReads(automation);
     try {
       result = await runNowRequest(
         automation.id,
@@ -1499,30 +1615,28 @@ function AutomationFlowPage() {
       }
     } catch (err) {
       try {
-        const currentRun = await api.automations.latestRun(automation.id);
+        const currentRunRead = await readLatestRunForView(automation, true);
+        if (currentRunRead.error) throw currentRunRead.error;
+        const currentRun = isCurrentRunSnapshotRead(automation, currentRunRead)
+          ? currentRunRead.snapshot as TerminalCloseRunSnapshot | null
+          : null;
         const freshBlocked = fresh && /fresh_run_blocked|ambiguous_side_effect|reconciliation required/i.test(String(err));
         if (freshBlocked && await reviewFreshAndRetry()) return;
         if (currentRun && currentRun.automationId === automation.id && freshBlocked) {
           setInputPrompt(null);
-          setRunStates(currentRun.nodeStates);
-          applySnapshotFailures(currentRun.nodeFailures);
-          setRunStartedAt(currentRun.startedAt);
+          applyLatestRunToView(automation, currentRunRead);
           setMessage(locale === "en"
             ? "A fresh run was not started because the earlier run may have changed external state. Review the exact run and explicitly close it before starting a separate occurrence."
             : "이전 실행이 외부 상태를 바꿨을 수 있어 처음부터 새 실행을 시작하지 않았습니다. 해당 실행을 확인하고 명시적으로 종결한 뒤 별도 실행을 시작해 주세요.");
         } else if (currentRun && currentRun.automationId === automation.id && previousRun !== undefined && currentRun.runId !== previousRun?.runId) {
           setInputPrompt(null);
-          setRunStates(currentRun.nodeStates);
-          applySnapshotFailures(currentRun.nodeFailures);
-          setRunStartedAt(currentRun.startedAt);
+          applyLatestRunToView(automation, currentRunRead);
           setMessage(locale === "en"
             ? `A new run ${currentRun.runId} is in history with status ${currentRun.status}, but its reply was lost. Inspect that run and do not start another one just to check.`
             : `새 실행 ${currentRun.runId}이(가) 기록에 ${currentRun.status} 상태로 남아 있지만 응답이 유실됐습니다. 해당 실행을 확인하고 확인 목적으로 다시 실행하지 마세요.`);
         } else if (previousRun !== undefined && currentRun?.runId === previousRun?.runId) {
           if (fresh) {
-            setRunStates(currentRun?.nodeStates ?? {});
-            applySnapshotFailures(currentRun?.nodeFailures);
-            setRunStartedAt(currentRun?.startedAt ?? null);
+            applyLatestRunToView(automation, currentRunRead);
           }
           setMessage(locale === "en"
             ? "Run history still shows the same run as before this request. No new run was confirmed; inspect history before trying again."
@@ -1560,10 +1674,19 @@ function AutomationFlowPage() {
         : (locale === "en" ? "Run completed. The final steps and log are shown here." : "실행을 완료했습니다. 최종 단계와 기록을 이 화면에서 확인할 수 있습니다.");
     setMessage(terminalMessage);
     try {
-      const snap = await api.automations.latestRun(automation.id);
-      if (snap?.nodeStates) setRunStates(snap.nodeStates);
-      applySnapshotFailures(snap?.nodeFailures);
-      setRunStartedAt(snap?.startedAt ?? null);
+      const terminalRead = await readLatestRunForView(automation, true);
+      if (terminalRead.error) throw terminalRead.error;
+      if (!isCurrentRunSnapshotRead(automation, terminalRead)) {
+        setMessage(locale === "en"
+          ? `${terminalMessage} A newer run state or request arrived while the final history read was in flight.`
+          : `${terminalMessage} 최종 기록을 읽는 동안 더 새로운 실행 상태 또는 요청이 도착했습니다.`);
+      } else {
+        const snap = terminalRead.snapshot;
+        if (snap && !isCurrentAutomationRunSnapshot(snap, automation.id)) {
+          throw new Error("automation_terminal_read_identity_mismatch");
+        }
+        applyLatestRunToView(automation, terminalRead);
+      }
     } catch {
       setMessage(locale === "en"
         ? `${terminalMessage} The run-history view could not refresh. Do not rerun solely to refresh this screen.`
@@ -1579,17 +1702,17 @@ function AutomationFlowPage() {
     setRefreshing(true);
     setMessage(locale === "en" ? "Refreshing the saved run state…" : "저장된 실행 상태를 새로 읽는 중입니다…");
     try {
-      const snap = await api.automations.latestRun(automation.id);
-      if (snap && snap.automationId !== automation.id) throw new Error("automation_refresh_identity_mismatch");
-      if (snap) {
-        setRunStates(snap.nodeStates ?? {});
-        applySnapshotFailures(snap.nodeFailures);
-        setRunStartedAt(snap.startedAt ?? null);
-      } else if (!snap) {
-        setRunStates({});
-        setNodeFailures({});
-        setRunStartedAt(null);
+      const refreshRead = await readLatestRunForView(automation, true);
+      if (refreshRead.error) throw refreshRead.error;
+      if (!isCurrentRunSnapshotRead(automation, refreshRead)) {
+        setMessage(locale === "en"
+          ? "A newer run state or request arrived while the saved run state was refreshing. The newer state remains shown."
+          : "저장된 실행 상태를 읽는 동안 더 새로운 실행 상태 또는 요청이 도착했습니다. 더 새로운 상태를 그대로 표시합니다.");
+        return;
       }
+      const snap = refreshRead.snapshot;
+      if (snap && snap.automationId !== automation.id) throw new Error("automation_refresh_identity_mismatch");
+      applyLatestRunToView(automation, refreshRead);
       window.dispatchEvent(new CustomEvent("agentlas:automation-run-refresh", {
         detail: { automationId: automation.id },
       }));

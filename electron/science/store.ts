@@ -5,6 +5,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { TextDecoder } from "node:util";
 import { strFromU8, unzipSync } from "fflate";
 import { validateScienceProjectFolderPath } from "./project-folder-selection";
+import { verifyScienceWorkbook } from "../../shared/science-workbook";
 import type { RuntimeSelection } from "../../shared/types";
 import {
   normalizeScienceRuntimeSelection,
@@ -11566,6 +11567,70 @@ export class ScienceStore {
       throw new Error("science-comparative-genomics-table-source-invalid");
     }
     return { run, parent, table, sourceTableSha256: sourceTableOutput.sha256 };
+  }
+
+  commitWorkbookIngestion(input: {
+    requestId: string; projectId: string; conversationId: string; originMessageId: string;
+    title: string; rawBytes: Uint8Array; workbook: unknown; workerSha256: string; environmentSha256: string;
+  }): { source: ScienceSource; run: ScienceResearchRun; replayed: boolean } {
+    if (!input || ![input.requestId, input.projectId, input.conversationId, input.originMessageId].every((id) => UUID_RE.test(String(id)))) throw new Error("science-workbook-origin-invalid");
+    const title = safeText(input.title, 1_000, "workbook-title");
+    const workerSha256 = safeSha256(input.workerSha256, "workbook-worker-sha256");
+    const environmentSha256 = safeSha256(input.environmentSha256, "workbook-environment-sha256");
+    const raw = Buffer.from(input.rawBytes);
+    if (raw.length < 8 || raw.length > 8 * 1024 * 1024) throw new Error("science-workbook-raw-size-invalid");
+    const rawSha256 = createHash("sha256").update(raw).digest("hex");
+    const workbook = safeJsonRecord(input.workbook, 4 * 1024 * 1024, "workbook");
+    verifyScienceWorkbook(workbook, rawSha256);
+    const inputHash = sha256Json({ projectId: input.projectId, conversationId: input.conversationId,
+      originMessageId: input.originMessageId, title, rawSha256, workbookSha256: workbook.workbookSha256,
+      workerSha256, environmentSha256 });
+    return this.db.transaction(() => {
+      const prior = this.replay<{ source: ScienceSource; run: ScienceResearchRun; replayed: boolean }>(input.requestId, "dataset.workbook.ingest", inputHash);
+      if (prior) {
+        const source = this.getSourceVersionForProject(input.projectId, prior.source.id, prior.source.version.id);
+        const run = this.getResearchRunForProject(input.projectId, prior.run.id);
+        if (!source || !run || run.status !== "succeeded" || run.toolId !== "agentlas.workbook-ingest"
+          || source.version.contentSha256 !== rawSha256 || run.outputs.length !== 2) throw new Error("science-workbook-replay-integrity-failed");
+        this.verifiedSourceBytes(source);
+        run.outputs.forEach((output) => this.readRunBlob(output));
+        const bindings = this.getResearchRunSourceBindings(input.projectId, run.id);
+        if (bindings.length !== 1 || bindings[0].sourceVersionId !== source.version.id) throw new Error("science-workbook-replay-integrity-failed");
+        return { source, run, replayed: true };
+      }
+      const mimeType = workbook.format === "xls" ? "application/vnd.ms-excel" : "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+      const canonicalUri = `agentlas-dataset:sha256:${rawSha256}`;
+      let source = this.getSourceByCanonicalUriForProject(input.projectId, canonicalUri);
+      if (source) {
+        if (source.kind !== "dataset" || source.version.contentSha256 !== rawSha256 || source.version.mimeType !== mimeType) throw new Error("science-workbook-source-conflict");
+        this.verifiedSourceBytes(source);
+      } else {
+        source = this.createSource({ requestId: randomUUID(), projectId: input.projectId, kind: "dataset",
+          canonicalUri, title, authors: [], accessState: "parsed", contentSha256: rawSha256,
+          mimeType, retrievedAt: new Date().toISOString(), retrievalMethod: "local-file-main-owned" }, raw).source;
+      }
+      const resource = (role: string, mime: string, bytes: Buffer): ScienceResearchRunResourceInput => ({
+        role, mimeType: mime, ...this.putRunBlob(bytes), artifactId: null, artifactVersion: null,
+      });
+      const inputs = [resource("workbook-ingestion-input", "application/json", Buffer.from(JSON.stringify(canonicalValue({
+        sourceId: source.id, sourceVersionId: source.version.id, rawSha256, workerSha256,
+        parser: workbook.parser,
+      }))))];
+      const created = this.createResearchRun({ requestId: randomUUID(), projectId: input.projectId,
+        conversationId: input.conversationId, originMessageId: input.originMessageId,
+        toolId: "agentlas.workbook-ingest", toolVersion: "1.0.0", runtime: "native-sidecar",
+        inputManifestSha256: sha256Json(inputs), environmentSha256, inputs });
+      const outputs = [resource("workbook-grid", "application/vnd.agentlas.science.workbook+json", Buffer.from(JSON.stringify(canonicalValue(workbook)))),
+        resource("raw-workbook", mimeType, raw)];
+      const { run } = this.completeResearchRun({ requestId: randomUUID(), projectId: input.projectId, runId: created.run.id,
+        status: "succeeded", outputManifestSha256: sha256Json(outputs), outputs,
+        summary: "Workbook grid preserved; header inference, cleaning and analysis have not run." });
+      this.bindSucceededResearchRunSources({ projectId: input.projectId, runId: run.id,
+        bindings: [{ ordinal: 1, role: "raw-workbook", sourceId: source.id, sourceVersionId: source.version.id, outputOrdinal: 2 }] });
+      const result = { source, run, replayed: false };
+      this.remember(input.requestId, "dataset.workbook.ingest", inputHash, result, new Date().toISOString());
+      return result;
+    })();
   }
 
   commitDatasetIngestion(input: CommitScienceDatasetIngestionInput): CommitScienceDatasetIngestionResult {

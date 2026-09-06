@@ -50,6 +50,7 @@ import type {
   ScienceManuscriptBlueprintJournalBindingInput,
   ScienceManuscriptBlueprintSectionInput,
   ScienceSubmissionMetadata,
+  ScienceResearchCompletionScope,
 } from "../../shared/science-contract";
 import type {
   ScienceResearchBlockingDecision,
@@ -951,7 +952,7 @@ const PLATFORM_TOOLS: McpTool[] = [
   {
     name: "propose_research_contract",
     route: "/v1/platform/research-contracts/propose",
-    description: "Create a versioned draft research contract for the granted project, including objective, success and failure criteria, operating constraints, and bounded loop budgets. This tool cannot approve its own draft. After proposing, stop the intake phase and ask the human to approve or revise the exact draft through the Science decision surface.",
+    description: "Create a versioned research contract for the granted project, including objective, evidence-verifiable success and failure criteria, operating constraints, and loop budgets sized for the research objective. Main applies the project's existing standing research-contract approval when authorized and returns the exact approval receipt. If the returned contract is approved, continue the research and start its loop; do not stop for another confirmation. A draft result requires the human decision surface. Neither a short answer nor a manuscript alone proves the research objective complete.",
     inputSchema: {
       type: "object",
       properties: {
@@ -961,10 +962,11 @@ const PLATFORM_TOOLS: McpTool[] = [
         success_criteria: { type: "array", minItems: 1, maxItems: 30, uniqueItems: true, items: { type: "string", minLength: 1, maxLength: 2000 } },
         failure_criteria: { type: "array", minItems: 1, maxItems: 30, uniqueItems: true, items: { type: "string", minLength: 1, maxLength: 2000 } },
         constraints: { type: "array", maxItems: 50, uniqueItems: true, items: { type: "string", minLength: 1, maxLength: 2000 } },
+        completion_scope: { type: "string", enum: ["full-study", "bounded-deliverable"], description: "Whether the authoritative loop ends at the contract criteria or remains active through the lifecycle ready_to_submit gate." },
         max_episodes: { type: "integer", minimum: 1, maximum: 1000 },
         max_wall_time_minutes: { type: "integer", minimum: 1, maximum: 10080 },
       },
-      required: ["tool_call_id", "expected_project_version", "objective", "success_criteria", "failure_criteria", "constraints", "max_episodes", "max_wall_time_minutes"],
+      required: ["tool_call_id", "expected_project_version", "objective", "success_criteria", "failure_criteria", "constraints", "completion_scope", "max_episodes", "max_wall_time_minutes"],
       additionalProperties: false,
     },
   },
@@ -3885,7 +3887,11 @@ async function platformResult(route: string, body: Record<string, unknown>, gran
     };
   }
   if (route === "/v1/platform/research-contracts/propose") {
-    const result = store.saveResearchContract({
+    const completionScope = body.completion_scope;
+    if (completionScope !== "full-study" && completionScope !== "bounded-deliverable") {
+      throw new Error("science-research-completion-scope-invalid");
+    }
+    let result = store.saveResearchContract({
       requestId: stableUuid(`science-research-contract-propose:v1:${grant.context.invocationRunId}:${toolCallId}`),
       projectId: grant.context.projectId,
       expectedProjectVersion: positiveInteger(body.expected_project_version, "science-project-version-invalid"),
@@ -3893,10 +3899,50 @@ async function platformResult(route: string, body: Record<string, unknown>, gran
       successCriteria: body.success_criteria as string[],
       failureCriteria: body.failure_criteria as string[],
       constraints: body.constraints as string[],
+      completionScope: completionScope as ScienceResearchCompletionScope,
       maxEpisodes: positiveInteger(body.max_episodes, "science-contract-max-episodes-invalid"),
       maxWallTimeMinutes: positiveInteger(body.max_wall_time_minutes, "science-contract-max-wall-time-invalid"),
     });
-    return { ok: true, schema: "agentlas.science.research-contract-proposal/v1", ...result };
+    const policy = store.approvalPolicy(grant.context.projectId);
+    if (store.approvalIsStanding(grant.context.projectId, "research-contract")) {
+      result = store.approveResearchContract({
+        requestId: stableUuid(`science-contract-standing-approval:v1:${result.contract.id}:${result.contract.version}:${policy.id}:${policy.revision}`),
+        projectId: result.project.id,
+        contractId: result.contract.id,
+        expectedProjectVersion: result.project.version,
+        expectedContractVersion: result.contract.version,
+      });
+      // Admission belongs to Main. A model ending its response after intake
+      // must not strand an authorized study outside the continuation loop.
+      let session = store.getActiveLoopSession(grant.context.projectId);
+      if (!session && !store.listLoopSessions(grant.context.projectId).some((item) => item.contractId === result.contract.id)) {
+        session = store.startLoopSession({
+          requestId: stableUuid(`science-contract-loop-admission:v1:${result.contract.id}:${result.contract.version}`),
+          projectId: grant.context.projectId,
+          conversationId: grant.context.conversationId,
+          contractId: result.contract.id,
+          expectedProjectVersion: result.project.version,
+          expectedContractVersion: result.contract.version,
+          runtimeSelection: store.getTurnByInvocationRunId(grant.context.invocationRunId)?.runtimeSelection ?? null,
+        }).session;
+      }
+      if (session?.status === "queued" && session.contractId === result.contract.id
+        && session.runtimeChatId === store.getTurnByInvocationRunId(grant.context.invocationRunId)?.runtimeChatId) {
+        session = store.confirmLoopResumeDispatch({
+          projectId: session.projectId,
+          loopSessionId: session.id,
+          expectedLoopVersion: session.version,
+          expectedLoopStateSha256: session.stateSha256,
+          invocationRunId: grant.context.invocationRunId,
+        });
+      }
+      return {
+        ok: true, schema: "agentlas.science.research-contract-proposal/v1", ...result,
+        approval: { mode: "standing", policyId: policy.id, policyRevision: policy.revision, scope: "research-contract" },
+        researchLoop: session,
+      };
+    }
+    return { ok: true, schema: "agentlas.science.research-contract-proposal/v1", ...result, approval: { mode: "checkpoint" } };
   }
   if (route === "/v1/platform/research-loop/inspect") {
     const active = store.getActiveLoopSession(grant.context.projectId);
@@ -3928,6 +3974,7 @@ async function platformResult(route: string, body: Record<string, unknown>, gran
       projectId: grant.context.projectId,
       conversationId: grant.context.conversationId,
       contractId: exactText(body.contract_id, 80, "science-loop-contract-id-invalid"),
+      runtimeSelection: store.getTurnByInvocationRunId(grant.context.invocationRunId)?.runtimeSelection ?? null,
       expectedProjectVersion: positiveInteger(body.expected_project_version, "science-project-version-invalid"),
       expectedContractVersion: positiveInteger(body.expected_contract_version, "science-contract-version-invalid"),
     });

@@ -16,6 +16,7 @@ import type {
   ScienceManuscriptEditProposal,
   ScienceManuscriptSelectionContext,
 } from "./science-manuscript-proposal";
+import type { RuntimeSelection } from "./types";
 
 export * from "./science-manuscript-document";
 export * from "./science-manuscript-proposal";
@@ -293,6 +294,9 @@ export interface ScienceTurn {
   origin: "user" | "loop-continuation";
   continuationBasis: Record<string, unknown> | null;
   continuationBasisSha256: string | null;
+  /** Exact Science-owned orchestrator pin captured when this turn was created. */
+  runtimeSelection: RuntimeSelection | null;
+  runtimeSelectionSha256: string | null;
   status: ScienceTurnStatus;
   lastSequence: number;
   partialText: string;
@@ -311,6 +315,8 @@ export type StartScienceTurnInput = {
   runtimeChatId: string;
   invocationRunId: string;
   parentTurnId?: string | null;
+  /** Optional for legacy internal callers; new Science UI calls must provide an exact pin. */
+  runtimeSelection?: RuntimeSelection | null;
 } & (
   | { mode: "existing-user-message"; userMessageId: string }
   | { mode: "append-user-message"; content: string }
@@ -779,12 +785,22 @@ export interface ScienceResearchContract {
   successCriteria: string[];
   failureCriteria: string[];
   constraints: string[];
+  /**
+   * `full-study` keeps the authoritative loop alive through the lifecycle's
+   * journal-ready gate.  `bounded-deliverable` permits completion at the
+   * contract's own evidence criteria.  Null is retained for legacy contracts
+   * and keeps their pre-scope hash semantics.
+   */
+  completionScope: ScienceResearchCompletionScope | null;
   maxEpisodes: number;
   maxWallTimeMinutes: number;
   approvedAt: string | null;
   createdAt: string;
   updatedAt: string;
 }
+
+export const SCIENCE_RESEARCH_COMPLETION_SCOPES = ["full-study", "bounded-deliverable"] as const;
+export type ScienceResearchCompletionScope = typeof SCIENCE_RESEARCH_COMPLETION_SCOPES[number];
 
 /**
  * The decisions a project can authorize in advance.
@@ -831,6 +847,7 @@ export interface SaveScienceResearchContractInput {
   successCriteria: string[];
   failureCriteria: string[];
   constraints: string[];
+  completionScope?: ScienceResearchCompletionScope | null;
   maxEpisodes: number;
   maxWallTimeMinutes: number;
 }
@@ -928,6 +945,9 @@ export interface ScienceLoopSession {
   lifecycleStartRevision: number;
   lifecycleStartStateSha256: string;
   runtimeChatId: string;
+  /** Exact Science-owned orchestrator pin captured for the whole loop. */
+  runtimeSelection: RuntimeSelection | null;
+  runtimeSelectionSha256: string | null;
   activeRunId: string | null;
   status: "queued" | "running" | "pausing" | "paused" | "completed" | "failed" | "cancelled";
   stage: ScienceLoopStage;
@@ -1131,6 +1151,8 @@ export interface StartScienceLoopSessionInput {
   contractId: string;
   expectedProjectVersion: number;
   expectedContractVersion: number;
+  /** Optional for legacy internal callers; new Science UI calls must provide an exact pin. */
+  runtimeSelection?: RuntimeSelection | null;
 }
 
 export interface StartScienceLoopSessionResult {

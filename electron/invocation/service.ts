@@ -33,6 +33,8 @@ import { deriveGoalAcceptanceCriteria, ensureGoalLedgerGoal } from "../mcp/goal-
 import { resolveDesktopWorkforceGoalId } from "../mcp/workforce-goal-continuity";
 import {
   invocationWorkspaceBindingsEqual,
+  isRemoteInvocationWorkspaceBindingSource,
+  assertInvocationWorkspaceSourceContext,
   normalizeRemoteInvocationPermission,
   type InvocationWorkspaceBinding,
 } from "./workspace-binding";
@@ -900,6 +902,7 @@ export class InvocationService {
     /** Main-only exact Decision continuation binding; never accepted over IPC. */
     questionContinuation?: { sourceMessageId: string; requestHash: string },
   ): InvocationStartResult {
+    assertInvocationWorkspaceSourceContext(workspaceBinding, executionContext?.source);
     if (!this.acceptingStarts) throw new Error("desktop_execution_admission_closed");
     if ([...this.pendingGoalVerifications.values()].some((record) => record.chatId === req.chatId)) throw new Error("goal_verification_pending");
     const incoming = req as OneInvocationRequest;
@@ -1006,6 +1009,10 @@ export class InvocationService {
     const runWorkspaceBinding = workspaceBinding
       ? immutableWorkspaceBinding(workspaceBinding)
       : undefined;
+    // A workspace capability is not necessarily a Mobile surface. Science
+    // keeps its local persistence/projection while sharing directory identity checks.
+    const remoteWorkspaceBinding = Boolean(runWorkspaceBinding
+      && isRemoteInvocationWorkspaceBindingSource(runWorkspaceBinding.source));
     const controller = new AbortController();
     const startedAt = new Date().toISOString();
     const preparedOneTeamPreflight = requestedOneTeamPreflightRef
@@ -1229,7 +1236,7 @@ export class InvocationService {
       if (
         recoverablePartialPersisted
         || runReq.agentAppMode
-        || runWorkspaceBinding
+        || remoteWorkspaceBinding
         || !record.partialText.trim()
       ) return;
       try {
@@ -1509,7 +1516,7 @@ export class InvocationService {
     // from leaving One and Mobile stuck on a run that never became authoritative.
     const invocationOrigin = requestedOneMode
       ? "one" as const
-      : runWorkspaceBinding
+      : remoteWorkspaceBinding
         ? "mobile" as const
         : "work" as const;
     let canonicalTask: CanonicalTask | null;
@@ -1854,7 +1861,7 @@ export class InvocationService {
         // Desktop Work owns and consumes its native Work surface. Only One or
         // the separately bounded Mobile bridge receives the closed One/Mobile
         // semantic projection; ordinary project work must not mint One state.
-        if (requestedOneMode || runWorkspaceBinding) {
+        if (requestedOneMode || remoteWorkspaceBinding) {
           event = attachOneSurfaceProjection(event, runReq.chatId);
         }
         if (event.oneFriendlyFollowups) {
@@ -1945,7 +1952,7 @@ export class InvocationService {
         // semantic projection or durable write fails. A raw payload may carry
         // a Main-private local path/file URL; projection success must not be a
         // prerequisite for stripping that authority-bearing transport.
-        if ((requestedOneMode || runWorkspaceBinding) && event.kind === "surface" && event.surface) {
+        if ((requestedOneMode || remoteWorkspaceBinding) && event.kind === "surface" && event.surface) {
           event = {
             ...event,
             surface: undefined,
@@ -1990,7 +1997,7 @@ export class InvocationService {
         if (
           event.kind === "final"
           && !runReq.agentAppMode
-          && !runWorkspaceBinding
+          && !remoteWorkspaceBinding
           && typeof event.text === "string"
           && event.text.trim()
           && !hasDurableAssistantMessage(

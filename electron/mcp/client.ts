@@ -2277,6 +2277,16 @@ ${effectiveUserPrompt}`;
   // turn a Gemini failure into a Codex answer; show the actual failure so the
   // user can repair the selected runtime or graph.
   const automationRuntimePinned = Boolean(req.automationId && req.runtimeSelection);
+  if (executionContext?.source === "science" && !req.runtimeSelection?.model) {
+    sink({ kind: "error", error: {
+      code: "science-runtime-selection-required",
+      message: locale === "ko" ? "Science에서 연구 모델을 선택한 뒤 다시 시작하세요." : "Select a Science research model before starting this study.",
+    } });
+    return earlyResult();
+  }
+  // Science owns the model for the whole research session, independently of
+  // Library assignments and the Work/One role pools, including error recovery.
+  const scienceRuntimePinned = executionContext?.source === "science" && Boolean(req.runtimeSelection);
   // One's composer selection is the controller's first runtime for both One
   // chat and One Work/graph runs. A normal Library assignment remains the
   // default for other surfaces; One only leaves its pin after a typed runtime
@@ -2284,10 +2294,19 @@ ${effectiveUserPrompt}`;
   const runtimeResolution = selectInvocationRuntime(runtimes, runtimeTargets, {
     pin: req.runtimeSelection,
     pinIsAuthoritative:
-      isUnattendedExecution(executionContext) || req.oneMode === true || automationRuntimePinned,
+      isUnattendedExecution(executionContext) || req.oneMode === true || automationRuntimePinned || scienceRuntimePinned,
     agentAppMode: req.agentAppMode === true,
   });
   let runtimeChoice = runtimeResolution.choice;
+  if (scienceRuntimePinned && runtimeChoice) {
+    const selected = runtimeChoice.active;
+    const modelListIsAuthoritative = ["ollama", "lmstudio", "mlx"].includes(selected.kind)
+      || selected.modelDiscovery?.status === "ok";
+    if (selected.credentialAccess?.status === "unavailable" || selected.modelDiscovery?.stale
+      || (modelListIsAuthoritative && req.runtimeSelection?.model && !selected.availableModels?.includes(req.runtimeSelection.model))) {
+      runtimeChoice = null;
+    }
+  }
   let controllerFallbackBeforeRun: RuntimeStatus | null = null;
   // A One composer pin is a preference with an ordered recovery chain, not a
   // reason to stop before a runner starts. If the selected executable vanished
@@ -2322,13 +2341,13 @@ ${effectiveUserPrompt}`;
     sink({
       kind: "error",
       error: {
-        code: req.oneMode
+        code: scienceRuntimePinned ? "science-runtime-unavailable" : req.oneMode
           ? "one-runtime-unavailable"
           : runtimeResolution.pinHonored
             ? "pinned-runtime-unavailable"
             : "no-runtime",
         message: runtimeResolution.pinHonored && req.runtimeSelection
-          ? `Pinned automation runtime is unavailable: ${req.runtimeSelection.kind}${req.runtimeSelection.model ? ` · ${req.runtimeSelection.model}` : ""}`
+          ? `Pinned ${scienceRuntimePinned ? "Science" : "automation"} runtime is unavailable: ${req.runtimeSelection.kind}${req.runtimeSelection.model ? ` · ${req.runtimeSelection.model}` : ""}`
           : tStatus(locale, "errNoRuntime"),
       },
     });
@@ -2388,7 +2407,7 @@ ${effectiveUserPrompt}`;
     sink({
       kind: "error",
       error: {
-        code: "no-runner",
+        code: scienceRuntimePinned ? "science-runtime-unavailable" : "no-runner",
         message: tStatus(locale, "errNoRunner", {
           kind: active.kind,
           backend: active.backend,
@@ -4663,7 +4682,8 @@ ${effectiveUserPrompt}`;
     const directRuntimeFallbackAllowed =
       !req.agentAppMode
       && !isUnattendedExecution(executionContext)
-      && !automationRuntimePinned;
+      && !automationRuntimePinned
+      && !scienceRuntimePinned;
     const invokeCurrentRuntime = async (request: RunnerRequest): Promise<Awaited<ReturnType<Runner>>> => {
       const currentPicked = picked;
       if (!currentPicked) throw new Error("no-runner");

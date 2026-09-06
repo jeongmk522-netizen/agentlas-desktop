@@ -83,6 +83,10 @@ contextBridge.exposeInMainWorld("agentlasScience", Object.freeze({
     list: (projectId: string) => ipcRenderer.invoke("science:conversations:list", { extensionId, projectId }),
     messages: (projectId: string, conversationId: string) => ipcRenderer.invoke("science:messages:list", { extensionId, projectId, conversationId }),
   }),
+  runtime: Object.freeze({
+    inspect: (input: unknown) => ipcRenderer.invoke("science:runtime:inspect", { extensionId, input }),
+    select: (input: unknown) => ipcRenderer.invoke("science:runtime:select", { extensionId, input }),
+  }),
   composer: Object.freeze({
     start: (input: unknown) => ipcRenderer.invoke("science:composer:start", { extensionId, input }),
     cancel: (input: unknown) => ipcRenderer.invoke("science:composer:cancel", { extensionId, input }),

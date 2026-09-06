@@ -1821,15 +1821,79 @@ app.whenReady().then(async () => {
       events: session ? scienceStore().listLoopEvents(session.id, 0, 1_000) : [],
     };
   });
-  ipcMain.handle("science:researchLoops:start", (event, envelope: unknown) => {
+  ipcMain.handle("science:researchLoops:start", async (event, envelope: unknown) => {
     assertScienceSender(event, envelope, "science:agent-runtime");
     const input = envelope && typeof envelope === "object" && "input" in envelope ? (envelope as { input?: unknown }).input : null;
-    return scienceStore().startLoopSession(input as StartScienceLoopSessionInput);
+    if (!input || typeof input !== "object" || Array.isArray(input)) throw new Error("science-loop-input-invalid");
+    const record = input as StartScienceLoopSessionInput;
+    const { scienceRuntimePreference } = await import("./science/runtime-preferences");
+    assertScienceSender(event, envelope, "science:agent-runtime");
+    const runtimeSelection = scienceRuntimePreference(scienceStore(), record);
+    if (!runtimeSelection?.model) throw new Error("science-runtime-selection-required");
+    return scienceStore().startLoopSession({ ...record, runtimeSelection });
   });
   ipcMain.handle("science:researchLoops:transition", (event, envelope: unknown) => {
     assertScienceSender(event, envelope, "science:agent-runtime");
     const input = envelope && typeof envelope === "object" && "input" in envelope ? (envelope as { input?: unknown }).input : null;
-    return scienceStore().transitionLoopSession(input as TransitionScienceLoopSessionInput);
+    if (!input || typeof input !== "object" || Array.isArray(input)) throw new Error("science-loop-input-invalid");
+    const record = input as TransitionScienceLoopSessionInput;
+    const store = scienceStore();
+    const prior = store.getLoopSessionForProject(record.projectId, record.loopSessionId);
+    const result = store.transitionLoopSession(record);
+
+    // A pause/cancel is durable before adapter cancellation is requested. Use
+    // the exact active run captured before the transition because terminal
+    // cancel clears activeRunId, and keep this cleanup unconditional for the
+    // cancel action so a stale stop cannot deadlock on provider state.
+    if ((record.action === "pause" || record.action === "cancel") && prior?.activeRunId) {
+      const turn = store.getTurnByInvocationRunId(prior.activeRunId);
+      if (turn && turn.projectId === record.projectId) {
+        try {
+          scienceConversationService().cancel({
+            projectId: turn.projectId,
+            conversationId: turn.conversationId,
+            turnId: turn.id,
+          });
+        } catch (error) {
+          console.error("[science-runtime] loop transition cancellation failed", error);
+        }
+      }
+    }
+
+    if (record.action === "resume" && result.session.status === "queued") {
+      try {
+        if (!result.session.runtimeSelection?.model) throw new Error("science-runtime-selection-required");
+        const conversation = store.listConversations(record.projectId)
+          .find((candidate) => store.getConversationRuntimeBinding(record.projectId, candidate.id)?.runtimeChatId === result.session.runtimeChatId);
+        if (!conversation) throw new Error("science-loop-resume-conversation-missing");
+        scienceConversationService().resumeLoop({
+          requestId: record.requestId,
+          projectId: record.projectId,
+          conversationId: conversation.id,
+          loopSessionId: result.session.id,
+          expectedLoopVersion: result.session.version,
+          expectedLoopStateSha256: result.session.stateSha256,
+        });
+        const current = store.getLoopSessionForProject(record.projectId, result.session.id);
+        return { ...result, session: current ?? result.session };
+      } catch (error) {
+        const current = store.getLoopSessionForProject(record.projectId, result.session.id);
+        if (current && current.status === "queued"
+          && current.version === result.session.version && current.stateSha256 === result.session.stateSha256) {
+          try {
+            store.failLoopResumeDispatch({
+              projectId: current.projectId,
+              loopSessionId: current.id,
+              expectedLoopVersion: current.version,
+              expectedLoopStateSha256: current.stateSha256,
+              errorCode: (error instanceof Error ? error.message : String(error)).slice(0, 240) || "science-loop-resume-failed",
+            });
+          } catch { /* a concurrent canonical transition wins */ }
+        }
+        throw error;
+      }
+    }
+    return result;
   });
   ipcMain.handle("science:conversations:list", (event, input: unknown) => {
     assertScienceSender(event, input);
@@ -1842,16 +1906,42 @@ app.whenReady().then(async () => {
     const conversationId = input && typeof input === "object" && "conversationId" in input ? String((input as { conversationId?: unknown }).conversationId ?? "") : "";
     return scienceStore().listMessagesForProject(projectId, conversationId);
   });
-  ipcMain.handle("science:composer:start", (event, envelope: unknown) => {
+  const scienceRuntimeInput = (envelope: unknown) => {
+    const input = envelope && typeof envelope === "object" && "input" in envelope ? (envelope as { input?: unknown }).input : null;
+    if (!input || typeof input !== "object" || Array.isArray(input)) throw new Error("science-runtime-input-invalid");
+    const record = input as Record<string, unknown>;
+    if (typeof record.projectId !== "string" || typeof record.conversationId !== "string") throw new Error("science-runtime-input-invalid");
+    return { projectId: record.projectId, conversationId: record.conversationId, selection: record.selection };
+  };
+  ipcMain.handle("science:runtime:inspect", async (event, envelope: unknown) => {
+    assertScienceSender(event, envelope, "science:agent-runtime");
+    const input = scienceRuntimeInput(envelope);
+    const { inspectScienceRuntime } = await import("./science/runtime-preferences");
+    assertScienceSender(event, envelope, "science:agent-runtime");
+    return inspectScienceRuntime(scienceStore(), input);
+  });
+  ipcMain.handle("science:runtime:select", async (event, envelope: unknown) => {
+    assertScienceSender(event, envelope, "science:agent-runtime");
+    const input = scienceRuntimeInput(envelope);
+    const { selectScienceRuntime } = await import("./science/runtime-preferences");
+    assertScienceSender(event, envelope, "science:agent-runtime");
+    return selectScienceRuntime(scienceStore(), input);
+  });
+  ipcMain.handle("science:composer:start", async (event, envelope: unknown) => {
     assertScienceSender(event, envelope, "science:agent-runtime");
     const input = envelope && typeof envelope === "object" && "input" in envelope ? (envelope as { input?: unknown }).input : null;
     if (!input || typeof input !== "object" || Array.isArray(input)) throw new Error("science-composer-input-invalid");
     const record = input as Record<string, unknown>;
     const projectId = String(record.projectId ?? "");
     const conversationId = String(record.conversationId ?? "");
+    const { normalizeScienceRuntimeSelection } = await import("./science/runtime-selection");
+    const { scienceRuntimePreference } = await import("./science/runtime-preferences");
+    assertScienceSender(event, envelope, "science:agent-runtime");
+    const runtimeSelection = normalizeScienceRuntimeSelection(record.runtimeSelection ?? scienceRuntimePreference(scienceStore(), { projectId, conversationId }));
+    if (!runtimeSelection?.model) throw new Error("science-runtime-selection-required");
     ensureScienceTurnProjection();
     scienceTurnSubscribers.set(event.sender.id, { projectId, conversationId });
-    return scienceConversationService().start(input as ScienceComposerStartInput);
+    return scienceConversationService().start({ ...input, runtimeSelection } as ScienceComposerStartInput);
   });
   ipcMain.handle("science:composer:cancel", (event, envelope: unknown) => {
     assertScienceSender(event, envelope, "science:agent-runtime");

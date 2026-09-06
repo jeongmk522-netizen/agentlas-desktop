@@ -14,6 +14,12 @@ import fs from "node:fs";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
+import {
+  readFrozenPrivateGateInputs,
+  readPrivateFreshnessSnapshot,
+  verifyFrozenPrivateGateInputs,
+  verifyPrivateFreshnessSnapshot,
+} from "./lib/staged-gate-snapshot.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const BASE_REF = process.env.AGENTLAS_GATE_BASE || "";
@@ -26,6 +32,7 @@ const diskGates = fs.readdirSync(path.join(root, "scripts"))
 const MAX_SOURCE_BYTES = 4 * 1024 * 1024;
 const missingFile = { exists: false, isFile: false, size: 0, text: "" };
 const localFiles = new Map();
+let privateInputs = new Map();
 const blobs = new Map();
 const canonical = (relative) => path.relative(root, path.resolve(root, relative)).split(path.sep).join("/");
 function git(args) {
@@ -38,6 +45,11 @@ function git(args) {
 }
 function diskFile(relative) {
   const name = canonical(relative);
+  if (privateInputs.has(name)) {
+    const { bytes } = privateInputs.get(name);
+    return { exists: true, isFile: true, size: bytes.length,
+      text: bytes.length <= MAX_SOURCE_BYTES ? bytes.toString("utf8") : "" };
+  }
   if (!localFiles.has(name)) {
     const absolute = path.resolve(root, name);
     try {
@@ -76,11 +88,35 @@ function snapshotReader(files, trackedUnion) {
     return { ...file, text: blobs.get(file.oid) };
   };
 }
+
+function privateSnapshotReader(state, trackedUnion) {
+  const stateRoot = path.resolve(root, state.root);
+  const stateFiles = new Map(state.files.map((file) => {
+    const absolute = path.join(stateRoot, file.name);
+    return [file.name, { ...file, exists: true, isFile: true, size: fs.statSync(absolute).size }];
+  }));
+  return (relative) => {
+    const name = canonical(relative);
+    const file = stateFiles.get(name);
+    if (!file) return trackedUnion.has(name) ? missingFile : diskFile(name);
+    if (!file.isFile || file.size > MAX_SOURCE_BYTES) return { ...file, text: "" };
+    const key = `${state.root}:${file.oid}`;
+    if (!blobs.has(key)) {
+      try {
+        blobs.set(key, fs.readFileSync(path.join(stateRoot, name), "utf8"));
+      } catch {
+        throw new Error(`PRIVATE_FRESHNESS_CONTENT_MISMATCH: ${name}`);
+      }
+    }
+    return { ...file, text: blobs.get(key) };
+  };
+}
 function snapshotGates(files, trackedUnion) {
   // Do not resurrect a deleted tracked gate from disk or miss an INDEX-only gate.
   return [...new Set([
     ...[...files].filter(([name, file]) => gatePath(name) && file.isFile).map(([name]) => name),
-    ...diskGates.filter((name) => !trackedUnion.has(name) && diskFile(name).isFile),
+    ...[...new Set([...diskGates, ...privateInputs.keys()])]
+      .filter((name) => gatePath(name) && !trackedUnion.has(name) && diskFile(name).isFile),
   ])].sort();
 }
 
@@ -227,13 +263,37 @@ function scan(gateFiles, readFile) {
 let result;
 try {
   if (mode === "staged") {
+    if (process.env.AGENTLAS_PRIVATE_GATE_FRESHNESS_MANIFEST) {
+      // The bound gate runs inside an immutable, non-Git export. Its HEAD and
+      // INDEX trees are supplied by the snapshot receipt; invoking Git here
+      // would read a different repository (or fail because none exists).
+      const freshness = readPrivateFreshnessSnapshot(root, process.env.AGENTLAS_PRIVATE_GATE_FRESHNESS_MANIFEST);
+      const head = new Map(freshness.head.files.map((file) => [file.name, file]));
+      const index = new Map(freshness.index.files.map((file) => [file.name, file]));
+      const trackedUnion = new Set([...head.keys(), ...index.keys()]);
+      privateInputs = readFrozenPrivateGateInputs(root, trackedUnion);
+      const previous = scan(snapshotGates(head, trackedUnion), privateSnapshotReader(freshness.head, trackedUnion));
+      const current = scan(snapshotGates(index, trackedUnion), privateSnapshotReader(freshness.index, trackedUnion));
+      verifyFrozenPrivateGateInputs(root, privateInputs);
+      verifyPrivateFreshnessSnapshot(root, freshness);
+      const known = new Set(previous.entries);
+      const fresh = current.entries.filter((entry) => !known.has(entry));
+      const fixed = previous.entries.filter((entry) => !current.entries.includes(entry));
+      console.log(`gate freshness: HEAD → INDEX — new ${fresh.length}, resolved ${fixed.length}, existing ${current.entries.length - fresh.length}`);
+      for (const entry of current.entries) console.log(`${known.has(entry) ? "EXISTING" : "NEW"} ${entry}`);
+      for (const entry of fixed) console.log(`RESOLVED ${entry}`);
+      if (fresh.length) console.error("gate freshness: staged changes introduce stale checks; update the affected contract and its gate together.");
+      process.exit(fresh.length ? 1 : 0);
+    }
     const head = treeFiles("HEAD");
     const index = treeFiles("INDEX");
     const trackedUnion = new Set([...head.keys(), ...index.keys()]);
+    privateInputs = readFrozenPrivateGateInputs(root, trackedUnion);
     // Local-only gates and sources share one immutable, cached disk view across
     // both scans. Only the versioned HEAD/INDEX content is allowed to differ.
     const previous = scan(snapshotGates(head, trackedUnion), snapshotReader(head, trackedUnion));
     const current = scan(snapshotGates(index, trackedUnion), snapshotReader(index, trackedUnion));
+    verifyFrozenPrivateGateInputs(root, privateInputs);
     const known = new Set(previous.entries);
     const fresh = current.entries.filter((entry) => !known.has(entry));
     const fixed = previous.entries.filter((entry) => !current.entries.includes(entry));
@@ -246,9 +306,17 @@ try {
   if (BASE_REF) {
     const files = treeFiles(BASE_REF);
     const trackedUnion = new Set([...files.keys(), ...treeFiles("HEAD").keys(), ...treeFiles("INDEX").keys()]);
+    privateInputs = readFrozenPrivateGateInputs(root, trackedUnion);
     result = scan(snapshotGates(files, trackedUnion), snapshotReader(files, trackedUnion));
+    verifyFrozenPrivateGateInputs(root, privateInputs);
   } else {
-    result = scan(diskGates.filter((name) => diskFile(name).isFile).sort(), diskFile);
+    if (process.env.AGENTLAS_PRIVATE_GATE_ALLOWLIST) {
+      const trackedUnion = new Set([...treeFiles("HEAD").keys(), ...treeFiles("INDEX").keys()]);
+      privateInputs = readFrozenPrivateGateInputs(root, trackedUnion);
+    }
+    const gates = [...new Set([...diskGates, ...privateInputs.keys()])].filter(gatePath);
+    result = scan(gates.filter((name) => diskFile(name).isFile).sort(), diskFile);
+    verifyFrozenPrivateGateInputs(root, privateInputs);
   }
 } catch (error) {
   console.error(`gate freshness: snapshot/read failed — ${error.message}`);

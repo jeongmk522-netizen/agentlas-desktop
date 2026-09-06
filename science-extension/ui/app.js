@@ -230,7 +230,10 @@ function isNewerComposerEvent(candidate, current) {
  */
 function createComposerEventSync({
   getCurrentScope,
+  getCurrentConversationScope,
   readReceipt,
+  readAttach,
+  onAttach,
   onProgress,
   onTerminal,
   onError,
@@ -242,12 +245,16 @@ function createComposerEventSync({
   const terminalFailures = new Map();
   const hydratedTerminalTurns = new Set();
 
-  const isCurrentEvent = (event) => {
-    const scope = getCurrentScope();
+  const currentConversationScope = () => {
+    const scope = typeof getCurrentConversationScope === "function" ? getCurrentConversationScope() : getCurrentScope();
+    return scope && scope.projectId && scope.conversationId ? scope : null;
+  };
+
+  const isCurrentConversationEvent = (event) => {
+    const scope = currentConversationScope();
     return Boolean(scope
       && event?.projectId === scope.projectId
-      && event.conversationId === scope.conversationId
-      && event.turnId === scope.turnId);
+      && event.conversationId === scope.conversationId);
   };
 
   const queueLatest = (event) => {
@@ -266,11 +273,26 @@ function createComposerEventSync({
       while (!disposed && pendingEvent) {
         const event = pendingEvent;
         pendingEvent = null;
-        if (!isCurrentEvent(event)) continue;
+        if (!isCurrentConversationEvent(event)) continue;
 
         const key = composerEventKey(event);
         let turn;
         try {
+          const current = getCurrentScope();
+          if (!current || current.turnId !== event.turnId) {
+            if (typeof readAttach !== "function") continue;
+            const attached = await readAttach({
+              projectId: event.projectId,
+              conversationId: event.conversationId,
+            });
+            if (disposed || !isCurrentConversationEvent(event)) continue;
+            const attachedTurn = attached?.turn;
+            if (!attachedTurn
+              || attachedTurn.projectId !== event.projectId
+              || attachedTurn.conversationId !== event.conversationId) continue;
+            onAttach?.(attachedTurn, event);
+            if (attachedTurn.id !== event.turnId) continue;
+          }
           turn = await readReceipt({
             projectId: event.projectId,
             conversationId: event.conversationId,
@@ -278,7 +300,7 @@ function createComposerEventSync({
           });
           receiptFailures.delete(key);
         } catch (error) {
-          if (disposed || !isCurrentEvent(event)) continue;
+          if (disposed || !isCurrentConversationEvent(event)) continue;
           const failures = (receiptFailures.get(key) || 0) + 1;
           receiptFailures.set(key, failures);
           if (failures === 1) {
@@ -311,12 +333,12 @@ function createComposerEventSync({
         if (hydratedTerminalTurns.has(key)) continue;
         hydratedTerminalTurns.add(key);
         trimTerminalHistory();
-        try {
-          await onTerminal(turn, event);
-          terminalFailures.delete(key);
-        } catch (error) {
-          hydratedTerminalTurns.delete(key);
-          if (disposed || !isCurrentEvent(event)) continue;
+          try {
+            await onTerminal(turn, event);
+            terminalFailures.delete(key);
+          } catch (error) {
+            hydratedTerminalTurns.delete(key);
+            if (disposed || !isCurrentConversationEvent(event)) continue;
           const failures = (terminalFailures.get(key) || 0) + 1;
           terminalFailures.set(key, failures);
           if (failures === 1) queueLatest(event);
@@ -334,7 +356,7 @@ function createComposerEventSync({
 
   return {
     push(event) {
-      if (disposed || !isCurrentEvent(event)) return false;
+      if (disposed || !isCurrentConversationEvent(event)) return false;
       if (hydratedTerminalTurns.has(composerEventKey(event))) return false;
       queueLatest(event);
       void drain();
@@ -364,7 +386,7 @@ function createComposerEventSync({
   const blankNewProjectDraft = () => ({ title: "", question: "", folderSelectionId: null, folderPath: "" });
   const state = {
     locale: "en",
-    projects: [], selectedId: null, lifecycle: null, researchLoopInspection: null, conversations: [], selectedConversationId: null, messages: [], sources: [], sourceFigures: [], runs: [], artifacts: [], labs: [], workspaceLabBindings: [], labCatalog: [], labDecisionProjections: [], rendererPacks: [], manuscripts: [], claimLedger: null, journalProfiles: [], submissionExports: [], analysisSpecs: [], decisions: [],
+    projects: [], selectedId: null, lifecycle: null, researchLoopInspection: null, researchLoopActionBusy: false, researchLoopActionError: "", conversations: [], selectedConversationId: null, messages: [], sources: [], sourceFigures: [], runs: [], artifacts: [], labs: [], workspaceLabBindings: [], labCatalog: [], labDecisionProjections: [], rendererPacks: [], manuscripts: [], claimLedger: null, journalProfiles: [], submissionExports: [], analysisSpecs: [], decisions: [],
     artifactContextsByMessage: new Map(), labContextsById: new Map(), artifactHistoryById: new Map(), selectedLabId: null, selectedArtifactOriginVersion: null, inspectedArtifactVersion: null, inspectedArtifactContext: null, artifactComparison: null, draftHistoryGuard: null, labsExpanded: true, expandedLabGroups: new Set(["chemistry"]), expandedLabDecisions: new Set(), projectMenuOpen: false, projectFolderOpen: false, projectLibrarySummaries: new Map(), projectLibrarySummaryState: "loading", librarySearch: "", librarySelectedProjectId: null, projectFolderSelectedKey: null, newProjectStep: "details", selectedResearchTemplateId: null, newProjectDraft: blankNewProjectDraft(), newProjectFolderError: "", newProjectFolderBusy: false, newProjectGeneration: 0, newProjectRequestId: null, newProjectRequestSignature: "", labManagerOpen: false, labManagerBusyId: null, labManagerGeneration: 0, labManagerError: "", historyOpen: false, railCollapsed: readRailCollapsed(),
     blocksByMessage: new Map(), citationsByMessage: new Map(), evidenceById: new Map(), selectedSourceId: null, selectedArtifactId: null,
     evidenceGraph: null, evidenceGraphReviews: [], evidenceGraphLoading: false, evidenceGraphError: "", selectedEvidenceGraphNodeId: null, selectedEvidenceGraphCandidateId: null, evidenceGraphReviewSheet: false, evidenceGraphReviewDecision: "accepted", evidenceGraphReviewBusy: false, evidenceGraphReviewError: "", evidenceGraphPathAnchorId: null, evidenceGraphPath: null,
@@ -375,6 +397,7 @@ function createComposerEventSync({
     literatureSources: [], literatureUnresolvedIds: [], literatureLoading: false, literatureError: "",
     acquisitionRuns: [], acquisitionUnresolvedIds: [], acquisitionLoading: false, acquisitionError: "",
     activeTurn: null, composerSending: false, composerDraft: "", composerError: "", composerEventDispose: null, lifecycleChangeDispose: null, runtimeQuestions: [], runtimeQuestionDispose: null, runtimeQuestionBusy: false, runtimeQuestionError: "", runtimeQuestionDraft: "", runtimeQuestionDraftRequestId: null,
+    runtimeSelection: null, runtimeOptions: [], runtimeUnavailable: false, runtimeSelectionLoading: false, runtimeSelectionBusy: false, runtimeSelectionError: "", runtimeSelectionScope: null, runtimePickerOpen: false, runtimePickerQuery: "",
     vegaDraft: null, vegaSaving: false, vegaSaveError: "", pendingDraftNavigation: null,
     selectedManuscriptId: null, selectedAnalysisPlanId: null, manuscriptDraft: null, manuscriptSaving: false, manuscriptSaveError: "", manuscriptView: "paper", manuscriptInspectorOpen: false, selectedJournalProfileId: null, journalValidation: null, journalSheet: false, submissionSheet: false, submissionDraft: null, journalActionBusy: false, journalActionError: "",
     manuscriptEditorModel: null, manuscriptArtifactContexts: new Map(), manuscriptArtifactLineages: new Map(), manuscriptArtifactPreviewUrls: new Map(), manuscriptEditProposals: [], manuscriptSelectionContexts: [], manuscriptSelectionContext: null, manuscriptSelectionBusy: false, manuscriptSelectionError: "", manuscriptInsertion: null, manuscriptInsertBusy: false, manuscriptInsertError: "", manuscriptTransactionBusy: false, manuscriptProposalBusy: null, manuscriptNotice: "",
@@ -408,6 +431,12 @@ function createComposerEventSync({
   let runtimeQuestionTimer = null;
   let librarySearchTimer = null;
   let librarySearchComposing = false;
+  let scienceModelSearchComposing = false;
+  let scienceModelSearchTimer = null;
+  let runtimeSelectionRequestEpoch = 0;
+  let conversationRefreshInFlight = null;
+  let conversationRefreshPending = false;
+  let conversationRefreshPendingRuntime = false;
   const uiCopy = (ko, en) => state.locale === "ko" ? ko : en;
   const pendingHypothesisCopy = (pending) => uiCopy(
     `${pending}건이 당신의 결정을 기다립니다.`,
@@ -876,6 +905,148 @@ function createComposerEventSync({
     setProjectLibrarySummaries(await science.projects.library());
   }
   const selectedConversation = () => state.conversations.find((item) => item.id === state.selectedConversationId) || state.conversations[0] || null;
+  const SCIENCE_RUNTIME_RUNNING_STATUSES = new Set(["queued", "running", "cancelling"]);
+  const scienceRuntimeScope = (projectId = state.selectedId, conversationId = selectedConversation()?.id) => ({
+    projectId: projectId || null,
+    conversationId: conversationId || null,
+  });
+  const scienceRuntimeScopeKey = (scope) => scope?.projectId && scope?.conversationId
+    ? JSON.stringify([scope.projectId, scope.conversationId])
+    : null;
+  const scienceRuntimeSelectionKey = (selection) => {
+    if (!selection || typeof selection !== "object") return "";
+    return ["kind", "backend", "source", "model", "role", "inherit", "longContext", "effort"]
+      .map((key) => `${key}=${selection[key] === undefined || selection[key] === null ? "" : String(selection[key])}`)
+      .join("|");
+  };
+  const scienceRuntimeSelectionForDisplay = () => {
+    const activeTurn = state.activeTurn;
+    if (activeTurn && SCIENCE_RUNTIME_RUNNING_STATUSES.has(activeTurn.status) && activeTurn.runtimeSelection) return activeTurn.runtimeSelection;
+    const loopSelection = state.researchLoopInspection?.session?.runtimeSelection || state.researchLoopInspection?.runtimeSelection;
+    if (state.researchLoopInspection?.active === true && loopSelection) return loopSelection;
+    return state.runtimeSelection;
+  };
+  const scienceRuntimePickerLocked = () => Boolean(
+    (state.activeTurn && SCIENCE_RUNTIME_RUNNING_STATUSES.has(state.activeTurn.status))
+      || state.researchLoopInspection?.active === true
+      || ["queued", "running", "pausing"].includes(state.researchLoopInspection?.session?.status),
+  );
+  const scienceRuntimeOptionLabel = (option) => String(option?.label || option?.selection?.model || "").trim();
+  const scienceRuntimeOptionProvider = (option) => String(option?.provider || option?.selection?.backend || option?.selection?.kind || "").trim();
+  const scienceRuntimeDisplayLabel = () => {
+    const selection = scienceRuntimeSelectionForDisplay();
+    const selectedKey = scienceRuntimeSelectionKey(selection);
+    const option = state.runtimeOptions.find((item) => scienceRuntimeSelectionKey(item?.selection) === selectedKey);
+    return scienceRuntimeOptionLabel(option) || String(selection?.model || "").trim();
+  };
+  const scienceRuntimeDisplayProvider = () => {
+    const selection = scienceRuntimeSelectionForDisplay();
+    const selectedKey = scienceRuntimeSelectionKey(selection);
+    const option = state.runtimeOptions.find((item) => scienceRuntimeSelectionKey(item?.selection) === selectedKey);
+    return scienceRuntimeOptionProvider(option) || String(selection?.backend || selection?.kind || "").trim();
+  };
+  const scienceRuntimeErrorText = (value) => {
+    const text = String(value || "").trim();
+    if (!text) return "";
+    if (/selection-locked|runtime-selection-locked|research.*running|loop.*running/i.test(text)) return uiCopy("현재 연구가 실행 중이라 모델을 바꿀 수 없습니다.", "The current research is running, so its model is locked.");
+    if (/receipt-mismatch/i.test(text)) return uiCopy("모델 선택을 확인하지 못했습니다. 다시 선택해 주세요.", "The model selection could not be confirmed. Choose it again.");
+    if (/unavailable|no-runtime|runtime/i.test(text)) return uiCopy("연결된 모델을 사용할 수 없습니다.", "No connected model is available.");
+    return uiCopy("모델을 불러오지 못했습니다. 다시 시도해 주세요.", "The model list could not be loaded. Try again.");
+  };
+  const scienceRuntimeSelectionMatchesScope = (scope) => scienceRuntimeScopeKey(scope) === scienceRuntimeScopeKey(state.runtimeSelectionScope)
+    && scope?.projectId === state.selectedId
+    && scope?.conversationId === selectedConversation()?.id;
+  const scienceRuntimeInspectionResult = (result) => ({
+    selection: result?.selection && typeof result.selection === "object" ? result.selection : null,
+    options: Array.isArray(result?.options)
+      ? result.options.filter((option) => option?.selection && typeof option.selection === "object" && scienceRuntimeOptionLabel(option))
+      : [],
+    unavailable: result?.unavailable === true,
+  });
+
+  async function refreshScienceRuntimeSelection(projectId, conversationId, { renderDock = true } = {}) {
+    const scope = scienceRuntimeScope(projectId, conversationId);
+    const epoch = ++runtimeSelectionRequestEpoch;
+    state.runtimeSelectionScope = scope;
+    state.runtimeSelectionLoading = true;
+    state.runtimeSelectionBusy = false;
+    state.runtimeSelectionError = "";
+    state.runtimePickerOpen = false;
+    state.runtimePickerQuery = "";
+    if (renderDock) renderChatDock();
+    try {
+      if (!scope.projectId || !scope.conversationId || typeof science?.runtime?.inspect !== "function") {
+        throw new Error("science-runtime-inspection-unavailable");
+      }
+      const inspected = scienceRuntimeInspectionResult(await science.runtime.inspect({
+        projectId: scope.projectId,
+        conversationId: scope.conversationId,
+      }));
+      if (epoch !== runtimeSelectionRequestEpoch || !scienceRuntimeSelectionMatchesScope(scope)) return;
+      state.runtimeSelection = inspected.selection;
+      state.runtimeOptions = inspected.options;
+      state.runtimeUnavailable = inspected.unavailable;
+      state.runtimeSelectionLoading = false;
+      state.runtimeSelectionError = "";
+    } catch (error) {
+      if (epoch !== runtimeSelectionRequestEpoch || !scienceRuntimeSelectionMatchesScope(scope)) return;
+      state.runtimeSelection = null;
+      state.runtimeOptions = [];
+      state.runtimeUnavailable = true;
+      state.runtimeSelectionLoading = false;
+      state.runtimeSelectionError = error instanceof Error ? error.message : String(error);
+    }
+    if (renderDock && epoch === runtimeSelectionRequestEpoch && scienceRuntimeSelectionMatchesScope(scope)) renderChatDock();
+  }
+
+  async function selectScienceRuntimeOption(optionIndex) {
+    const projectId = state.selectedId;
+    const conversationId = selectedConversation()?.id;
+    const scope = scienceRuntimeScope(projectId, conversationId);
+    const requestEpoch = runtimeSelectionRequestEpoch;
+    const isCurrent = () => requestEpoch === runtimeSelectionRequestEpoch && scienceRuntimeSelectionMatchesScope(scope);
+    const option = Number.isSafeInteger(optionIndex) ? state.runtimeOptions[optionIndex] : null;
+    if (!option?.selection || !scope.projectId || !scope.conversationId || scienceRuntimePickerLocked() || state.runtimeSelectionBusy) return;
+    if (!scienceRuntimeSelectionMatchesScope(scope) || typeof science?.runtime?.select !== "function") {
+      state.runtimeSelectionError = "science-runtime-selection-unavailable";
+      state.runtimeUnavailable = true;
+      renderChatDock();
+      return;
+    }
+    const previousSelection = state.runtimeSelection;
+    state.runtimeSelectionBusy = true;
+    state.runtimeSelectionError = "";
+    renderChatDock();
+    try {
+      const selected = await science.runtime.select({
+        projectId: scope.projectId,
+        conversationId: scope.conversationId,
+        selection: option.selection,
+      });
+      if (!isCurrent()) return;
+      const receipt = selected?.selection;
+      if (scienceRuntimeSelectionKey(receipt) !== scienceRuntimeSelectionKey(option.selection)) {
+        throw new Error("science-runtime-selection-receipt-mismatch");
+      }
+      state.runtimeSelection = receipt;
+      state.runtimeUnavailable = false;
+      state.runtimeSelectionError = "";
+      state.runtimePickerOpen = false;
+      state.runtimePickerQuery = "";
+    } catch (error) {
+      if (!isCurrent()) return;
+      state.runtimeSelection = previousSelection;
+      state.runtimeSelectionError = error instanceof Error ? error.message : String(error);
+      state.runtimeUnavailable = !previousSelection;
+      state.runtimePickerOpen = true;
+    } finally {
+      if (isCurrent()) {
+        state.runtimeSelectionBusy = false;
+        renderChatDock();
+      }
+    }
+  }
+
   const evidenceGraphNodeById = (id) => state.evidenceGraph?.nodes?.find((node) => node.id === id) || null;
   const evidenceGraphCandidateById = (id) => state.evidenceGraph?.inferenceCandidates?.find((candidate) => candidate.id === id) || null;
   const evidenceGraphReviewForCandidate = (candidate) => {
@@ -945,6 +1116,51 @@ function createComposerEventSync({
       detail: `${session.status} · ${session.stage}${episode ? ` · episode ${episode.ordinal} ${episode.status}` : ""}`,
     };
   };
+  const scienceResearchLoopActionErrorText = (value) => {
+    const text = String(value || "").trim();
+    if (!text) return "";
+    if (/version-conflict|state.*conflict/i.test(text)) return uiCopy("연구 상태가 바뀌었습니다. 최신 상태를 다시 확인해 주세요.", "The research changed. Refresh its latest state and try again.");
+    if (/terminal|not-paused|not-running/i.test(text)) return uiCopy("연구 상태가 바뀌어 이 동작을 적용하지 못했습니다.", "The research state changed before this action was applied.");
+    return uiCopy("연구 상태를 갱신하지 못했습니다. 다시 시도해 주세요.", "The research state could not be updated. Try again.");
+  };
+  async function transitionScienceResearchLoop(action) {
+    const inspection = state.researchLoopInspection;
+    const session = inspection?.session;
+    const projectId = state.selectedId;
+    if (!projectId || !session || session.projectId !== projectId || session.status !== "paused" || state.researchLoopActionBusy
+      || !["resume", "cancel"].includes(action) || typeof science?.researchLoops?.transition !== "function") return;
+    const requestId = crypto.randomUUID();
+    const expectedSessionId = session.id;
+    const expectedVersion = session.version;
+    const expectedStateSha256 = session.stateSha256;
+    state.researchLoopActionBusy = true;
+    state.researchLoopActionError = "";
+    renderChatDock();
+    try {
+      const result = await science.researchLoops.transition({
+        requestId,
+        projectId,
+        loopSessionId: expectedSessionId,
+        expectedLoopVersion: expectedVersion,
+        expectedLoopStateSha256: expectedStateSha256,
+        action,
+        reason: action === "resume" ? "researcher-requested-resume" : "researcher-requested-stop",
+      });
+      if (!result?.session || result.session.id !== expectedSessionId) throw new Error("science-loop-transition-receipt-invalid");
+      const refreshed = await science.researchLoops.inspect(projectId);
+      if (projectId !== state.selectedId) return;
+      state.researchLoopInspection = refreshed;
+    } catch (error) {
+      if (projectId === state.selectedId && state.researchLoopInspection?.session?.id === expectedSessionId) {
+        state.researchLoopActionError = error instanceof Error ? error.message : String(error);
+      }
+    } finally {
+      if (projectId === state.selectedId && state.researchLoopInspection?.session?.id === expectedSessionId) {
+        state.researchLoopActionBusy = false;
+        renderChatDock();
+      }
+    }
+  }
   const lifecycleCompactLabel = () => researchLoopPresentation()?.label || (state.lifecycle
     ? `${lifecyclePhaseLabels[state.lifecycle.phase] || state.lifecycle.phase} · r${state.lifecycle.revision}`
     : "Lifecycle");
@@ -1467,59 +1683,103 @@ function createComposerEventSync({
     };
   }
 
-  async function refreshConversationOnly(projectId) {
-    const conversation = selectedConversation();
-    if (!conversation || projectId !== state.selectedId) return;
-    const messages = await science.conversations.messages(projectId, conversation.id);
-    const safeMessages = Array.isArray(messages) ? messages : [];
-    const [messageEvidence, messageArtifactRows, attached, manuscripts, journalProfiles, analysisSpecs, decisions, lifecycle, project, researchContract, graphSnapshot, labDecisionProjections, loopInspection, runs] = await Promise.all([
-      loadMessageEvidence(projectId, safeMessages),
-      Promise.all(safeMessages.map(async (message) => [message.id, await science.artifacts.forMessage(projectId, message.conversationId, message.id)])),
-      science.composer.attach({ projectId, conversationId: conversation.id }),
-      science.manuscripts.list(projectId),
-      science.journals.list(projectId),
-      science.analysisSpecs.list(projectId),
-      science.decisions.list(projectId, undefined, ["queued", "presented", "deferred"]),
-      science.researchLifecycle.get(projectId),
-      science.projects.get(projectId),
-      science.researchContracts.get(projectId),
-      science.evidenceGraph.get(projectId).catch((error) => ({ graph: null, reviews: [], error: error instanceof Error ? error.message : String(error) })),
-      science.labs.decisionProjections(projectId),
-      science.researchLoops.inspect(projectId).catch(() => null),
-      science.runs.list(projectId),
-    ]);
-    if (projectId !== state.selectedId || conversation.id !== selectedConversation()?.id) return;
-    if (attached?.turn && attached.turn.id === state.activeTurn?.id && attached.turn.lastSequence < state.activeTurn.lastSequence) return;
-    state.messages = safeMessages;
-    state.chatMessagesScope = JSON.stringify([projectId, conversation.id]);
-    state.artifactContextsByMessage = new Map(messageArtifactRows.map(([messageId, contexts]) => [messageId, Array.isArray(contexts) ? contexts : []]));
-    state.blocksByMessage = messageEvidence.blocks;
-    state.citationsByMessage = messageEvidence.citations;
-    state.evidenceById = messageEvidence.spans;
-    state.activeTurn = attached?.turn || null;
-    state.composerError = composerTurnError(state.activeTurn);
-    state.manuscripts = Array.isArray(manuscripts) ? manuscripts : state.manuscripts;
-    state.journalProfiles = Array.isArray(journalProfiles) ? journalProfiles : state.journalProfiles;
-    state.analysisSpecs = Array.isArray(analysisSpecs) ? analysisSpecs : state.analysisSpecs;
-    state.decisions = Array.isArray(decisions) ? decisions : state.decisions;
-    state.labDecisionProjections = Array.isArray(labDecisionProjections) ? labDecisionProjections : [];
-    state.runs = Array.isArray(runs) ? runs : [];
-    state.lifecycle = lifecycle;
-    state.researchLoopInspection = loopInspection;
-    state.evidenceGraph = graphSnapshot?.graph || null;
-    state.evidenceGraphReviews = Array.isArray(graphSnapshot?.reviews) ? graphSnapshot.reviews : [];
-    state.evidenceGraphError = graphSnapshot?.error || "";
-    applyResearchContractSnapshot(project, researchContract);
-    if (!journalProfileById(state.selectedJournalProfileId)) state.selectedJournalProfileId = state.journalProfiles[0]?.id || null;
-    for (const tab of state.workspaceTabs.filter((item) => item.kind === "manuscript")) {
-      const manuscript = manuscriptById(tab.manuscriptId);
-      if (manuscript) { tab.title = manuscript.title; tab.exactVersion = manuscript.currentVersion; tab.exactContentSha256 = manuscript.version?.contentSha256 || null; }
+  async function refreshConversationOnly(projectId, { refreshRuntimeSelection = false } = {}) {
+    if (conversationRefreshInFlight) {
+      conversationRefreshPending = true;
+      conversationRefreshPendingRuntime = conversationRefreshPendingRuntime || refreshRuntimeSelection;
+      return conversationRefreshInFlight;
     }
-    if (!state.projectFolderOpen && await maybeOpenDraftJobManuscript(projectId, { terminalStatus: state.activeTurn?.status })) return;
-    maybePresentAnalysisPlanReview();
-    if (state.researchContractSheet || state.analysisPlanReviewSheet) { render(); return; }
-    renderWorkspaceTabs();
-    renderChatDock();
+    const performRefresh = async (shouldRefreshRuntime) => {
+      const conversation = selectedConversation();
+      if (!conversation || projectId !== state.selectedId) return;
+      const activeTurnSnapshot = state.activeTurn ? {
+        id: state.activeTurn.id,
+        lastSequence: state.activeTurn.lastSequence,
+      } : null;
+      const messages = await science.conversations.messages(projectId, conversation.id);
+      const safeMessages = Array.isArray(messages) ? messages : [];
+      const [messageEvidence, messageArtifactRows, attached, manuscripts, journalProfiles, analysisSpecs, decisions, lifecycle, project, researchContract, graphSnapshot, labDecisionProjections, loopInspection, runs] = await Promise.all([
+        loadMessageEvidence(projectId, safeMessages),
+        Promise.all(safeMessages.map(async (message) => [message.id, await science.artifacts.forMessage(projectId, message.conversationId, message.id)])),
+        science.composer.attach({ projectId, conversationId: conversation.id }),
+        science.manuscripts.list(projectId),
+        science.journals.list(projectId),
+        science.analysisSpecs.list(projectId),
+        science.decisions.list(projectId, undefined, ["queued", "presented", "deferred"]),
+        science.researchLifecycle.get(projectId),
+        science.projects.get(projectId),
+        science.researchContracts.get(projectId),
+        science.evidenceGraph.get(projectId).catch((error) => ({ graph: null, reviews: [], error: error instanceof Error ? error.message : String(error) })),
+        science.labs.decisionProjections(projectId),
+        science.researchLoops.inspect(projectId).catch(() => null),
+        science.runs.list(projectId),
+      ]);
+      if (projectId !== state.selectedId || conversation.id !== selectedConversation()?.id) return;
+      const attachedTurn = attached?.turn || null;
+      const currentTurn = state.activeTurn;
+      const activeTurnAdvanced = currentTurn?.id !== activeTurnSnapshot?.id
+        || Number(currentTurn?.lastSequence) !== Number(activeTurnSnapshot?.lastSequence);
+      if (activeTurnAdvanced && currentTurn && attachedTurn?.id !== currentTurn.id) {
+        conversationRefreshPending = true;
+        conversationRefreshPendingRuntime = conversationRefreshPendingRuntime || shouldRefreshRuntime;
+        return;
+      }
+      if (attachedTurn && currentTurn && attachedTurn.id === currentTurn.id && Number(attachedTurn.lastSequence) < Number(currentTurn.lastSequence)) {
+        conversationRefreshPending = true;
+        conversationRefreshPendingRuntime = conversationRefreshPendingRuntime || shouldRefreshRuntime;
+        return;
+      }
+      state.messages = safeMessages;
+      state.chatMessagesScope = JSON.stringify([projectId, conversation.id]);
+      state.artifactContextsByMessage = new Map(messageArtifactRows.map(([messageId, contexts]) => [messageId, Array.isArray(contexts) ? contexts : []]));
+      state.blocksByMessage = messageEvidence.blocks;
+      state.citationsByMessage = messageEvidence.citations;
+      state.evidenceById = messageEvidence.spans;
+      state.activeTurn = attachedTurn || null;
+      state.composerError = composerTurnError(state.activeTurn);
+      if (shouldRefreshRuntime) {
+        await refreshScienceRuntimeSelection(projectId, conversation.id, { renderDock: false });
+        if (projectId !== state.selectedId || conversation.id !== selectedConversation()?.id) return;
+      }
+      state.manuscripts = Array.isArray(manuscripts) ? manuscripts : state.manuscripts;
+      state.journalProfiles = Array.isArray(journalProfiles) ? journalProfiles : state.journalProfiles;
+      state.analysisSpecs = Array.isArray(analysisSpecs) ? analysisSpecs : state.analysisSpecs;
+      state.decisions = Array.isArray(decisions) ? decisions : [];
+      state.labDecisionProjections = Array.isArray(labDecisionProjections) ? labDecisionProjections : [];
+      state.runs = Array.isArray(runs) ? runs : [];
+      state.lifecycle = lifecycle;
+      state.researchLoopInspection = loopInspection;
+      state.evidenceGraph = graphSnapshot?.graph || null;
+      state.evidenceGraphReviews = Array.isArray(graphSnapshot?.reviews) ? graphSnapshot.reviews : [];
+      state.evidenceGraphError = graphSnapshot?.error || "";
+      applyResearchContractSnapshot(project, researchContract);
+      if (!journalProfileById(state.selectedJournalProfileId)) state.selectedJournalProfileId = state.journalProfiles[0]?.id || null;
+      for (const tab of state.workspaceTabs.filter((item) => item.kind === "manuscript")) {
+        const manuscript = manuscriptById(tab.manuscriptId);
+        if (manuscript) { tab.title = manuscript.title; tab.exactVersion = manuscript.currentVersion; tab.exactContentSha256 = manuscript.version?.contentSha256 || null; }
+      }
+      if (!state.projectFolderOpen && await maybeOpenDraftJobManuscript(projectId, { terminalStatus: state.activeTurn?.status })) return;
+      maybePresentAnalysisPlanReview();
+      if (state.researchContractSheet || state.analysisPlanReviewSheet) { render(); return; }
+      renderWorkspaceTabs();
+      renderChatDock();
+    };
+    let nextRuntimeRefresh = refreshRuntimeSelection;
+    const run = (async () => {
+      while (true) {
+        conversationRefreshPending = false;
+        conversationRefreshPendingRuntime = false;
+        await performRefresh(nextRuntimeRefresh);
+        if (!conversationRefreshPending || projectId !== state.selectedId) break;
+        nextRuntimeRefresh = conversationRefreshPendingRuntime;
+      }
+    })();
+    conversationRefreshInFlight = run;
+    try {
+      await run;
+    } finally {
+      if (conversationRefreshInFlight === run) conversationRefreshInFlight = null;
+    }
   }
 
   async function selectProject(projectId, options = {}) {
@@ -1556,6 +1816,7 @@ function createComposerEventSync({
       manuscriptView: state.manuscriptView,
       selectedJournalProfileId: state.selectedJournalProfileId,
     } : null;
+    const preserveRuntimeSelection = Boolean(preservedWorkspace && !switchingProject);
     state.selectedId = projectId;
     state.projectFolderOpen = Boolean(options.openFolder);
     if (window.matchMedia("(max-width: 680px)").matches) state.railCollapsed = true;
@@ -1637,8 +1898,22 @@ function createComposerEventSync({
     state.labManagerError = "";
     state.activeTurn = null;
     state.researchLoopInspection = null;
+    state.researchLoopActionBusy = false;
+    state.researchLoopActionError = "";
     state.composerSending = false;
     state.composerError = "";
+    if (!preserveRuntimeSelection) {
+      runtimeSelectionRequestEpoch += 1;
+      state.runtimeSelection = null;
+      state.runtimeOptions = [];
+      state.runtimeUnavailable = false;
+      state.runtimeSelectionLoading = false;
+      state.runtimeSelectionBusy = false;
+      state.runtimeSelectionError = "";
+      state.runtimeSelectionScope = null;
+    }
+    state.runtimePickerOpen = false;
+    state.runtimePickerQuery = "";
     state.selectedManuscriptId = null;
     state.selectedAnalysisPlanId = null;
     state.manuscriptDraft = null;
@@ -1831,6 +2106,22 @@ function createComposerEventSync({
       state.acquisitionRuns = [];
       state.acquisitionUnresolvedIds = [];
       state.acquisitionError = "";
+      const runtimeConversation = selectedConversation();
+      if (runtimeConversation && !preserveRuntimeSelection) {
+        await refreshScienceRuntimeSelection(projectId, runtimeConversation.id, { renderDock: false });
+      }
+      else if (!runtimeConversation) {
+        runtimeSelectionRequestEpoch += 1;
+        state.runtimeSelection = null;
+        state.runtimeOptions = [];
+        state.runtimeUnavailable = false;
+        state.runtimeSelectionLoading = false;
+        state.runtimeSelectionError = "";
+        state.runtimeSelectionScope = null;
+        state.runtimePickerOpen = false;
+        state.runtimePickerQuery = "";
+      }
+      if (epoch !== selectionEpoch) return;
       if (!state.projectFolderOpen && await maybeOpenDraftJobManuscript(projectId, { terminalStatus: state.activeTurn?.status })) return;
       maybePresentAnalysisPlanReview();
       render();
@@ -5664,6 +5955,18 @@ function createComposerEventSync({
     state.chatMessagesScope = null;
     state.activeTurn = null;
     state.composerError = "";
+    state.researchLoopActionBusy = false;
+    state.researchLoopActionError = "";
+    runtimeSelectionRequestEpoch += 1;
+    state.runtimeSelection = null;
+    state.runtimeOptions = [];
+    state.runtimeUnavailable = false;
+    state.runtimeSelectionLoading = false;
+    state.runtimeSelectionBusy = false;
+    state.runtimeSelectionError = "";
+    state.runtimeSelectionScope = null;
+    state.runtimePickerOpen = false;
+    state.runtimePickerQuery = "";
     state.mode = "session";
     state.currentDestination = "overview";
     const tab = state.workspaceTabs.find((item) => item.kind === "conversation" && item.conversationId === conversation.id);
@@ -5672,7 +5975,7 @@ function createComposerEventSync({
     state.projectError = "";
     render();
     try {
-      await refreshConversationOnly(state.selectedId);
+      await refreshConversationOnly(state.selectedId, { refreshRuntimeSelection: true });
       void queueWorkspacePersistence();
     } catch (error) {
       state.projectError = error instanceof Error ? error.message : String(error);
@@ -6697,11 +7000,60 @@ function createComposerEventSync({
       : "";
   }
 
+  function scienceRuntimePickerMarkup() {
+    const locked = scienceRuntimePickerLocked();
+    const loading = state.runtimeSelectionLoading;
+    const busy = state.runtimeSelectionBusy;
+    const selected = scienceRuntimeSelectionForDisplay();
+    const selectedKey = scienceRuntimeSelectionKey(selected);
+    const label = scienceRuntimeDisplayLabel() || uiCopy("모델 선택", "Select model");
+    const provider = scienceRuntimeDisplayProvider();
+    const query = String(state.runtimePickerQuery || "").trim().toLocaleLowerCase(state.locale || "en");
+    const visibleOptions = state.runtimeOptions
+      .map((option, index) => ({ option, index }))
+      .filter(({ option }) => !query || [scienceRuntimeOptionLabel(option), scienceRuntimeOptionProvider(option), option.selection?.model, option.selection?.backend, option.selection?.kind]
+        .filter(Boolean).join(" ").toLocaleLowerCase(state.locale || "en").includes(query));
+    const buttonDisabled = locked || loading || busy || !selectedConversation();
+    const status = state.runtimeSelectionError
+      ? scienceRuntimeErrorText(state.runtimeSelectionError)
+      : state.runtimeUnavailable
+        ? uiCopy("연결된 모델을 사용할 수 없습니다.", "No connected model is available.")
+        : "";
+    const optionRows = visibleOptions.length
+      ? visibleOptions.map(({ option, index }) => {
+        const optionKey = scienceRuntimeSelectionKey(option.selection);
+        const optionLabel = scienceRuntimeOptionLabel(option);
+        const optionProvider = scienceRuntimeOptionProvider(option);
+        return `<button type="button" class="scienceModelOption${optionKey === selectedKey ? " isSelected" : ""}" data-action="select-science-model" data-science-runtime-option-index="${index}" role="option" aria-selected="${optionKey === selectedKey}" ${locked || busy ? "disabled" : ""}><span class="scienceModelOptionCopy"><strong>${escapeHtml(optionLabel)}</strong>${optionProvider ? `<em>${escapeHtml(optionProvider)}</em>` : ""}</span><span class="scienceModelOptionCheck" aria-hidden="true">${optionKey === selectedKey ? "✓" : ""}</span></button>`;
+      }).join("")
+      : `<div class="scienceModelEmpty">${escapeHtml(state.runtimeUnavailable ? uiCopy("사용 가능한 모델이 없습니다.", "No available models.") : query ? uiCopy("검색 결과가 없습니다.", "No models match this search.") : uiCopy("사용 가능한 모델이 없습니다.", "No models are available."))}</div>`;
+    const menu = state.runtimePickerOpen && !locked
+      ? `<div class="scienceModelMenu" role="dialog" aria-label="${escapeHtml(uiCopy("모델 선택", "Select model"))}"><div class="scienceModelMenuHeader"><strong>${escapeHtml(uiCopy("연구 모델", "Research model"))}</strong><button type="button" class="scienceModelClose" data-action="close-science-model" aria-label="${escapeHtml(uiCopy("닫기", "Close"))}">×</button></div><label class="scienceModelSearch">${heroIcon("search")}<span class="visuallyHidden">${escapeHtml(uiCopy("모델 검색", "Search models"))}</span><input type="search" data-science-model-search value="${escapeHtml(state.runtimePickerQuery)}" placeholder="${escapeHtml(uiCopy("모델 또는 제공자 검색", "Search model or provider"))}" autocomplete="off"></label><div class="scienceModelOptions" role="listbox" aria-label="${escapeHtml(uiCopy("사용 가능한 모델", "Available models"))}">${optionRows}</div>${status ? `<p class="scienceModelError" role="alert">${escapeHtml(status)}</p>` : ""}</div>`
+      : "";
+    const triggerTitle = locked
+      ? uiCopy("현재 연구 실행의 모델", "Model pinned for the running research")
+      : uiCopy("연구 모델 선택", "Choose the research model");
+    return `<div class="scienceModelPicker${state.runtimePickerOpen ? " isOpen" : ""}" data-science-model-picker><button type="button" class="scienceModelTrigger${!selected ? " isRequired" : ""}" data-action="toggle-science-model" data-science-model-trigger aria-haspopup="dialog" aria-expanded="${state.runtimePickerOpen && !locked}" aria-label="${escapeHtml(triggerTitle)}" title="${escapeHtml(triggerTitle)}" ${buttonDisabled ? "disabled" : ""}><span class="scienceModelTriggerMark" aria-hidden="true">✦</span><span class="scienceModelTriggerCopy"><strong>${escapeHtml(label)}</strong>${provider ? `<em>${escapeHtml(provider)}</em>` : ""}</span><span class="scienceModelTriggerChevron" aria-hidden="true">⌄</span></button>${menu}</div>`;
+  }
+
+  function scienceResearchLoopControlsMarkup() {
+    const session = state.researchLoopInspection?.session;
+    if (!session || session.status !== "paused" || session.projectId !== state.selectedId) return "";
+    const busy = state.researchLoopActionBusy;
+    const error = scienceResearchLoopActionErrorText(state.researchLoopActionError);
+    const detail = uiCopy(
+      `연구 ${session.currentEpisode || 0}회차가 멈췄습니다. 현재 모델은 이 연구에 고정되어 있습니다.`,
+      `Research is paused at episode ${session.currentEpisode || 0}. Its pinned model stays fixed until you continue or stop it.`,
+    );
+    return `<div class="scienceResearchLoopControls" data-research-loop-controls data-loop-session-id="${escapeHtml(session.id)}" data-loop-version="${escapeHtml(session.version)}" data-loop-state-sha256="${escapeHtml(session.stateSha256)}"><div class="scienceResearchLoopCopy"><strong>${escapeHtml(uiCopy("연구가 일시 중지됨", "Research paused"))}</strong><span>${escapeHtml(detail)}</span></div><div class="scienceResearchLoopActions"><button type="button" class="scienceResearchLoopResume" data-action="resume-science-loop" ${busy ? "disabled" : ""}>${escapeHtml(busy ? uiCopy("처리 중…", "Working…") : uiCopy("연구 계속", "Continue research"))}</button><button type="button" class="scienceResearchLoopCancel" data-action="cancel-science-loop" ${busy ? "disabled" : ""}>${escapeHtml(uiCopy("연구 중지", "Stop research"))}</button></div>${error ? `<p class="scienceResearchLoopError" role="alert">${escapeHtml(error)}</p>` : ""}</div>`;
+  }
+
   function composer(docked = false) {
-    const running = state.activeTurn && ["queued", "running", "cancelling"].includes(state.activeTurn.status);
+    const running = state.activeTurn && SCIENCE_RUNTIME_RUNNING_STATUSES.has(state.activeTurn.status);
     const needsInitialRun = !running && state.messages.length === 1 && state.messages[0].role === "user" && !state.messages.some((message) => message.role === "assistant");
     const disabled = state.composerSending || !selectedConversation() || !chatMessagesReady();
-    const sendDisabled = !running && (disabled || (!needsInitialRun && !state.composerDraft.trim()));
+    const runtimeSelectionBlocked = !state.runtimeSelection || state.runtimeUnavailable || state.runtimeSelectionLoading || state.runtimeSelectionBusy;
+    const sendDisabled = !running && (disabled || runtimeSelectionBlocked || (!needsInitialRun && !state.composerDraft.trim()));
     // 같은 실패가 두 번 나오면 안 된다. 본문 .failClosed 가 사람 문장으로 설명하는 경우
   // 하단 상태줄까지 오류 원문을 되풀이하면, 사람은 잘린 개발자 문자열
   // ("Error invoking remote method 'scien…")만 읽게 된다. 설명된 실패는 짧게 가리키고
@@ -6724,8 +7076,14 @@ function createComposerEventSync({
       ? uiCopy("연구 실행 중단됨", "Research run stopped")
       : loopPresentation?.attention
         ? loopPresentation.label
+        : state.runtimeSelectionError
+          ? scienceRuntimeErrorText(state.runtimeSelectionError)
+          : state.runtimeUnavailable
+            ? uiCopy("연결된 모델을 사용할 수 없습니다.", "No connected model is available.")
+            : !state.runtimeSelection && !state.runtimeSelectionLoading
+              ? uiCopy("모델을 선택해 주세요.", "Choose a model to begin.")
         : needsInitialRun ? "저장된 첫 질문을 실행할 수 있습니다" : "");
-    return `<footer class="composer${docked ? " dockedComposer" : ""}"><div class="composerBox"><textarea data-composer-input ${disabled || running || needsInitialRun ? "disabled" : ""} rows="2" aria-label="후속 질문" placeholder="후속 질문, 분석 또는 실험 요청">${escapeHtml(state.composerDraft)}</textarea><div class="composerBar"><div class="composerTools">${status ? `<span class="composerStatus">${escapeHtml(status)}</span>` : ""}</div><button class="sendButton" data-action="${running ? "cancel-turn" : "send-turn"}" ${sendDisabled ? "disabled" : ""} aria-label="${running ? "중단" : needsInitialRun ? "첫 질문 실행" : "보내기"}">${running ? "■" : "↑"}</button></div></div></footer>`;
+    return `<footer class="composer${docked ? " dockedComposer" : ""}"><div class="composerBox"><textarea data-composer-input ${disabled || running || needsInitialRun ? "disabled" : ""} rows="2" aria-label="후속 질문" placeholder="후속 질문, 분석 또는 실험 요청">${escapeHtml(state.composerDraft)}</textarea><div class="composerBar"><div class="composerTools">${scienceRuntimePickerMarkup()}${scienceResearchLoopControlsMarkup()}${status ? `<span class="composerStatus">${escapeHtml(status)}</span>` : ""}</div><button class="sendButton" data-action="${running ? "cancel-turn" : "send-turn"}" ${sendDisabled ? "disabled" : ""} aria-label="${running ? "중단" : needsInitialRun ? "첫 질문 실행" : "보내기"}">${running ? "■" : "↑"}</button></div></div></footer>`;
   }
 
   function chatContextTokensMarkup() {
@@ -6833,6 +7191,9 @@ function createComposerEventSync({
     state.messages = [...state.messages.filter((item) => item.id !== message.id), message]
       .sort((left, right) => left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id));
     state.activeTurn = turn;
+    if (turn.runtimeSelection && turn.projectId === state.selectedId && turn.conversationId === selectedConversation()?.id) {
+      state.runtimeSelection = turn.runtimeSelection;
+    }
   }
 
   async function startComposerTurn(options = {}) {
@@ -6885,6 +7246,14 @@ function createComposerEventSync({
     const selectionContext = !needsInitialRun && state.mode === "manuscript" ? state.manuscriptSelectionContext : null;
     const runtimeContent = selectionContext ? `${content}\n\n<<agentlas-manuscript-selection:v1 ${JSON.stringify({ selectionContextId: selectionContext.id, manuscriptId: selectionContext.manuscriptId, manuscriptVersion: selectionContext.manuscriptVersion, manuscriptContentSha256: selectionContext.manuscriptContentSha256, manuscriptDocumentSha256: selectionContext.manuscriptDocumentSha256, nodeId: selectionContext.nodeId, nodeRevision: selectionContext.nodeRevision, nodeContentSha256: selectionContext.nodeContentSha256, startOffset: selectionContext.startOffset, endOffset: selectionContext.endOffset, selectedText: selectionContext.selectedText })}>>` : content;
     if (!needsInitialRun && !content) return;
+    const runtimeSelection = state.runtimeSelection;
+    if (!runtimeSelection || state.runtimeUnavailable || state.runtimeSelectionLoading || state.runtimeSelectionBusy) {
+      state.runtimePickerOpen = true;
+      state.composerError = state.runtimeUnavailable ? "science-runtime-selection-unavailable" : "science-runtime-selection-required";
+      renderChatDock();
+      requestAnimationFrame(() => document.querySelector("[data-science-model-trigger]")?.focus());
+      return;
+    }
     state.composerSending = true;
     state.composerError = "";
     renderChatDock();
@@ -6893,6 +7262,7 @@ function createComposerEventSync({
         requestId,
         projectId: project.id,
         conversationId: conversation.id,
+        runtimeSelection,
         ...(needsInitialRun
           ? { mode: "existing-user-message", userMessageId: state.messages[0].id }
           : { mode: "append-user-message", content: runtimeContent }),
@@ -6927,6 +7297,7 @@ function createComposerEventSync({
             requestId,
             projectId: project.id,
             conversationId: conversation.id,
+            runtimeSelection,
             mode: "append-user-message",
             content: state.messages[0].content,
           };
@@ -9819,6 +10190,33 @@ function createComposerEventSync({
   root.addEventListener("click", (event) => {
     const target = event.target.closest("button");
     if (!target) return;
+    if (target.dataset.action === "resume-science-loop") {
+      void transitionScienceResearchLoop("resume");
+      return;
+    }
+    if (target.dataset.action === "cancel-science-loop") {
+      void transitionScienceResearchLoop("cancel");
+      return;
+    }
+    if (target.dataset.action === "toggle-science-model") {
+      if (scienceRuntimePickerLocked() || state.runtimeSelectionLoading || state.runtimeSelectionBusy) return;
+      state.runtimePickerOpen = !state.runtimePickerOpen;
+      renderChatDock();
+      if (state.runtimePickerOpen) requestAnimationFrame(() => document.querySelector("[data-science-model-search]")?.focus());
+      return;
+    }
+    if (target.dataset.action === "close-science-model") {
+      state.runtimePickerOpen = false;
+      state.runtimePickerQuery = "";
+      renderChatDock();
+      requestAnimationFrame(() => document.querySelector("[data-science-model-trigger]")?.focus());
+      return;
+    }
+    if (target.dataset.action === "select-science-model") {
+      const optionIndex = Number(target.dataset.scienceRuntimeOptionIndex);
+      if (Number.isSafeInteger(optionIndex)) void selectScienceRuntimeOption(optionIndex);
+      return;
+    }
     if (target.dataset.action === "retry-inline-preview") {
       const host = target.closest(".inlineArtifactItem")?.querySelector("[data-inline-vega-artifact], [data-inline-capture-artifact]");
       if (host) void hydrateInlineArtifactPreview(host);
@@ -10615,7 +11013,32 @@ function createComposerEventSync({
     }, 120);
   }
 
+  function scheduleScienceModelSearchRender(modelSearch) {
+    const value = modelSearch.value;
+    const selectionStart = modelSearch.selectionStart;
+    const selectionEnd = modelSearch.selectionEnd;
+    state.runtimePickerQuery = value;
+    if (scienceModelSearchTimer) window.clearTimeout(scienceModelSearchTimer);
+    scienceModelSearchTimer = window.setTimeout(() => {
+      scienceModelSearchTimer = null;
+      if (scienceModelSearchComposing || !state.runtimePickerOpen) return;
+      renderChatDock();
+      requestAnimationFrame(() => {
+        const input = document.querySelector("[data-science-model-search]");
+        if (!input) return;
+        input.focus();
+        if (selectionStart !== null && selectionEnd !== null) input.setSelectionRange(selectionStart, selectionEnd);
+      });
+    }, 80);
+  }
+
   root.addEventListener("compositionstart", (event) => {
+    if (event.target.closest("[data-science-model-search]")) {
+      scienceModelSearchComposing = true;
+      if (scienceModelSearchTimer) window.clearTimeout(scienceModelSearchTimer);
+      scienceModelSearchTimer = null;
+      return;
+    }
     if (!event.target.closest("[data-project-search]")) return;
     librarySearchComposing = true;
     if (librarySearchTimer) window.clearTimeout(librarySearchTimer);
@@ -10623,6 +11046,12 @@ function createComposerEventSync({
   });
 
   root.addEventListener("compositionend", (event) => {
+    const modelSearch = event.target.closest("[data-science-model-search]");
+    if (modelSearch) {
+      scienceModelSearchComposing = false;
+      scheduleScienceModelSearchRender(modelSearch);
+      return;
+    }
     const projectSearch = event.target.closest("[data-project-search]");
     if (!projectSearch) return;
     librarySearchComposing = false;
@@ -10630,6 +11059,12 @@ function createComposerEventSync({
   });
 
   root.addEventListener("input", (event) => {
+    const modelSearch = event.target.closest("[data-science-model-search]");
+    if (modelSearch) {
+      state.runtimePickerQuery = modelSearch.value;
+      if (!event.isComposing && !scienceModelSearchComposing) scheduleScienceModelSearchRender(modelSearch);
+      return;
+    }
     const projectSearch = event.target.closest("[data-project-search]");
     if (projectSearch) {
       state.librarySearch = projectSearch.value;
@@ -10707,7 +11142,7 @@ function createComposerEventSync({
     if (!target) return;
     state.composerDraft = target.value;
     const send = document.querySelector('[data-action="send-turn"]');
-    if (send) send.disabled = !state.composerDraft.trim();
+    if (send) send.disabled = !state.composerDraft.trim() || !state.runtimeSelection || state.runtimeUnavailable || state.runtimeSelectionLoading || state.runtimeSelectionBusy;
   });
 
   root.addEventListener("mouseup", () => {
@@ -10776,6 +11211,21 @@ function createComposerEventSync({
         }
       }
       return;
+    }
+    const scienceModelSearch = event.target.closest?.("[data-science-model-search]");
+    if (scienceModelSearch) {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        state.runtimePickerOpen = false;
+        state.runtimePickerQuery = "";
+        renderChatDock();
+        requestAnimationFrame(() => document.querySelector("[data-science-model-trigger]")?.focus());
+        return;
+      }
+      if (event.key === "Enter" || event.key === "ArrowDown" || event.key === "ArrowUp") {
+        event.preventDefault();
+        return;
+      }
     }
     const dialog = event.target.closest?.('[role="dialog"]') || document.querySelector('[role="dialog"]');
     if (dialog) {
@@ -11439,23 +11889,42 @@ function createComposerEventSync({
           turnId: state.activeTurn.id,
           lastSequence: state.activeTurn.lastSequence,
         } : null,
+        getCurrentConversationScope: () => ({
+          projectId: state.selectedId,
+          conversationId: selectedConversation()?.id,
+        }),
         readReceipt: (input) => science.composer.receipt(input),
+        readAttach: (input) => science.composer.attach(input),
+        onAttach: (turn) => {
+          if (turn.projectId !== state.selectedId || turn.conversationId !== selectedConversation()?.id) return;
+          if (state.activeTurn?.id === turn.id && Number(turn.lastSequence) < Number(state.activeTurn.lastSequence)) return;
+          state.activeTurn = turn;
+          state.composerError = composerTurnError(turn);
+          if (turn.runtimeSelection) state.runtimeSelection = turn.runtimeSelection;
+          renderChatDock();
+        },
         onProgress: (turn) => {
           state.activeTurn = turn;
+          if (turn.runtimeSelection && turn.projectId === state.selectedId && turn.conversationId === selectedConversation()?.id) {
+            state.runtimeSelection = turn.runtimeSelection;
+          }
           renderChatDock();
         },
         onTerminal: async (turn) => {
           state.activeTurn = turn;
+          if (turn.runtimeSelection && turn.projectId === state.selectedId && turn.conversationId === selectedConversation()?.id) {
+            state.runtimeSelection = turn.runtimeSelection;
+          }
           const projectId = state.selectedId;
           recordRunFailure(composerTurnError(turn));
           if (!projectId) return;
           if (state.projectFolderOpen) await selectProject(projectId, { openFolder: true, preserveWorkspace: true });
           else if (state.mode === "lab") await refreshConversationOnly(projectId);
-          else await selectProject(projectId, { preserveWorkspace: true });
+          else await refreshConversationOnly(projectId);
         },
         onError: (error, event) => {
           if (event.projectId !== state.selectedId || event.conversationId !== selectedConversation()?.id
-            || event.turnId !== state.activeTurn?.id) return;
+          ) return;
           recordRunFailure(error);
         },
       });

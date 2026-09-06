@@ -356,7 +356,7 @@ button { cursor: pointer; color: inherit; }
 .workspaceCenter { min-width: 0; flex: 1; container: science-center / inline-size; }
 .workspaceSurface { min-height: 100%; height: 100%; }
 
-.chatDock { min-width: var(--science-chat-width); flex: 0 0 var(--science-chat-width); min-height: 0; padding: 0; background: var(--surface); border-left: 1px solid var(--line); }
+.chatDock { position: relative; z-index: 3; min-width: var(--science-chat-width); flex: 0 0 var(--science-chat-width); min-height: 0; padding: 0; background: var(--surface); border-left: 1px solid var(--line); }
 .workspace[data-workspace-mode="session"] .chatDock, .workspace[data-workspace-mode="manuscript"] .chatDock { min-width: var(--science-chat-width); flex-basis: var(--science-chat-width); }
 .workspace[data-workspace-mode="manuscript"] .chatDock { padding-top: 0; }
 .chatDockFrame { height: 100%; min-height: 0; display: flex; flex-direction: column; overflow: hidden; border: 0; border-radius: 0; background: var(--surface); box-shadow: none; }
@@ -400,6 +400,8 @@ button { cursor: pointer; color: inherit; }
 .chatArtifactLink strong { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .chatArtifactLink span { display: block; margin-top: 3px; color: var(--muted); }
 .chatDockComposer { flex: 0 0 auto; border-top: 1px solid var(--line); background: var(--surface); overflow: hidden; }
+.chatDockComposer { position: relative; overflow: visible; }
+.chatDockFrame:has(.scienceModelMenu) { overflow: visible; }
 .composer.dockedComposer { position: static; z-index: auto; left: auto; right: auto; bottom: auto; padding: 0; background: transparent; pointer-events: auto; }
 .composer.dockedComposer .composerBox { width: 100%; max-width: none; margin: 0; border: 0; border-radius: 0; box-shadow: none; }
 .composer.dockedComposer textarea { min-height: 58px; height: 58px; padding: 14px 14px 6px; color: var(--ink); }
@@ -683,6 +685,50 @@ button { cursor: pointer; color: inherit; }
 .composerBar button:disabled { cursor: not-allowed; opacity: .55; }
 .composerBar .sendButton { width: 38px; height: 38px; flex-basis: 38px; border-radius: 11px; background: var(--ink); color: white; border-color: var(--ink); font-size: 18px; }
 .composerStatus { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.scienceModelPicker { position: static; min-width: 0; flex: 0 1 auto; }
+.scienceModelTrigger { min-width: 0; max-width: 190px; height: 32px; display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--line); border-radius: 9px; background: var(--surface); padding: 0 8px; color: var(--ink); text-align: left; }
+.scienceModelTrigger:hover:not(:disabled), .scienceModelTrigger:focus-visible { border-color: var(--line-strong); background: var(--soft); }
+.scienceModelTrigger.isRequired { border-color: var(--line-strong); }
+.scienceModelTrigger:disabled { cursor: not-allowed; opacity: .72; }
+.scienceModelTriggerMark { flex: 0 0 auto; color: var(--ink); font-size: 13px; line-height: 1; }
+.scienceModelTriggerCopy { min-width: 0; display: grid; gap: 1px; line-height: 1.15; }
+.scienceModelTriggerCopy strong { overflow: hidden; font-size: 11px; font-weight: 680; text-overflow: ellipsis; white-space: nowrap; }
+.scienceModelTriggerCopy em { overflow: hidden; color: var(--muted); font-size: 9px; font-style: normal; text-overflow: ellipsis; white-space: nowrap; }
+.scienceModelTriggerChevron { flex: 0 0 auto; color: var(--muted); font-size: 14px; line-height: 1; }
+.scienceModelMenu { position: absolute; z-index: 30; right: 0; bottom: calc(100% + 8px); width: min(320px, calc(100vw - 28px)); max-height: min(360px, calc(100vh - 180px)); display: grid; grid-template-rows: auto auto minmax(0, 1fr) auto; gap: 8px; overflow: hidden; border: 1px solid var(--line-strong); border-radius: var(--science-radius-card); background: var(--surface); box-shadow: var(--science-shadow-standard); padding: 10px; }
+.scienceModelMenuHeader { min-height: 24px; display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.scienceModelMenuHeader strong { color: var(--ink); font-size: 12px; font-weight: 700; }
+.scienceModelClose { width: 26px; height: 26px; display: grid; place-items: center; border: 0; border-radius: 7px; background: transparent; color: var(--muted); font-size: 17px; line-height: 1; }
+.scienceModelClose:hover, .scienceModelClose:focus-visible { background: var(--soft); color: var(--ink); }
+.scienceModelSearch { min-width: 0; height: 34px; display: flex; align-items: center; gap: 7px; border: 1px solid var(--line); border-radius: 9px; background: var(--surface); padding: 0 9px; color: var(--muted); }
+.scienceModelSearch .uiIcon { width: 14px; height: 14px; flex: 0 0 14px; }
+.scienceModelSearch input { width: 100%; min-width: 0; height: 30px; border: 0; outline: none; background: transparent; color: var(--ink); font-size: 11px; }
+.scienceModelOptions { min-height: 0; display: grid; gap: 2px; overflow-y: auto; overscroll-behavior: contain; }
+.scienceModelOption { min-width: 0; min-height: 48px; display: flex; align-items: center; gap: 8px; border: 1px solid transparent; border-radius: 9px; background: transparent; padding: 7px 8px; color: var(--ink); text-align: left; }
+.scienceModelOption:hover:not(:disabled), .scienceModelOption:focus-visible { border-color: var(--line); background: var(--soft); }
+.scienceModelOption.isSelected { border-color: var(--line-strong); background: var(--soft); }
+.scienceModelOption:disabled { cursor: not-allowed; opacity: .68; }
+.scienceModelOptionCopy { min-width: 0; display: grid; flex: 1 1 auto; gap: 2px; }
+.scienceModelOptionCopy strong { overflow: hidden; font-size: 11px; font-weight: 680; text-overflow: ellipsis; white-space: nowrap; }
+.scienceModelOptionCopy em { overflow: hidden; color: var(--muted); font-size: 10px; font-style: normal; text-overflow: ellipsis; white-space: nowrap; }
+.scienceModelOptionCheck { width: 16px; flex: 0 0 16px; color: var(--ink); font-size: 13px; text-align: center; }
+.scienceModelEmpty, .scienceModelError { margin: 0; color: var(--muted); font-size: 11px; line-height: 1.5; }
+.scienceModelEmpty { padding: 12px 8px; text-align: center; }
+.scienceModelError { border-top: 1px solid var(--line); padding: 8px 2px 0; color: var(--muted-deep); }
+.composerBar .scienceModelTrigger { width: auto; min-width: 112px; max-width: 190px; height: 32px; flex: 0 1 auto; display: inline-flex; border-radius: 9px; }
+.composerBar .scienceModelClose { width: 26px; height: 26px; flex: 0 0 26px; display: grid; border-radius: 7px; }
+.composerBar .scienceModelOption { width: 100%; min-height: 48px; height: auto; flex: 0 0 auto; display: flex; border-radius: 9px; }
+.scienceResearchLoopControls { min-width: 0; display: grid !important; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 8px; flex: 1 1 100%; border-top: 1px solid var(--line); padding: 7px 0 0; }
+.composerBar .composerTools { min-width: 0; flex-wrap: wrap; }
+.scienceResearchLoopCopy { min-width: 0; display: grid; gap: 2px; }
+.scienceResearchLoopCopy strong { overflow: hidden; color: var(--ink); font-size: 10px; font-weight: 720; text-overflow: ellipsis; white-space: nowrap; }
+.scienceResearchLoopCopy span { overflow: hidden; color: var(--muted); font-size: 10px; line-height: 1.35; text-overflow: ellipsis; white-space: nowrap; }
+.scienceResearchLoopActions { display: flex; align-items: center; gap: 5px; }
+.composerBar .scienceResearchLoopActions button { width: auto; min-width: 0; height: 27px; flex: 0 0 auto; border-radius: 7px; padding: 0 8px; font-size: 10px; font-weight: 700; }
+.composerBar .scienceResearchLoopResume { border-color: var(--ink); background: var(--ink); color: #fff; }
+.composerBar .scienceResearchLoopCancel { border-color: var(--line-strong); background: var(--surface); color: var(--muted-deep); }
+.scienceResearchLoopActions button:disabled { cursor: wait; opacity: .55; }
+.scienceResearchLoopError { grid-column: 1 / -1; margin: 0; color: var(--danger); font-size: 10px; line-height: 1.4; }
 
 .manuscriptWorkspace { min-height: 0; height: 100%; display: flex; flex-direction: column; overflow: hidden; background: var(--surface); }
 .journalToolbar { min-height: 54px; flex: 0 0 54px; display: flex; align-items: center; gap: 0; overflow-x: auto; overflow-y: hidden; border-bottom: 1px solid var(--line); background: var(--surface); padding: 0 14px; scrollbar-width: none; }
@@ -4660,7 +4706,7 @@ select,
 .workspaceTabAdd,
 .workspaceTabOverflow,
 .chatHeaderAction,
-.composerBar button,
+.composerBar button:not(.scienceModelTrigger):not(.scienceModelClose):not(.scienceModelOption):not(.scienceResearchLoopResume):not(.scienceResearchLoopCancel),
 .scienceDialog > header button,
 .bottomSheet > header button {
   width: var(--science-icon-button-size);

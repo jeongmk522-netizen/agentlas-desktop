@@ -35,5 +35,8 @@ button { font: inherit; }
 }
 @media (max-width: 520px) {
   .artifact-bar { bottom: 55px; }
-  .receipt-bar { bottom: 105px; width: calc(100% - 55px); }
+  .receipt-bar { right: 48px; bottom: 105px; width: calc(100% - 96px); }
+  .ketcher-host [data-testid="top-toolbar"] { position: relative; z-index: 10; justify-content: flex-start; align-content: center; flex-wrap: wrap; gap: 0 8px; height: auto; min-height: 36px; padding-inline: 8px; }
+  .ketcher-host [data-testid="top-toolbar"] > div { flex: 0 0 auto; height: 36px; }
+  .ketcher-host [data-testid="top-toolbar"] > div:last-child { margin-left: auto; }
 }

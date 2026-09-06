@@ -221,6 +221,16 @@ function App() {
     : errorKind === "validation"
       ? { title: "The structure could not be validated.", guidance: "Correct the structure, then validate it again." }
       : { title: "This structure could not be loaded.", guidance: "Reopen the artifact. If it still fails, return to its source and replace the invalid structure." };
+  const phaseLabel = {
+    launching: "Loading",
+    probing: "Loading",
+    rendering: "Loading",
+    validating: "Validating",
+    saving: "Saving",
+    "edit-dirty": "Validation required",
+    "ready-to-save": "Ready to save",
+    "version-saved": "Version saved",
+  }[phase] || "";
 
   return (
     <main className="pack-shell">
@@ -231,7 +241,7 @@ function App() {
           <small>Ketcher 3.17.2 · Indigo 1.45.1 · offline signed pack</small>
         </div>
         <div className="actions">
-          <span className={`phase phase-${phase}`}>{phase}</span>
+          {phaseLabel && <span className={`phase phase-${phase}`}>{phaseLabel}</span>}
           <button onClick={() => validateCurrent().catch((validationError) => { setPhase("validation-failed"); setError(String(validationError)); setErrorKind("validation"); setMessage("Validation failed. No version can be saved."); })} disabled={["launching", "probing", "rendering", "validating", "saving", "version-saved", "failed"].includes(phase)}>Validate structure</button>
           <button className="primary" onClick={saveVersion} disabled={phase !== "ready-to-save"}>Save new version</button>
         </div>

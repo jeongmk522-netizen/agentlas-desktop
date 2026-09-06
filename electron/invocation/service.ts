@@ -1966,13 +1966,16 @@ export class InvocationService {
           observedAt: new Date().toISOString(),
         };
         const durableTextForVerification = event.durableTextForVerification;
-        // Main-only persistence receipt: keep it out of renderer/mobile events.
+        const durableMessageId = event.durableAssistantMessageIdForVerification;
+        // Preserve only the opaque committed-message identity for history
+        // catch-up. The body used to verify it remains Main-only.
         if (
           durableTextForVerification !== undefined
           || event.durableAssistantMessageIdForVerification !== undefined
         ) {
           event = {
             ...event,
+            ...(durableMessageId ? { durableMessageId } : {}),
             durableTextForVerification: undefined,
             durableAssistantMessageIdForVerification: undefined,
           };

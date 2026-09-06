@@ -1833,6 +1833,8 @@ export interface AgentConcurrencyInfo {
 
 export interface ChatHistoryEntry {
   id: string;
+  /** Opaque Main-issued durable chat-message identity; never derived from copy or timestamps. */
+  durableMessageId?: string;
   role: "user" | "assistant" | "system";
   text: string;
   createdAt: string;
@@ -4484,6 +4486,8 @@ export interface McpInvocationEvent {
   sequence?: number;
   /** Main observation time for this event. Preserved when an active run is reattached. */
   observedAt?: string;
+  /** Opaque durable assistant-message identity, present only after Main commits the transcript row. */
+  durableMessageId?: string;
   /** Main-owned run boundary. Unlike status prose, this is an authoritative lifecycle fact. */
   lifecycle?: {
     phase: "start" | "cancel_requested";

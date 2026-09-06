@@ -113,6 +113,7 @@ import { requestOneOperationalRecovery } from "@/lib/one-operational-recovery";
 import { toolFailureCopy } from "@shared/tool-failure";
 import { useJudgedOneDecision } from "@/lib/one-decision-judged";
 import { visibleDecisionReceipt } from "@/lib/one-decision-receipt";
+import { mergeDurableChatCatchup } from "./durable-chat-catchup";
 import { alwaysApprovedChatIds, grantAlwaysApproval, subscribeAlwaysApproved } from "@/lib/always-approved-chats";
 import type { OneRecurrenceSelectionV1 } from "@shared/one-recurrence";
 import { seatEventLine } from "@shared/one-seat-events";
@@ -493,6 +494,8 @@ function decisionRejectCopy(locale: "ko" | "en"): string {
 
 type UiMessage = {
   id: string;
+  /** Exact Main-issued transcript identity for a settled assistant row. */
+  durableMessageId?: string;
   role: "user" | "assistant" | "system";
   text: string;
   streaming?: boolean;
@@ -682,6 +685,7 @@ function toUiMessages(history: ChatHistoryEntry[]): UiMessage[] {
     const parsedFiles = parseChatFileMessage(entry.text);
     visible.push({
       id: entry.id,
+      durableMessageId: entry.durableMessageId ?? entry.id,
       role: entry.role === "assistant" ? "assistant" : entry.role,
       text: parsedFiles.visibleText,
       images: entry.imageDataUrls?.length ? entry.imageDataUrls : undefined,
@@ -1602,21 +1606,7 @@ export function OneShell() {
   const renderedActivityStartedAt = busy && !activeRunOwnsActivity
     ? activeRunStartedAtRef.current
     : runStartedAt;
-  // An optimistic "next instruction" row and its durable twin (persisted by Main
-  // when the queued run starts) must never both render — that was the doubled
-  // user bubble in the 2026-08-15 recording. The durable row wins.
-  const visibleMessages = useMemo(() => {
-    if (!messages.some((message) => message.id.startsWith("one-steer:"))) return messages;
-    return messages.filter((message, index) => {
-      if (!message.id.startsWith("one-steer:")) return true;
-      return !messages.some((other, otherIndex) => (
-        otherIndex !== index
-        && !other.id.startsWith("one-steer:")
-        && other.role === "user"
-        && other.text === message.text
-      ));
-    });
-  }, [messages]);
+  const visibleMessages = messages;
   const liveResponseMounted = messages.some((message) => message.id === "one-live-response");
   const livePromptMounted = Boolean(activeRunPrompt && messages.some((message) => (
     message.role === "user" && message.text === activeRunPrompt.text
@@ -2372,24 +2362,18 @@ export function OneShell() {
       if (!supersededByNewerRun() && history && shownThreadChatIdRef.current === chatId) {
         const next = toUiMessages(history);
         setMessages((current) => {
+          // A navigation or a newer run can begin after the history promise
+          // resolves but before React applies this updater. Re-check the
+          // current owners here so an older terminal receipt cannot overwrite
+          // a different chat or its live response.
+          if (
+            shownThreadChatIdRef.current !== chatId
+            || runChatIdRef.current !== chatId
+            || runIdRef.current
+          ) return current;
           if (next.length === 0 && current.length > 0) return current;
-          /*
-           * 방금 도착한 답이 아직 기록에 없을 수 있다(기록 쓰기가 이 읽기보다 늦는 경우).
-           * 그 상태에서 화면을 기록으로 통째 교체하면 사용자가 읽고 있던 답이 사라진다 —
-           * Work 에서 같은 계열을 이미 겪었고(라이브 final 뒤 낡은 durable tail), 규칙은
-           * "기록에 없는, 방금 정착한 답만 꼬리에 남긴다" 이다. 있는 답을 지우지 않고,
-           * 없는 답을 지어내지도 않는다.
-           */
-          const durableTexts = new Set(next.map((message) => (message.text ?? "").trim()).filter(Boolean));
-          const settledTail = current.filter((message) => (
-            message.role === "assistant"
-            && typeof message.id === "string"
-            && message.id.startsWith("one-answer:")
-            && (message.text ?? "").trim().length > 0
-            && !durableTexts.has((message.text ?? "").trim())
-          ));
           return hydrateCachedChatFiles(
-            settledTail.length ? [...next, ...settledTail] : next,
+            mergeDurableChatCatchup(current, next),
             chatFileGroupsIncludingMessages(oneChatFileGroupsRef.current, current),
           );
         });
@@ -2515,7 +2499,7 @@ export function OneShell() {
       // instruction ran, until the history reload brought it back).
       setMessages((current) => upsertLiveMessage(current, text, false).map((message) => (
         message.id === "one-live-response"
-          ? { ...message, id: `one-answer:${settledRunId ?? uid()}`, createdAt: message.createdAt ?? new Date().toISOString() }
+          ? { ...message, id: `one-answer:${settledRunId ?? uid()}`, createdAt: message.createdAt ?? new Date().toISOString(), ...(event.durableMessageId ? { durableMessageId: event.durableMessageId } : {}) }
           : message
       )));
       setBusy(false);
@@ -2542,7 +2526,7 @@ export function OneShell() {
       setMessages((current) => current.flatMap((message) => {
         if (message.id !== "one-live-response") return [message];
         if (!message.text.trim()) return [];
-        return [{ ...message, id: `one-answer:${settledRunId ?? uid()}`, streaming: false, createdAt: message.createdAt ?? new Date().toISOString() }];
+        return [{ ...message, id: `one-answer:${settledRunId ?? uid()}`, streaming: false, createdAt: message.createdAt ?? new Date().toISOString(), ...(event.durableMessageId ? { durableMessageId: event.durableMessageId } : {}) }];
       }));
       setBusy(false);
       setLiveRunPrompt((current) => current?.runId === settledRunId ? null : current);
@@ -2724,9 +2708,14 @@ export function OneShell() {
       if (!liveRunOwnsThread) {
         const next = toUiMessages(history);
         setMessages((current) => {
-          // 다른 대화에서 왔으면 비어 있더라도 교체한다 — 남의 화면을 남겨 두는 것이
-          // 바로 "합쳐져 보이는" 증상이다.
-          if (!screenAlreadyOnThisThread) return next;
+          // This request can resolve after a navigation or a new live run.
+          // The callback, not only the request-time snapshot, decides which
+          // chat currently owns the renderer.
+          const screenStillOnThisThread = shownThreadChatIdRef.current === chatId;
+          const liveRunNowOwnsThread = Boolean(
+            runIdRef.current && runChatIdBeforeSwitch === chatId,
+          );
+          if (!screenStillOnThisThread || liveRunNowOwnsThread) return current;
           const hydratedNext = hydrateCachedChatFiles(
             next,
             chatFileGroupsIncludingMessages(oneChatFileGroupsRef.current, current),
@@ -2734,14 +2723,7 @@ export function OneShell() {
           // 같은 대화인데 서버 스냅샷이 아직 비었다면(첫 실행이 방금 시작됐다면)
           // 사람이 막 친 말과 라이브 응답을 빈 스냅샷으로 지우지 않는다.
           if (hydratedNext.length === 0 && current.length > 0) return current;
-          // 큐에 넣은 다음 지시(one-steer:)는 Main이 그 실행을 시작할 때 비로소 원장에
-          // 남는다. 그 사이의 히스토리 재적재가 낙관 행을 지우면 사람이 친 말이 화면에서
-          // 사라졌다가 실행 끝에 다시 나타난다 — 원장에 같은 말이 오기 전까지 유지한다.
-          const pendingSteers = current.filter((message) => (
-            message.id.startsWith("one-steer:")
-            && !hydratedNext.some((durable) => durable.role === "user" && durable.text === message.text)
-          ));
-          return pendingSteers.length > 0 ? [...hydratedNext, ...pendingSteers] : hydratedNext;
+          return mergeDurableChatCatchup(current, hydratedNext);
         });
       }
       shownThreadChatIdRef.current = chatId;

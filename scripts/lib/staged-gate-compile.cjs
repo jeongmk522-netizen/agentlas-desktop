@@ -153,7 +153,11 @@ const earlyRoots = {
   "scripts/test-refusal-not-output-contract.cjs": ["electron/mcp/client.js", "electron/mcp/final-display-backstop.js", "electron/runtime/runtime-refusal.js"],
   "scripts/test-final-display-hygiene.cjs": ["electron/mcp/final-display-backstop.js", "electron/runtime/runtime-refusal.js"],
 };
-const gate = path.relative(root, path.resolve(process.argv[1])).split(path.sep).join("/");
+// Eval/print workers have no script argv; stdin uses "-". They still need the
+// resolver and integrity guards below, but have no named gate's early roots.
+const entry = process.argv[1];
+const gate = typeof entry === "string" && entry !== "-"
+  ? path.relative(root, path.resolve(entry)).split(path.sep).join("/") : "";
 for (const name of earlyRoots[gate] || []) {
   if (!compile(path.join(dist, name))) throw new Error(`INDEX_BUILD_ROOT_MISSING: ${name}`);
 }

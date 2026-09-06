@@ -3456,8 +3456,22 @@ button.manuscriptBinding:hover { border-color: var(--line-strong); background: v
 @media (max-width: 1350px) {
   .manuscriptToolbarIdentity { max-width: 190px; }
   .journalToolbar .journalMetric { display: none; }
-  .manuscriptToolbarActions .manuscriptExportGroup { display: none; }
   .manuscriptInsertPanel { width: 390px; min-width: 330px; }
+}
+
+@container science-center (max-width: 799px) {
+  .manuscriptToolbarActions {
+    min-width: 0;
+    max-width: 100%;
+    flex-wrap: wrap;
+    overflow: visible;
+    row-gap: 6px;
+  }
+  .manuscriptExportGroup {
+    min-width: 0;
+    max-width: 100%;
+    flex-wrap: wrap;
+  }
 }
 
 /* ============================================================================

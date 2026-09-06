@@ -1,5 +1,27 @@
 # Changelog
 
+## 1.1.5 — 2026-09-06
+
+Fixes Science startup when packaged runtime dependencies are missing. Desktop
+now ships Sharp and Molstar with the Science services and verifies the final
+archive's native image runtime before packaging can finish. Existing application
+data stays in place; reinstalling a Science extension alone does not repair a
+missing Desktop runtime dependency.
+
+Science manuscript exports follow the selected journal profile and share one
+word-count scope with validation. Ordinary exports remain marked as drafts;
+submission readiness requires the journal checks. Research continuation counts
+the initial turn and preserves explicit stop and stalled-progress boundaries.
+Evidence graph refreshes discard responses from a previously selected project.
+
+Missing legacy test imports are hidden from the selectable worker roster while
+retaining their identity and execution history. Agents with matching display
+names are not merged automatically.
+
+This release binds Agentlas OS v1.2.44 at 1f6d64374502cfd5f8581ad3c1fb18691ed61b1d.
+Its public runtime asset `hephaestus-runtime-v1.2.44.tar.gz` is pinned at SHA-256 `795d1c294db662475d4eb0c7e4562ba0ca1e0f27d3b1da0f5e9c6e7cf627d83a`.
+Source readiness does not prove a public installer or update feed; the Releases page stays the authority.
+
 ## 1.1.4 — 2026-09-06
 
 Fixes startup after upgrading from 1.1.1 and restores Science installation

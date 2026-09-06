@@ -49,20 +49,7 @@ function installOneFixture(mode) {
   const taskId = "task_launch_comparison_001";
   const chatId = "chat_launch_comparison_001";
   const runId = "run_launch_comparison_001";
-  const resultMode = mode === "result" || mode === "memory" || mode === "followup" || mode === "briefing-language";
-  let followUpChat = null;
-  let followUpHistory = [];
-  let followUpContinuation = null;
-  if (mode === "followup") {
-    try {
-      const persisted = JSON.parse(window.localStorage.getItem("agentlas.qa.oneFollowUp") || "null");
-      if (persisted && typeof persisted === "object") {
-        followUpChat = persisted.chat || null;
-        followUpHistory = Array.isArray(persisted.history) ? persisted.history : [];
-        followUpContinuation = persisted.input || null;
-      }
-    } catch {}
-  }
+  const resultMode = mode === "result" || mode === "memory" || mode === "briefing-language";
   const task = {
     id: taskId,
     version: 7,
@@ -254,9 +241,7 @@ function installOneFixture(mode) {
     pendingOperations: [],
   };
   api.oneProfile.get = async () => profile;
-  api.oneSuggestions.getState = async () => mode === "followup"
-    ? { ...suggestions, suggestions: [] }
-    : suggestions;
+  api.oneSuggestions.getState = async () => suggestions;
   api.oneMemory.getState = async () => ({
     contractVersion: "1.0.0",
     version: 4,
@@ -295,9 +280,7 @@ function installOneFixture(mode) {
   api.oneFeatureIntro.getState = async () => null;
   api.oneActivation.getState = async () => null;
   api.oneBriefing.get = async () => null;
-  api.oneTeamPreflight.getForChat = async (requestedChatId) => followUpChat && requestedChatId === followUpChat.id
-    ? null
-    : mode === "team"
+  api.oneTeamPreflight.getForChat = async () => mode === "team"
     ? team
     : resultMode
       ? {
@@ -338,49 +321,15 @@ function installOneFixture(mode) {
   api.tasks.list = async () => mode === "conversation" ? [] : [task];
   api.tasks.get = async (id) => id === taskId ? task : null;
   api.tasks.findForChat = async (id) => mode === "conversation" || id !== chatId ? null : task;
-  api.tasks.continueFromResult = async (input) => {
-    window.__qa.calls.push({ name: "tasks.continueFromResult", payload: input });
-    followUpChat = {
-      id: "chat_follow_up_001",
-      projectId: null,
-      firmId: null,
-      agentGroupId: null,
-      agentId: "agent-one",
-      kind: "user",
-      title: input.userPrompt,
-      archivedAt: null,
-      createdAt: now,
-      updatedAt: now,
-      continuousMode: false,
-      swarmMode: false,
-      hiredAgents: [],
-    };
-    followUpHistory = [{
-      id: "message_follow_up_context",
-      role: "system",
-      text: `완료한 이전 일에서 이어갑니다 · ${task.title}\n\n${surface.summary}\n\n새 요청은 별도의 일로 처리합니다. 이전 팀·권한·임시 첨부는 자동으로 이어받지 않았어요.`,
-      createdAt: now,
-    }, {
-      id: "message_follow_up_user_1",
-      role: "user",
-      text: input.userPrompt,
-      createdAt: now,
-    }, {
-      id: "message_follow_up_assistant_1",
-      role: "assistant",
-      text: "30만원 이하 조건으로 다시 좁혔어요. 위닉스 타워 프라임이 예산 안에서 가장 균형이 좋고, 더 작은 방이면 블루스카이도 충분합니다.",
-      createdAt: now,
-    }];
-    followUpContinuation = input;
-    window.localStorage.setItem("agentlas.qa.oneFollowUp", JSON.stringify({
-      chat: followUpChat,
-      history: followUpHistory,
-      input,
-    }));
-    return followUpChat;
-  };
-  api.chats.listRecent = async () => followUpChat ? [followUpChat, conversation] : [conversation];
-  api.chats.get = async (id) => followUpChat && id === followUpChat.id ? followUpChat : conversation;
+  // api.tasks.continueFromResult has zero remaining call sites in
+  // renderer/components/one/OneShell.tsx: forking a completed task's follow-up
+  // into a hidden new conversation was retired 2026-07-20 (commit 8b954420) in
+  // favor of `canContinueInPlace`, which keeps a follow-up in the same visible
+  // conversation. scripts/verify-agentlas-one-ui.cjs asserts that decision
+  // directly (`api.tasks.continueFromResult must not be called` /
+  // `canContinueInPlace` must exist), so this fixture no longer mocks it.
+  api.chats.listRecent = async () => [conversation];
+  api.chats.get = async () => conversation;
   api.invoke.activeChats = async () => mode === "progress" ? [chatId] : [];
   api.invoke.latestReceipt = async () => resultMode ? receipt : null;
   api.invoke.latestOneSurface = async () => resultMode ? { manifest: surface } : null;
@@ -392,18 +341,36 @@ function installOneFixture(mode) {
       { kind: "tool-use", status: "가격과 공식 사양을 교차 검증하고 있습니다.", tool: { name: "verify_sources", result: "3 sources checked" }, agentId: "source-verifier", agentName: "출처 검증자", phase: "delegate" },
     ],
   } : null;
-  api.invoke.history = async (id) => followUpChat && id === followUpChat.id ? followUpHistory : mode === "conversation" ? [
-    { id: "message_user_1", role: "user", text: "거실 공기청정기를 바꾸고 싶은데 뭐부터 봐야 할지 모르겠어.", createdAt: "2026-07-19T03:01:00.000Z" },
-    { id: "message_assistant_1", role: "assistant", text: "먼저 거실 크기와 예산만 알면 후보를 크게 줄일 수 있어요. 지난번 가전 선택에서는 **소음과 관리 편의**를 중요하게 보셨는데, 이번에도 같은 기준을 적용할까요?", createdAt: "2026-07-19T03:02:00.000Z" },
-    { id: "message_user_2", role: "user", text: "응. 25평 거실이고 50만원 아래였으면 좋겠어.", createdAt: "2026-07-19T03:03:00.000Z" },
-    { id: "message_assistant_2", role: "assistant", text: "좋아요. 이번에는 **25평·50만원 이하·소음·필터 관리**를 기준으로 비교할게요. 제품 사양과 실제 가격은 리서처가 찾고, 다른 검증자가 추천 근거를 교차 확인하면 안전합니다. 비교를 시작할까요?", createdAt: "2026-07-19T03:04:00.000Z" },
-  ] : mode === "team" ? [
+  const teamHistoryBase = [
     { id: "message_user_team", role: "user", text: "50만원 이하 공기청정기 중 우리 집에 맞는 걸 골라줘.", createdAt: "2026-07-19T03:11:00.000Z" },
     { id: "message_assistant_team", role: "assistant", text: "25평 거실과 지난번에 중요하게 본 소음·관리 편의를 기준으로 잡았어요. 제품 조사와 출처 검증을 나눠서 진행하겠습니다.", createdAt: "2026-07-19T03:12:00.000Z" },
-  ] : [
-    { id: "message_user_result", role: "user", text: "50만원 이하 공기청정기 중 우리 집에 맞는 걸 골라줘.", createdAt: "2026-07-19T03:11:00.000Z" },
-    { id: "message_assistant_result", role: "assistant", text: "공식 사양과 현재 가격을 대조해 세 제품으로 추렸어요. 결론부터 보면 **LG 퓨리케어 360°**가 가장 잘 맞습니다.", createdAt: "2026-07-19T03:29:00.000Z" },
   ];
+  let teamHistoryReads = 0;
+  api.invoke.history = async (id) => {
+    if (mode === "conversation") return [
+      { id: "message_user_1", role: "user", text: "거실 공기청정기를 바꾸고 싶은데 뭐부터 봐야 할지 모르겠어.", createdAt: "2026-07-19T03:01:00.000Z" },
+      { id: "message_assistant_1", role: "assistant", text: "먼저 거실 크기와 예산만 알면 후보를 크게 줄일 수 있어요. 지난번 가전 선택에서는 **소음과 관리 편의**를 중요하게 보셨는데, 이번에도 같은 기준을 적용할까요?", createdAt: "2026-07-19T03:02:00.000Z" },
+      { id: "message_user_2", role: "user", text: "응. 25평 거실이고 50만원 아래였으면 좋겠어.", createdAt: "2026-07-19T03:03:00.000Z" },
+      { id: "message_assistant_2", role: "assistant", text: "좋아요. 이번에는 **25평·50만원 이하·소음·필터 관리**를 기준으로 비교할게요. 제품 사양과 실제 가격은 리서처가 찾고, 다른 검증자가 추천 근거를 교차 확인하면 안전합니다. 비교를 시작할까요?", createdAt: "2026-07-19T03:04:00.000Z" },
+    ];
+    if (mode === "team") {
+      // The first read is the pre-run thread load; One's settle-then-rehydrate
+      // path (renderer/components/one/OneShell.tsx settleRun, 2026-08-24/09-06)
+      // re-reads durable history right after the mock run's "final" event and
+      // replaces the transcript with whatever this returns. A static array that
+      // never gains the run's answer makes that second read erase "QA final"
+      // the moment it lands, so the assistant text this mock actually produced
+      // (scripts/lib/mock-agentlas-bridge.cjs finish()) must appear here too.
+      teamHistoryReads += 1;
+      return teamHistoryReads >= 2
+        ? [...teamHistoryBase, { id: "message_assistant_team_final", role: "assistant", text: "QA final", createdAt: now }]
+        : teamHistoryBase;
+    }
+    return [
+      { id: "message_user_result", role: "user", text: "50만원 이하 공기청정기 중 우리 집에 맞는 걸 골라줘.", createdAt: "2026-07-19T03:11:00.000Z" },
+      { id: "message_assistant_result", role: "assistant", text: "공식 사양과 현재 가격을 대조해 세 제품으로 추렸어요. 결론부터 보면 **LG 퓨리케어 360°**가 가장 잘 맞습니다.", createdAt: "2026-07-19T03:29:00.000Z" },
+    ];
+  };
 }
 
 async function capture(browser, baseUrl, fixture) {
@@ -422,17 +389,6 @@ async function capture(browser, baseUrl, fixture) {
     // itself (getForChat -> autoResolve -> start) can land after the flat 900ms wait above.
     await page.getByText("QA final", { exact: false }).waitFor({ timeout: 8_000 });
   }
-  if (fixture.mode === "followup") {
-    const composer = page.getByLabel("One에게 요청");
-    await composer.fill("30만원 이하로 다시 골라줘");
-    await page.getByRole("button", { name: "보내기" }).click();
-    await page.getByText("30만원 이하 조건으로 다시 좁혔어요.", { exact: false }).waitFor({ timeout: 5_000 });
-    const continuedComposer = page.getByLabel("One에게 요청");
-    await continuedComposer.fill("그중 소음이 가장 낮은 건 뭐야?");
-    await page.getByRole("button", { name: "보내기" }).click();
-    await page.getByText("그중 소음이 가장 낮은 건 뭐야?", { exact: true }).waitFor({ timeout: 5_000 });
-    await page.waitForTimeout(500);
-  }
   const metrics = await page.evaluate(() => {
     const text = document.body.innerText;
     return {
@@ -446,15 +402,38 @@ async function capture(browser, baseUrl, fixture) {
   assert.ok(metrics.width <= metrics.clientWidth + 2, `${fixture.name}: horizontal overflow`);
   assert.doesNotMatch(metrics.text, /구조화된 실행 결과|Run closure|external recruitment denied|release hash unavailable|Task · [A-Za-z0-9]/, `${fixture.name}: internal language leaked`);
   if (fixture.mode === "result") {
-    assert.match(metrics.text, /가장 잘 맞는 선택: LG 퓨리케어 360°/i);
+    // The standalone result title/summary header (surface.title rendered in an
+    // <h3>) was retired 2026-08-15 (d2bcbe81, "the conversation reads like
+    // Codex — one work block per turn, the model's own headline while it
+    // works"): OneAdaptiveResult's sole call site (renderer/components/one/
+    // OneShell.tsx) has passed omitNarrative unconditionally ever since, so
+    // that header is unreachable. What replaced it is the block-level
+    // "추천" (Recommended) marker on the chosen Comparison option — assert
+    // that live decision instead of the retired echoed headline, and assert
+    // the retired header stays gone rather than matching arbitrary fixture text.
     assert.match(metrics.text, /LG 퓨리케어 360°/);
-    assert.match(metrics.text, /비교표 저장/);
+    assert.match(metrics.text, /추천/, "the winning option must carry the live recommended marker");
+    // The surface's own "open_work" primaryAction (label "비교표 저장") was
+    // retired 2026-08-23 (07a76c93, "One Team 대화·inline Browser 완주와 대화
+    // 디자인 정리"): onOpenWork/canOpenWork were deleted from OneAdaptiveResult
+    // entirely, so semanticActions unconditionally drops any open_work action
+    // and that button can never render — the result renders inline in One now,
+    // with nowhere separate left to open. The ArtifactList "열기" action on the
+    // saved comparison file is what actually persists/opens the result today.
+    assert.match(metrics.text, /공기청정기-비교표\.csv/, "the saved comparison artifact must still be offered");
+    assert.doesNotMatch(metrics.text, /비교표 저장/, "the retired open_work CTA must not reappear");
     assert.match(metrics.text, /이 팀을 다음에도 바로 부를 수 있게 둘까요/);
     assert.doesNotMatch(metrics.text, /One이 준비한 팀|Team prepared by One/, "a consumed proposal must disappear before the result renders");
     assert.doesNotMatch(metrics.text, /\*\*|\[link omitted\]|✅/, "structured results must not leak model Markdown or status emoji into native cells");
+    // "일의 결과" is the ko translation of the same aria-label the
+    // briefing-language (en) fixture below reads as "Work result"
+    // (renderer/lib/i18n.tsx one.res.aria.work_result).
+    const resultHeadings = await page.getByLabel("일의 결과").getByRole("heading", { level: 3 }).count();
+    assert.equal(resultHeadings, 0, "the retired standalone result title/summary header must stay gone (OneAdaptiveResult omitNarrative)");
   }
   if (fixture.mode === "memory") {
-    assert.match(metrics.text, /가장 잘 맞는 선택: LG 퓨리케어 360°/i);
+    assert.match(metrics.text, /LG 퓨리케어 360°/);
+    assert.match(metrics.text, /추천/, "the winning option must carry the live recommended marker");
     assert.match(metrics.text, /이 기준을 기억해둘까요/);
     assert.match(metrics.text, /예산을 넘기지 않고 공식 출처를 우선/);
     assert.match(metrics.text, /확인 전에는 재사용하지 않아요/);
@@ -494,27 +473,7 @@ async function capture(browser, baseUrl, fixture) {
       assert.ok(sourcesSection.includes(chrome), `expected English chrome "${chrome}" in the result region`);
     }
   }
-  if (fixture.mode === "followup") {
-    assert.match(metrics.text, /이전 결과를 참고해 이 대화에서 이어서 진행해요/);
-    assert.match(metrics.text, /30만원 이하로 다시 골라줘/);
-    assert.match(metrics.text, /그중 소음이 가장 낮은 건 뭐야/);
-    assert.doesNotMatch(metrics.text, /이전 팀·권한·임시 첨부는 자동으로 이어받지 않았어요|완료한 이전 일에서 이어갑니다/, "the beginner surface must collapse internal continuation details");
-    assert.doesNotMatch(metrics.text, /One이 준비한 팀|이 팀을 다음에도 바로 부를 수 있게 둘까요/);
-    const persistedContinuation = await page.evaluate(() => JSON.parse(window.localStorage.getItem("agentlas.qa.oneFollowUp") || "null")?.input);
-    assert.deepEqual(persistedContinuation, {
-      taskId: "task_launch_comparison_001",
-      expectedVersion: 7,
-      userPrompt: "30만원 이하로 다시 골라줘",
-    });
-    const followUpRuns = await page.evaluate(() => window.__qa.calls.filter((item) => item.name === "invoke.run"));
-    assert.equal(followUpRuns.length, 1, "the next turn inside the new conversation must not fork context again");
-  }
   await page.screenshot({ path: path.join(outDir, `${fixture.name}.png`), fullPage: true });
-  if (fixture.mode === "followup" && fixture.viewport.width > 700) {
-    await page.getByRole("button", { name: "사이드바 열기" }).click();
-    await page.waitForTimeout(180);
-    await page.screenshot({ path: path.join(outDir, `${fixture.name}-menu.png`) });
-  }
   if (fixture.viewport.width <= 700) {
     const menuButton = page.getByRole("button", { name: "사이드바 열기" });
     await menuButton.click();
@@ -544,7 +503,10 @@ async function capture(browser, baseUrl, fixture) {
         if (scroller) scroller.scrollTop = scroller.scrollHeight;
       });
       await page.waitForTimeout(220);
-      const primaryAction = page.getByRole("button", { name: "비교표 저장" });
+      // No "open_work" CTA renders anymore (retired 2026-08-23, 07a76c93); the
+      // saved comparison artifact's own "열기" action is the reachable
+      // equivalent of the old primary action.
+      const primaryAction = page.locator('[data-artifact-ref="artifact_comparison_csv"]').getByRole("button", { name: "열기" });
       assert.ok(await primaryAction.count(), "mobile result: primary action must remain reachable");
       await primaryAction.scrollIntoViewIfNeeded();
       const primaryBox = await primaryAction.boundingBox();
@@ -564,7 +526,10 @@ async function capture(browser, baseUrl, fixture) {
       if (scroller) scroller.scrollTop = scroller.scrollHeight;
     });
     await page.waitForTimeout(220);
-    const primaryAction = page.getByRole("button", { name: "비교표 저장" });
+    // No "open_work" CTA renders anymore (retired 2026-08-23, 07a76c93); the
+    // saved comparison artifact's own "열기" action is the reachable
+    // equivalent of the old primary action.
+    const primaryAction = page.locator('[data-artifact-ref="artifact_comparison_csv"]').getByRole("button", { name: "열기" });
     await primaryAction.scrollIntoViewIfNeeded();
     const primaryBox = await primaryAction.boundingBox();
     assert.ok(primaryBox && primaryBox.y >= 0 && primaryBox.y < fixture.viewport.height, "desktop result: primary action must remain reachable");
@@ -602,8 +567,6 @@ async function main() {
     { name: "result-desktop", mode: "result", query: "?task=task_launch_comparison_001", viewport: { width: 1440, height: 1100 } },
     { name: "result-mobile", mode: "result", query: "?task=task_launch_comparison_001", viewport: { width: 960, height: 700 } /* electron/main.ts minWidth: 960 — 더 좁은 창은 제품에서 만날 수 없다 */ },
     { name: "memory-desktop", mode: "memory", query: "?task=task_launch_comparison_001", viewport: { width: 1440, height: 1100 } },
-    { name: "followup-desktop", mode: "followup", query: "?task=task_launch_comparison_001", viewport: { width: 1440, height: 980 } },
-    { name: "followup-mobile", mode: "followup", query: "?task=task_launch_comparison_001", viewport: { width: 960, height: 700 } /* electron/main.ts minWidth: 960 — 더 좁은 창은 제품에서 만날 수 없다 */ },
   ];
   const results = [];
   try {

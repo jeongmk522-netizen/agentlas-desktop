@@ -596,8 +596,16 @@ function createComposerEventSync({
     const canvas = host?.querySelector?.("canvas");
     if (!canvas) throw new Error("science-vega-canvas-missing");
     const initial = canvas.getBoundingClientRect();
-    const naturalWidth = Number(canvas.dataset.vegaNaturalCssWidth) || initial.width;
-    const naturalHeight = Number(canvas.dataset.vegaNaturalCssHeight) || initial.height;
+    // canvas.width/height are backing-store pixels. Derive the Vega logical CSS
+    // size through devicePixelRatio before the pre-fit max-width rule can shrink
+    // the measured rect; never treat backing pixels as CSS pixels.
+    const pixelRatio = Number.isFinite(Number(window.devicePixelRatio)) && Number(window.devicePixelRatio) > 0
+      ? Number(window.devicePixelRatio)
+      : 1;
+    const logicalWidth = Number(canvas.width) > 0 ? Number(canvas.width) / pixelRatio : 0;
+    const logicalHeight = Number(canvas.height) > 0 ? Number(canvas.height) / pixelRatio : 0;
+    const naturalWidth = Number(canvas.dataset.vegaNaturalCssWidth) || logicalWidth || initial.width;
+    const naturalHeight = Number(canvas.dataset.vegaNaturalCssHeight) || logicalHeight || initial.height;
     if (!(naturalWidth > 0) || !(naturalHeight > 0)) throw new Error("science-vega-canvas-size-invalid");
     canvas.dataset.vegaNaturalCssWidth = String(naturalWidth);
     canvas.dataset.vegaNaturalCssHeight = String(naturalHeight);

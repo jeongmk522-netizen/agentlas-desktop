@@ -3480,6 +3480,7 @@ button.manuscriptBinding:hover { border-color: var(--line-strong); background: v
 }
 
 @container science-center (max-width: 559px) {
+  .evidenceGraphHeaderActions { min-width: 0; flex-wrap: wrap; }
   .evidenceGraphCanvasPane > header { align-items: stretch; flex-direction: column; }
   .evidenceGraphCanvasControls { min-width: 0; flex-basis: auto; }
 }

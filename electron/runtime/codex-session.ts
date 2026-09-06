@@ -60,6 +60,7 @@ export const CODEX_APP_SERVER_ARGS = ["app-server", "--listen", "stdio://"] as c
  */
 export const CODEX_CLIENT_REQUESTS = [
   "initialize",
+  "model/list",
   "thread/resume",
   "thread/start",
   "turn/interrupt",
@@ -89,6 +90,7 @@ export const CODEX_SERVER_NOTIFICATIONS = [
   "item/agentMessage/delta",
   "item/completed",
   "item/started",
+  "model/rerouted",
   "thread/started",
   "thread/tokenUsage/updated",
   "turn/completed",
@@ -116,6 +118,8 @@ export interface CodexResidentSession {
   closed: boolean;
   /** 이 프로세스가 들고 있는 thread — 다음 턴이 그대로 이어 쓴다. */
   threadId: string | null;
+  /** thread/start 또는 thread/resume 이 실제로 확인한 모델 선택. */
+  modelAcknowledgement: CodexModelAcknowledgement | null;
   /** `turn/completed` 까지 완주한 턴 수 — 구형 CLI(즉시 실패) 판별에 쓴다. */
   completedTurns: number;
   stopHeartbeat: () => void;
@@ -148,6 +152,7 @@ export async function openCodexResidentSession(opts: {
     active: null,
     closed: false,
     threadId: null,
+    modelAcknowledgement: null,
     completedTurns: 0,
     stopHeartbeat: () => {},
   };
@@ -241,6 +246,122 @@ export function codexProtocolReceipt(init: any): string {
   const userAgent = String(init?.userAgent ?? "unknown").slice(0, 200);
   const platform = `${String(init?.platformOs ?? "?")}/${String(init?.platformFamily ?? "?")}`;
   return `[runtime-protocol] codex-app-server userAgent=${userAgent} platform=${platform}`;
+}
+
+/* ──────────────────────── 모델 선택 확인 ───────────────────────── */
+
+const CODEX_PROTOCOL_TOKEN = /^[^\x00-\x1f\x7f]{1,256}$/;
+
+export type CodexModelAcknowledgement = {
+  requestedModel: string | null;
+  model: string;
+  modelProvider: string;
+  mode: "provider-default" | "direct" | "canonical";
+};
+
+export class CodexModelSelectionError extends Error {
+  constructor(
+    public readonly code: "response_invalid" | "resolution_unverified" | "rerouted",
+    message: string,
+  ) {
+    super(message);
+    this.name = "CodexModelSelectionError";
+  }
+}
+
+type CodexProtocolRequest = (
+  method: string,
+  params: Record<string, unknown>,
+  options: { timeoutMs: number; signal?: AbortSignal },
+) => Promise<any>;
+
+function codexProtocolToken(value: unknown): value is string {
+  return typeof value === "string" && CODEX_PROTOCOL_TOKEN.test(value);
+}
+
+/**
+ * A thread response is the authority for the model the server selected. Exact
+ * equality needs no catalog call. A differing acknowledgement is accepted only
+ * when the server's complete, hidden-inclusive catalog explicitly maps the
+ * requested id to the acknowledged canonical model. Catalog failure or an
+ * incomplete/malformed page can prove nothing and therefore fails closed.
+ */
+export async function acknowledgeCodexThreadModel(input: {
+  request: CodexProtocolRequest;
+  response: any;
+  requestedModel?: string | null;
+  expectedThreadId?: string;
+  signal?: AbortSignal;
+  timeoutMs?: number;
+}): Promise<CodexModelAcknowledgement> {
+  const threadId = input.response?.thread?.id;
+  const model = input.response?.model;
+  const modelProvider = input.response?.modelProvider;
+  if (!codexProtocolToken(threadId)
+    || (input.expectedThreadId !== undefined && threadId !== input.expectedThreadId)
+    || !codexProtocolToken(model)
+    || !codexProtocolToken(modelProvider)) {
+    throw new CodexModelSelectionError("response_invalid", "Codex thread response did not acknowledge a valid thread, model, and provider.");
+  }
+  const requestedModel = input.requestedModel == null || input.requestedModel === ""
+    ? null
+    : input.requestedModel;
+  if (!requestedModel) return { requestedModel: null, model, modelProvider, mode: "provider-default" };
+  if (!codexProtocolToken(requestedModel)) {
+    throw new CodexModelSelectionError("response_invalid", "The requested Codex model is not a valid protocol value.");
+  }
+  if (requestedModel === model) return { requestedModel, model, modelProvider, mode: "direct" };
+
+  const deadline = Date.now() + Math.min(30_000, Math.max(1, input.timeoutMs ?? 30_000));
+  const cursors = new Set<string>();
+  const mappings = new Map<string, string>();
+  let cursor: string | undefined;
+  let rowCount = 0;
+  try {
+    do {
+      if (input.signal?.aborted) throw input.signal.reason ?? new Error("Codex model acknowledgement cancelled");
+      const remaining = deadline - Date.now();
+      if (remaining <= 0) throw new Error("model/list timed out");
+      const page = await input.request(
+        "model/list",
+        { limit: 100, includeHidden: true, ...(cursor ? { cursor } : {}) },
+        { timeoutMs: remaining, signal: input.signal },
+      );
+      if (!page || typeof page !== "object" || Array.isArray(page)
+        || !Array.isArray(page.data)
+        || !(page.nextCursor == null || codexProtocolToken(page.nextCursor))) {
+        throw new Error("model/list response is malformed");
+      }
+      for (const row of page.data) {
+        if (!row || typeof row !== "object" || Array.isArray(row)
+          || !codexProtocolToken(row.id) || !codexProtocolToken(row.model)
+          || mappings.has(row.id)) {
+          throw new Error("model/list row is malformed or duplicated");
+        }
+        mappings.set(row.id, row.model);
+        rowCount += 1;
+        if (rowCount > 512) throw new Error("model/list exceeded the supported bound");
+      }
+      cursor = page.nextCursor ?? undefined;
+      if (cursor !== undefined) {
+        if (cursors.has(cursor) || cursors.size >= 32) throw new Error("model/list cursor is invalid");
+        cursors.add(cursor);
+      }
+    } while (cursor);
+  } catch (error) {
+    if (error instanceof CodexModelSelectionError) throw error;
+    throw new CodexModelSelectionError(
+      "resolution_unverified",
+      `Codex acknowledged model ${model}, but the requested model ${requestedModel} could not be resolved from the complete server catalog: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+  if (mappings.get(requestedModel) !== model) {
+    throw new CodexModelSelectionError(
+      "resolution_unverified",
+      `Codex acknowledged model ${model}, which was not an observed canonical mapping for requested model ${requestedModel}.`,
+    );
+  }
+  return { requestedModel, model, modelProvider, mode: "canonical" };
 }
 
 /* ────────────────────────────── 풀 ────────────────────────────── */

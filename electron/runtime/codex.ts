@@ -37,7 +37,9 @@ import {
 import { AcpRpcError } from "./acp-protocol";
 import {
   CODEX_APP_SERVER_ARGS,
+  CodexModelSelectionError,
   CodexSessionContinuityError,
+  acknowledgeCodexThreadModel,
   answerCodexApproval,
   codexApprovalCapability,
   codexAppServerSupported,
@@ -1093,6 +1095,7 @@ async function runCodexResidentTurn(input: {
 
   const session = lease.session;
   const reusing = !lease.fresh && Boolean(session.threadId);
+  const explicitResume = Boolean(req.runtimeSessionId);
   let broken = false;
   /** 이 턴에서 화면으로 나간 본문이 있는가 — 있으면 1회성 재시도는 답을 두 번 쓰는 짓이다. */
   let emitted = false;
@@ -1119,6 +1122,7 @@ async function runCodexResidentTurn(input: {
   let interrupted = false;
   let settleTurn: ((reason: "completed" | "closed") => void) | null = null;
   let closedReason = "";
+  let modelSelectionError: CodexModelSelectionError | null = null;
   // Every blocking MCP elicitation belongs to this one turn, even when the
   // underlying app-server process survives for later turns. Stop, transport
   // close, or checkout release must cancel the question before the session can
@@ -1147,6 +1151,18 @@ async function runCodexResidentTurn(input: {
 
   const onNotification = (method: string, params: any): void => {
     switch (method) {
+      case "model/rerouted": {
+        const acknowledged = session.modelAcknowledgement;
+        if (req.model && params?.threadId === session.threadId) {
+          modelSelectionError = new CodexModelSelectionError(
+            "rerouted",
+            `Codex rerouted the explicitly requested model from ${String(params?.fromModel ?? acknowledged?.model ?? req.model)} to ${String(params?.toModel ?? "unknown")}.`,
+          );
+          broken = true;
+          settleTurn?.("completed");
+        }
+        break;
+      }
       case "thread/started":
         if (typeof params?.thread?.id === "string") session.threadId = params.thread.id;
         break;
@@ -1424,8 +1440,8 @@ async function runCodexResidentTurn(input: {
     session.active = sink;
     if (req.workforceRuntimeToolGrant) workforceObservation = new CodexWorkforceObservation(req, session.init, req.workforceRuntimeToolGrant.canonicalConfigSha256);
     /* ── 스레드: 살아 있는 세션이면 그대로, 새 프로세스면 resume 또는 start ── */
-    if (!reusing || workforceObservation) {
-      const startParams: Record<string, unknown> = {
+    if (!reusing || workforceObservation || explicitResume) {
+      const commonThreadParams: Record<string, unknown> = {
         cwd,
         approvalPolicy: policy.approvalPolicy,
         approvalsReviewer,
@@ -1440,26 +1456,42 @@ async function runCodexResidentTurn(input: {
           "sandbox_workspace_write.exclude_slash_tmp": true,
         } } : {}),
         developerInstructions: `${buildDeveloperInstructions(req)}\n\n${codexImageToolInstructions(Boolean(imageToolSlot))}`,
-        ...(req.model ? { model: req.model } : {}),
         ...(imageToolSlot ? { dynamicTools: [CODEX_IMAGE_DYNAMIC_TOOL] } : {}),
       };
       let resumed = false;
-      const threadToResume = reusing ? session.threadId : resumeThreadId;
+      // A caller-supplied runtimeSessionId names the thread to resume. A live
+      // same-fingerprint pool entry is only an optimization and cannot replace
+      // that explicit continuity target.
+      const threadToResume = req.runtimeSessionId ?? (reusing ? session.threadId : resumeThreadId);
       if (threadToResume) {
         let releaseResume: (() => void) | undefined;
         try {
           releaseResume = await prepareCodexThreadResume(session, threadToResume, req.signal);
           const response = await session.conn.request(
             "thread/resume",
-            { threadId: threadToResume, ...startParams },
+            {
+              threadId: threadToResume,
+              ...commonThreadParams,
+              // A caller-owned runtimeSessionId is an explicit resume request;
+              // retain its model override. Stored same-fingerprint continuity
+              // can inherit the thread model, but still verifies the response.
+              ...(req.runtimeSessionId && req.model ? { model: req.model } : {}),
+            },
             { timeoutMs: 120_000, signal: req.signal },
           );
-          workforceObservation?.acknowledgeThread(response, policy, cwd, approvalsReviewer, threadToResume);
+          const modelAcknowledgement = await acknowledgeCodexThreadModel({
+            request: session.conn.request.bind(session.conn), response,
+            requestedModel: req.model, expectedThreadId: threadToResume,
+            signal: req.signal,
+          });
+          workforceObservation?.acknowledgeThread(response, modelAcknowledgement, policy, cwd, approvalsReviewer, threadToResume);
           session.threadId = threadToResume;
+          session.modelAcknowledgement = modelAcknowledgement;
           resumed = true;
         } catch (err) {
           if (req.signal?.aborted) throw abortReasonError(req);
           events.onStatus(`[runtime-session] resume_failed kind=${KIND}`);
+          if (err instanceof CodexModelSelectionError) throw err;
           throw err instanceof CodexSessionContinuityError ? err : new CodexSessionContinuityError(
             "resume_failed", `Codex thread resume failed: ${err instanceof Error ? err.message : String(err)}`,
           );
@@ -1468,21 +1500,32 @@ async function runCodexResidentTurn(input: {
         }
       }
       if (!resumed) {
-        const started = await session.conn.request("thread/start", startParams, { timeoutMs: 120_000, signal: req.signal });
-        const id = String(started?.thread?.id ?? "");
-        if (!id) throw new Error("codex app-server thread/start returned no thread id");
-        workforceObservation?.acknowledgeThread(started, policy, cwd, approvalsReviewer);
+        const started = await session.conn.request("thread/start", {
+          ...commonThreadParams,
+          ...(req.model ? { model: req.model } : {}),
+        }, { timeoutMs: 120_000, signal: req.signal });
+        const modelAcknowledgement = await acknowledgeCodexThreadModel({
+          request: session.conn.request.bind(session.conn), response: started,
+          requestedModel: req.model, signal: req.signal,
+        });
+        const id = started.thread.id as string;
+        workforceObservation?.acknowledgeThread(started, modelAcknowledgement, policy, cwd, approvalsReviewer);
         session.threadId = id;
+        session.modelAcknowledgement = modelAcknowledgement;
       }
       // 버전 스큐 관측 — 이 세션이 어떤 app-server 였는지 영수증에 남긴다.
       events.onStatus(codexProtocolReceipt(session.init));
     }
     if (!session.threadId) throw new Error("codex app-server session has no thread");
+    if (req.model && session.modelAcknowledgement?.requestedModel !== req.model) {
+      throw new CodexModelSelectionError("resolution_unverified", "The resident Codex thread has no acknowledgement for the requested model.");
+    }
     if (workforceObservation) {
       workforceObservation.observeInventory(await waitForCodexWorkforceInventory(
         session.conn.request.bind(session.conn), session.threadId, req.workforceRuntimeToolGrant!, req.signal,
       ));
     }
+    if (modelSelectionError) throw modelSelectionError;
 
     /* ── 턴 ── */
     // 새 스레드면 시스템+히스토리 시드, 이어가는 스레드면 사용자 턴만(+gap/turn 컨텍스트).
@@ -1505,7 +1548,6 @@ async function runCodexResidentTurn(input: {
       approvalPolicy: policy.approvalPolicy,
       approvalsReviewer,
       sandboxPolicy: policy.sandboxPolicy,
-      ...(req.model ? { model: req.model } : {}),
       ...(appliedEffort ? { effort: appliedEffort } : {}),
       // ★출력 형태 계약 — app-server 는 스키마를 **인라인**으로 받는다(exec 은 파일 경로만).
       ...(req.outputSchema ? { outputSchema: req.outputSchema.schema } : {}),
@@ -1519,6 +1561,8 @@ async function runCodexResidentTurn(input: {
     events.onStatus(`[runtime-session] ${continuing ? "resumed" : "created"} kind=${KIND}`);
     const reason = await settled;
     closeThinking();
+
+    if (modelSelectionError) throw modelSelectionError;
 
     if (req.signal?.aborted) {
       // 취소여도 스레드가 생겼으면 저장 → 이어지는 steering 메시지가 문맥을 유지한다.
@@ -1615,6 +1659,7 @@ async function runCodexResidentTurn(input: {
   } catch (err) {
     broken = true;
     if (req.signal?.aborted || req.workforceRuntimeToolGrant) throw err;
+    if (err instanceof CodexModelSelectionError) throw err;
     if (err instanceof CodexSessionContinuityError) throw err;
     if (looksLikeMissingAppServer(session.conn?.lastStderr ?? "", err)) {
       markCodexAppServerUnsupported(err instanceof Error ? err.message : String(err));

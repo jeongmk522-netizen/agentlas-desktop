@@ -3,6 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import type { RunnerRequest, WorkforceHostObservation, WorkforceHostInventorySnapshot, WorkforceRuntimeToolGrant } from "./runner";
 import { workforceHostObservationDigest } from "./runner";
+import type { CodexModelAcknowledgement } from "./codex-session";
 
 const HASH = /^sha256:[0-9a-f]{64}$/;
 const TOOL = /^[A-Za-z0-9][A-Za-z0-9_.$:/@+~-]{0,127}$/;
@@ -194,9 +195,11 @@ export class CodexWorkforceObservation {
     if (expected && expected !== actual && version(expected) !== actual) fail("runtime_version_mismatch");
   }
 
-  acknowledgeThread(response: any, expected: { sandboxPolicy: Record<string, unknown>; approvalPolicy: string }, cwd: string, reviewer: string, threadId?: string): void {
+  acknowledgeThread(response: any, modelAcknowledgement: CodexModelAcknowledgement, expected: { sandboxPolicy: Record<string, unknown>; approvalPolicy: string }, cwd: string, reviewer: string, threadId?: string): void {
     if (!record(response) || !record(response.sandbox) || typeof response.thread?.id !== "string" || !response.thread.id) fail("thread_policy_missing");
     if (threadId && response.thread.id !== threadId) fail("thread_id_mismatch");
+    if (response.model !== modelAcknowledgement.model || response.modelProvider !== modelAcknowledgement.modelProvider
+      || (this.req.model && modelAcknowledgement.requestedModel !== this.req.model)) fail("thread_model_mismatch");
     const actual = response.sandbox;
     const wanted = expected.sandboxPolicy;
     if (response.approvalPolicy !== expected.approvalPolicy || response.approvalsReviewer !== reviewer
@@ -227,7 +230,11 @@ export class CodexWorkforceObservation {
       if (canonical(effectiveRoots(actual.writableRoots)) !== canonical(effectiveRoots(wanted.writableRoots as string[]))) fail("thread_roots_mismatch");
     }
     this.threadId = response.thread.id;
-    this.policy = JSON.parse(JSON.stringify({ sandbox: actual, approvalPolicy: response.approvalPolicy, approvalsReviewer: response.approvalsReviewer, cwd: response.cwd }));
+    this.policy = JSON.parse(JSON.stringify({
+      sandbox: actual, approvalPolicy: response.approvalPolicy, approvalsReviewer: response.approvalsReviewer, cwd: response.cwd,
+      model: modelAcknowledgement.model, modelProvider: modelAcknowledgement.modelProvider,
+      modelAcknowledgement: modelAcknowledgement.mode,
+    }));
   }
 
   observeInventory(snapshot: McpSnapshot): void {

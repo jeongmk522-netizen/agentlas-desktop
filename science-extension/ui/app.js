@@ -389,7 +389,7 @@ function createComposerEventSync({
     projects: [], selectedId: null, lifecycle: null, researchLoopInspection: null, researchLoopActionBusy: false, researchLoopActionError: "", conversations: [], selectedConversationId: null, messages: [], sources: [], sourceFigures: [], runs: [], artifacts: [], labs: [], workspaceLabBindings: [], labCatalog: [], labDecisionProjections: [], rendererPacks: [], manuscripts: [], claimLedger: null, journalProfiles: [], submissionExports: [], analysisSpecs: [], decisions: [],
     artifactContextsByMessage: new Map(), labContextsById: new Map(), artifactHistoryById: new Map(), selectedLabId: null, selectedArtifactOriginVersion: null, inspectedArtifactVersion: null, inspectedArtifactContext: null, artifactComparison: null, draftHistoryGuard: null, labsExpanded: true, expandedLabGroups: new Set(["chemistry"]), expandedLabDecisions: new Set(), projectMenuOpen: false, projectFolderOpen: false, projectLibrarySummaries: new Map(), projectLibrarySummaryState: "loading", librarySearch: "", librarySelectedProjectId: null, projectFolderSelectedKey: null, newProjectStep: "details", selectedResearchTemplateId: null, newProjectDraft: blankNewProjectDraft(), newProjectFolderError: "", newProjectFolderBusy: false, newProjectGeneration: 0, newProjectRequestId: null, newProjectRequestSignature: "", labManagerOpen: false, labManagerBusyId: null, labManagerGeneration: 0, labManagerError: "", historyOpen: false, railCollapsed: readRailCollapsed(),
     blocksByMessage: new Map(), citationsByMessage: new Map(), evidenceById: new Map(), selectedSourceId: null, selectedArtifactId: null,
-    evidenceGraph: null, evidenceGraphReviews: [], evidenceGraphLoading: false, evidenceGraphError: "", selectedEvidenceGraphNodeId: null, selectedEvidenceGraphCandidateId: null, evidenceGraphReviewSheet: false, evidenceGraphReviewDecision: "accepted", evidenceGraphReviewBusy: false, evidenceGraphReviewError: "", evidenceGraphPathAnchorId: null, evidenceGraphPath: null,
+    evidenceGraph: null, evidenceGraphReviews: [], evidenceGraphLoading: false, evidenceGraphRefreshId: null, evidenceGraphError: "", selectedEvidenceGraphNodeId: null, selectedEvidenceGraphCandidateId: null, evidenceGraphReviewSheet: false, evidenceGraphReviewDecision: "accepted", evidenceGraphReviewBusy: false, evidenceGraphReviewError: "", evidenceGraphPathAnchorId: null, evidenceGraphPath: null,
     mode: "session", drawer: null, modal: false, manuscriptModal: false, saving: false, loadingProject: false, projectError: "", projectFolderOpenBusy: false, projectFolderOpenError: "", activeVegaView: null, activeCytoscape: null, activeNumericSurface: null, activeJBrowseTarget: null, scrollByMode: { session: 0, lab: 0, manuscript: 0 }, returnMessageId: null,
     workspaceTabs: [{ id: "research", kind: "research", dirty: false }], activeWorkspaceTabId: "research", currentDestination: "overview", hypotheses: [], hypothesesError: "", approvalPolicy: null, approvalPolicyError: "", workspaceSyncError: "",
     analysisRuns: [], analysisRunArtifacts: [], analysisRunsError: "", analysisRunsProjectId: null,
@@ -1912,6 +1912,7 @@ function createComposerEventSync({
     state.evidenceGraph = null;
     state.evidenceGraphReviews = [];
     state.evidenceGraphLoading = false;
+    state.evidenceGraphRefreshId = null;
     state.evidenceGraphError = "";
     state.selectedEvidenceGraphNodeId = null;
     state.selectedEvidenceGraphCandidateId = null;
@@ -10181,28 +10182,37 @@ function createComposerEventSync({
 
   async function refreshEvidenceGraph() {
     if (!state.selectedId || state.evidenceGraphLoading) return;
+    const projectId = state.selectedId;
+    const requestId = crypto.randomUUID();
+    const currentRequest = () => state.selectedId === projectId && state.evidenceGraphRefreshId === requestId;
+    state.evidenceGraphRefreshId = requestId;
     state.evidenceGraphLoading = true;
     state.evidenceGraphError = "";
     render();
     try {
       const result = await science.evidenceGraph.refresh({
-        requestId: crypto.randomUUID(),
-        projectId: state.selectedId,
+        requestId,
+        projectId,
         expectedRevision: state.evidenceGraph?.revision ?? null,
         expectedContentSha256: state.evidenceGraph?.contentSha256 ?? null,
       });
-      const snapshot = await science.evidenceGraph.get(state.selectedId);
-      if (!result?.graph || snapshot?.graph?.id !== result.graph.id || snapshot.graph.contentSha256 !== result.graph.contentSha256) throw new Error("science-evidence-graph-refresh-readback-mismatch");
+      if (!currentRequest()) return;
+      const snapshot = await science.evidenceGraph.get(projectId);
+      if (!currentRequest()) return;
+      if (!result?.graph || result.graph.projectId !== projectId || snapshot?.graph?.projectId !== projectId || snapshot.graph.id !== result.graph.id || snapshot.graph.contentSha256 !== result.graph.contentSha256) throw new Error("science-evidence-graph-refresh-readback-mismatch");
       state.evidenceGraph = snapshot.graph;
       state.evidenceGraphReviews = Array.isArray(snapshot.reviews) ? snapshot.reviews : [];
       if (!evidenceGraphNodeById(state.selectedEvidenceGraphNodeId)) state.selectedEvidenceGraphNodeId = null;
       if (!evidenceGraphCandidateById(state.selectedEvidenceGraphCandidateId)) state.selectedEvidenceGraphCandidateId = null;
       state.evidenceGraphPath = null;
     } catch (error) {
-      state.evidenceGraphError = error instanceof Error ? error.message : String(error);
+      if (currentRequest()) state.evidenceGraphError = error instanceof Error ? error.message : String(error);
     } finally {
-      state.evidenceGraphLoading = false;
-      render();
+      if (currentRequest()) {
+        state.evidenceGraphLoading = false;
+        state.evidenceGraphRefreshId = null;
+        render();
+      }
     }
   }
 

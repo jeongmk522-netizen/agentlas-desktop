@@ -2603,10 +2603,16 @@ function createComposerEventSync({
     const version = source.version || null;
     const scope = literatureTextScope(version);
     const spans = version?.id ? spansBySourceVersion.get(version.id) || [] : [];
+    const datasetSource = source.kind === "dataset";
     const retracted = source.verificationStatus === "retracted";
-    const emptySpanGuidance = state.evidenceGraph
-      ? uiCopy("이 출처의 문장이 주장을 받치려면 먼저 근거 구간으로 인용되어 Evidence Graph에 기록되어야 합니다. 연구 채팅에서 이 출처를 인용하면 여기에 나타납니다.", "A passage from this source must first be cited as an evidence span and recorded in the Evidence Graph before it can support a claim. Cite this source in the research chat and it will appear here.")
-      : uiCopy("이 출처의 문장이 주장을 받치려면 먼저 근거 구간으로 인용되어 Evidence Graph에 기록되어야 합니다. 해석·결정 화면에서 Evidence Graph를 먼저 만들면 이미 인용된 구간도 여기에 나타납니다.", "A passage from this source must first be cited as an evidence span and recorded in the Evidence Graph before it can support a claim. Build the Evidence Graph in Interpretation & Decisions and previously cited spans will appear here.");
+    const emptySpanGuidance = datasetSource
+      ? uiCopy("가져오기·파싱은 인용 근거 구간을 자동으로 생성하지 않습니다. 데이터/분석 결과를 인용하고 Evidence Graph에서 확인하세요.", "Importing or parsing does not automatically create citation evidence spans. Cite the data or analysis result and verify it in the Evidence Graph.")
+      : state.evidenceGraph
+        ? uiCopy("이 출처의 문장이 주장을 받치려면 먼저 근거 구간으로 인용되어 Evidence Graph에 기록되어야 합니다. 연구 채팅에서 이 출처를 인용하면 여기에 나타납니다.", "A passage from this source must first be cited as an evidence span and recorded in the Evidence Graph before it can support a claim. Cite this source in the research chat and it will appear here.")
+        : uiCopy("이 출처의 문장이 주장을 받치려면 먼저 근거 구간으로 인용되어 Evidence Graph에 기록되어야 합니다. 해석·결정 화면에서 Evidence Graph를 먼저 만들면 이미 인용된 구간도 여기에 나타납니다.", "A passage from this source must first be cited as an evidence span and recorded in the Evidence Graph before it can support a claim. Build the Evidence Graph in Interpretation & Decisions and previously cited spans will appear here.");
+    const sourceKindLabel = datasetSource
+      ? uiCopy("등록된 데이터셋", "Registered dataset")
+      : `${source.kind || "kind 미기록"}`;
     const spanBody = spans.length === 0
       ? `<div class="literatureSpanEmpty"><strong>${escapeHtml(uiCopy("승격된 근거 구간이 없습니다.", "No evidence span has been promoted yet."))}</strong><p>${escapeHtml(emptySpanGuidance)}</p></div>`
       : `<ul class="literatureSpanList">${spans.map((span) => `<li class="literatureSpan" data-evidence-span-id="${escapeHtml(span.id)}" data-evidence-scope="${escapeHtml(span.scope)}" data-evidence-status="${escapeHtml(span.status)}">
@@ -2616,8 +2622,8 @@ function createComposerEventSync({
     return `<article class="literatureSource" data-source-id="${escapeHtml(source.id)}" data-access-state="${escapeHtml(version?.accessState || "unknown")}" data-text-scope="${escapeHtml(scope)}" data-verification-status="${escapeHtml(source.verificationStatus || "unverified")}">
       <header class="literatureSourceHeader">
         <strong>${escapeHtml(source.title || "제목이 기록되지 않은 출처")}</strong>
-        <button class="literatureSourceOpen" type="button" data-source-id="${escapeHtml(source.id)}">${uiCopy("파일 열기", "Open file")} ${heroIcon("chevron-right")}</button>
-        <span class="literatureSourceKind">${escapeHtml(source.kind || "kind 미기록")}${source.publicationYear ? ` · ${escapeHtml(source.publicationYear)}` : ""}${source.containerTitle ? ` · ${escapeHtml(source.containerTitle)}` : ""}</span>
+        <button class="literatureSourceOpen" type="button" data-source-id="${escapeHtml(source.id)}"><span>${uiCopy("파일 열기", "Open file")}</span> ${heroIcon("chevron-right")}</button>
+        <span class="literatureSourceKind">${escapeHtml(sourceKindLabel)}${source.publicationYear ? ` · ${escapeHtml(source.publicationYear)}` : ""}${source.containerTitle ? ` · ${escapeHtml(source.containerTitle)}` : ""}</span>
       </header>
       <p class="literatureSourceUri"><code>${escapeHtml(source.canonicalUri || "정규 URI가 기록되지 않았습니다.")}</code></p>
       <dl class="literatureSourceFacts">
@@ -3065,7 +3071,7 @@ function createComposerEventSync({
   const RESULTS_VALIDATION_LOOKUP_LIMIT = 60;
   const runResultShortHash = (value) => (value ? `${String(value).slice(0, 12)}…` : "—");
   const analysisRunStatusLabels = {
-    running: ["실행 중", "Running"], succeeded: ["성공", "Succeeded"],
+    running: ["실행 중", "Running"], succeeded: ["실행 성공", "Execution succeeded"],
     failed: ["실패", "Failed"], cancelled: ["취소됨", "Cancelled"],
   };
   const analysisRunOutputs = (run) => (Array.isArray(run?.outputs) ? run.outputs : []);
@@ -3127,7 +3133,7 @@ function createComposerEventSync({
         <strong>${escapeHtml(artifact?.title || output.artifactId)}</strong>
         <span>${escapeHtml(artifact?.kind || output.mimeType || "unknown")} · v${escapeHtml(boundVersion)} · <code title="${escapeHtml(output.sha256)}">${escapeHtml(runResultShortHash(output.sha256))}</code></span>
         <em>${escapeHtml(binding)}</em>
-        ${artifact ? `<button class="analysisRunArtifactOpen" type="button" data-action="open-result-artifact" data-result-artifact-id="${escapeHtml(artifact.id)}" data-result-artifact-version="${escapeHtml(boundVersion)}">${uiCopy("정확한 아티팩트 열기", "Open exact artifact")}${heroIcon("chevron-right")}</button>` : ""}
+        ${artifact ? `<button class="analysisRunArtifactOpen" type="button" data-action="open-result-artifact" data-result-artifact-id="${escapeHtml(artifact.id)}" data-result-artifact-version="${escapeHtml(boundVersion)}"><span>${uiCopy("정확한 아티팩트 열기", "Open exact artifact")}</span>${heroIcon("chevron-right")}</button>` : ""}
       </li>`;
     }).join("");
     const projectedRows = projectedArtifacts.map((artifact) => {
@@ -3136,7 +3142,7 @@ function createComposerEventSync({
         <strong>${escapeHtml(artifact.title)}</strong>
         <span>${escapeHtml(artifact.kind || "artifact")} · v${escapeHtml(artifactVersion)} · <code title="${escapeHtml(artifact.version?.contentSha256 || "")}">${escapeHtml(runResultShortHash(artifact.version?.contentSha256))}</code></span>
         <em>${uiCopy("이 실행에서 생성되어 프로젝트 아티팩트로 연결된 정확한 결과입니다.", "This exact result was created by this run and linked as a project artifact.")}</em>
-        <button class="analysisRunArtifactOpen" type="button" data-action="open-result-artifact" data-result-artifact-id="${escapeHtml(artifact.id)}" data-result-artifact-version="${escapeHtml(artifactVersion)}">${uiCopy("정확한 아티팩트 열기", "Open exact artifact")}${heroIcon("chevron-right")}</button>
+        <button class="analysisRunArtifactOpen" type="button" data-action="open-result-artifact" data-result-artifact-id="${escapeHtml(artifact.id)}" data-result-artifact-version="${escapeHtml(artifactVersion)}"><span>${uiCopy("정확한 아티팩트 열기", "Open exact artifact")}</span>${heroIcon("chevron-right")}</button>
       </li>`;
     }).join("");
     const manifestRows = outputs.filter((output) => !output?.artifactId).map((output) => `<li class="analysisRunManifestOutput" data-output-role="${escapeHtml(output?.role || "")}">
@@ -3174,6 +3180,7 @@ function createComposerEventSync({
     const runs = loaded && Array.isArray(state.analysisRuns) ? state.analysisRuns : [];
     const artifactsById = new Map((Array.isArray(state.analysisRunArtifacts) ? state.analysisRunArtifacts : []).map((artifact) => [artifact.id, artifact]));
     const outputlessCount = runs.filter(analysisRunSucceededWithoutOutput).length;
+    const noPlanCount = runs.filter((run) => !run?.analysisPlan).length;
     const body = !loaded
       ? `<div class="loadingState" aria-live="polite">${uiCopy("실행 기록을 불러오는 중…", "Loading run records…")}</div>`
       : state.analysisRunsError
@@ -3185,7 +3192,8 @@ function createComposerEventSync({
       <div class="researchKicker"><span>${escapeHtml(domainLabel(project.domain))}</span> · <span>${uiCopy("분석 실행", "Analysis runs")}</span></div>
       <h1>${escapeHtml(project.title)}</h1>
       ${state.analysisRunsError ? `<div class="errorCopy" role="alert">${escapeHtml(uiCopy(`실행 기록을 불러오지 못했습니다. ${state.analysisRunsError}`, `Could not load run records. ${state.analysisRunsError}`))}</div>` : ""}
-      ${loaded && runs.length ? `<div class="analysisRunsSummary"><span>${uiCopy("전체", "Total")} <strong>${escapeHtml(runs.length)}</strong></span><span>${uiCopy("성공", "Succeeded")} <strong>${escapeHtml(runs.filter((run) => run.status === "succeeded").length)}</strong></span><span>${uiCopy("실패·취소", "Failed or cancelled")} <strong>${escapeHtml(runs.filter((run) => run.status === "failed" || run.status === "cancelled").length)}</strong></span><span data-alert="${outputlessCount > 0}">${uiCopy("출력 없는 성공", "Succeeded without output")} <strong>${escapeHtml(outputlessCount)}</strong></span></div>` : ""}
+      ${loaded && runs.length ? `<div class="analysisRunsSummary"><span>${uiCopy("전체", "Total")} <strong>${escapeHtml(runs.length)}</strong></span><span>${uiCopy("실행 성공", "Execution succeeded")} <strong>${escapeHtml(runs.filter((run) => run.status === "succeeded").length)}</strong></span><span>${uiCopy("실패·취소", "Failed or cancelled")} <strong>${escapeHtml(runs.filter((run) => run.status === "failed" || run.status === "cancelled").length)}</strong></span><span data-alert="${outputlessCount > 0}">${uiCopy("출력 없는 성공", "Succeeded without output")} <strong>${escapeHtml(outputlessCount)}</strong></span></div>` : ""}
+      ${loaded && noPlanCount ? `<p class="acquisitionBoundary" role="note">${escapeHtml(uiCopy(`고정된 분석계획 없이 실행한 기록 ${noPlanCount}건입니다. 실행 성공은 연구 완료나 결론 검증을 뜻하지 않습니다. 계획과 해석을 확인하세요.`, `${noPlanCount} run${noPlanCount === 1 ? "" : "s"} recorded without a pinned analysis plan. Execution succeeded does not mean the study is complete or the conclusion is validated. Review the plan and interpretation.`))}</p>` : ""}
       ${body}
     </div></section>`;
   }

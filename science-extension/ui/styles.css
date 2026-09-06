@@ -3910,8 +3910,8 @@ button.manuscriptBinding:hover { border-color: var(--line-strong); background: v
 .resultArtifact { display: grid; gap: 8px; border: 1px solid var(--grey-200); border-radius: 10px; background: var(--surface); padding: 14px 16px; margin-bottom: 10px; }
 .resultArtifact > strong { color: var(--ink); font-size: 14px; font-weight: 650; }
 .resultArtifact code { color: var(--grey-500); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; }
-.resultArtifactActions { display: flex; align-items: center; gap: 10px 14px; margin-top: 4px; }
-.resultArtifactActions > button { display: inline-flex; flex: 0 0 auto; align-items: center; gap: 6px; min-height: 36px; padding: 0 14px; }
+.resultArtifactActions { min-width: 0; max-width: 100%; display: flex; flex-wrap: wrap; align-items: center; gap: 10px 14px; margin-top: 4px; }
+.resultArtifactActions > button { display: inline-flex; flex: 0 1 auto; min-width: 0; max-width: 100%; align-items: center; gap: 6px; min-height: 36px; padding: 0 14px; white-space: normal; overflow-wrap: anywhere; }
 .resultArtifactActions > button .uiIcon { width: 13px; height: 13px; }
 .resultArtifactActions > span { max-width: 560px; color: var(--grey-600); font-size: 11px; line-height: 1.5; }
 

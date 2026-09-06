@@ -720,14 +720,14 @@ export function RunHistoryPanel({ automation, locale, compact = false }: RunHist
             ? "확인 내용을 저장했습니다. 이 발생은 완료 처리됐습니다."
             : "Saved the confirmation. This occurrence is complete.";
       setMessage(terminalMessage);
-      if (!await load({ reportFailure: false })) {
+      if (!await load({ reportFailure: false, forceReconciliation: true })) {
         setMessage(`${terminalMessage} ${ko
           ? "최신 기록 화면만 불러오지 못했습니다. 같은 확인을 반복하지 말고 화면을 다시 여세요."
           : "Only the latest history failed to load. Do not repeat the confirmation; reopen this page."}`);
       }
     } catch (err) {
       const conflicted = /conflict|stale/.test(String(err));
-      const reloaded = conflicted ? await load({ reportFailure: false }) : false;
+      const reloaded = conflicted ? await load({ reportFailure: false, forceReconciliation: true }) : false;
       setRecoveryError(reconciliationErrorMessage(err, ko, reloaded));
     } finally {
       setReconciling(false);
@@ -774,14 +774,14 @@ export function RunHistoryPanel({ automation, locale, compact = false }: RunHist
             ? "발생을 다시 대기열에 넣었습니다."
             : "Queued the occurrence for retry.";
       setMessage(terminalMessage);
-      if (!await load({ reportFailure: false })) {
+      if (!await load({ reportFailure: false, forceReconciliation: true })) {
         setMessage(`${terminalMessage} ${ko
           ? "최신 기록 화면만 불러오지 못했습니다. 같은 조정을 반복하지 말고 화면을 다시 여세요."
           : "Only the latest history failed to load. Do not repeat the reconciliation; reopen this page."}`);
       }
     } catch (err) {
       const conflicted = /conflict|stale/.test(String(err));
-      const reloaded = conflicted ? await load({ reportFailure: false }) : false;
+      const reloaded = conflicted ? await load({ reportFailure: false, forceReconciliation: true }) : false;
       setRecoveryError(reconciliationErrorMessage(err, ko, reloaded));
     } finally {
       setEventActionId(null);

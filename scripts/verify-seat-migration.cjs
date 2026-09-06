@@ -96,13 +96,19 @@ let backupPath = null;
 // 실제로 나가는 SQL 을 보려고 exec 를 한 겹 감싼다.
 const origExec = db.exec.bind(db);
 db.exec = (sql) => { if (/CREATE TABLE chats_v102/.test(sql)) { console.log("--- 생성 SQL ---"); console.log(sql.split("\n").slice(0,26).join("\n")); console.log("--- 끝 ---"); } return origExec(sql); };
-const run = new Function("db", "backupDatabaseFile", "userVersion", body);
+// ★v102 블록은 db.ts 모듈 스코프의 tableExists() 헬퍼를 부른다(2026-09-03, e3e7095b
+// 로 이 블록에 추가됨). 블록만 문자열로 뽑아 new Function 으로 태우면 그 헬퍼가
+// 스코프에 없어 "tableExists is not defined" 로 죽는다 — 마이그레이션 자체가 아니라
+// 이 하네스가 낡아 있던 것이다. db.ts 의 정의와 같은 SQL 로 실제 함수를 넣어 준다.
+const tableExists = (targetDb, table) =>
+  Boolean(targetDb.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ? LIMIT 1").get(table));
+const run = new Function("db", "backupDatabaseFile", "userVersion", "tableExists", body);
 // 마이그레이션이 던지면 **그것부터 실패**로 기록한다. 예외로 스크립트가 죽으면 아래 검사가
 // 하나도 안 돌고, 그러면 "실패 0" 이 되어 통과처럼 보인다(2026-08-23 실측: 역검증이
 // 그렇게 통과했다 — 검사가 잡은 게 아니라 스크립트가 죽은 것이었다).
 let migrationError = null;
 try {
-  run(db, (d, tag) => { backupPath = path.join(dir, `backup-${tag}`); fs.copyFileSync(dbPath, backupPath); return backupPath; }, 101);
+  run(db, (d, tag) => { backupPath = path.join(dir, `backup-${tag}`); fs.copyFileSync(dbPath, backupPath); return backupPath; }, 101, tableExists);
   db.pragma("user_version = 102");
 } catch (error) {
   migrationError = error;

@@ -21,19 +21,20 @@ assert.equal(describeCronExpression("*/60 * * * *", "ko"), "1시간마다");
 assert.equal(describeCronExpression("0 */3 * * *", "ko"), "3시간마다");
 assert.equal(describeCronExpression("30 */6 * * *", "en"), "Every 6 hours at :30");
 
-// ── 시각형 ────────────────────────────────────────────────────────────────
-assert.equal(describeCronExpression("0 9 * * *", "ko"), "매일 09:00");
+// ── 시각형 — 한국어는 사람이 말하는 대로 "오전/오후 H시" (오너 결정 2026-08-19,
+//    2734de12). 영어는 24시간 HH:MM 그대로다 — 두 언어가 갈리는 것이 계약이다.
+assert.equal(describeCronExpression("0 9 * * *", "ko"), "매일 오전 9시");
 assert.equal(describeCronExpression("0 9 * * 1-5", "en"), "Weekdays at 09:00");
-assert.equal(describeCronExpression("0 9 * * 0,6", "ko"), "주말 09:00");
-assert.equal(describeCronExpression("0 9 * * 1", "ko"), "매주 월요일 09:00");
-assert.equal(describeCronExpression("0 9 * * 0,2,4", "ko"), "매주 일·화·목요일 09:00");
+assert.equal(describeCronExpression("0 9 * * 0,6", "ko"), "주말 오전 9시");
+assert.equal(describeCronExpression("0 9 * * 1", "ko"), "매주 월요일 오전 9시");
+assert.equal(describeCronExpression("0 9 * * 0,2,4", "ko"), "매주 일·화·목요일 오전 9시");
 assert.equal(describeCronExpression("0 9 1 * *", "en"), "Monthly on day 1 at 09:00");
 assert.equal(describeCronExpression("0 * * * *", "ko"), "매시 정각");
 assert.equal(describeCronExpression("15 * * * *", "en"), "Hourly at :15");
 
 // ── cron 7 = 일요일. 7칸 표를 7로 색인해 "undefined"가 문장에 박혔었다 ──────
-assert.equal(describeCronExpression("0 9 * * 7", "ko"), "매주 일요일 09:00");
-assert.equal(describeCronExpression("0 9 * * 0,7", "ko"), "매주 일·일요일 09:00");
+assert.equal(describeCronExpression("0 9 * * 7", "ko"), "매주 일요일 오전 9시");
+assert.equal(describeCronExpression("0 9 * * 0,7", "ko"), "매주 일·일요일 오전 9시");
 for (const locale of ["ko", "en"]) {
   assert.ok(
     !String(describeCronExpression("0 9 * * 7", locale)).includes("undefined"),
@@ -62,11 +63,11 @@ assert.equal(humanizeScheduleLabel("매일 오전 8시", "ko"), "매일 오전 8
 // `weekly-1-09:00` 같은 저장 토큰이 그대로 들어 있고, 그걸 사람 문장이라며 폰에
 // 보내면 화면에 토큰이 뜬다.
 assert.equal(humanizeScheduleLabel("cron:*/20 * * * *", "ko"), "20분마다");
-assert.equal(humanizeScheduleLabel("daily-09:00", "ko"), "매일 09:00");
+assert.equal(humanizeScheduleLabel("daily-09:00", "ko"), "매일 오전 9시");
 assert.equal(humanizeScheduleLabel("daily-9:05", "en"), "Daily at 09:05");
 assert.equal(humanizeScheduleLabel("every-10m", "ko"), "10분마다");
 assert.equal(humanizeScheduleLabel("every-3h", "en"), "Every 3 hours");
-assert.equal(humanizeScheduleLabel("weekly-1-09:00", "ko"), "매주 월요일 09:00");
+assert.equal(humanizeScheduleLabel("weekly-1-09:00", "ko"), "매주 월요일 오전 9시");
 // 모르는 토큰은 지어내지 않고 그대로 둔다.
 assert.equal(humanizeScheduleLabel("some-custom-label", "ko"), "some-custom-label");
 
@@ -134,7 +135,7 @@ assert.equal(humanSchedule("manual", "ko"), "값을 넣을 때만");
 assert.equal(humanizeScheduleLabel("manual", "ko"), "수동 실행");
 
 // ── 목록·범위형 — 흔한데 예전엔 전부 null 이라 크론 원문이 제목에 올라갔다 ──
-assert.equal(describeCronExpression("0 9,18 * * *", "ko"), "매일 09:00, 18:00");
+assert.equal(describeCronExpression("0 9,18 * * *", "ko"), "매일 오전 9시, 오후 6시");
 assert.equal(describeCronExpression("0 9,13,18 * * *", "en"), "Daily at 09:00, 13:00, 18:00");
 assert.equal(describeCronExpression("0 9-18 * * *", "ko"), "매일 09시~18시 매시");
 assert.equal(describeCronExpression("0,30 * * * *", "ko"), "매시 00분, 30분");

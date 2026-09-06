@@ -15,11 +15,26 @@
  * 전에 판정을 읽으면 방금 닫은 항목이 안 보인다).
  *
  * 사용 파일: dist/electron/** (build:electron 산출물)
+ *
+ * 실행: ELECTRON_RUN_AS_NODE=1 electron scripts/goal-completion-contract.cjs
+ *
+ * ★2026-09-03(e3e7095b) 이후 ensureGoalLedgerGoal 등은 Python 원장이 아니라
+ *   dist/electron/store/long-runs.js(=better-sqlite3, Electron ABI)로 간다.
+ *   그런데 이 게이트는 npm run build:electron && `node` 로만 돌게 남아 있었다 —
+ *   getDb()가 "Store not initialized" 로 던지고, ensureGoalLedgerGoal 의
+ *   try/catch 가 그것을 삼켜 "goal 생성 실패"라는 엉뚱한 단언만 남겼다.
+ *   store 초기화 자체가 빠진 낡은 게이트였다(플레인 node 로는 better-sqlite3 의
+ *   Electron ABI 도 못 연다). 격리 store 를 실제로 초기화하도록 고친다.
  */
 const assert = require("node:assert");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
+const { app } = require("electron");
+
+const storeHome = fs.mkdtempSync(path.join(os.tmpdir(), "agentlas-goal-completion-store-"));
+process.env.AGENTLAS_STORE_PATH = path.join(storeHome, "agentlas.sqlite");
+app.setPath("userData", path.join(storeHome, "user-data"));
 
 const ROOT = path.resolve(__dirname, "..");
 const checks = [];
@@ -168,7 +183,12 @@ const { GOAL_COMPLETE_MARKER, stripGoalCompleteMarker, goalCompletionVerdict } =
 
 // ── 5. 원장 왕복 (라이브) ─────────────────────────────────────────────────
 // 격리 AGENTLAS_HOME 에서 실제 CLI 를 돌린다. 오너의 실제 원장은 건드리지 않는다.
-{
+(async () => {
+  await app.whenReady();
+  // ensureGoalLedgerGoal 등은 이제 better-sqlite3 store 를 직접 연다 — 부르기 전에
+  // 반드시 초기화돼 있어야 한다("Store not initialized" 를 삼켜 "goal 생성 실패"로
+  // 잘못 보고하던 자리).
+  require(path.join(ROOT, "dist/electron/store/db.js")).initStore();
   const ledger = require(path.join(ROOT, "dist/electron/mcp/goal-ledger.js"));
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "agentlas-goal-gate-"));
   const projectDir = path.join(home, "project");
@@ -270,4 +290,7 @@ const { GOAL_COMPLETE_MARKER, stripGoalCompleteMarker, goalCompletionVerdict } =
     console.error(err);
     process.exit(1);
   });
-}
+})().catch((err) => {
+  console.error(err);
+  process.exit(1);
+});

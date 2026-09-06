@@ -4,6 +4,7 @@ import path from "node:path";
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import type { workbookToCells } from "./workers/workbook-to-cells";
+import { verifyScienceWorkbook } from "../../shared/science-workbook";
 
 type Workbook = ReturnType<typeof workbookToCells>;
 const MAX_RAW = 8 * 1024 * 1024;
@@ -60,8 +61,7 @@ export async function prepareScienceWorkbook(
     let workbook: Workbook;
     try { workbook = JSON.parse(outputBytes.toString("utf8")) as Workbook; }
     catch { throw new Error("science-workbook-output-invalid"); }
-    if (workbook.schema !== "agentlas.science-workbook-cells/v1" || workbook.rawSha256 !== hash(rawBytes)
-      || !Array.isArray(workbook.sheets) || !workbook.sheets.length) throw new Error("science-workbook-output-invalid");
+    verifyScienceWorkbook(workbook, hash(rawBytes));
     return { rawBytes, outputBytes, workbook, workerSha256, outputSha256: hash(outputBytes) };
   } finally { fs.rmSync(job, { recursive: true, force: true }); }
 }

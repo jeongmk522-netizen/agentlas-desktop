@@ -8285,7 +8285,20 @@ function createComposerEventSync({
     state.inlinePreviewUrls = [];
     disposeComparePreviews();
     if (state.activeVegaView) { try { state.activeVegaView.finalize(); } catch {} state.activeVegaView = null; }
-    if (state.activeCytoscape) { try { state.activeCytoscape.destroy(); } catch {} state.activeCytoscape = null; }
+    if (state.activeCytoscape) {
+      try {
+        const cy = state.activeCytoscape;
+        const key = cy.container()?.dataset.evidenceGraphSnapshotKey;
+        if (key) state.evidenceGraphViewport = {
+          key,
+          positions: Object.fromEntries(cy.nodes().map((node) => [node.id(), { ...node.position() }])),
+          zoom: cy.zoom(),
+          pan: { ...cy.pan() },
+        };
+      } catch { /* A missing viewport snapshot must not prevent leaving the screen. */ }
+      try { state.activeCytoscape.destroy(); } catch {}
+      state.activeCytoscape = null;
+    }
     if (state.activeNumericSurface) { try { state.activeNumericSurface.dispose(); } catch {} state.activeNumericSurface = null; }
     if (state.activeSpatialScene) { try { state.activeSpatialScene.dispose(); } catch {} state.activeSpatialScene = null; }
     if (state.activeJBrowseTarget) {
@@ -8514,6 +8527,10 @@ function createComposerEventSync({
       } })),
       ...graph.edges.map((edge) => ({ data: { id: edge.id, source: edge.fromNodeId, target: edge.toNodeId, kind: edge.kind } })),
     ];
+    const snapshotKey = `${state.selectedId}:${graph.contentSha256}`;
+    const saved = state.evidenceGraphViewport?.key === snapshotKey ? state.evidenceGraphViewport : null;
+    const restore = saved && graph.nodes.every((node) => saved.positions[node.id]);
+    host.dataset.evidenceGraphSnapshotKey = snapshotKey;
     const cy = window.cytoscape({
       container: host,
       elements,
@@ -8537,7 +8554,10 @@ function createComposerEventSync({
         { selector: "edge[kind = 'invalidated-by']", style: { "line-color": "#b42318", "target-arrow-color": "#b42318", "line-style": "dotted", width: 2 } },
         { selector: "edge[kind = 'identifies-gap']", style: { "line-color": "#b48335", "target-arrow-color": "#b48335", "line-style": "dashed", width: 1.8 } },
       ],
-      layout: { name: "cose", animate: false, fit: true, padding: 48, nodeRepulsion: 9000, idealEdgeLength: 96, edgeElasticity: 110, gravity: .45, randomize: true },
+      ...(restore ? { zoom: saved.zoom, pan: saved.pan } : {}),
+      layout: restore
+        ? { name: "preset", positions: saved.positions, fit: false }
+        : { name: "cose", animate: false, fit: true, padding: 48, nodeRepulsion: 9000, idealEdgeLength: 96, edgeElasticity: 110, gravity: .45, randomize: true },
     });
     if (state.selectedEvidenceGraphNodeId) cy.getElementById(state.selectedEvidenceGraphNodeId).select();
     cy.on("tap", "node", (event) => {

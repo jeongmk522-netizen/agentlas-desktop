@@ -11810,6 +11810,9 @@ function createComposerEventSync({
       } finally {
         state.journalActionBusy = false;
         render();
+        if (state.journalValidation && state.journalValidation.status !== "ready") {
+          document.querySelector("#submission-export-form .submissionValidationNotice")?.scrollIntoView({ block: "start" });
+        }
       }
       return;
     }

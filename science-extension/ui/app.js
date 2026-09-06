@@ -10335,13 +10335,45 @@ function createComposerEventSync({
     }
   }
 
+  async function openEvidenceGraphSourceVersion(nodeId, canonicalRef) {
+    const lookup = beginEvidenceGraphExactRecordLookup(nodeId);
+    if (!lookup) return;
+    try {
+      // The graph canonicalRef hash includes verification metadata, while
+      // source.version.contentSha256 is the source bytes hash. Navigation
+      // pins the immutable project-scoped version identity and deliberately
+      // does not compare those two different hash domains.
+      const exactVersion = (item) => item?.projectId === lookup.projectId
+        && item?.id
+        && item.version?.sourceId === item.id
+        && item.version?.id === canonicalRef.id
+        && item.version?.version === canonicalRef.version;
+      let source = state.sources.find(exactVersion) || null;
+      if (!source) {
+        const sources = await science.sources.list(lookup.projectId);
+        if (!lookup.isCurrent()) return;
+        source = (Array.isArray(sources) ? sources : []).find(exactVersion) || null;
+      }
+      if (!source) throw new Error(uiCopy("정확한 source version을 현재 프로젝트에서 찾지 못했습니다.", "The exact source version is not available in this project."));
+      const exact = await science.sources.get(lookup.projectId, source.id);
+      if (!lookup.isCurrent()) return;
+      if (!exact || !exactVersion(exact)) throw new Error(uiCopy("정확한 source version을 현재 프로젝트에서 찾지 못했습니다.", "The exact source version is not available in this project."));
+      source = exact;
+      state.sources = [...state.sources.filter((item) => item.id !== source.id), source];
+      state.selectedSourceId = source.id;
+      state.drawer = { kind: "source", id: source.id };
+      finishEvidenceGraphExactRecordLookup(lookup);
+    } catch (error) {
+      failEvidenceGraphExactRecordLookup(lookup, error);
+    }
+  }
+
   function openEvidenceGraphExactRecord(nodeId) {
     const node = evidenceGraphNodeById(nodeId);
     if (!node) return;
     const ref = node.canonicalRef;
     if (ref.kind === "source-version") {
-      const source = state.sources.find((item) => item.version?.id === ref.id && item.version?.version === ref.version);
-      if (source) { state.selectedSourceId = source.id; state.drawer = { kind: "source", id: source.id }; render(); }
+      void openEvidenceGraphSourceVersion(node.id, ref);
       return;
     }
     if (ref.kind === "evidence-span") {

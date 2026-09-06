@@ -922,8 +922,9 @@ function rolePoolGates(list: RuntimeStatus[]): {
     },
     /**
      * 이 런타임이 실제로 가진 모델인가. **런타임이 광고한 인벤토리가 있을 때만**
-     * 부재를 판정한다(CLI는 발견된 목록, 로컬은 provider 조회 결과).
-     * BYOK의 정적 호스트 카탈로그는 신규 모델의 부재를 증명하지 않는다.
+     * 부재를 판정한다(로컬 inference의 설치 모델 조회 결과).
+     * CLI 목록은 숨김 모델이나 별칭을 생략할 수 있고, BYOK는 정적 호스트
+     * 카탈로그다. 둘 다 명시 모델의 부재를 증명하지 못한다.
      * 하드코딩 폴백 카탈로그로는 판정하지 않는다 — 계정이 새 모델을 받으면
      * 폴백이 곧바로 낡아 유효 모델을 차단하게 된다(실측: claude-code 폴백에
      * 없는 `fable`이 실제로는 정상 실행됨). 증명 못 하면 통과시키고 실패는
@@ -935,8 +936,7 @@ function rolePoolGates(list: RuntimeStatus[]): {
       const runtime = runtimeFor(selection);
       if (!runtime) return false;
       if (runtime.modelDiscovery && (runtime.modelDiscovery.status !== "ok" || runtime.modelDiscovery.stale)) return false;
-      const authoritative = LOCAL_MODEL_INVENTORY_KINDS.has(runtime.kind)
-        || runtime.modelDiscovery?.status === "ok";
+      const authoritative = LOCAL_MODEL_INVENTORY_KINDS.has(runtime.kind);
       if (!authoritative) return false;
       const catalog = runtime.availableModels ?? [];
       if (catalog.length === 0) return false;

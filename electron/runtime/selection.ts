@@ -387,8 +387,9 @@ function runtimeModelUnavailable(runtime: RuntimeStatus, selectedModel: string |
   const discovery = runtime.modelDiscovery;
   // Failed/empty/stale discovery cannot prove that an explicit model was removed.
   if (discovery && (discovery.status !== "ok" || discovery.stale)) return false;
-  const authoritative = LOCAL_AUTHORITATIVE_MODEL_KINDS.has(runtime.kind)
-    || discovery?.status === "ok";
+  // CLI picker catalogs may omit accepted aliases/hidden models even when the
+  // read succeeds. Preserve the explicit request and let the runtime answer it.
+  const authoritative = LOCAL_AUTHORITATIVE_MODEL_KINDS.has(runtime.kind);
   return authoritative && (runtime.availableModels?.length ?? 0) > 0
     && !runtime.availableModels!.includes(model);
 }

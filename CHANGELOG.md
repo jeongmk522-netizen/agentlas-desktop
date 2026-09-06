@@ -14,6 +14,14 @@ submission readiness requires the journal checks. Research continuation counts
 the initial turn and preserves explicit stop and stalled-progress boundaries.
 Evidence graph refreshes discard responses from a previously selected project.
 
+Graph provides separate refresh, resume, and fresh-run actions. Starting over
+preserves the previous execution record and requires review of already completed
+external actions; uncertain effects remain blocked until reconciled.
+
+One Hub agents use the server-confirmed lease before joining the organization.
+Purchase retries reuse the same account-bound request, and an installation retry
+does not create another purchase. Existing active leases are reused.
+
 Missing legacy test imports are hidden from the selectable worker roster while
 retaining their identity and execution history. Agents with matching display
 names are not merged automatically.

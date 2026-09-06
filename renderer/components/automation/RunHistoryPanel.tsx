@@ -130,6 +130,12 @@ export function RunHistoryPanel({ automation, locale, compact = false }: RunHist
   const [dismissedThrough, setDismissedThrough] = useState<string | null>(automation.attentionClearedAt ?? null);
   const [dismissingAttention, setDismissingAttention] = useState(false);
   const reconciliationAttemptRef = useRef<string | null>(null);
+  const loadRequestRef = useRef(0);
+  const reconciliationRequestRef = useRef(0);
+  const loadOwnerRef = useRef(automation.id);
+  loadOwnerRef.current = automation.id;
+  useEffect(() => () => { loadRequestRef.current += 1; reconciliationAttemptRef.current = null; }, []);
+
 
   useEffect(() => {
     setDismissedThrough(automation.attentionClearedAt ?? null);
@@ -151,6 +157,8 @@ export function RunHistoryPanel({ automation, locale, compact = false }: RunHist
   const load = useCallback(async (options: { reportFailure?: boolean; forceReconciliation?: boolean } = {}): Promise<boolean> => {
     const api = ipc();
     if (!api) return false;
+    const request = ++loadRequestRef.current;
+    const isCurrent = () => request === loadRequestRef.current && loadOwnerRef.current === automation.id;
     let snap: WorkflowRunSnapshot | null = null;
     try {
       const [history, nextSnap, nextAttentions] = await Promise.all([
@@ -158,11 +166,13 @@ export function RunHistoryPanel({ automation, locale, compact = false }: RunHist
         api.automations.latestRun(automation.id),
         api.automations.listTriggerAttention(automation.id),
       ]);
+      if (!isCurrent()) return false;
       snap = nextSnap;
       setRuns(history);
       setLatest(nextSnap);
       setAttentions(nextAttentions);
     } catch (err) {
+      if (!isCurrent()) return false;
       if (options.reportFailure !== false) {
         setMessage(ko ? "실행 기록을 불러오지 못했어요. 잠시 뒤 다시 시도해 주세요." : "Could not load run history. Try again shortly.");
       }
@@ -176,12 +186,18 @@ export function RunHistoryPanel({ automation, locale, compact = false }: RunHist
     const reconciliationKey = `${snap.runId}:${JSON.stringify(automation.graph)}`;
     if (!options.forceReconciliation && reconciliationAttemptRef.current === reconciliationKey) return true;
     reconciliationAttemptRef.current = reconciliationKey;
+    const reconciliationRequest = ++reconciliationRequestRef.current;
+    const isCurrentReconciliation = () => loadOwnerRef.current === automation.id
+      && reconciliationAttemptRef.current === reconciliationKey
+      && reconciliationRequestRef.current === reconciliationRequest;
     try {
       const nextReconciliation = await api.automations.getGraphReconciliation(automation.id);
+      if (!isCurrentReconciliation()) return false;
       setReconciliation(nextReconciliation);
       setRecoveryError("");
       return true;
     } catch (err) {
+      if (!isCurrentReconciliation()) return false;
       setReconciliation(null);
       setRecoveryError(reconciliationErrorMessage(err, ko));
       return false;

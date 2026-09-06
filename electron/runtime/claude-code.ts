@@ -28,6 +28,8 @@ import {
   createNdjsonLineReader,
   openClaudeResidentSession,
   residencyDisabledFor,
+  retireSupersededClaudeSessions,
+  captureClaudeExecutableOwner,
   writeClaudeResidentTurn,
   type AcpSessionLease,
   type ClaudeResidentSession,
@@ -332,7 +334,7 @@ async function materializeWindowsAgentAppMcpConfig(
   }
 }
 
-// 구형 claude CLI가 --include-partial-messages를 거부하면 false로 전환해(프로세스 수명 동안
+// 구형 claude CLI가 --include-partial-messages를 거부하면 false로 전환해(관측한 실행 파일 세대마다
 // 1회 학습) 이후 실행은 플래그 없이 — 메시지 덩어리 스트리밍으로 — 동작한다.
 
 const CANDIDATES = [
@@ -563,8 +565,8 @@ export function claudeFailureFromEvent(
 }
 
 /**
- * 이 CLI 는 `--input-format stream-json` 을 모른다(구형) — 프로세스 수명 동안 1회 학습해
- * 영구히 1회성 `-p` 경로로 강등한다. `--include-partial-messages` 학습과 같은 모양.
+ * 이 CLI 는 `--input-format stream-json` 을 모른다(구형) — 관측한 실행 파일 세대마다 1회 학습해
+ * 해당 세대에서 1회성 `-p` 경로를 사용한다. `--include-partial-messages` 학습과 같은 모양.
  */
 
 /** 구형 CLI 판별 — 상주 스폰이 아무 이벤트도 못 내고 죽었을 때 stderr 로만 판정한다. */
@@ -588,6 +590,17 @@ const runClaudeTurn = async (
   }
   const bin = executableIdentity.executable;
   const executableState = capabilitiesFor(executableIdentity);
+
+  const executableOwner = req.chatId ? {
+    chatId: req.chatId,
+    sessionOwnerId: req.runtimeSessionOwnerId ?? req.agentId ?? null,
+    isolateOwner: req.runtimeSessionOwnerId != null,
+    generation: executableIdentity.generation,
+  } : null;
+  const retainExecutableOwner = executableOwner && allowResidency
+    && !req.untrustedNoTools && !req.workforceRuntimeToolGrant
+    && !residencyDisabledFor(KIND, req.env ?? process.env)
+    ? captureClaudeExecutableOwner(executableOwner) : () => true;
 
   const stagedImages = await stageCliImageAttachments(req);
   const runReq = stagedImages.images.length > 0 ? { ...req, userPrompt: stagedImages.userPrompt } : req;
@@ -959,6 +972,8 @@ const runClaudeTurn = async (
     residencyEligible && runReq.chatId && fingerprint
       ? claudePoolKey({
           chatId: runReq.chatId,
+          sessionOwnerId: runtimeSessionOwnerId ?? null,
+          isolateOwner: isolateRuntimeSessionOwner,
           fingerprint,
           executableGeneration: executableIdentity.generation,
           cwd: runCwd,
@@ -973,7 +988,18 @@ const runClaudeTurn = async (
   let lease: AcpSessionLease<ClaudeResidentSession> | null = null;
   /** 이 세션을 풀에 되돌리면 안 되는가(취소·오류·프로토콜 파손). */
   let broken = false;
-  if (poolKey) {
+  if (poolKey && executableOwner) {
+    try {
+      const current = getExecutable(req.runtimeSource, runCwd, runEnv);
+      if (!retainExecutableOwner() || current?.generation !== executableIdentity.generation) {
+        throw new Error("cli_executable_identity_changed_during_preparation");
+      }
+    } catch (error) {
+      cleanupSysFile();
+      cleanupAgentAppMcpConfig();
+      throw error;
+    }
+    retireSupersededClaudeSessions(pool, executableOwner);
     try {
       lease = await pool.acquire(
         poolKey,
@@ -987,6 +1013,7 @@ const runClaudeTurn = async (
         },
         async () =>
           openClaudeResidentSession({
+            executableOwner,
             bin,
             // `--input-format stream-json` 은 `--print` 와 함께만 동작한다(claude --help).
             // args 에는 `-p` 가 이미 들어 있다.
@@ -996,6 +1023,7 @@ const runClaudeTurn = async (
             cwd: runCwd,
             env: runEnv,
           }),
+        retainExecutableOwner,
       );
     } catch {
       // 상주 세션을 못 열었으면 조용히 1회성 경로로 — 사용자에게 차이가 없어야 한다.
@@ -1597,7 +1625,7 @@ const runClaudeTurn = async (
         broken = true;
         const why = (stderr || session.stderrTail).slice(-500);
         if (session.completedTurns === 0 && looksLikeUnknownInputFormat(why)) {
-          // 구형 CLI 는 `--input-format` 자체를 모른다 — 영구 강등(프로세스 수명 동안 1회 학습).
+          // 구형 CLI 는 `--input-format` 자체를 모른다 — 해당 실행 파일 세대에서 1회성 경로로 전환.
           executableState.residencySupported = false;
           console.warn(`[residency] claude-code degraded to one-shot: ${why.trim().slice(0, 200)}`);
           events.onStatus(`[residency] disabled kind=${KIND} reason=input-format-unsupported`);

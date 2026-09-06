@@ -45,7 +45,8 @@ export function observeCliExecutableIdentity(input: {
           if (fs.statSync(candidate).isFile()) { executable = candidate; break; }
         } catch (error) {
           const code = (error as NodeJS.ErrnoException).code;
-          if (code !== "ENOENT" && code !== "ENOTDIR") throw error;
+          if (code !== "ENOENT" && code !== "ENOTDIR"
+            && (explicit || (code !== "EACCES" && code !== "EPERM"))) throw error;
         }
       }
       if (executable) break;

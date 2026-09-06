@@ -2011,8 +2011,9 @@ button.manuscriptBinding:hover { border-color: var(--line-strong); background: v
 .projectHubProjectList > div { min-height: 0; overflow-y: auto; scrollbar-width: thin; }
 .projectHubProjectList button { width: 100%; min-width: 0; min-height: 42px; display: grid; grid-template-columns: 30px minmax(0, 1fr); align-items: center; gap: 8px; border: 0; border-radius: var(--science-radius-control); background: transparent; padding: 5px 7px; color: var(--grey-600); text-align: left; }
 .projectHubProjectList button:hover, .projectHubProjectList button[aria-current="page"] { background: var(--surface); color: var(--ink); }
-.projectHubProjectList img { width: 30px; height: 30px; display: block; border-radius: 6px; object-fit: cover; }
-.projectHubProjectList button span { overflow: hidden; font-size: 10px; font-weight: 620; text-overflow: ellipsis; white-space: nowrap; }
+.projectHubProjectList .projectFolderGlyph { width: 30px; height: 30px; display: grid; place-items: center; border: 1px solid var(--grey-200); border-radius: 8px; background: var(--surface); color: var(--grey-600); }
+.projectHubProjectList .projectFolderGlyph .uiIcon { width: 16px; height: 16px; }
+.projectHubProjectList button > span:not(.projectFolderGlyph) { min-width: 0; overflow: hidden; font-size: 10px; font-weight: 620; text-overflow: ellipsis; white-space: nowrap; }
 .projectHubProjectList p { margin: 7px 8px; color: var(--grey-500); font-size: 10px; line-height: 1.45; }
 
 .projectHubMain { min-width: 0; overflow-y: auto; padding: 24px 20px 36px; background: var(--surface); scrollbar-width: thin; }
@@ -2033,7 +2034,8 @@ button.manuscriptBinding:hover { border-color: var(--line-strong); background: v
 .projectHubCard:hover { border-color: var(--grey-400); box-shadow: var(--elev-1); transform: translateY(-1px); }
 .projectHubCard[aria-pressed="true"] { border-color: var(--ink); box-shadow: 0 0 0 1px var(--ink); }
 .projectHubCard:focus-visible { outline: 2px solid var(--brand-coral); outline-offset: 3px; }
-.projectHubCard > img { width: 100%; height: 110px; display: block; border-bottom: 1px solid var(--grey-100); background: #f8f4ed; object-fit: contain; }
+.projectHubCard > .projectFolderGlyph { width: 100%; height: 110px; display: grid; place-items: center; border-bottom: 1px solid var(--grey-100); background: var(--grey-50); color: var(--grey-600); }
+.projectHubCard > .projectFolderGlyph .uiIcon { width: 46px; height: 46px; }
 .projectHubCardBody { min-width: 0; flex: 1 1 auto; display: flex; flex-direction: column; padding: 10px; }
 .projectHubCardBody > small { overflow: hidden; color: var(--grey-500); font-size: 9px; font-weight: 690; text-overflow: ellipsis; white-space: nowrap; }
 .projectHubCardBody > strong { display: -webkit-box; overflow: hidden; margin-top: 5px; font-size: 13px; line-height: 1.3; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow-wrap: anywhere; }
@@ -2063,8 +2065,9 @@ button.manuscriptBinding:hover { border-color: var(--line-strong); background: v
 .projectHubDetail > header { padding-bottom: 10px; border-bottom: 1px solid var(--grey-200); }
 .projectHubDetail > header span { color: var(--grey-500); font-size: 10px; font-weight: 720; letter-spacing: .07em; text-transform: uppercase; }
 .projectHubDetailHero { position: relative; overflow: hidden; margin-top: 14px; border: 1px solid var(--grey-200); border-radius: var(--science-radius-card); background: var(--surface); }
-.projectHubDetailHero img { width: 100%; aspect-ratio: 4 / 3; display: block; object-fit: cover; }
-.projectHubDetailHero span { position: absolute; right: 8px; bottom: 8px; max-width: calc(100% - 16px); overflow: hidden; border-radius: 999px; background: rgba(255,255,255,.9); padding: 4px 7px; color: var(--grey-700); font-size: 8px; font-weight: 700; text-overflow: ellipsis; white-space: nowrap; backdrop-filter: blur(5px); }
+.projectFolderDetailGlyph { width: 100%; aspect-ratio: 4 / 3; display: grid; place-items: center; background: var(--grey-50); color: var(--grey-600); }
+.projectFolderDetailGlyph .uiIcon { width: 52px; height: 52px; }
+.projectHubDetailLabel { position: absolute; right: 8px; bottom: 8px; max-width: calc(100% - 16px); overflow: hidden; border-radius: 999px; background: rgba(255,255,255,.9); padding: 4px 7px; color: var(--grey-700); font-size: 8px; font-weight: 700; text-overflow: ellipsis; white-space: nowrap; backdrop-filter: blur(5px); }
 .projectHubDetail > h2 { overflow-wrap: anywhere; margin: 15px 0 7px; font-size: 18px; line-height: 1.25; letter-spacing: -.025em; }
 .projectHubDetail > p { margin: 0; color: var(--grey-600); font-size: 10px; line-height: 1.55; overflow-wrap: anywhere; }
 .projectHubFacts { display: grid; gap: 0; margin: 15px 0 0; }
@@ -2072,8 +2075,11 @@ button.manuscriptBinding:hover { border-color: var(--line-strong); background: v
 .projectHubFacts dt { color: var(--grey-500); }
 .projectHubFacts dd { margin: 0; color: var(--ink); overflow-wrap: anywhere; }
 .projectHubDetailMetrics { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px 6px; margin-top: 14px; }
-.projectHubDetailActions { margin-top: 20px; }
+.projectHubDetailActions { display: grid; gap: 8px; margin-top: 20px; }
 .projectHubDetailActions .primaryButton { width: 100%; min-height: 36px; display: flex; align-items: center; justify-content: space-between; gap: 8px; white-space: nowrap; }
+.projectHubDetailActions .secondaryButton { width: 100%; min-height: 36px; display: flex; align-items: center; justify-content: center; gap: 8px; white-space: nowrap; }
+.projectHubActionError { margin: 10px 0 0; color: var(--alarm); font-size: 10px; line-height: 1.45; overflow-wrap: anywhere; }
+.projectHubPathValue { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .projectHubDetailActions .uiIcon { width: 14px; height: 14px; }
 .projectHubDetailEmpty { min-height: 240px; display: grid; place-items: center; align-content: center; gap: 7px; color: var(--grey-500); text-align: center; }
 .projectHubDetailEmpty .uiIcon { width: 24px; height: 24px; }
@@ -2144,7 +2150,7 @@ button.manuscriptBinding:hover { border-color: var(--line-strong); background: v
 @media (max-width: 520px) {
   .projectHubGrid { grid-template-columns: minmax(0, 1fr); }
   .projectHubCard { min-height: 232px; }
-  .projectHubCard > img { height: 126px; }
+  .projectHubCard > .projectFolderGlyph { height: 126px; }
   .projectHubHeading > .primaryButton { width: 100%; justify-content: center; }
   .projectHubMainSearch > span { display: none; }
   .projectHubFolderMetrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -2175,7 +2181,8 @@ button.manuscriptBinding:hover { border-color: var(--line-strong); background: v
 .primaryButton { border: 1px solid var(--ink); background: var(--ink); color: #fff; }
 .primaryButton:disabled { cursor: wait; opacity: .55; }
 
-.modal.newProjectModal { width: min(760px, 100%); border-radius: var(--science-radius-card); padding: 0; overflow-y: auto; box-shadow: 0 18px 48px rgba(54,53,53,.16); }
+.modal.newProjectModal { width: min(760px, 100%); border-radius: var(--science-radius-card); padding: 0; overflow-y: auto; border: 1px solid #e5e7e5; background: #fff; box-shadow: 0 20px 26px rgba(54,53,53,.16); }
+.projectCreationBackdrop { background: rgba(34,38,35,.18); backdrop-filter: blur(2px); }
 .newProjectModal > header { display: flex; align-items: start; justify-content: space-between; gap: 16px; padding: 22px 24px 0; }
 .newProjectModal > header > div > span { color: var(--grey-500); font-size: 10px; font-weight: 720; letter-spacing: .08em; text-transform: uppercase; }
 .newProjectModal > header h2 { margin-top: 5px; }
@@ -2192,6 +2199,20 @@ button.manuscriptBinding:hover { border-color: var(--line-strong); background: v
 .projectDomainCard { min-width: 0; cursor: pointer; }
 .projectDomainCard input { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
 .newProjectModal > .field input, .newProjectModal > .field textarea { border-radius: 12px; }
+.projectFolderPicker { width: 100%; min-width: 0; display: grid; grid-template-columns: 32px minmax(0, 1fr) 18px; align-items: center; gap: 10px; border: 1px solid var(--grey-200); border-radius: 12px; background: var(--surface); padding: 10px 12px; color: var(--ink); text-align: left; }
+.projectFolderPicker:hover { border-color: var(--grey-400); background: var(--grey-50); }
+.projectFolderPicker:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
+.projectFolderPicker:disabled { cursor: wait; opacity: .62; }
+.projectFolderPickerIcon { width: 32px; height: 32px; display: grid; place-items: center; border: 1px solid var(--grey-200); border-radius: 9px; background: var(--grey-50); color: var(--grey-600); }
+.projectFolderPickerIcon .uiIcon { width: 17px; height: 17px; }
+.projectFolderPickerCopy { min-width: 0; display: grid; gap: 3px; }
+.projectFolderPickerCopy strong, .projectFolderPickerPath { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.projectFolderPickerCopy strong { font-size: 12px; font-weight: 650; }
+.projectFolderPickerPath { display: block; color: var(--grey-600); font-size: 11px; line-height: 1.35; }
+.projectFolderPickerPath.isPlaceholder { color: var(--grey-500); }
+.projectFolderPickerArrow { display: grid; place-items: center; color: var(--grey-500); }
+.projectFolderPickerArrow .uiIcon { width: 14px; height: 14px; }
+.projectFolderError { display: block; margin-top: 6px; }
 .projectDomainCard > span { min-height: 50px; display: flex; align-items: center; gap: 7px; border: 1px solid var(--grey-200); border-radius: 12px; background: var(--surface); padding: 0 9px; }
 .projectDomainCard:hover > span { background: var(--grey-50); }
 .projectDomainCard input:checked + span { border-color: var(--ink); background: var(--grey-100); box-shadow: inset 0 0 0 1px var(--ink); }

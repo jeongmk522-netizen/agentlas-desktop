@@ -68,6 +68,7 @@ import {
   SCIENCE_ASTRONOMY_LIGHT_CURVE_LAB_ID,
   SCIENCE_ASTRONOMY_LIGHT_CURVE_OUTPUT_MIME,
   SCIENCE_ASTRONOMY_LIGHT_CURVE_OUTPUT_ROLE,
+  SCIENCE_ASTRONOMY_LIGHT_CURVE_PLUGIN_VERSION,
   SCIENCE_ASTRONOMY_LIGHT_CURVE_RENDERER_ID,
   SCIENCE_ASTRONOMY_LIGHT_CURVE_RENDERER_VERSION,
   SCIENCE_ASTRONOMY_LIGHT_CURVE_TOOL_ID,
@@ -1308,7 +1309,7 @@ function normalizeAstronomyLightCurvePeriodicityInput(
   return validateScienceAstronomyLightCurveInputDescriptor({
     schema: "agentlas.science.astronomy-light-curve-periodicity-input/v1",
     title: boundedText(input.title, 240, "title"),
-    runtime: { pluginId: "agentlas-astronomy", pluginVersion: "1.2.1", runtimeSha256: pluginRuntimeSha256 },
+    runtime: { pluginId: "agentlas-astronomy", pluginVersion: SCIENCE_ASTRONOMY_LIGHT_CURVE_PLUGIN_VERSION, runtimeSha256: pluginRuntimeSha256 },
     sourceTable: {
       artifactId: context.artifact.id,
       artifactVersion: context.selectedVersion.version,
@@ -2704,7 +2705,7 @@ export class ScienceToolGateway {
       toolId: SCIENCE_ASTRONOMY_LIGHT_CURVE_TOOL_ID,
       toolVersion: SCIENCE_ASTRONOMY_LIGHT_CURVE_TOOL_VERSION,
       workerSha256,
-      plugin: { id: "agentlas-astronomy", version: "1.2.1", runtimeSha256: pluginRuntimeSha256 },
+      plugin: { id: "agentlas-astronomy", version: SCIENCE_ASTRONOMY_LIGHT_CURVE_PLUGIN_VERSION, runtimeSha256: pluginRuntimeSha256 },
       runtime: TOOL_RUNTIME,
       electron: process.versions.electron ?? null,
       node: process.versions.node,

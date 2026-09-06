@@ -434,6 +434,9 @@ function createComposerEventSync({
   let scienceModelSearchComposing = false;
   let scienceModelSearchTimer = null;
   let runtimeSelectionRequestEpoch = 0;
+  let projectLibrarySummaryRequestEpoch = 0;
+  let manuscriptEditorRequestEpoch = 0;
+  let manuscriptSaveRequestEpoch = 0;
   let conversationRefreshInFlight = null;
   let conversationRefreshPending = false;
   let conversationRefreshPendingRuntime = false;
@@ -901,8 +904,21 @@ function createComposerEventSync({
     state.projectLibrarySummaryState = "ready";
   };
   async function refreshProjectLibrarySummaries() {
+    const requestEpoch = ++projectLibrarySummaryRequestEpoch;
     state.projectLibrarySummaryState = "loading";
-    setProjectLibrarySummaries(await science.projects.library());
+    try {
+      const rows = await science.projects.library();
+      // A project switch can leave the previous library request in flight. The library
+      // endpoint returns a whole-project snapshot, so accepting that late response can put
+      // an older manuscript count back on the landing page after the user has moved on.
+      if (requestEpoch !== projectLibrarySummaryRequestEpoch) return false;
+      setProjectLibrarySummaries(rows);
+      return true;
+    } catch (error) {
+      // A superseded request must not turn a newer successful snapshot into an error state.
+      if (requestEpoch !== projectLibrarySummaryRequestEpoch) return false;
+      throw error;
+    }
   }
   const selectedConversation = () => state.conversations.find((item) => item.id === state.selectedConversationId) || state.conversations[0] || null;
   const SCIENCE_RUNTIME_RUNNING_STATUSES = new Set(["queued", "running", "cancelling"]);
@@ -1276,6 +1292,10 @@ function createComposerEventSync({
     return bindings.length === 1 ? decision : null;
   };
   const manuscriptById = (id) => state.manuscripts.find((manuscript) => manuscript.id === id) || null;
+  const invalidateManuscriptRequests = () => {
+    manuscriptEditorRequestEpoch += 1;
+    manuscriptSaveRequestEpoch += 1;
+  };
   const journalProfileById = (id) => state.journalProfiles.find((profile) => profile.id === id) || null;
   const analysisSpecById = (id) => state.analysisSpecs.find((analysisSpec) => analysisSpec.id === id) || null;
   const statisticsMethodLabels = {
@@ -1742,6 +1762,14 @@ function createComposerEventSync({
         if (projectId !== state.selectedId || conversation.id !== selectedConversation()?.id) return;
       }
       state.manuscripts = Array.isArray(manuscripts) ? manuscripts : state.manuscripts;
+      try {
+        await refreshProjectLibrarySummaries();
+      } catch {
+        if (projectId === state.selectedId && conversation.id === selectedConversation()?.id) {
+          state.projectLibrarySummaryState = "unavailable";
+        }
+      }
+      if (projectId !== state.selectedId || conversation.id !== selectedConversation()?.id) return;
       state.journalProfiles = Array.isArray(journalProfiles) ? journalProfiles : state.journalProfiles;
       state.analysisSpecs = Array.isArray(analysisSpecs) ? analysisSpecs : state.analysisSpecs;
       state.decisions = Array.isArray(decisions) ? decisions : [];
@@ -1784,6 +1812,10 @@ function createComposerEventSync({
 
   async function selectProject(projectId, options = {}) {
     state.librarySelectedProjectId = projectId;
+    // Invalidate any whole-library snapshot that was started for the project we are leaving.
+    // The next successful project load will publish a fresh canonical projection.
+    projectLibrarySummaryRequestEpoch += 1;
+    invalidateManuscriptRequests();
     const switchingProject = state.selectedId !== projectId;
     const priorProjectId = state.selectedId;
     if (switchingProject && priorProjectId) {
@@ -1994,6 +2026,14 @@ function createComposerEventSync({
       state.labs = safeLabs;
       state.workspaceLabBindings = Array.isArray(workspaceState?.labs) ? workspaceState.labs.filter((binding) => binding?.projectId === projectId) : [];
       state.manuscripts = safeManuscripts;
+      try {
+        await refreshProjectLibrarySummaries();
+      } catch {
+        // A library summary is a landing/folder projection. Do not make a successfully loaded
+        // project unusable when that secondary projection is temporarily unavailable.
+        state.projectLibrarySummaryState = "unavailable";
+      }
+      if (epoch !== selectionEpoch) return;
       state.journalProfiles = safeJournalProfiles;
       state.analysisSpecs = Array.isArray(analysisSpecs) ? analysisSpecs : [];
       state.decisions = Array.isArray(decisions) ? decisions : [];
@@ -2786,6 +2826,7 @@ function createComposerEventSync({
       "research-contract": "연구 계약 승인",
       hypothesis: "가설 승인·기각",
       "journal-identity": "저널 신원 확인",
+      "analysis-plan": "분석 계획 검증·확정",
       "submission-attestation": "제출 최종 확인 (연구자 이름으로 출판사에 나가는 진술)",
     };
     // Each row delegates a different decision. One shared sentence made four
@@ -2794,12 +2835,14 @@ function createComposerEventSync({
       "research-contract": "목표와 중단 기준을 연구자 확인 없이 확정합니다",
       hypothesis: "제안된 가설을 스스로 채택하거나 기각합니다",
       "journal-identity": "투고할 저널의 요건을 스스로 확정합니다",
+      "analysis-plan": "허용된 범위에서 완전한 계획 버전을 고정합니다",
       "submission-attestation": "제출 진술을 연구자 확인 없이 확정합니다",
     };
     const scopeAsked = {
       "research-contract": "계약을 확정하기 전에 묻습니다",
       hypothesis: "가설을 채택·기각하기 전에 묻습니다",
       "journal-identity": "저널 요건을 확정하기 전에 묻습니다",
+      "analysis-plan": "계획 버전을 확정하기 전에 검토를 요청합니다",
       "submission-attestation": "제출 진술을 확정하기 전에 묻습니다",
     };
     const rows = Object.entries(scopeLabels).map(([scope, label]) => {
@@ -3467,12 +3510,23 @@ function createComposerEventSync({
     if (!state.selectedId || !state.selectedManuscriptId) return;
     const projectId = state.selectedId;
     const manuscriptId = state.selectedManuscriptId;
+    const requestEpoch = ++manuscriptEditorRequestEpoch;
+    const isCurrent = () => requestEpoch === manuscriptEditorRequestEpoch
+      && state.selectedId === projectId
+      && state.selectedManuscriptId === manuscriptId;
     const snapshot = await loadManuscriptEditorWorkspace(projectId, manuscriptId);
-    if (state.selectedId !== projectId || state.selectedManuscriptId !== manuscriptId) {
+    if (!isCurrent()) {
       disposeManuscriptArtifactPreviews(snapshot.artifactPreviewUrls);
       return;
     }
     applyManuscriptEditorWorkspace(snapshot);
+    try {
+      await refreshProjectLibrarySummaries();
+    } catch {
+      if (!isCurrent()) return;
+      state.projectLibrarySummaryState = "unavailable";
+    }
+    if (!isCurrent()) return;
     state.manuscriptNotice = notice;
     state.manuscriptInsertError = "";
     disposeManuscriptInsertion();
@@ -3481,19 +3535,35 @@ function createComposerEventSync({
 
   async function openManuscript(manuscriptId) {
     if (!state.selectedId || !manuscriptId) return;
+    const projectId = state.selectedId;
+    const requestEpoch = ++manuscriptEditorRequestEpoch;
+    manuscriptSaveRequestEpoch += 1;
+    state.manuscriptSaving = false;
+    const isCurrentProject = () => requestEpoch === manuscriptEditorRequestEpoch && state.selectedId === projectId;
+    const isCurrent = () => isCurrentProject() && state.selectedManuscriptId === manuscriptId;
     rememberScroll();
     try {
       const [manuscript, claimLedger, editorWorkspace] = await Promise.all([
-        science.manuscripts.get(state.selectedId, manuscriptId),
-        science.claimLedgers.getForManuscript(state.selectedId, manuscriptId),
-        loadManuscriptEditorWorkspace(state.selectedId, manuscriptId),
+        science.manuscripts.get(projectId, manuscriptId),
+        science.claimLedgers.getForManuscript(projectId, manuscriptId),
+        loadManuscriptEditorWorkspace(projectId, manuscriptId),
       ]);
-      if (!manuscript || manuscript.projectId !== state.selectedId) throw new Error("science-manuscript-not-found");
+      if (!isCurrentProject()) return;
+      if (!manuscript || manuscript.projectId !== projectId) throw new Error("science-manuscript-not-found");
       ensureManuscriptWorkspaceTab(manuscript);
       state.selectedManuscriptId = manuscript.id;
       applyManuscriptEditorWorkspace(editorWorkspace);
       state.claimLedger = claimLedger;
-      restoreSubmissionExportState(manuscript, claimLedger, await science.submissions.list(state.selectedId, manuscript.id));
+      const submissionExports = await science.submissions.list(projectId, manuscript.id);
+      if (!isCurrent()) return;
+      restoreSubmissionExportState(manuscript, claimLedger, submissionExports);
+      try {
+        await refreshProjectLibrarySummaries();
+      } catch {
+        if (!isCurrent()) return;
+        state.projectLibrarySummaryState = "unavailable";
+      }
+      if (!isCurrent()) return;
       state.journalValidation = null;
       state.manuscriptSaveError = "";
       state.manuscriptSelectionError = "";
@@ -3506,6 +3576,7 @@ function createComposerEventSync({
       render();
       void queueWorkspacePersistence();
     } catch (error) {
+      if (!isCurrentProject()) return;
       state.projectError = error instanceof Error ? error.message : String(error);
       render();
     }
@@ -4846,9 +4917,16 @@ function createComposerEventSync({
   }
 
   async function saveManuscriptDraft() {
-    const manuscript = manuscriptById(state.selectedManuscriptId);
+    const projectId = state.selectedId;
+    const manuscriptId = state.selectedManuscriptId;
+    const manuscript = manuscriptById(manuscriptId);
     const draft = state.manuscriptDraft;
-    if (!manuscript || !draft || !draft.dirty || state.manuscriptSaving) return;
+    if (!projectId || !manuscript || !draft || !draft.dirty || state.manuscriptSaving) return;
+    const requestEpoch = ++manuscriptSaveRequestEpoch;
+    const isCurrent = () => requestEpoch === manuscriptSaveRequestEpoch
+      && state.selectedId === projectId
+      && state.selectedManuscriptId === manuscriptId
+      && state.mode === "manuscript";
     state.manuscriptSaving = true;
     state.manuscriptSaveError = "";
     render();
@@ -4856,7 +4934,7 @@ function createComposerEventSync({
     try {
       const result = await science.manuscripts.appendVersion({
         requestId: crypto.randomUUID(),
-        projectId: state.selectedId,
+        projectId,
         manuscriptId: manuscript.id,
         expectedVersion: draft.baseVersion,
         expectedContentSha256: draft.baseContentSha256,
@@ -4865,16 +4943,21 @@ function createComposerEventSync({
       });
       saved = result.manuscript;
     } catch (error) {
+      if (!isCurrent()) return;
       state.manuscriptSaving = false;
       state.manuscriptSaveError = error instanceof Error ? error.message : String(error);
       render();
       return;
     }
+    if (!isCurrent()) return;
     state.manuscripts = [saved, ...state.manuscripts.filter((item) => item.id !== saved.id)];
     state.manuscriptDraft = manuscriptDraftFrom(saved);
     state.claimLedger = null;
-    try { state.claimLedger = await science.claimLedgers.getForManuscript(state.selectedId, saved.id); }
-    catch { state.claimLedger = null; }
+    let claimLedger = null;
+    try { claimLedger = await science.claimLedgers.getForManuscript(projectId, saved.id); }
+    catch { claimLedger = null; }
+    if (!isCurrent()) return;
+    state.claimLedger = claimLedger;
     state.manuscriptSaving = false;
     ensureManuscriptWorkspaceTab(saved);
     // Reload the immutable document model after a source save. The block
@@ -4883,10 +4966,16 @@ function createComposerEventSync({
     try {
       await refreshManuscriptEditorWorkspace(`Saved as immutable v${saved.currentVersion}`);
     } catch (error) {
+      if (!isCurrent()) return;
       state.manuscriptSaveError = `Saved immutable v${saved.currentVersion}, but the editor could not refresh: ${error instanceof Error ? error.message : String(error)}`;
+      try {
+        await refreshProjectLibrarySummaries();
+      } catch {
+        if (state.selectedId === projectId) state.projectLibrarySummaryState = "unavailable";
+      }
       render();
     }
-    void queueWorkspacePersistence();
+    if (isCurrent()) void queueWorkspacePersistence();
   }
 
   async function connectActiveArtifactToManuscript() {
@@ -5923,6 +6012,7 @@ function createComposerEventSync({
 
   function returnToSession(destination = state.currentDestination) {
     const returnMessageId = state.returnMessageId;
+    invalidateManuscriptRequests();
     rememberScroll();
     state.mode = "session";
     state.currentDestination = projectDestinationIds.has(destination) && !["manuscript", "submission-archive"].includes(destination) ? destination : "overview";
@@ -5933,6 +6023,7 @@ function createComposerEventSync({
     state.inspectedArtifactContext = null;
     state.artifactComparison = null;
     state.historyOpen = false;
+    state.manuscriptSaving = false;
     state.returnMessageId = null;
     compareEpoch += 1;
     render();
@@ -5949,6 +6040,7 @@ function createComposerEventSync({
   async function openConversation(conversationId) {
     const conversation = state.conversations.find((item) => item.id === conversationId);
     if (!conversation || !state.selectedId) return;
+    invalidateManuscriptRequests();
     composerRequestEpoch += 1;
     state.composerSending = false;
     state.selectedConversationId = conversation.id;
@@ -5968,6 +6060,7 @@ function createComposerEventSync({
     state.runtimePickerOpen = false;
     state.runtimePickerQuery = "";
     state.mode = "session";
+    state.manuscriptSaving = false;
     state.currentDestination = "overview";
     const tab = state.workspaceTabs.find((item) => item.kind === "conversation" && item.conversationId === conversation.id);
     state.activeWorkspaceTabId = tab?.id || RESEARCH_TAB_ID;
@@ -11936,7 +12029,7 @@ function createComposerEventSync({
     }
     state.projects = Array.isArray(bootstrap.projects) ? bootstrap.projects : [];
     try {
-      setProjectLibrarySummaries(await science.projects.library());
+      await refreshProjectLibrarySummaries();
     } catch {
       state.projectLibrarySummaries = new Map();
       state.projectLibrarySummaryState = "unavailable";

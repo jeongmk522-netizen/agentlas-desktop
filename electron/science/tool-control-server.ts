@@ -28,7 +28,7 @@ import {
 import { isScienceResidueInteraction, type ScienceProteinColorTheme, type ScienceProteinRepresentation } from "../../shared/science-renderer-runtime";
 import { commitScienceChemistrySmilesEdit, commitScienceMolstarViewEdit } from "./lab-editors";
 import type { ExecuteStatisticsAnalysisInput } from "./tool-gateway";
-import { scienceAcademicFullTextService, scienceAcademicSearchService, scienceArtifactPublicationValidator, scienceAstronomyCatalogService, scienceBiodiversityCatalogService, scienceChemistryValidator, scienceComparativeGenomicsService, scienceComparativeGenomicsTableService, scienceDeextinctionFeasibilityService, scienceDomainAnalysisService, scienceEarthAnalysisService, scienceEarthquakeCatalogService, scienceEconomicsAnalysisService, scienceEconomicsCatalogService, scienceEvidenceGraphService, scienceExtantArchosaurLocusPanelService, scienceExtantReferenceAssemblyService, scienceGenomicsCatalogService, scienceHypotheticalAsrService, scienceJournalPublicationService, scienceManuscriptRenderService, scienceMaterialsCatalogService, scienceNoaaCoopsWaterLevelService, sciencePaleontologyAnalysisService, sciencePaleontologyCandidateComparisonService, sciencePaleontologyCatalogService, sciencePhysicsAnalysisService, sciencePhysicsHepDataLiveService, sciencePhysicsInspireLiveService, scienceScientificDataService, scienceStore, scienceToolGateway } from "./runtime";
+import { scienceAcademicFullTextService, scienceAcademicSearchService, scienceAstronomyAnalysisService, scienceArtifactPublicationValidator, scienceAstronomyCatalogService, scienceBiodiversityCatalogService, scienceChemistryValidator, scienceComparativeGenomicsService, scienceComparativeGenomicsTableService, scienceDeextinctionFeasibilityService, scienceDomainAnalysisService, scienceEarthAnalysisService, scienceEarthquakeCatalogService, scienceEconomicsAnalysisService, scienceEconomicsCatalogService, scienceEvidenceGraphService, scienceExtantArchosaurLocusPanelService, scienceExtantReferenceAssemblyService, scienceGenomicsCatalogService, scienceHypotheticalAsrService, scienceJournalPublicationService, scienceManuscriptRenderService, scienceMaterialsCatalogService, scienceNoaaCoopsWaterLevelService, sciencePaleontologyAnalysisService, sciencePaleontologyCandidateComparisonService, sciencePaleontologyCatalogService, sciencePhysicsAnalysisService, sciencePhysicsHepDataLiveService, sciencePhysicsInspireLiveService, scienceScientificDataService, scienceStore, scienceToolGateway } from "./runtime";
 import { earthAnalysisToolSummary, isEarthAnalysisToolId } from "./earth-analysis";
 import { deextinctionFeasibilityToolSummary } from "./deextinction-feasibility";
 import { paleontologyCandidateComparisonToolSummary } from "./paleontology-candidate-comparison";
@@ -1921,7 +1921,7 @@ const PLATFORM_TOOLS: McpTool[] = [
   {
     name: "freeze_analysis_plan",
     route: "/v1/platform/analysis-plans/freeze",
-    description: "Verify and bind an analysis plan that the researcher already approved in the Science UI. This tool cannot approve or mutate a draft: a draft fails with science-analysis-plan-human-approval-required. Re-list plans after the human acts, then pass the exact frozen version, content hash, and post-approval lock version. A frozen plan with data.acquisition but no exact data.inputs authorizes the prespecified collection step only; after collection, propose and obtain approval for a successor plan with exact immutable input artifact bindings before analysis execution.",
+    description: "Verify and bind an exact analysis plan. Under the project's existing standing analysis-plan authorization, the host validates a complete draft with no unresolved decisions, records the exact policy and plan version, and freezes it without another human checkpoint. This is a policy approval, not a human review. Without that scope, a draft requires the Science UI review. Pass the current version, content hash, and lock version; use the returned frozen receipt for subsequent work. Acquisition-only plans authorize collection only: after collection, propose and freeze a successor plan with exact immutable input artifact bindings before analysis execution.",
     inputSchema: {
       type: "object",
       properties: {
@@ -2592,6 +2592,7 @@ const IMPLEMENTED_TOOL_IDS = new Set([
   "agentlas.academic-to-citation-network",
   "agentlas.astronomy-to-sky-map",
   "agentlas.astronomy-light-curve-periodicity",
+  "agentlas.astronomy-light-curve-periodicity-depth",
   "agentlas.biodiversity-to-map",
   "agentlas.earthquake-to-map",
   "agentlas.physics-dataset",
@@ -3364,6 +3365,9 @@ async function dispatchDescriptorTool(
       analysis: earthAnalysisToolSummary(result),
     };
   }
+  if (tool.id === "agentlas.astronomy-light-curve-periodicity-depth") {
+    return scienceAstronomyAnalysisService().dispatch(tool.id, body, common, tool);
+  }
   if (tool.id === "agentlas.astronomy-light-curve-periodicity") {
     const sourceTable = body.source_table as Record<string, unknown>;
     const columns = body.columns as Record<string, unknown>;
@@ -3411,13 +3415,18 @@ async function dispatchDescriptorTool(
       summary: analysis.summary,
       bestFit: analysis.bestFit,
       warnings: analysis.warnings,
+      boundaries: analysis.boundaries,
       publicationTables: [
         { schema: observations.schema, rowCount: observations.rows.length, contentSha256: provenance.observationsTableSha256 },
         { schema: peaks.schema, rowCount: peaks.rows.length, contentSha256: provenance.peaksTableSha256 },
         { schema: periodogram.schema, rowCount: periodogram.rows.length, contentSha256: provenance.periodogramTableSha256 },
       ],
       figure: { schema: "agentlas.astronomy.light-curve-publication-figure/v1", contentSha256: provenance.figureSha256 },
-      scientificLimits: ["false-alarm-probability-not-computed", "period-uncertainty-not-computed", "single-sinusoid-model-only"],
+      scientificLimits: [
+        ...(Array.isArray(analysis.warnings) ? analysis.warnings.filter((warning) =>
+          warning === "false-alarm-probability-not-computed" || warning === "period-uncertainty-not-computed") : []),
+        "analytic-fap-white-noise-model", "period-standard-error-not-confidence-interval", "single-sinusoid-model-only",
+      ],
     };
   }
   if (tool.id === "agentlas.physics-hepdata-chi-square-analysis") {
@@ -4280,7 +4289,7 @@ async function platformResult(route: string, body: Record<string, unknown>, gran
       expectedVersion: positiveInteger(body.expected_version, "science-analysis-version-invalid"),
       expectedContentSha256: exactSha256(body.expected_content_sha256, "science-analysis-content-invalid"),
       expectedLockVersion: positiveInteger(body.expected_lock_version, "science-analysis-lock-version-invalid"),
-    });
+    }, { allowStandingApproval: true });
     return { ok: true, schema: "agentlas.science-analysis-plan-freeze-result/v1", ...result };
   }
   if (route === "/v1/platform/journals/list") {

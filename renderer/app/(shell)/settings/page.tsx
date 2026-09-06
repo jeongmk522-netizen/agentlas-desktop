@@ -854,7 +854,7 @@ export default function SettingsPage() {
         <TerminalProfilesPanel />
 
         {/* 로컬 모델 (Ollama) */}
-        <h2 style={{ fontFamily: "var(--font-head)", fontSize: 15, margin: "32px 0 12px" }}>
+        <h2 id="ollama" style={{ fontFamily: "var(--font-head)", fontSize: 15, margin: "32px 0 12px" }}>
           {t("settings.ollama.title")}
         </h2>
         <p style={{ fontSize: 12, color: "var(--muted-deep)", margin: "0 0 12px" }}>

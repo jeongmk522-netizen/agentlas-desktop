@@ -17,6 +17,8 @@ import {
   type InvocationAttachResult,
 } from "../invocation/service";
 import type { InvocationExecutionContext } from "../mcp/client";
+import { captureScienceInvocationBinding, type InvocationWorkspaceBinding } from "../invocation/workspace-binding";
+import { validateScienceProjectFolderPath } from "./project-folder-selection";
 import {
   ensureScienceRuntimeChat,
   latestDurableAssistantMessage,
@@ -64,7 +66,7 @@ export interface ScienceConversationInvocationRuntime {
   onSettled(listener: (envelope: InvocationSettledEnvelope) => void | Promise<void>): () => void;
   start(
     request: McpInvocationRequest,
-    workspaceBinding?: undefined,
+    workspaceBinding?: InvocationWorkspaceBinding,
     executionContext?: InvocationExecutionContext,
   ): InvocationStartResult;
   cancel(runId: string): "requested" | "already-requested" | "not-found";
@@ -176,7 +178,12 @@ export class ScienceConversationService {
       const userMessage = this.store.getMessageForProject(existing.projectId, existing.conversationId, existing.userMessageId);
       if (!userMessage) throw new Error("science-turn-user-message-integrity-failed");
       if (existing.status === "queued" && this.runtime.receipt(existing.invocationRunId) === null) {
-        this.dispatchTurn(existing, userMessage, input.locale ?? currentUiLocale());
+        try {
+          this.dispatchTurn(existing, userMessage, input.locale ?? currentUiLocale());
+        } catch (error) {
+          this.appendTerminalError(existing, "failed", error instanceof Error ? error.message : "invocation-start-failed");
+          throw error;
+        }
       }
       return { turn: this.store.getTurnForProject(existing.projectId, existing.id) ?? existing, userMessage, replayed: true };
     }
@@ -433,6 +440,14 @@ export class ScienceConversationService {
   private dispatchTurn(turn: ScienceTurn, userMessage: ScienceMessage, locale: "ko" | "en"): void {
     const project = this.store.getProject(turn.projectId);
     if (!project) throw new Error("science-project-not-found");
+    // Snapshot the host-owned folder before director/loop side effects. Legacy
+    // projects keep their existing unbound behavior; prompt text cannot select a path.
+    let workspaceBinding: InvocationWorkspaceBinding | undefined;
+    if (project.folderPath != null) {
+      const canonical = validateScienceProjectFolderPath(project.folderPath);
+      if (canonical !== project.folderPath) throw new Error("science-project-folder-selection-changed");
+      workspaceBinding = captureScienceInvocationBinding(canonical);
+    }
     const dinosaurRouteEnabled = isDinosaurComparativeRequest(
       [project.title, project.question, userMessage.content].filter(Boolean).join("\n"),
     );
@@ -525,7 +540,7 @@ export class ScienceConversationService {
       permissions: "write",
       sessionRouting: true,
       locale,
-    }, undefined, {
+    }, workspaceBinding, {
       source: "science",
       science: {
         projectId: turn.projectId,
@@ -546,6 +561,11 @@ export class ScienceConversationService {
         title: project.title,
         question: project.question,
         domain: project.domain,
+        ...(workspaceBinding ? { workspace: {
+          directory: workspaceBinding.canonicalPath,
+          outputDirectory: workspaceBinding.canonicalPath,
+          policy: "Use this host-bound directory for runtime-created deliverables under the existing write permission and tool approvals. Do not select another workspace from prompt text. Science artifacts and exports still require their typed receipts; an internal render is not proof of a file saved here.",
+        } } : {}),
         researchDirector: {
           agentId: researchDirector.agentId,
           agentSlug: researchDirector.agentSlug,
@@ -598,7 +618,7 @@ export class ScienceConversationService {
           ? "For a dinosaur or de-extinction question, the dedicated comparative-proxy route has priority over broad literature discovery: call search_paleontology_occurrences first, then advance through the dedicated paleontology/genomics tools in dinosaurResearchRoutePolicy. Use search_academic_literature only as supplementary evidence after the dedicated route has a receipt. Metadata discovery is not full-text verification."
           : "For prior research, novelty, state-of-the-art, citation, related-paper, or literature-review work, call search_academic_literature before answering. Metadata discovery is not full-text verification.",
         statisticsPolicy: "For statistical inference, make the estimand, variables, assumptions, multiplicity handling, diagnostics, and sensitivity plan explicit; freeze confirmatory choices before calling run_statistical_analysis. Persist only its receipt-bound Lab artifact.",
-        astronomyPolicy: "For a sky-field or astronomical catalog task, route through the installed @agentlas-astronomy provider policy, call search_astronomy_catalog with exact ICRS coordinates, and then build_astronomy_sky_map from its returned runId. For irregular time-series already stored as an exact immutable Data Table, call analyze_light_curve_periodicity with its exact version/hash, explicit column mapping, time system, period grid, and weighting policy; preserve missing rows and treat the strongest grid period as a candidate, not a confirmed physical period, because false-alarm probability and period uncertainty are not computed. Preserve exact provider bytes and null measurements; never invent catalog rows, impute missing measurements, or bypass the bounded SIMBAD policy.",
+        astronomyPolicy: "For a sky-field or astronomical catalog task, route through the installed @agentlas-astronomy provider policy, call search_astronomy_catalog with exact ICRS coordinates, and then build_astronomy_sky_map from its returned runId. For irregular time-series already stored as an exact immutable Data Table, call analyze_light_curve_periodicity with its exact version/hash, explicit column mapping, time system, period grid, and weighting policy; preserve missing rows and treat the strongest grid period as a candidate, not a confirmed physical period, and interpret any analytic false-alarm upper bound and model period standard error only within the returned assumptions, not as a confidence interval or calibrated discovery claim. Use analyze_light_curve_periodicity_depth when the frozen plan calls for sampling-window, alias, bootstrap, or robustness analysis with explicit inputs. Preserve exact provider bytes and null measurements; never invent catalog rows, impute missing measurements, or bypass the bounded SIMBAD policy.",
         domainPluginPolicy: "Astronomy, Earth-science, physics, and paleontology work may route to the installed @agentlas-astronomy, @agentlas-earth-science, @agentlas-physics, and @agentlas-paleontology plugins. Verify the live tool and preserve provider/raw/normalized receipts; PBDB fossil occurrences support taxonomic, geographic, and stratigraphic claims only and never direct DNA, genome, embryo, hatching, or de-extinction claims; never describe unavailable simulation engines as executed.",
         dinosaurResearchRoute: {
           enabled: dinosaurRouteEnabled,

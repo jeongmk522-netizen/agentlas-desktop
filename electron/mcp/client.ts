@@ -172,6 +172,7 @@ import { userDataPath } from "../runtime-paths";
 import {
   normalizeRemoteInvocationPermission,
   revalidateInvocationWorkspaceBinding,
+  assertInvocationWorkspaceSourceContext,
   type InvocationWorkspaceBinding,
 } from "../invocation/workspace-binding";
 import {
@@ -1516,6 +1517,7 @@ export async function runMcpInvocation(
   /** Main-only hook after this invocation's user message is durably stored. */
   onDurableUserMessage?: (messageId: string) => Promise<void>,
 ): Promise<McpInvocationResult> {
+  assertInvocationWorkspaceSourceContext(workspaceBinding, executionContext?.source);
   // A scheduled invocation is the worker leg of the automation, even though
   // it shares this implementation with an interactive orchestrator turn.
   // Keep usage and replay attribution aligned with the runtime that actually
@@ -1770,8 +1772,11 @@ export async function runMcpInvocation(
   // ontology, or project-scoped Experience. This is deliberately narrower than
   // `restrictedReadBoundary`: the selected runtime and its read tools remain
   // available, preserving Desktop/Mobile execution parity.
-  const suppressMutableProjectContext =
-    executionContext?.source === "automation" && !canWrite;
+  // Science owns its research state in its private store. Selecting a runtime
+  // directory must not seed/activate Work memory or write evolution proposals there.
+  const scienceWorkspaceBound = executionContext?.source === "science" && workspaceBinding?.source === "science";
+  const suppressMutableProjectContext = scienceWorkspaceBound
+    || (executionContext?.source === "automation" && !canWrite);
   // Permission still controls normal Desktop write authority. It is unrelated
   // to whether the request originated from a paired phone.
   const projectReadOnlyBoundary = !canWrite || restrictedReadBoundary;
@@ -2926,7 +2931,7 @@ ${effectiveUserPrompt}`;
     mcpCodexConfigArgs = scienceGrant.codexConfigArgs;
     mcpRuntimeEnv = scienceGrant.runtimeEnv;
     mcpIncludedServers = [scienceGrant.includedServer];
-    mcpAutoSelectionPrompt = `Agentlas Science is the only MCP server enabled for this turn. Use its Main-owned platform tools and the installed Science Lab descriptors; do not call a standalone duplicate domain server. Agentlas Science provides search_academic_literature. Before making claims about prior research, novelty, state of the art, citations, related papers, or a literature review, call it and ground the answer in its returned project Source ids and provider receipts. Treat metadata-only results as discovery evidence, not full-text verification; disclose partial provider failures and never invent a source. For a dinosaur or de-extinction question, this literature rule has a hard exception: follow the dinosaurResearchRoute in the Science surface context and call search_paleontology_occurrences first for an initial batch of 2–4 named taxa, then use the returned stratigraphic receipts and advance to the extant-reference and comparative-gene-tree tools. Read the returned dinosaurRoute metadata before selecting ASR or the extant-locus-panel: use its exact hypotheticalAsrTargetNodeId and locusPanelSelection when present; if availableLeafGroups reports fewer than two crocodilian leaves, do not duplicate or relabel a leaf and ask one focused human decision because the exact provider data cannot satisfy the panel contract. The host may materialize the stratigraphic child automatically; do not call PBDB repeatedly after the route-control response says the candidate-search budget is reached. Do not call broad academic search repeatedly while a dedicated route step is available; advance once per receipt or ask one focused missing-input question. Fossil and extant-proxy evidence never establishes recovered dinosaur DNA, a dinosaur genome, an embryo, hatching, or biological revival. For an astronomical sky field, call search_astronomy_catalog with exact ICRS coordinates, then pass its runId to build_astronomy_sky_map so the user receives a durable interactive Lab artifact; never invent catalog rows or replace missing measurements. For irregular astronomical time-series data already stored as an exact immutable Data Table, call analyze_light_curve_periodicity with the exact artifact version/hash, explicit time system, column mapping, period grid, and weighting policy. Report its false-alarm-probability, period-uncertainty, single-sinusoid, cadence, and sampling-window warnings without upgrading a grid peak into a confirmed physical period; direct the user to the returned Figure Lab artifact for the publication tables and interactive Vega figure. Agentlas Science also provides render_table_as_vega. Use it when measured tabular data should become a durable interactive Lab artifact; never fabricate an artifact receipt. Respond as Agentlas Science without the One or Hope name/prefix. The turn's sandbox is read-only for FILES and SHELL, and that is deliberate: this work is not done by writing files. Recording research state through the Agentlas Science tools above -- proposing a research contract, recording hypotheses, freezing an analysis plan, running a Lab, appending a lifecycle revision, composing a manuscript version -- is the sanctioned way to do this work, and every one of those writes is validated by the host, not by the sandbox. Call them. Do not treat them as forbidden external state, and do not ask to escalate to full access in order to use them: a study that stops for that never leaves intake. Escalate only if you genuinely need to write a file or run a command outside these tools.`.trim();
+    mcpAutoSelectionPrompt = `Agentlas Science is the only MCP server enabled for this turn. Use its Main-owned platform tools and the installed Science Lab descriptors; do not call a standalone duplicate domain server. Agentlas Science provides search_academic_literature. Before making claims about prior research, novelty, state of the art, citations, related papers, or a literature review, call it and ground the answer in its returned project Source ids and provider receipts. Treat metadata-only results as discovery evidence, not full-text verification; disclose partial provider failures and never invent a source. For a dinosaur or de-extinction question, this literature rule has a hard exception: follow the dinosaurResearchRoute in the Science surface context and call search_paleontology_occurrences first for an initial batch of 2–4 named taxa, then use the returned stratigraphic receipts and advance to the extant-reference and comparative-gene-tree tools. Read the returned dinosaurRoute metadata before selecting ASR or the extant-locus-panel: use its exact hypotheticalAsrTargetNodeId and locusPanelSelection when present; if availableLeafGroups reports fewer than two crocodilian leaves, do not duplicate or relabel a leaf and ask one focused human decision because the exact provider data cannot satisfy the panel contract. The host may materialize the stratigraphic child automatically; do not call PBDB repeatedly after the route-control response says the candidate-search budget is reached. Do not call broad academic search repeatedly while a dedicated route step is available; advance once per receipt or ask one focused missing-input question. Fossil and extant-proxy evidence never establishes recovered dinosaur DNA, a dinosaur genome, an embryo, hatching, or biological revival. For an astronomical sky field, call search_astronomy_catalog with exact ICRS coordinates, then pass its runId to build_astronomy_sky_map so the user receives a durable interactive Lab artifact; never invent catalog rows or replace missing measurements. For irregular astronomical time-series data already stored as an exact immutable Data Table, call analyze_light_curve_periodicity with the exact artifact version/hash, explicit time system, column mapping, period grid, and weighting policy. Report the returned analytic false-alarm upper bound, model period standard error, assumptions, and warnings without upgrading a grid peak into a confirmed physical period or a standard error into a confidence interval. Call analyze_light_curve_periodicity_depth with explicit inputs when the frozen plan requires sampling-window, alias, bootstrap, or robustness analysis; direct the user to the returned Figure Lab artifact for the publication tables and interactive Vega figure. Agentlas Science also provides render_table_as_vega. Use it when measured tabular data should become a durable interactive Lab artifact; never fabricate an artifact receipt. Respond as Agentlas Science without the One or Hope name/prefix. The turn's sandbox is read-only for FILES and SHELL, and that is deliberate: this work is not done by writing files. Recording research state through the Agentlas Science tools above -- proposing a research contract, recording hypotheses, freezing an analysis plan, running a Lab, appending a lifecycle revision, composing a manuscript version -- is the sanctioned way to do this work, and every one of those writes is validated by the host, not by the sandbox. Call them. Do not treat them as forbidden external state, and do not ask to escalate to full access in order to use them: a study that stops for that never leaves intake. Escalate only if you genuinely need to write a file or run a command outside these tools.`.trim();
   }
 
   /*
@@ -4028,7 +4033,7 @@ ${effectiveUserPrompt}`;
   // project-memory injection, so it stays gated on write permission: a read run
   // gets a map, never someone else's memory.
   let activePath: string | null = null;
-  if (!req.agentAppMode && workingFolder) {
+  if (!req.agentAppMode && workingFolder && !scienceWorkspaceBound) {
     try {
       if (canWrite) {
         const visit = await recordFolderVisit(workingFolder, undefined, {
@@ -4079,7 +4084,7 @@ ${effectiveUserPrompt}`;
       if (memoryContext) turnContextParts.push(memoryContext);
       // hep 발화 표면 — 프로젝트 작업 폴더에 대기 중 성장 제안 요약 파일을 쓰고(호스트가
       // 읽게), 고위험 대기분이 있으면 세션 컨텍스트에 한 줄 주입. 실패-무해.
-      if (workingFolder && canWrite && !projectReadOnlyBoundary) {
+      if (workingFolder && canWrite && !projectReadOnlyBoundary && !scienceWorkspaceBound) {
         try {
           const growth = writeEvolutionProposalsForProject(workingFolder);
           const line = evolutionSessionContextLine(growth.pending, locale === "ko" ? "ko" : "en");

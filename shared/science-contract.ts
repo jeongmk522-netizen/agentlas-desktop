@@ -813,6 +813,7 @@ export type ScienceResearchCompletionScope = typeof SCIENCE_RESEARCH_COMPLETION_
 export const SCIENCE_APPROVAL_SCOPES = Object.freeze([
   "research-contract",
   "hypothesis",
+  "analysis-plan",
   "journal-identity",
   "submission-attestation",
 ] as const);
@@ -2405,7 +2406,14 @@ export interface ScienceAnalysisPlanReviewReceipt {
   analysisSpecLockVersion: number;
   decision: "approve" | "revise";
   rationale: string | null;
-  actor: "human";
+  actor: "human" | "standing-policy";
+  /** Present only for a host-authorized standing approval; never a human click. */
+  approvalPolicy?: {
+    id: string;
+    revision: number;
+    grantedBy: string;
+    contentSha256: string;
+  };
   resultingStatus: "draft" | "frozen";
   createdAt: string;
   receiptSha256: string;

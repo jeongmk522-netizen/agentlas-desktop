@@ -3,7 +3,7 @@
 const crypto = require("node:crypto");
 
 const PLUGIN_ID = "agentlas-astronomy";
-const PLUGIN_VERSION = "1.2.1";
+const PLUGIN_VERSION = "1.2.2";
 const SIMBAD_ORIGIN = "https://simbad.cds.unistra.fr";
 const SIMBAD_TAP_PATH = "/simbad/sim-tap/sync";
 const SIMBAD_TAP_ENDPOINT = `${SIMBAD_ORIGIN}${SIMBAD_TAP_PATH}`;
@@ -35,7 +35,9 @@ const LOMB_SCARGLE_ALGORITHM = deepFreeze({
   timeOrigin: "minimum-analysis-eligible-time",
   windowFunction: "squared-modulus-of-normalized-weighted-complex-sampling-transform",
   falseAlarmProbability: "baluev-2008-analytic-upper-bound-on-standard-normalized-power",
+  falseAlarmInterpretation: "analytic upper bound under the declared white-noise model; a returned 0 is a numerical floor, not exact certainty",
   periodUncertainty: "montgomery-odonoghue-1999-frequency-standard-error-propagated-to-period",
+  periodUncertaintyInterpretation: "standard-error estimate under the single-sinusoid model, not a confidence interval",
   reference: {
     title: "The generalised Lomb-Scargle periodogram: A new formalism for the floating-mean and Keplerian periodograms",
     authors: "M. Zechmeister and M. Kuerster",
@@ -45,15 +47,21 @@ const LOMB_SCARGLE_ALGORITHM = deepFreeze({
   falseAlarmReference: {
     title: "Assessing the statistical significance of periodogram peaks",
     authors: "R. V. Baluev",
-    doi: "10.1111/j.1365-2966.2008.13657.x",
+    doi: "10.1111/j.1365-2966.2008.12689.x",
     note: "Analytic upper bound via the Davies extreme-value bound; see also VanderPlas 2018, doi:10.3847/1538-4365/aab766, eq. 21-22.",
   },
   periodUncertaintyReference: {
-    title: "Sig: A digital filtering program for sinusoidal analysis of time series",
+    title: "A derivation of the errors for least squares fitting to time series data",
     authors: "M. H. Montgomery and D. O'Donoghue",
     note: "Delta Scuti Star Newsletter 13, 28. Frequency standard error sigma_f = sqrt(6/N) * sigma_residual / (pi * T * amplitude), propagated to period by sigma_P = P^2 * sigma_f.",
   },
 });
+const LOMB_SCARGLE_BOUNDARIES = deepFreeze([
+  "The Baluev false-alarm probability is an analytic upper bound under an independent Gaussian white-noise model; correlated noise, mis-scaled errors, and aliases can invalidate that interpretation.",
+  "The Montgomery-O'Donoghue period value is a local single-sinusoid standard-error estimate, not a confidence interval and not an alias resolution.",
+  "A returned false-alarm probability of 0 is the numerical lower floor of the bounded calculation, not exact certainty.",
+  "No detrending, red-noise model, multi-harmonic fit, or transit template is applied; the declared astronomical time system is preserved verbatim.",
+]);
 
 /**
  * The chance that pure noise would produce a peak at least this strong, anywhere in the searched
@@ -143,7 +151,7 @@ const DEFAULT_POLICY = deepFreeze({
   maxObjects: 500,
   minRadiusDeg: 0.001,
   maxRadiusDeg: 10,
-  userAgent: "Agentlas-Astronomy/1.2.0 (SIMBAD TAP object research; https://agentlas.ai)",
+  userAgent: "Agentlas-Astronomy/1.2.2 (SIMBAD TAP object research; https://agentlas.ai)",
   contentTypes: CONTENT_TYPE_ALLOWLIST,
   retryableStatusCodes: RETRYABLE_STATUS_CODES,
 });
@@ -1312,7 +1320,8 @@ function lightCurvePeakTable(peaks, metadata) {
     rows: peaks,
     notes: [
       "Peaks are local maxima on the declared finite grid and are not independent detections.",
-      "No false-alarm probability or period confidence interval is computed.",
+      "The result includes a Baluev analytic false-alarm upper bound and a Montgomery-O'Donoghue period standard-error estimate when numerically resolvable; neither is a calibrated detection probability or confidence interval.",
+      "A returned false-alarm probability of 0 is a numerical floor, not exact certainty.",
     ],
   };
 }
@@ -1488,7 +1497,6 @@ function analyzeLightCurvePeriodicity(input) {
   if (normalizedInput.maximumPeriodDays > baselineDays) warnings.push("maximum-period-exceeds-observation-baseline");
   if (medianCadenceDays !== null && normalizedInput.minimumPeriodDays < 2 * medianCadenceDays) warnings.push("minimum-period-below-twice-median-cadence-alias-risk");
   if (medianCadenceDays !== null && maximumGapDays > 5 * medianCadenceDays) warnings.push("large-sampling-gaps-window-alias-risk");
-  warnings.push("false-alarm-probability-not-computed", "period-uncertainty-not-computed", "single-sinusoid-model-only");
 
   const minimumError = resolvedWeighting === "weighted"
     ? Math.min(...eligibleRows.map((row) => row.measurement.standardError))
@@ -1659,10 +1667,9 @@ function analyzeLightCurvePeriodicity(input) {
     maximumPeaks: normalizedInput.maximumPeaks,
     timeOrigin,
   };
-  // The two numbers a reader needs before believing a peak: how likely noise alone is, and how
-  // tightly the period is pinned. Both were declared "not-computed" while the tool still answered
-  // questions of the form "is this signal explained by observational noise?" -- which it could not.
-  const residualScale = Math.sqrt(Math.max(0, bestPeak.normalizedResidualRootMeanSquare ** 2 * constantModelResidualSum));
+  // The two numbers a reader needs before believing a peak are computed by declared analytic
+  // methods. Each remains null when its inputs cannot resolve the estimate.
+  const residualScale = bestPeak.normalizedResidualRootMeanSquare;
   const bestFitSummary = {
     ...bestPeak,
     constantModelMean: weightedMean,
@@ -1674,12 +1681,16 @@ function analyzeLightCurvePeriodicity(input) {
       bestPeak.periodDays, points.length, baselineDays, bestPeak.amplitude, residualScale,
     ),
   };
+  if (bestFitSummary.falseAlarmProbability === null) warnings.push("false-alarm-probability-not-computed");
+  if (bestFitSummary.periodStandardErrorDays === null) warnings.push("period-uncertainty-not-computed");
+  warnings.push("single-sinusoid-model-only");
   const core = {
     schema: LOMB_SCARGLE_SCHEMA,
     algorithm: LOMB_SCARGLE_ALGORITHM,
     settings,
     summary,
     warnings,
+    boundaries: LOMB_SCARGLE_BOUNDARIES,
     periodogram,
     peaks: peakRows,
     bestFit: bestFitSummary,

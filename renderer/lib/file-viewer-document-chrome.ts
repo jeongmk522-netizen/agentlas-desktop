@@ -487,6 +487,12 @@ const DOCUMENT_CHROME_STYLE = `
 .pdf-shell[data-agentlas-layout='compact'] .pdf-content { grid-template-columns: minmax(0, 1fr) !important; }
 .pptx-viewer-shell[data-agentlas-layout='compact'] { grid-template-columns: minmax(0, 1fr) !important; }
 .pptx-viewer-shell[data-agentlas-layout='compact'] > .pptx-render-surface { grid-column: 1; }
+.pdf-shell[data-agentlas-layout='compact'][data-agentlas-nav-open='true'] .pdf-content { grid-template-columns: 132px minmax(0, 1fr) !important; }
+.pdf-shell[data-agentlas-layout='compact'][data-agentlas-nav-open='true'] .pdf-nav-pane { grid-column: 1; grid-row: 1; position: relative; inset: auto; width: auto; z-index: auto; box-shadow: none; }
+.pdf-shell[data-agentlas-layout='compact'][data-agentlas-nav-open='true'] .pdf-wrapper { grid-column: 2; grid-row: 1; min-width: 0; }
+.pptx-viewer-shell[data-agentlas-layout='compact'][data-agentlas-nav-open='true'] { grid-template-columns: 132px minmax(0, 1fr) !important; }
+.pptx-viewer-shell[data-agentlas-layout='compact'][data-agentlas-nav-open='true'] > .agentlas-pptx-nav { grid-column: 1; grid-row: 1; position: relative; inset: auto; width: auto; z-index: auto; box-shadow: none; }
+.pptx-viewer-shell[data-agentlas-layout='compact'][data-agentlas-nav-open='true'] > .pptx-render-surface { grid-column: 2; grid-row: 1; }
 .pdf-shell[data-agentlas-layout='compact'] .agentlas-document-nav-toggle,
 .pptx-viewer-shell[data-agentlas-layout='compact'] .agentlas-document-nav-toggle { display: inline-flex; }
 .pdf-shell[data-agentlas-layout='compact'] .pdf-nav-pane,
@@ -559,7 +565,7 @@ function presentationSlides(surface: HTMLElement): HTMLElement[] {
   return Array.from(surface.querySelectorAll<HTMLElement>("[data-slide-index], .slide"));
 }
 
-function ensureNavigationToggle(shell: HTMLElement, locale: "ko" | "en", kind: "page" | "slide"): void {
+function ensureNavigationToggle(shell: HTMLElement, locale: "ko" | "en", kind: "page" | "slide", onToggle?: () => void): void {
   if (shell.querySelector(":scope > .agentlas-document-nav-toggle")) return;
   const button = document.createElement("button");
   button.type = "button";
@@ -577,6 +583,7 @@ function ensureNavigationToggle(shell: HTMLElement, locale: "ko" | "en", kind: "
   button.addEventListener("click", () => {
     shell.dataset.agentlasNavOpen = shell.dataset.agentlasNavOpen === "true" ? "false" : "true";
     sync();
+    onToggle?.();
   });
   sync();
   shell.append(button);
@@ -635,7 +642,10 @@ async function fitPresentationSurface(surface: HTMLElement): Promise<FileViewerZ
   const slideContent = activeSlide?.matches(".slide")
     ? activeSlide
     : activeSlide?.querySelector<HTMLElement>(":scope > .slide") ?? activeSlide?.querySelector<HTMLElement>(".slide");
-  const provider = findFileViewerZoomProvider(surface);
+  // The presentation provider is registered on the owning shell, not on its
+  // child surface. A surface-only lookup misses it and falls back to generic
+  // fit, which repeatedly scales the already-scaled presentation.
+  const provider = findFileViewerZoomProvider(surface.closest<HTMLElement>(".pptx-viewer-shell") ?? surface);
   if (!slideContent || !provider?.setZoom) return null;
   const style = getComputedStyle(surface);
   const availableWidth = Math.max(1, surface.clientWidth - parseFloat(style.paddingLeft || "0") - parseFloat(style.paddingRight || "0"));
@@ -664,6 +674,7 @@ export function installPagedDocumentChrome(host: HTMLElement, locale: "ko" | "en
   let pdfClickHandler: ((event: Event) => void) | null = null;
   let pdfResizeObserver: ResizeObserver | null = null;
   let presentationResizeObserver: ResizeObserver | null = null;
+  let presentationFitFrame = 0;
   let spreadsheetRoot: ShadowRoot | null = null;
   let spreadsheetShell: HTMLElement | null = null;
   let spreadsheetCellHandler: ((event: Event) => void) | null = null;
@@ -693,6 +704,8 @@ export function installPagedDocumentChrome(host: HTMLElement, locale: "ko" | "en
     managedSlides = [];
     presentationResizeObserver?.disconnect();
     presentationResizeObserver = null;
+    if (presentationFitFrame) window.cancelAnimationFrame(presentationFitFrame);
+    presentationFitFrame = 0;
     if (rebuildFrame) window.cancelAnimationFrame(rebuildFrame);
     rebuildFrame = 0;
   };
@@ -811,7 +824,7 @@ export function installPagedDocumentChrome(host: HTMLElement, locale: "ko" | "en
     disconnectPdf();
     pdfRoot = root;
     pdfShell = shell;
-    ensureNavigationToggle(shell, locale, "page");
+    ensureNavigationToggle(shell, locale, "page", onPageSelected);
     const wrapper = root.querySelector<HTMLElement>(".pdf-wrapper");
     const navigationButtons = () => Array.from(nav.querySelectorAll<HTMLElement>(".pdf-page-button"));
     const initialActive = nav.querySelector<HTMLElement>(".pdf-page-button--active");
@@ -879,7 +892,7 @@ export function installPagedDocumentChrome(host: HTMLElement, locale: "ko" | "en
     const shell = root.querySelector<HTMLElement>(".pptx-viewer-shell");
     const surface = shell?.querySelector<HTMLElement>(":scope > .pptx-render-surface");
     if (!shell || !surface) return false;
-    ensureNavigationToggle(shell, locale, "slide");
+    ensureNavigationToggle(shell, locale, "slide", onPageSelected);
     let nav = shell.querySelector<HTMLElement>(":scope > .agentlas-pptx-nav");
     if (!nav) {
       nav = document.createElement("aside");
@@ -888,6 +901,30 @@ export function installPagedDocumentChrome(host: HTMLElement, locale: "ko" | "en
       shell.insertBefore(nav, surface);
     }
     if (managedSurface === surface && surfaceObserver) return true;
+
+    const schedulePresentationFit = () => {
+      if (presentationFitFrame) window.cancelAnimationFrame(presentationFitFrame);
+      // The provider updates fitScale in its own resize frame after a compact
+      // rail opens or closes. Wait for that layout, then run a second fit after
+      // the provider's resize pass so the selected slide uses the live scale.
+      const waitForLayout = (frames: number, afterLayout: () => void): void => {
+        presentationFitFrame = window.requestAnimationFrame(() => {
+          if (frames > 1) {
+            waitForLayout(frames - 1, afterLayout);
+            return;
+          }
+          afterLayout();
+        });
+      };
+      waitForLayout(3, () => {
+        if (disposed || managedSurface !== surface) return;
+        onPageSelected?.();
+        waitForLayout(4, () => {
+          presentationFitFrame = 0;
+          if (!disposed && managedSurface === surface) onPageSelected?.();
+        });
+      });
+    };
 
     const setActive = (active: number) => {
       presentationSlides(surface).forEach((slide, index) => {
@@ -985,7 +1022,7 @@ export function installPagedDocumentChrome(host: HTMLElement, locale: "ko" | "en
         button.addEventListener("click", () => {
           setActive(index);
           closeCompactNavigation(shell);
-          onPageSelected?.();
+          schedulePresentationFit();
         });
         nav.append(button);
         if (thumbObserver) thumbObserver.observe(button);
@@ -993,12 +1030,12 @@ export function installPagedDocumentChrome(host: HTMLElement, locale: "ko" | "en
       });
       configureActiveSlides(slides);
       syncActiveFallback();
-      window.requestAnimationFrame(() => onPageSelected?.());
+      schedulePresentationFit();
     };
 
     disconnectPresentation();
     managedSurface = surface;
-    presentationResizeObserver = observeCodexPanelLayout(shell, onPageSelected);
+    presentationResizeObserver = observeCodexPanelLayout(shell, schedulePresentationFit);
     surfaceObserver = new MutationObserver((records) => {
       const slides = presentationSlides(surface);
       for (const record of records) {

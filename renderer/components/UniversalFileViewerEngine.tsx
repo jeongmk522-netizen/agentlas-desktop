@@ -161,7 +161,10 @@ export function UniversalFileViewerEngine({
     toolbar: false,
     search: false,
     ai: false,
-    fit: { mode: "contain" as const, resize: "until-interaction" as const, padding: 18, minScale: 0.25, maxScale: 2 },
+    // Paged PPTX chrome fits the selected slide from its natural dimensions.
+    // Generic auto-fit races that resize handler and measures scaled content.
+    fit: resolveViewerType(name, mimeType) === "pptx" ? undefined
+      : { mode: "contain" as const, resize: "until-interaction" as const, padding: 18, minScale: 0.25, maxScale: 2 },
     ui: { density: "compact" as const, surfaceBackground: "#edf0f4" },
     docx: {
       worker: true,
@@ -225,7 +228,7 @@ export function UniversalFileViewerEngine({
       useWorker: true,
     },
   });
-  }, [locale]);
+  }, [locale, name, mimeType]);
 
   const runViewerAction = async (kind: "download" | "open", action: () => void | Promise<void>) => {
     setActionState(kind === "download" ? "downloading" : "opening");

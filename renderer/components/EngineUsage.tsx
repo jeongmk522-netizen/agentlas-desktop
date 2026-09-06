@@ -12,6 +12,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { ipc, ipcEvents } from "@/lib/ipc";
 import { useVisibleInterval } from "@/lib/useVisibleInterval";
 import { useT } from "@/lib/i18n";
+import { navigate } from "@/lib/navigation";
 import { loadViewData, readViewData, writeViewData } from "@/lib/view-data-cache";
 import type {
   CliRuntimeVersionStatus,
@@ -594,7 +595,7 @@ export function EngineUsage() {
         )}
       </>
     ) : !connected ? (
-      <button onClick={() => (e.auth === "apikey" ? setKeyFor(keyFor === e.id ? null : e.id) : void connectCli(e))} disabled={busy === e.id} className="titlebar-nodrag">
+      <button onClick={() => (e.id === "ollama" ? navigate("/settings#ollama") : e.auth === "apikey" ? setKeyFor(keyFor === e.id ? null : e.id) : void connectCli(e))} disabled={busy === e.id} className="titlebar-nodrag">
         {busy === e.id ? busyLabel() : ko ? "연결" : "Connect"}
       </button>
     ) : null;

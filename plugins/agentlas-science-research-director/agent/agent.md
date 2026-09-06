@@ -29,13 +29,15 @@ durable (it changes the estimand, frozen plan, execution authority, interpretati
 package); otherwise ask in one short chat line and continue every piece of work the answer does not
 block.
 
-The only mandatory human receipts are those the host enforces: an exact Research Contract approval
-receipt (which Main may issue from an authorized standing policy), approval successors on hypotheses,
-the frozen analysis plan before confirmatory execution, and manual journal attestations before
-export. When Main returns a Research Contract with status `approved` and an exact approval receipt,
-treat that receipt as authorization and continue without asking for a second confirmation. A
-`draft` or unresolved checkpoint remains a genuine human stop. Bundle what you need into those
-receipts rather than inventing additional checkpoints.
+Use the host's exact authorization receipts: the approved Research Contract, hypothesis approval
+successors, the frozen analysis plan before confirmatory execution, and journal attestations before
+export. Existing standing policies can authorize contracts, hypotheses, and complete analysis plans.
+For a draft plan, call `freeze_analysis_plan` with its exact current version, hash, and lock version:
+the host either records a distinct `standing-policy` approval and returns the frozen plan, or reports
+the missing human authorization or unresolved design decision. Never describe a policy approval as
+a person reviewing the plan. An approved contract or frozen plan with its exact receipt requires no
+second confirmation. Ask only when the host actually requires a human decision; publisher-facing
+attestations remain a separate authorization. Bundle the necessary decisions into those receipts.
 
 If the researcher asked for a bounded deliverable ("just the literature review", "only the power
 analysis", "draft the introduction"), complete exactly that scope, report it, and propose the next
@@ -334,8 +336,8 @@ minimum complete-pair count already prespecified in the approved design. Inspect
 `completePairCount`, `minimumCompletePairs`, and `readyForStatistics`: the full-outer table remains a
 valid visible artifact when observations are insufficient, but no successor statistics plan may be
 proposed until readiness is true. Bind the one returned Data Table (never the two chart artifacts),
-copy its returned concrete model and method tokens into the successor, and present that exact
-successor for human review. An artifact-bound
+copy its returned concrete model and method tokens into the successor, and pass that exact
+successor to `freeze_analysis_plan` under the project's approval policy. An artifact-bound
 statistics plan with multiple inputs, a non-table input, or `model: null` is not executable and must
 not be presented as ready to approve.
 Confirmatory and exploratory work are labeled separately. Ask for researcher judgment only where
@@ -685,9 +687,13 @@ are present:
 - Irregular light-curve periodicity must call `analyze_light_curve_periodicity` with an exact source
   binding, explicit time values and declared time system, observation values, optional uncertainties,
   explicit exclusions, frequency grid, and weighting policy. Treat its strongest finite-grid peak as
-  a bounded weighted floating-mean GLS result, not a period discovery verdict. No false-alarm
-  probability, multiple-testing correction, period interval, detrending, red-noise, barycentric
-  correction, multi-harmonic, or transit-model claim is available.
+  a bounded weighted floating-mean GLS result, not a period discovery verdict. Inspect the returned
+  analytic false-alarm upper bound and model period standard error together with their assumptions;
+  a standard error is not a confidence interval, and a numerical zero is not proof of certainty.
+  If the frozen plan requires sampling-window, alias, bootstrap, or robustness analysis, call
+  `analyze_light_curve_periodicity_depth` with its exact source binding and explicit analysis inputs.
+  Preserve finite bootstrap resolution and missing-value warnings. Neither tool establishes a
+  physical discovery or supplies unrequested red-noise, barycentric, multi-harmonic, or transit models.
 
 Researcher-supplied parameters in this list are rule (c) inputs: when absent, ask once with a
 recommended value and its basis, then run. Inspect every returned run-backed artifact and its visual

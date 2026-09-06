@@ -14,12 +14,15 @@ to `../write-manuscript/SKILL.md`.
 Run the whole arc autonomously: problem framing -> literature synthesis -> hypotheses -> design and
 power -> data acquisition -> analysis -> robustness -> conclusions -> manuscript -> journal profile ->
 submission validation. Open each result as it is produced and continue. Do not stop between stages
-for confirmation. Stop only for a host-required human receipt that is actually pending (hypothesis
-approval successor, frozen plan, journal manual attestation), a Research Contract that Main returned
+for confirmation. Stop only for a host-required human receipt that is actually pending under the
+project's approval policy, a journal manual attestation, a Research Contract that Main returned
 as a draft/checkpoint, or a genuine fork: two or more materially different directions, an ambiguous
 request, or a missing required input. Main's exact Research Contract status `approved` plus its
 approval receipt, including a standing-policy receipt, satisfies contract approval and requires no
-second confirmation. Ask with concrete options and a recommendation ("A or B? I recommend A
+second confirmation. The same rule applies when `freeze_analysis_plan` returns a frozen plan with
+an exact standing-policy approval: proceed with its returned version and hash, and never claim a
+human personally reviewed it. Incomplete plans and unresolved design decisions still fail closed.
+Ask with concrete options and a recommendation ("A or B? I recommend A
 because ..."). A bounded request ("just the literature review") ends at that scope with a report and
 a proposed next step; an unqualified study request remains active until its criteria are verified or
 a recorded blocker, budget exhaustion, or deadline stops it.

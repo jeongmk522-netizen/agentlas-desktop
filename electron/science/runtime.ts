@@ -30,6 +30,7 @@ import { ScienceArtifactPublicationValidator } from "./artifact-publication-vali
 import { ScienceDomainAnalysisService } from "./domain-analysis";
 import { ScienceEarthAnalysisService } from "./earth-analysis";
 import { SciencePhysicsAnalysisService } from "./physics-analysis";
+import { ScienceAstronomyAnalysisService } from "./astronomy-analysis";
 import {
   resolveExactVerifiedScienceRenderer,
   resolveExactVerifiedScienceRendererExecutor,
@@ -47,6 +48,7 @@ let activeChemistryValidator: ScienceChemistryValidator | null = null;
 let activeAcademicSearchService: ScienceAcademicSearchService | null = null;
 let activeAcademicFullTextService: ScienceAcademicFullTextService | null = null;
 let activeAstronomyCatalogService: ScienceAstronomyCatalogService | null = null;
+let activeAstronomyAnalysisService: ScienceAstronomyAnalysisService | null = null;
 let activeBiodiversityCatalogService: ScienceBiodiversityCatalogService | null = null;
 let activePaleontologyCatalogService: SciencePaleontologyCatalogService | null = null;
 let activePaleontologyAnalysisService: SciencePaleontologyAnalysisService | null = null;
@@ -135,6 +137,11 @@ export function scienceAcademicFullTextService(): ScienceAcademicFullTextService
 export function scienceAstronomyCatalogService(): ScienceAstronomyCatalogService {
   if (!activeAstronomyCatalogService) activeAstronomyCatalogService = new ScienceAstronomyCatalogService(scienceStore());
   return activeAstronomyCatalogService;
+}
+
+export function scienceAstronomyAnalysisService(): ScienceAstronomyAnalysisService {
+  if (!activeAstronomyAnalysisService) activeAstronomyAnalysisService = new ScienceAstronomyAnalysisService(scienceStore());
+  return activeAstronomyAnalysisService;
 }
 
 export function scienceBiodiversityCatalogService(): ScienceBiodiversityCatalogService {
@@ -356,6 +363,7 @@ export function closeScienceStore(): void {
   activeAcademicSearchService = null;
   activeAcademicFullTextService = null;
   activeAstronomyCatalogService = null;
+  activeAstronomyAnalysisService = null;
   activeBiodiversityCatalogService = null;
   activePaleontologyCatalogService = null;
   activePaleontologyAnalysisService = null;

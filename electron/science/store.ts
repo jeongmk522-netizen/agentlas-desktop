@@ -19167,6 +19167,7 @@ export class ScienceStore {
             OR (r.tool_id = 'agentlas.physics-hepdata-chi-square-analysis' AND r.tool_version = '1.0.0')
             OR (r.tool_id = 'agentlas.materials-lattice-metrics-analysis' AND r.tool_version = '1.0.0')
             OR (r.tool_id = 'agentlas.paleontology-stratigraphic-support' AND r.tool_version = '1.0.0')
+            OR (r.tool_id = 'agentlas.astronomy-light-curve-periodicity-depth' AND r.tool_version = '1.0.0')
             OR (r.tool_id IN (
               'agentlas.physics-spectrum-fit-analysis',
               'agentlas.physics-significance-limits-analysis',

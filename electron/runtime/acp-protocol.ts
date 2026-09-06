@@ -305,6 +305,31 @@ export function acpMcpServersFromConfig(
 }
 
 /**
+ * ACP select options are either a flat option list or a list of documented
+ * `{ group, name, options }` groups. Treat mixed and merely nested lookalikes
+ * as malformed instead of guessing a provider-specific shape.
+ */
+function sessionConfigSelectOptionEntries(options: unknown): any[] {
+  if (!Array.isArray(options)) return [];
+  const isOption = (value: unknown): value is { value: string } =>
+    Boolean(value)
+    && typeof value === "object"
+    && typeof (value as { value?: unknown }).value === "string"
+    && Boolean((value as { value: string }).value.trim());
+  if (options.every(isOption)) return options;
+
+  const isGroup = (value: unknown): value is { group: string; name: string; options: Array<{ value: string }> } => {
+    if (!value || typeof value !== "object") return false;
+    const group = value as { group?: unknown; name?: unknown; options?: unknown };
+    return typeof group.group === "string"
+      && typeof group.name === "string"
+      && Array.isArray(group.options) && group.options.every(isOption);
+  };
+  if (!options.every(isGroup)) return [];
+  return options.flatMap((group) => group.options);
+}
+
+/**
  * A model selector the ACP agent explicitly advertised through session/new or
  * session/load. `configId` is agent-owned: clients must send it back verbatim
  * to session/set_config_option instead of guessing that every selector is
@@ -329,8 +354,8 @@ export function modelConfigOptionFromSession(response: any, expectedConfigId?: s
     : options.find((option) => option && option.category === "model")
       ?? options.find((option) => option && option.id === "model");
   const configId = typeof picked?.id === "string" && picked.id.trim() ? picked.id : "";
-  if (!configId || !Array.isArray(picked?.options)) return null;
-  const values: string[] = [...new Set<string>(picked.options
+  if (!configId) return null;
+  const values: string[] = [...new Set<string>(sessionConfigSelectOptionEntries(picked?.options)
     .map((choice: any): string => typeof choice?.value === "string" ? choice.value : "")
     .filter((value: string) => Boolean(value.trim())))];
   if (values.length === 0) return null;
@@ -377,8 +402,10 @@ export function modelOptionsFromNewSession(response: any): Array<{ id: string; n
   };
   const options: any[] = Array.isArray(response?.configOptions) ? response.configOptions : [];
   const picked = options.find((o) => o && o.category === "model") ?? options.find((o) => o && o.id === "model");
-  if (picked && Array.isArray(picked.options)) {
-    for (const choice of picked.options) if (choice) push(choice.value, choice.name, choice.description, choice.value === picked.currentValue);
+  if (picked) {
+    for (const choice of sessionConfigSelectOptionEntries(picked.options)) {
+      push(choice.value, choice.name, choice.description, choice.value === picked.currentValue);
+    }
   }
   const vendor = response?.models;
   if (vendor && Array.isArray(vendor.availableModels)) {

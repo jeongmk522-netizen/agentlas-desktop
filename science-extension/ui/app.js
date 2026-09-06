@@ -5264,8 +5264,9 @@ function createComposerEventSync({
     }
   }
 
-  async function openLab(labId, artifactId, originVersion = null, returnMessageId = null, exactVersion = null, preferredContext = null) {
+  async function openLab(labId, artifactId, originVersion = null, returnMessageId = null, exactVersion = null, preferredContext = null, navigationGuard = null) {
     rememberScroll();
+    if (typeof navigationGuard === "function" && !navigationGuard()) return;
     state.labDecisionActionError = "";
     // Lab context is a snapshot. Acquisition can materialize an artifact after that snapshot was
     // loaded, so refresh before deciding the Lab is empty or an explicit result is missing.
@@ -5274,6 +5275,7 @@ function createComposerEventSync({
       try {
         const latestContexts = await science.artifacts.forLab(projectId, labId);
         if (projectId !== state.selectedId) return;
+        if (typeof navigationGuard === "function" && !navigationGuard()) return;
         if (Array.isArray(latestContexts)) {
           // A result card resolves an exact artifact version before opening its Lab. forLab can
           // legitimately omit that artifact when the Lab repository has not indexed it yet; do
@@ -5293,6 +5295,7 @@ function createComposerEventSync({
     const fallbackArtifactId = (state.labContextsById.get(labId) || [])[0]?.artifact?.id || null;
     const nextArtifactId = artifactId || fallbackArtifactId;
     const nextArtifact = artifactForLab(labId, nextArtifactId);
+    if (typeof navigationGuard === "function" && !navigationGuard()) return;
     if (nextArtifact) ensureArtifactWorkspaceTab(labId, nextArtifactId, exactVersion || originVersion || nextArtifact.currentVersion, originVersion, returnMessageId);
     else ensureLabWorkspaceTab(labId);
     state.selectedLabId = labId;
@@ -5307,8 +5310,12 @@ function createComposerEventSync({
     state.statisticsLaunchOpen = false;
     state.selectedArtifactOriginVersion = originVersion;
     state.returnMessageId = returnMessageId;
-    state.inspectedArtifactVersion = null;
-    state.inspectedArtifactContext = null;
+    const hasPreferredHistoricalContext = Number.isSafeInteger(exactVersion)
+      && exactVersion > 0
+      && preferredContext?.selectedVersion?.version === exactVersion
+      && preferredContext?.artifact?.currentVersion !== exactVersion;
+    state.inspectedArtifactVersion = hasPreferredHistoricalContext ? exactVersion : null;
+    state.inspectedArtifactContext = hasPreferredHistoricalContext ? preferredContext : null;
     state.artifactComparison = null;
     state.draftHistoryGuard = null;
     state.historyOpen = false;
@@ -5323,11 +5330,13 @@ function createComposerEventSync({
     try {
       const history = await science.artifacts.history(state.selectedId, nextArtifactId);
       if (!history || history.artifactId !== nextArtifactId) throw new Error("아티팩트 버전 기록을 불러오지 못했습니다.");
+      if (typeof navigationGuard === "function" && !navigationGuard()) return;
       state.artifactHistoryById.set(nextArtifactId, history);
       if (state.mode === "lab" && state.selectedArtifactId === nextArtifactId) {
         render();
       }
     } catch (error) {
+      if (typeof navigationGuard === "function" && !navigationGuard()) return;
       state.artifactHistoryById.set(nextArtifactId, { error: error instanceof Error ? error.message : String(error), entries: [] });
       if (state.mode === "lab" && state.selectedArtifactId === nextArtifactId) render();
     }
@@ -10466,6 +10475,45 @@ function createComposerEventSync({
     }
   }
 
+  async function openEvidenceGraphArtifactVersion(nodeId, canonicalRef) {
+    const lookup = beginEvidenceGraphExactRecordLookup(nodeId);
+    if (!lookup) return;
+    try {
+      const artifactVersion = canonicalRef?.version;
+      if (!canonicalRef?.id || !Number.isSafeInteger(artifactVersion) || artifactVersion < 1) {
+        throw new Error(uiCopy("정확한 artifact version 정보가 유효하지 않습니다.", "The exact artifact version reference is invalid."));
+      }
+      const context = await science.artifacts.context(lookup.projectId, canonicalRef.id, artifactVersion);
+      if (!lookup.isCurrent()) return;
+      if (!context
+        || context.artifact?.id !== canonicalRef.id
+        || context.artifact?.projectId !== lookup.projectId
+        || context.selectedVersion?.version !== artifactVersion
+        || context.selectedVersion?.contentSha256 !== canonicalRef.contentSha256
+        || !context.linkage?.labId) {
+        throw new Error(uiCopy("정확한 artifact version을 현재 프로젝트에서 찾지 못했습니다.", "The exact artifact version is not available in this project."));
+      }
+      await openLab(
+        context.linkage.labId,
+        canonicalRef.id,
+        artifactVersion,
+        null,
+        artifactVersion,
+        context,
+        lookup.isCurrent,
+      );
+      if (!lookup.isCurrent()) return;
+      if (state.mode !== "lab" || state.selectedLabId !== context.linkage.labId || state.selectedArtifactId !== canonicalRef.id) {
+        throw new Error(uiCopy("artifact version을 열 때 현재 Lab 상태가 바뀌었습니다.", "The Lab changed while opening the exact artifact version."));
+      }
+      state.inspectedArtifactVersion = artifactVersion;
+      state.inspectedArtifactContext = context;
+      finishEvidenceGraphExactRecordLookup(lookup);
+    } catch (error) {
+      failEvidenceGraphExactRecordLookup(lookup, error);
+    }
+  }
+
   function openEvidenceGraphExactRecord(nodeId) {
     const node = evidenceGraphNodeById(nodeId);
     if (!node) return;
@@ -10479,9 +10527,7 @@ function createComposerEventSync({
       return;
     }
     if (ref.kind === "artifact-version") {
-      const artifact = state.artifacts.find((item) => item.id === ref.id && item.version?.version === ref.version && item.version?.contentSha256 === ref.contentSha256);
-      const labId = artifact ? labForArtifact(artifact.id) : null;
-      if (artifact && labId) void openLab(labId, artifact.id, ref.version, null, ref.version);
+      void openEvidenceGraphArtifactVersion(node.id, ref);
       return;
     }
     if (ref.kind === "research-run") {

@@ -1362,7 +1362,22 @@ function ChatPage() {
   // in the new chat.
   const [hydratedChatId, setHydratedChatId] = useState<string | null>(null);
   const currentChatIdRef = useRef(chatId);
-  currentChatIdRef.current = chatId;
+  const chatGenerationRef = useRef(0);
+  if (currentChatIdRef.current !== chatId) {
+    currentChatIdRef.current = chatId;
+    chatGenerationRef.current += 1;
+  }
+  const chatGeneration = chatGenerationRef.current;
+  const chatMountedRef = useRef(true);
+  useEffect(() => {
+    chatMountedRef.current = true;
+    return () => { chatMountedRef.current = false; };
+  }, []);
+  // A -> B -> A is a new view even though the chat id matches again. Pending
+  // IPC may settle durably for the old view, but must not mutate the new one.
+  const isCurrentChat = useCallback(() => chatMountedRef.current
+    && currentChatIdRef.current === chatId
+    && chatGenerationRef.current === chatGeneration, [chatId, chatGeneration]);
   const [busy, setBusy] = useState(false);
   const [cancelPending, setCancelPending] = useState(false);
   // Every renderer-owned transcript mutation advances this clock. Async
@@ -2643,19 +2658,20 @@ function ChatPage() {
   }, [consumeEvent]);
 
   // runId 채널 구독 — send()와 재접속 경로 공용. lastStatusRef를 받으면(리플레이 후) 이어서 쓴다.
-  // deps [] 로 안정화(consumeEvent는 ref로 접근) — 한 번 건 구독이 렌더 도중 교체돼 이벤트를 흘리지 않게.
+  // Stable within a chat generation; a queued event from an older view cannot
+  // reach the new view's consumeEvent ref, even after A -> B -> A.
   const subscribeRun = useCallback(
     (runId: string, placeholderId: string, lastStatusRef: { text: string } = { text: "" }) => {
       const api = ipc();
       const events = ipcEvents();
-      if (!api || !events) return;
+      if (!api || !events || !isCurrentChat()) return;
       const channel = api.invoke.eventChannel(runId);
       subRef.current?.();
-      subRef.current = events.on(channel, (ev: McpInvocationEvent) =>
-        consumeEventRef.current(ev, placeholderId, lastStatusRef),
-      );
+      subRef.current = events.on(channel, (ev: McpInvocationEvent) => {
+        if (isCurrentChat()) consumeEventRef.current(ev, placeholderId, lastStatusRef);
+      });
     },
-    [],
+    [isCurrentChat],
   );
 
   // Esc는 현재 보이는 우측 레일만 닫는다. 산출물 자체를 지우면 사용자가 작업을 잃은 것처럼 보인다.
@@ -2706,6 +2722,9 @@ function ChatPage() {
     const restored = readChatViewSnapshot(chatId);
     setMessages(restored?.messages ?? []);
     setBusy(false);
+    questionCommitPendingRef.current = null;
+    setQuestionCommitPending(false);
+    continuationTransportRetryableRef.current.clear();
     setCancelPending(false);
     runIdRef.current = null;
     lastRunIdRef.current = null;
@@ -3422,9 +3441,11 @@ function ChatPage() {
       const api = ipc();
       const events = ipcEvents();
       if (
+        !isCurrentChat() ||
         !api ||
         !events ||
         !chat ||
+        chat.id !== chatId ||
         busy ||
         (requestedTaskId && validatedTaskChatId !== chat.id)
       ) return false;
@@ -3434,6 +3455,7 @@ function ChatPage() {
         // existing active contract instead of overwriting it, so a later
         // steering turn can never become the goal by accident.
         const defined = await api.chats.defineGoal(chat.id, userPrompt, locale).catch(() => null);
+        if (!isCurrentChat()) return false;
         if (defined) setGoalContext(defined);
       }
       let attachedChatFiles: ChatFileItem[] | undefined;
@@ -3446,10 +3468,12 @@ function ChatPage() {
         }
         try {
           const snapshot = await bridge.snapshot({ chatId: chat.id, files: opts.files });
+          if (!isCurrentChat()) return false;
           attachedChatFiles = snapshot.files.map((file) => chatFileItem(file, "user-attachment"));
           hydratedChatFileGroupsRef.current.set(snapshot.groupId, attachedChatFiles);
           boundUserPrompt = appendChatFileMarker(userPrompt, snapshot.groupId);
         } catch (cause) {
+          if (!isCurrentChat()) return false;
           const detail = cause instanceof Error ? cause.message : String(cause);
           setSessionNotice(locale === "ko" ? `첨부를 보내지 않았습니다: ${detail}` : `The attachment was not sent: ${detail}`);
           return false;
@@ -3463,6 +3487,7 @@ function ChatPage() {
         if (nextTitle) {
           try {
             const renamed = await api.chats.rename(chat.id, nextTitle);
+            if (!isCurrentChat()) return false;
             setChat(renamed);
             setTitleDraft(renamed.title);
             window.dispatchEvent(new Event("agentlas:tasks-changed"));
@@ -3472,6 +3497,7 @@ function ChatPage() {
           }
         }
       }
+      if (!isCurrentChat()) return false;
       const images = opts?.images;
       const placeholderId = uid();
       const imageDataUrls = images?.map(
@@ -3588,14 +3614,17 @@ function ChatPage() {
           try {
             continued = await api.confirm.continueAnswer(continuationInput);
           } catch {
+            if (!isCurrentChat()) return false;
             // One response-loss reconciliation only. Main owns the stable run
             // id/hash, so this cannot mint a second execution.
             continued = await api.confirm.continueAnswer(continuationInput).catch(() => null);
+            if (!isCurrentChat()) return false;
             if (!continued) {
               continuationTransportRetryableRef.current.add(runId);
               throw new Error("decision_continuation_transport_unavailable");
             }
           }
+          if (!isCurrentChat()) return false;
           if (!continued || continued.runId !== runId || continued.status === "rejected") {
             continuationTransportRetryableRef.current.delete(runId);
             throw new Error(continued?.reasonCode ?? "decision_continuation_rejected");
@@ -3639,10 +3668,12 @@ function ChatPage() {
             runtimeSelection: chat.runtimeSelection ?? undefined,
           });
         }
+        if (!isCurrentChat()) return false;
         // runId 도착 전에 Stop을 눌렀다면(레이스) 구독을 건 직후 즉시 취소 — abort 종료 이벤트를 수신해 busy 해제.
         if (cancelRequestedRef.current) requestRunCancellation(runId);
         return true;
       } catch {
+        if (!isCurrentChat()) return false;
         // invoke 실패 — 미리 건 구독을 정리해 유령 리스너가 남지 않게 한다.
         subRef.current?.();
         subRef.current = null;
@@ -3688,6 +3719,8 @@ function ChatPage() {
       allAgents,
       allGeneratedApps,
       chat,
+      chatId,
+      isCurrentChat,
       busy,
       goalContext?.objective,
       locale,
@@ -3844,7 +3877,7 @@ function ChatPage() {
    */
   const answerQuestionBatch = useCallback(
     async (messageId: string, sourceMessageId: string, reply: string, perQuestion: QuestionSheetAnswer[]) => {
-      if (busy || questionCommitPendingRef.current) return;
+      if (!isCurrentChat() || busy || questionCommitPendingRef.current) return;
       const api = ipc();
       if (!api?.confirm?.commitAnswer) {
         setSessionNotice(locale === "ko"
@@ -3873,16 +3906,26 @@ function ChatPage() {
               runtimeSelection: chat?.runtimeSelection ?? undefined,
             },
           });
-          if (!receipt || receipt.chatId !== chatId || receipt.sourceMessageId !== sourceMessageId) {
+          if (!receipt || receipt.chatId !== chatId || receipt.sourceMessageId !== sourceMessageId
+            || typeof receipt.continuationRunId !== "string" || !receipt.continuationRunId.trim()) {
             throw new Error("question_commit_receipt_mismatch");
           }
         } catch {
+          if (!isCurrentChat()) return;
           // IPC can lose its response after Main commits. Recover only the
           // exact same source+reply+Main run binding; never infer acceptance.
-          const recovered = (await api.confirm.committedAnswers(chatId).catch(() => []))
-            .find((item) => item.sourceMessageId === sourceMessageId
+          let rows: Awaited<ReturnType<typeof api.confirm.committedAnswers>> = [];
+          try {
+            rows = await api.confirm.committedAnswers?.(chatId) ?? [];
+          } catch { /* Missing or unavailable recovery keeps the editable draft. */ }
+          if (!isCurrentChat()) return;
+          const recovered = (Array.isArray(rows) ? rows : [])
+            .find((item) => item && item.sourceMessageId === sourceMessageId
+              // Main already scopes these rows by chat; its real shape has no
+              // chatId. Reject only an explicitly contradictory bridge field.
+              && (!("chatId" in item) || item.chatId === chatId)
               && item.reply === reply.trim()
-              && Boolean(item.continuationRunId));
+              && typeof item.continuationRunId === "string" && Boolean(item.continuationRunId.trim()));
           if (recovered?.continuationRunId) {
             receipt = { chatId, sourceMessageId, continuationRunId: recovered.continuationRunId };
           } else {
@@ -3893,6 +3936,7 @@ function ChatPage() {
           }
         }
         window.dispatchEvent(new Event("agentlas:attention-refresh"));
+        if (!isCurrentChat()) return;
         const sent = await send(reply, {
           permissions: perms ?? DEFAULT_PERMISSION,
           decisionContinuation: {
@@ -3900,6 +3944,7 @@ function ChatPage() {
             runId: receipt.continuationRunId,
           },
         }).catch(() => false);
+        if (!isCurrentChat()) return;
         if (!sent) {
           const retryable = receipt?.continuationRunId
             ? continuationTransportRetryableRef.current.has(receipt.continuationRunId)
@@ -3939,7 +3984,7 @@ function ChatPage() {
           ),
         );
       } finally {
-        if (questionCommitPendingRef.current === messageId) {
+        if (isCurrentChat() && questionCommitPendingRef.current === messageId) {
           questionCommitPendingRef.current = null;
           setQuestionCommitPending(false);
         }
@@ -3947,7 +3992,7 @@ function ChatPage() {
     },
     // send는 동일 useCallback에 의존
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [busy, chat, chatId, locale, project, send],
+    [busy, chat, chatId, isCurrentChat, locale, project, send],
   );
 
   /** 질문 시트 × 닫기 — 이 배치의 미답 질문을 잠가("—") 시트를 접는다. 전송 없음. */
@@ -3994,7 +4039,7 @@ function ChatPage() {
     const sheet = pendingQuestionSheet;
     const reply = sheet?.initialReply;
     const continuationRunId = sheet?.continuationRunId;
-    if (!reply?.trim() || !continuationRunId || busy || questionCommitPendingRef.current) return;
+    if (!isCurrentChat() || !sheet || !reply?.trim() || !continuationRunId?.trim() || busy || questionCommitPendingRef.current) return;
     questionCommitPendingRef.current = sheet.messageId;
     setQuestionCommitPending(true);
     const key = `${chatId}\0${sheet.sourceMessageId}\0${continuationRunId}`;
@@ -4006,6 +4051,7 @@ function ChatPage() {
           runId: continuationRunId,
         },
       }).catch(() => false);
+      if (!isCurrentChat()) return;
       if (!resumed) {
         const retryable = continuationTransportRetryableRef.current.has(continuationRunId);
         setMessages((messages) => messages.map((message) => message.id === sheet.messageId
@@ -4032,12 +4078,12 @@ function ChatPage() {
         };
       }));
     } finally {
-      if (questionCommitPendingRef.current === sheet.messageId) {
+      if (isCurrentChat() && questionCommitPendingRef.current === sheet.messageId) {
         questionCommitPendingRef.current = null;
         setQuestionCommitPending(false);
       }
     }
-  }, [busy, chatId, pendingQuestionSheet, send]);
+  }, [busy, chatId, isCurrentChat, locale, pendingQuestionSheet, send]);
 
   useEffect(() => {
     const sheet = pendingQuestionSheet;

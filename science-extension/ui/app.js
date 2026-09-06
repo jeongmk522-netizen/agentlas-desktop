@@ -11792,6 +11792,9 @@ function createComposerEventSync({
             state.submissionExports = Array.isArray(exports) ? exports : [];
             state.lifecycle = lifecycle;
             render();
+            if (state.journalValidation === result.validation) {
+              document.querySelector("#submission-export-form .submissionValidationNotice")?.scrollIntoView({ block: "start" });
+            }
           }).catch(() => { /* the blocked validation remains visible even if optional refresh fails */ });
           return;
         }

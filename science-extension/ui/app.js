@@ -389,7 +389,7 @@ function createComposerEventSync({
     projects: [], selectedId: null, lifecycle: null, researchLoopInspection: null, researchLoopActionBusy: false, researchLoopActionError: "", conversations: [], selectedConversationId: null, messages: [], sources: [], sourceFigures: [], runs: [], artifacts: [], labs: [], workspaceLabBindings: [], labCatalog: [], labDecisionProjections: [], rendererPacks: [], manuscripts: [], claimLedger: null, journalProfiles: [], submissionExports: [], analysisSpecs: [], decisions: [],
     artifactContextsByMessage: new Map(), labContextsById: new Map(), artifactHistoryById: new Map(), selectedLabId: null, selectedArtifactOriginVersion: null, inspectedArtifactVersion: null, inspectedArtifactContext: null, artifactComparison: null, draftHistoryGuard: null, labsExpanded: true, expandedLabGroups: new Set(["chemistry"]), expandedLabDecisions: new Set(), projectMenuOpen: false, projectFolderOpen: false, projectLibrarySummaries: new Map(), projectLibrarySummaryState: "loading", librarySearch: "", librarySelectedProjectId: null, projectFolderSelectedKey: null, newProjectStep: "details", selectedResearchTemplateId: null, newProjectDraft: blankNewProjectDraft(), newProjectFolderError: "", newProjectFolderBusy: false, newProjectGeneration: 0, newProjectRequestId: null, newProjectRequestSignature: "", labManagerOpen: false, labManagerBusyId: null, labManagerGeneration: 0, labManagerError: "", historyOpen: false, railCollapsed: readRailCollapsed(),
     blocksByMessage: new Map(), citationsByMessage: new Map(), evidenceById: new Map(), selectedSourceId: null, selectedArtifactId: null,
-    evidenceGraph: null, evidenceGraphReviews: [], evidenceGraphLoading: false, evidenceGraphRefreshId: null, evidenceGraphError: "", selectedEvidenceGraphNodeId: null, selectedEvidenceGraphCandidateId: null, evidenceGraphReviewSheet: false, evidenceGraphReviewDecision: "accepted", evidenceGraphReviewBusy: false, evidenceGraphReviewError: "", evidenceGraphPathAnchorId: null, evidenceGraphPath: null,
+    evidenceGraph: null, evidenceGraphReviews: [], evidenceGraphLoading: false, evidenceGraphRefreshId: null, evidenceGraphError: "", selectedEvidenceGraphNodeId: null, selectedEvidenceGraphCandidateId: null, evidenceGraphExactRecordRequestId: null, evidenceGraphExactRecordNodeId: null, evidenceGraphExactRecordLoading: false, evidenceGraphExactRecordError: "", evidenceGraphReviewSheet: false, evidenceGraphReviewDecision: "accepted", evidenceGraphReviewBusy: false, evidenceGraphReviewError: "", evidenceGraphPathAnchorId: null, evidenceGraphPath: null,
     mode: "session", drawer: null, modal: false, manuscriptModal: false, saving: false, loadingProject: false, projectError: "", projectFolderOpenBusy: false, projectFolderOpenError: "", activeVegaView: null, activeCytoscape: null, activeNumericSurface: null, activeJBrowseTarget: null, scrollByMode: { session: 0, lab: 0, manuscript: 0 }, returnMessageId: null,
     workspaceTabs: [{ id: "research", kind: "research", dirty: false }], activeWorkspaceTabId: "research", currentDestination: "overview", hypotheses: [], hypothesesError: "", approvalPolicy: null, approvalPolicyError: "", workspaceSyncError: "",
     analysisRuns: [], analysisRunArtifacts: [], analysisRunsError: "", analysisRunsProjectId: null,
@@ -906,6 +906,78 @@ function createComposerEventSync({
   };
   const sourceById = (id) => state.sources.find((source) => source.id === id) || null;
   const citationById = (id) => [...state.citationsByMessage.values()].flat().find((citation) => citation.id === id) || null;
+  function invalidateEvidenceGraphExactRecord() {
+    state.evidenceGraphExactRecordRequestId = null;
+    state.evidenceGraphExactRecordNodeId = null;
+    state.evidenceGraphExactRecordLoading = false;
+    state.evidenceGraphExactRecordError = "";
+  }
+
+  function beginEvidenceGraphExactRecordLookup(nodeId) {
+    const projectId = state.selectedId;
+    if (!projectId) return null;
+    const requestId = crypto.randomUUID();
+    state.evidenceGraphExactRecordRequestId = requestId;
+    state.evidenceGraphExactRecordNodeId = nodeId;
+    state.evidenceGraphExactRecordLoading = true;
+    state.evidenceGraphExactRecordError = "";
+    render();
+    return {
+      projectId,
+      requestId,
+      isCurrent: () => state.selectedId === projectId
+        && state.selectedEvidenceGraphNodeId === nodeId
+        && state.evidenceGraphExactRecordRequestId === requestId,
+    };
+  }
+
+  function finishEvidenceGraphExactRecordLookup(lookup) {
+    if (!lookup?.isCurrent()) return false;
+    state.evidenceGraphExactRecordLoading = false;
+    state.evidenceGraphExactRecordRequestId = null;
+    state.evidenceGraphExactRecordError = "";
+    render();
+    return true;
+  }
+
+  function failEvidenceGraphExactRecordLookup(lookup, error) {
+    if (!lookup?.isCurrent()) return false;
+    state.evidenceGraphExactRecordLoading = false;
+    state.evidenceGraphExactRecordRequestId = null;
+    state.evidenceGraphExactRecordError = error instanceof Error ? error.message : String(error);
+    render();
+    return true;
+  }
+
+  async function findProjectEvidenceCitation(projectId, evidenceSpanId, isCurrent = () => true) {
+    if (!isCurrent()) return { cancelled: true, evidence: null, citation: null };
+    const evidence = await science.evidence.get(projectId, evidenceSpanId);
+    if (!isCurrent()) return { cancelled: true, evidence: null, citation: null };
+    if (!evidence || evidence.projectId !== projectId || evidence.id !== evidenceSpanId) return { evidence: null, citation: null };
+    const cached = [...state.citationsByMessage.values()].flat().find((citation) => citation.projectId === projectId
+      && citation.evidenceSpanId === evidence.id
+      && citation.sourceId === evidence.sourceId
+      && citation.sourceVersionId === evidence.sourceVersionId);
+    if (cached) return { evidence, citation: cached };
+    const conversations = await science.conversations.list(projectId);
+    if (!isCurrent()) return { cancelled: true, evidence: null, citation: null };
+    for (const conversation of Array.isArray(conversations) ? conversations : []) {
+      if (!conversation?.id) continue;
+      const messages = await science.conversations.messages(projectId, conversation.id);
+      if (!isCurrent()) return { cancelled: true, evidence: null, citation: null };
+      for (const message of Array.isArray(messages) ? messages : []) {
+        if (!message?.id) continue;
+        const citations = await science.messages.citations(projectId, message.id);
+        if (!isCurrent()) return { cancelled: true, evidence: null, citation: null };
+        const citation = (Array.isArray(citations) ? citations : []).find((item) => item?.projectId === projectId
+          && item.evidenceSpanId === evidence.id
+          && item.sourceId === evidence.sourceId
+          && item.sourceVersionId === evidence.sourceVersionId);
+        if (citation) return { evidence, citation };
+      }
+    }
+    return { evidence, citation: null };
+  }
   const selectedProject = () => state.projects.find((item) => item.id === state.selectedId) || null;
   const setProjectLibrarySummaries = (rows) => {
     state.projectLibrarySummaries = new Map((Array.isArray(rows) ? rows : []).filter((row) => row?.projectId).map((row) => [row.projectId, row]));
@@ -1924,6 +1996,7 @@ function createComposerEventSync({
     state.evidenceGraphError = "";
     state.selectedEvidenceGraphNodeId = null;
     state.selectedEvidenceGraphCandidateId = null;
+    invalidateEvidenceGraphExactRecord();
     state.evidenceGraphReviewSheet = false;
     state.evidenceGraphReviewDecision = "accepted";
     state.evidenceGraphReviewBusy = false;
@@ -2346,7 +2419,10 @@ function createComposerEventSync({
       : candidate ? `<section class="evidenceGraphInspectorSection"><h3>Exact evidence path</h3><p class="evidenceGraphNoContext">No surviving exact evidence path is attached. This candidate cannot be treated as supported.</p></section>` : "";
     const pathExplanation = state.evidenceGraphPath
       ? `<div class="evidenceGraphPathResult" data-found="${escapeHtml(state.evidenceGraphPath.found)}"><strong>${state.evidenceGraphPath.found ? "Directed path found" : "No directed path"}</strong><span>${state.evidenceGraphPath.found ? `${state.evidenceGraphPath.nodeIds.length} nodes · ${state.evidenceGraphPath.edgeIds.length} edges` : (state.evidenceGraphPath.blockedBy || []).join(", ") || "The selected direction is not supported by the graph."}</span></div>` : "";
-    const openExact = node ? `<button class="secondaryButton evidenceGraphExactButton" data-action="open-evidence-graph-exact" data-evidence-graph-node-id="${escapeHtml(node.id)}">Open exact record</button>` : "";
+    const exactRecordActive = Boolean(node && state.evidenceGraphExactRecordNodeId === node.id);
+    const exactRecordFeedback = exactRecordActive && state.evidenceGraphExactRecordError
+      ? `<p class="evidenceGraphExactRecordError" role="alert">${escapeHtml(state.evidenceGraphExactRecordError)}</p>` : "";
+    const openExact = node ? `<button class="secondaryButton evidenceGraphExactButton" data-action="open-evidence-graph-exact" data-evidence-graph-node-id="${escapeHtml(node.id)}" ${exactRecordActive && state.evidenceGraphExactRecordLoading ? "disabled" : ""}>${exactRecordActive && state.evidenceGraphExactRecordLoading ? "Looking up exact record…" : "Open exact record"}</button>` : "";
     const pathAction = node ? (state.evidenceGraphPathAnchorId && state.evidenceGraphPathAnchorId !== node.id
       ? `<button class="secondaryButton" data-action="explain-evidence-graph-path" data-evidence-graph-node-id="${escapeHtml(node.id)}">Explain directed path</button>`
       : `<button class="secondaryButton" data-action="anchor-evidence-graph-path" data-evidence-graph-node-id="${escapeHtml(node.id)}">${state.evidenceGraphPathAnchorId === node.id ? "Path start selected" : "Start path here"}</button>`) : "";
@@ -2356,7 +2432,7 @@ function createComposerEventSync({
       <div class="evidenceGraphInspectorScroll">
         ${node ? `<section class="evidenceGraphInspectorSection"><h3>Statement</h3><p>${escapeHtml(node.statement)}</p></section><section class="evidenceGraphInspectorSection"><h3>Conditioning context</h3>${evidenceGraphContextMarkup(node.conditioningContext)}</section><section class="evidenceGraphInspectorSection evidenceGraphCanonical"><h3>Exact canonical record</h3><dl><div><dt>Kind</dt><dd>${escapeHtml(node.canonicalRef.kind)}</dd></div><div><dt>ID</dt><dd><code>${escapeHtml(node.canonicalRef.id)}</code></dd></div><div><dt>Version</dt><dd>v${escapeHtml(node.canonicalRef.version)}</dd></div><div><dt>Content</dt><dd><code title="${escapeHtml(node.canonicalRef.contentSha256)}">${escapeHtml(evidenceGraphShortHash(node.canonicalRef.contentSha256))}</code></dd></div></dl></section>` : ""}
         ${candidate ? `<section class="evidenceGraphInspectorSection evidenceGraphCandidateReview" data-review-status="${escapeHtml(review?.decision || "pending")}"><h3>Inference review</h3><strong>${escapeHtml(review?.decision || "Pending human review")}</strong><p>${escapeHtml(review?.rationale || candidate.rationale)}</p><span>Acceptance records a review decision only. It never promotes this candidate to a scientific fact.</span></section>` : ""}
-        ${missing}${path}${pathExplanation}
+        ${missing}${path}${pathExplanation}${exactRecordFeedback}
       </div><footer>${openExact}${pathAction}${reviewAction}</footer>
     </aside>`;
   }
@@ -10201,6 +10277,7 @@ function createComposerEventSync({
     const projectId = state.selectedId;
     const requestId = crypto.randomUUID();
     const currentRequest = () => state.selectedId === projectId && state.evidenceGraphRefreshId === requestId;
+    invalidateEvidenceGraphExactRecord();
     state.evidenceGraphRefreshId = requestId;
     state.evidenceGraphLoading = true;
     state.evidenceGraphError = "";
@@ -10232,6 +10309,32 @@ function createComposerEventSync({
     }
   }
 
+  async function openEvidenceGraphEvidenceSpan(nodeId, evidenceSpanId) {
+    const lookup = beginEvidenceGraphExactRecordLookup(nodeId);
+    if (!lookup) return;
+    try {
+      const result = await findProjectEvidenceCitation(lookup.projectId, evidenceSpanId, lookup.isCurrent);
+      if (result.cancelled || !lookup.isCurrent()) return;
+      if (!result.evidence) throw new Error(uiCopy("현재 프로젝트에서 정확한 evidence span을 찾지 못했습니다.", "The exact evidence span is not available in this project."));
+      if (!result.citation) throw new Error(uiCopy("evidence span은 찾았지만 프로젝트의 정확한 인용 연결을 찾지 못했습니다.", "The evidence span exists, but its exact project citation link was not found."));
+      const citation = result.citation;
+      const source = await science.sources.get(lookup.projectId, citation.sourceId);
+      if (!lookup.isCurrent()) return;
+      if (!source || source.projectId !== lookup.projectId || source.id !== citation.sourceId || source.version?.id !== result.evidence.sourceVersionId) {
+        throw new Error(uiCopy("정확한 출처 기록을 현재 프로젝트에서 찾지 못했습니다.", "The exact source record is not available in this project."));
+      }
+      const priorCitations = state.citationsByMessage.get(citation.messageId) || [];
+      if (!priorCitations.some((item) => item.id === citation.id)) state.citationsByMessage.set(citation.messageId, [...priorCitations, citation]);
+      state.evidenceById.set(result.evidence.id, result.evidence);
+      state.sources = [...state.sources.filter((item) => item.id !== source.id), source];
+      state.selectedSourceId = source.id;
+      state.drawer = { kind: "citation", id: citation.id };
+      finishEvidenceGraphExactRecordLookup(lookup);
+    } catch (error) {
+      failEvidenceGraphExactRecordLookup(lookup, error);
+    }
+  }
+
   function openEvidenceGraphExactRecord(nodeId) {
     const node = evidenceGraphNodeById(nodeId);
     if (!node) return;
@@ -10242,8 +10345,7 @@ function createComposerEventSync({
       return;
     }
     if (ref.kind === "evidence-span") {
-      const citation = [...state.citationsByMessage.values()].flat().find((item) => item.evidenceSpanId === ref.id);
-      if (citation) { state.selectedSourceId = citation.sourceId; state.drawer = { kind: "citation", id: citation.id }; render(); }
+      void openEvidenceGraphEvidenceSpan(node.id, ref.id);
       return;
     }
     if (ref.kind === "artifact-version") {
@@ -10403,6 +10505,7 @@ function createComposerEventSync({
     }
     if (target.dataset.citationFit && state.activeCytoscape) { state.activeCytoscape.fit(undefined, 34); return; }
     if (target.dataset.evidenceGraphNodeId && !target.dataset.action) {
+      invalidateEvidenceGraphExactRecord();
       state.selectedEvidenceGraphNodeId = target.dataset.evidenceGraphNodeId;
       state.selectedEvidenceGraphCandidateId = state.evidenceGraph?.inferenceCandidates?.find((candidate) => candidate.nodeId === target.dataset.evidenceGraphNodeId)?.id || null;
       state.evidenceGraphPath = null;
@@ -10410,6 +10513,7 @@ function createComposerEventSync({
       return;
     }
     if (target.dataset.evidenceGraphCandidateId && !target.dataset.action) {
+      invalidateEvidenceGraphExactRecord();
       const candidate = evidenceGraphCandidateById(target.dataset.evidenceGraphCandidateId);
       state.selectedEvidenceGraphCandidateId = candidate?.id || null;
       state.selectedEvidenceGraphNodeId = candidate?.nodeId || null;
@@ -10970,6 +11074,7 @@ function createComposerEventSync({
     const evidenceGraphNodeSelect = event.target.closest("[data-evidence-graph-node-select]");
     if (evidenceGraphNodeSelect) {
       const nodeId = evidenceGraphNodeSelect.value;
+      invalidateEvidenceGraphExactRecord();
       state.selectedEvidenceGraphNodeId = nodeId || null;
       state.selectedEvidenceGraphCandidateId = state.evidenceGraph?.inferenceCandidates?.find((candidate) => candidate.nodeId === nodeId)?.id || null;
       state.evidenceGraphPath = null;

@@ -413,12 +413,15 @@ function initializeInstallIdentity(): InstallIdentity {
     // service. Only non-official identities receive an explicit namespace.
     app.setName(identity.appName);
     const userDataDir = identity.userDataOverride
-      ?? (identity.channel === "local-candidate"
+      ?? (identity.channel === "local-candidate" || identity.channel === "dev"
         ? path.join(app.getPath("appData"), identity.userDataNamespace)
         : null);
     if (userDataDir) {
       fs.mkdirSync(userDataDir, { recursive: true, mode: 0o700 });
       app.setPath("userData", userDataDir);
+    }
+    if (identity.channel === "dev") {
+      console.info("[Agentlas-Dev] 별도의 개발 프로필을 사용합니다. 공식 Agentlas의 로그인과 데이터는 기존 프로필에 그대로 보존됩니다. 개발 프로필은 처음에는 비어 있을 수 있습니다.");
     }
     return identity;
   } catch (error) {

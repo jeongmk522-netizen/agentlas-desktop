@@ -977,6 +977,14 @@ function createComposerEventSync({
     state.evidenceGraphExactRecordError = "";
   }
 
+  function closeEvidenceGraphInspector() {
+    invalidateEvidenceGraphExactRecord();
+    state.selectedEvidenceGraphNodeId = null;
+    state.selectedEvidenceGraphCandidateId = null;
+    state.evidenceGraphPath = null;
+    render();
+  }
+
   function beginEvidenceGraphExactRecordLookup(nodeId) {
     invalidateSourceVersionLookup();
     const projectId = state.selectedId;
@@ -2475,7 +2483,7 @@ function createComposerEventSync({
   }
 
   function evidenceGraphInspector(graph, selectedNode, selectedCandidate) {
-    if (!selectedNode && !selectedCandidate) return `<aside class="evidenceGraphInspector"><div class="evidenceGraphInspectorEmpty"><strong>Select a node</strong><p>Inspect its exact canonical version, epistemic status, conditioning context, and directed evidence paths.</p></div></aside>`;
+    if (!selectedNode && !selectedCandidate) return "";
     const candidate = selectedCandidate || graph.inferenceCandidates.find((item) => item.nodeId === selectedNode?.id) || null;
     const node = selectedNode || evidenceGraphNodeById(candidate?.nodeId);
     const review = evidenceGraphReviewForCandidate(candidate);
@@ -2495,13 +2503,17 @@ function createComposerEventSync({
       ? `<button class="secondaryButton" data-action="explain-evidence-graph-path" data-evidence-graph-node-id="${escapeHtml(node.id)}">Explain directed path</button>`
       : `<button class="secondaryButton" data-action="anchor-evidence-graph-path" data-evidence-graph-node-id="${escapeHtml(node.id)}">${state.evidenceGraphPathAnchorId === node.id ? "Path start selected" : "Start path here"}</button>`) : "";
     const reviewAction = candidate ? `<button class="primaryButton" data-action="open-evidence-graph-review" data-evidence-graph-candidate-id="${escapeHtml(candidate.id)}">${review ? "Review decision" : "Review inference"}</button>` : "";
-    return `<aside class="evidenceGraphInspector" data-selected-node-id="${escapeHtml(node?.id || "")}" data-selected-candidate-id="${escapeHtml(candidate?.id || "")}">
-      <header><div><span>${escapeHtml(node ? evidenceGraphKindLabel(node.kind) : evidenceGraphKindLabel(candidate.kind))}</span><h2>${escapeHtml(node?.label || candidate.label)}</h2></div>${node ? `<span class="evidenceGraphStatus" data-status="${escapeHtml(node.epistemicStatus)}">${escapeHtml(evidenceGraphStatusLabel(node.epistemicStatus))}</span>` : ""}</header>
+    return `<aside class="evidenceGraphInspector" data-selected-node-id="${escapeHtml(node?.id || "")}" data-selected-candidate-id="${escapeHtml(candidate?.id || "")}" aria-label="Evidence Graph node inspector">
+      <header><div><span>${escapeHtml(node ? evidenceGraphKindLabel(node.kind) : evidenceGraphKindLabel(candidate.kind))}</span><h2>${escapeHtml(node?.label || candidate.label)}</h2></div><div class="evidenceGraphInspectorHeaderActions">${node ? `<span class="evidenceGraphStatus" data-status="${escapeHtml(node.epistemicStatus)}">${escapeHtml(evidenceGraphStatusLabel(node.epistemicStatus))}</span>` : ""}<button class="evidenceGraphInspectorClose" type="button" data-action="close-evidence-graph-inspector" aria-label="Close node inspector">×</button></div></header>
       <div class="evidenceGraphInspectorScroll">
-        ${node ? `<section class="evidenceGraphInspectorSection"><h3>Statement</h3><p>${escapeHtml(node.statement)}</p></section><section class="evidenceGraphInspectorSection"><h3>Conditioning context</h3>${evidenceGraphContextMarkup(node.conditioningContext)}</section><section class="evidenceGraphInspectorSection evidenceGraphCanonical"><h3>Exact canonical record</h3><dl><div><dt>Kind</dt><dd>${escapeHtml(node.canonicalRef.kind)}</dd></div><div><dt>ID</dt><dd><code>${escapeHtml(node.canonicalRef.id)}</code></dd></div><div><dt>Version</dt><dd>v${escapeHtml(node.canonicalRef.version)}</dd></div><div><dt>Content</dt><dd><code title="${escapeHtml(node.canonicalRef.contentSha256)}">${escapeHtml(evidenceGraphShortHash(node.canonicalRef.contentSha256))}</code></dd></div></dl></section>` : ""}
-        ${candidate ? `<section class="evidenceGraphInspectorSection evidenceGraphCandidateReview" data-review-status="${escapeHtml(review?.decision || "pending")}"><h3>Inference review</h3><strong>${escapeHtml(review?.decision || "Pending human review")}</strong><p>${escapeHtml(review?.rationale || candidate.rationale)}</p><span>Acceptance records a review decision only. It never promotes this candidate to a scientific fact.</span></section>` : ""}
-        ${missing}${path}${pathExplanation}${exactRecordFeedback}
-      </div><footer>${openExact}${pathAction}${reviewAction}</footer>
+        ${node ? `<section class="evidenceGraphInspectorSection evidenceGraphInspectorPrimary"><h3>Statement</h3><p>${escapeHtml(node.statement)}</p></section>` : ""}
+        <footer class="evidenceGraphInspectorActions">${openExact}${pathAction}${reviewAction}</footer>
+        <details class="evidenceGraphTechnicalDetails"><summary>Technical metadata</summary><div class="evidenceGraphTechnicalBody">
+          ${node ? `<section class="evidenceGraphInspectorSection"><h3>Conditioning context</h3>${evidenceGraphContextMarkup(node.conditioningContext)}</section><section class="evidenceGraphInspectorSection evidenceGraphCanonical"><h3>Exact canonical record</h3><dl><div><dt>Kind</dt><dd>${escapeHtml(node.canonicalRef.kind)}</dd></div><div><dt>ID</dt><dd><code>${escapeHtml(node.canonicalRef.id)}</code></dd></div><div><dt>Version</dt><dd>v${escapeHtml(node.canonicalRef.version)}</dd></div><div><dt>Content</dt><dd><code title="${escapeHtml(node.canonicalRef.contentSha256)}">${escapeHtml(evidenceGraphShortHash(node.canonicalRef.contentSha256))}</code></dd></div></dl></section>` : ""}
+          ${candidate ? `<section class="evidenceGraphInspectorSection evidenceGraphCandidateReview" data-review-status="${escapeHtml(review?.decision || "pending")}"><h3>Inference review</h3><strong>${escapeHtml(review?.decision || "Pending human review")}</strong><p>${escapeHtml(review?.rationale || candidate.rationale)}</p><span>Acceptance records a review decision only. It never promotes this candidate to a scientific fact.</span></section>` : ""}
+          ${missing}${path}${pathExplanation}${exactRecordFeedback}
+        </div></details>
+      </div>
     </aside>`;
   }
 
@@ -2514,9 +2526,7 @@ function createComposerEventSync({
     const selectedCandidate = evidenceGraphCandidateById(state.selectedEvidenceGraphCandidateId);
     const selectedNode = evidenceGraphNodeById(state.selectedEvidenceGraphNodeId)
       || evidenceGraphNodeById(selectedCandidate?.nodeId)
-      || graph.nodes.find((node) => node.kind === "conclusion")
-      || graph.nodes.find((node) => node.kind === "hypothesis")
-      || graph.nodes[0] || null;
+      || null;
     const reviews = graph.inferenceCandidates.map((candidate) => evidenceGraphCandidateStatus(candidate));
     const acceptedCount = reviews.filter((status) => status === "accepted").length;
     const rejectedCount = reviews.filter((status) => status === "rejected").length;
@@ -2524,12 +2534,12 @@ function createComposerEventSync({
     const candidates = graph.inferenceCandidates.length
       ? graph.inferenceCandidates.map(evidenceGraphCandidateRow).join("")
       : `<div class="evidenceGraphNoCandidates"><strong>No inference candidates</strong><span>The graph contains no machine-proposed gap, qualification, or reconciliation requiring review.</span></div>`;
-    const nodeOptions = graph.nodes.map((node) => `<option value="${escapeHtml(node.id)}" ${node.id === selectedNode?.id ? "selected" : ""}>${escapeHtml(`${evidenceGraphKindLabel(node.kind)} · ${node.label}`)}</option>`).join("");
+    const nodeOptions = `<option value="" ${selectedNode ? "" : "selected"}>Select a node…</option>${graph.nodes.map((node) => `<option value="${escapeHtml(node.id)}" ${node.id === selectedNode?.id ? "selected" : ""}>${escapeHtml(`${evidenceGraphKindLabel(node.kind)} · ${node.label}`)}</option>`).join("")}`;
     return `<section class="evidenceGraphView" data-evidence-graph-state="ready" data-evidence-graph-revision="${escapeHtml(graph.revision)}" data-evidence-graph-sha256="${escapeHtml(graph.contentSha256)}">
       <header class="evidenceGraphHeader"><div><span>Interpretation · Evidence Graph</span><h1>${escapeHtml(project.title)}</h1><p>Citation is not support. Accepted inference remains a reviewed candidate until an exact non-invalidated research chain supports a conclusion.</p></div><div class="evidenceGraphHeaderActions"><span>Revision ${escapeHtml(graph.revision)} · <code title="${escapeHtml(graph.contentSha256)}">${escapeHtml(evidenceGraphShortHash(graph.contentSha256))}</code></span><button class="secondaryButton" data-action="refresh-evidence-graph" ${state.evidenceGraphLoading ? "disabled" : ""}>${state.evidenceGraphLoading ? "Refreshing…" : "Refresh graph"}</button></div></header>
       ${state.evidenceGraphError ? `<div class="evidenceGraphWarning" role="alert"><strong>Graph refresh failed closed.</strong><span>${escapeHtml(state.evidenceGraphError)}</span></div>` : ""}
       <div class="evidenceGraphMetrics" aria-label="Evidence Graph summary"><div><span>Nodes</span><strong>${escapeHtml(graph.nodes.length)}</strong></div><div><span>Edges</span><strong>${escapeHtml(graph.edges.length)}</strong></div><div><span>Pending review</span><strong>${escapeHtml(pendingCount)}</strong></div><div><span>Accepted / rejected</span><strong>${escapeHtml(acceptedCount)} / ${escapeHtml(rejectedCount)}</strong></div><div data-alert="${graph.summary.invalidatedNodeCount > 0}"><span>Invalidated</span><strong>${escapeHtml(graph.summary.invalidatedNodeCount)}</strong></div><div data-alert="${graph.summary.unsupportedConclusionCount > 0}"><span>Unsupported conclusions</span><strong>${escapeHtml(graph.summary.unsupportedConclusionCount)}</strong></div></div>
-      <div class="evidenceGraphWorkspace"><section class="evidenceGraphCanvasPane"><header><div><strong>Project evidence map</strong><span>${escapeHtml(graph.nodes.length)} canonical nodes · ${escapeHtml(graph.edges.length)} directed edges</span></div><div class="evidenceGraphCanvasControls"><label class="evidenceGraphNodePicker"><span>Inspect node</span><select data-evidence-graph-node-select aria-label="Inspect exact Evidence Graph node">${nodeOptions}</select></label><div class="evidenceGraphLegend"><span data-status="supported">Supported</span><span data-status="candidate">Candidate</span><span data-status="contradicted">Contradicted</span><span data-status="invalidated">Invalidated</span></div></div></header><div class="evidenceGraphCanvas" data-evidence-graph-canvas role="application" aria-label="Interactive project Evidence Graph"></div><footer><span>Click a node to inspect the exact record. Drag, zoom, and pan the real graph.</span><span>Directed edges preserve derivation and evidence paths.</span></footer></section>${evidenceGraphInspector(graph, selectedNode, selectedCandidate)}</div>
+      <div class="evidenceGraphWorkspace" data-inspector-open="${Boolean(selectedNode || selectedCandidate)}"><section class="evidenceGraphCanvasPane"><header><div><strong>Project evidence map</strong><span>${escapeHtml(graph.nodes.length)} canonical nodes · ${escapeHtml(graph.edges.length)} directed edges</span></div><div class="evidenceGraphCanvasControls"><label class="evidenceGraphNodePicker"><span>Inspect node</span><select data-evidence-graph-node-select aria-label="Inspect exact Evidence Graph node">${nodeOptions}</select></label><div class="evidenceGraphLegend"><span data-status="supported">Supported</span><span data-status="candidate">Candidate</span><span data-status="contradicted">Contradicted</span><span data-status="invalidated">Invalidated</span></div></div></header><div class="evidenceGraphCanvas" data-evidence-graph-canvas role="application" aria-label="Interactive project Evidence Graph"></div><footer><span>Click a node to inspect the exact record. Drag, zoom, and pan the real graph.</span><span>Directed edges preserve derivation and evidence paths.</span></footer></section>${evidenceGraphInspector(graph, selectedNode, selectedCandidate)}</div>
       <section class="evidenceGraphCandidateQueue"><header><div><span>Inference review queue</span><strong>AI proposals are never facts</strong></div><span>${escapeHtml(pendingCount)} pending · ${escapeHtml(acceptedCount)} accepted for testing · ${escapeHtml(rejectedCount)} rejected</span></header><div>${candidates}</div></section>
     </section>`;
   }
@@ -8278,6 +8288,10 @@ function createComposerEventSync({
   }
 
   function teardownArtifactRenderer(preserveNativeRenderer = false) {
+    if (evidenceGraphInspectorPlacementFrame !== null) {
+      cancelAnimationFrame(evidenceGraphInspectorPlacementFrame);
+      evidenceGraphInspectorPlacementFrame = null;
+    }
     document.querySelectorAll("[data-artifact-host]").forEach((host) => host.__scienceVisualViewerCleanup?.());
     for (const view of state.inlineVegaViews) { try { view.finalize(); } catch {} }
     state.inlineVegaViews = [];
@@ -8518,6 +8532,68 @@ function createComposerEventSync({
     return cy;
   }
 
+  let evidenceGraphInspectorPlacementFrame = null;
+
+  function queueEvidenceGraphInspectorPlacement() {
+    if (evidenceGraphInspectorPlacementFrame !== null) return;
+    evidenceGraphInspectorPlacementFrame = requestAnimationFrame(() => {
+      evidenceGraphInspectorPlacementFrame = null;
+      positionEvidenceGraphInspector();
+    });
+  }
+
+  function positionEvidenceGraphInspector() {
+    const workspace = document.querySelector(".evidenceGraphWorkspace[data-inspector-open=\"true\"]");
+    const inspector = workspace?.querySelector(".evidenceGraphInspector");
+    const canvas = workspace?.querySelector("[data-evidence-graph-canvas]");
+    const cy = state.activeCytoscape;
+    if (!workspace || !inspector || !canvas || !cy || !state.selectedEvidenceGraphNodeId) return;
+    const node = cy.getElementById(state.selectedEvidenceGraphNodeId);
+    if (!node || !node.length) return;
+    const workspaceRect = workspace.getBoundingClientRect();
+    const canvasRect = canvas.getBoundingClientRect();
+    const narrow = window.matchMedia("(max-width: 759px)").matches;
+    if (narrow) {
+      inspector.dataset.placement = "stacked";
+      inspector.style.removeProperty("left");
+      inspector.style.removeProperty("top");
+      inspector.style.removeProperty("right");
+      return;
+    }
+    const margin = 12;
+    const width = Math.max(1, inspector.offsetWidth);
+    const height = Math.max(1, inspector.offsetHeight);
+    const workspaceWidth = Math.max(1, workspaceRect.width);
+    const workspaceHeight = Math.max(1, workspaceRect.height);
+    const mapLeft = Math.max(margin, canvasRect.left - workspaceRect.left + margin);
+    const mapTop = Math.max(margin, canvasRect.top - workspaceRect.top + margin);
+    const mapRight = Math.min(workspaceWidth - margin, canvasRect.right - workspaceRect.left - margin);
+    const mapBottom = Math.min(workspaceHeight - margin, canvasRect.bottom - workspaceRect.top - margin);
+    const maxLeft = Math.max(mapLeft, Math.min(workspaceWidth - width - margin, mapRight - width));
+    const maxTop = Math.max(mapTop, Math.min(workspaceHeight - height - margin, mapBottom - height));
+    const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
+    const rendered = node.renderedPosition();
+    const nodeX = canvasRect.left - workspaceRect.left + Number(rendered.x || 0);
+    const nodeY = canvasRect.top - workspaceRect.top + Number(rendered.y || 0);
+    const radius = Math.max(22, Number(node.renderedWidth?.() || 30) / 2 + 10);
+    const vertical = clamp(nodeY - height / 2, mapTop, maxTop);
+    const horizontal = [
+      { left: clamp(nodeX + radius, mapLeft, maxLeft), top: vertical, placement: "right" },
+      { left: clamp(nodeX - width - radius, mapLeft, maxLeft), top: vertical, placement: "left" },
+      { left: clamp(nodeX - width / 2, mapLeft, maxLeft), top: clamp(nodeY - height - radius, mapTop, maxTop), placement: "above" },
+      { left: clamp(nodeX - width / 2, mapLeft, maxLeft), top: clamp(nodeY + radius, mapTop, maxTop), placement: "below" },
+    ];
+    const doesCoverNode = (candidate) => nodeX >= candidate.left - 8 && nodeX <= candidate.left + width + 8
+      && nodeY >= candidate.top - 8 && nodeY <= candidate.top + height + 8;
+    const placement = horizontal.find((candidate) => !doesCoverNode(candidate)) || horizontal
+      .sort((left, right) => Math.hypot(left.left + width / 2 - nodeX, left.top + height / 2 - nodeY)
+        - Math.hypot(right.left + width / 2 - nodeX, right.top + height / 2 - nodeY))[0];
+    inspector.dataset.placement = placement.placement;
+    inspector.style.left = `${Math.round(placement.left)}px`;
+    inspector.style.top = `${Math.round(placement.top)}px`;
+    inspector.style.right = "auto";
+  }
+
   function renderEvidenceGraph(graph, host) {
     if (!window.cytoscape || !graph || !Array.isArray(graph.nodes) || !Array.isArray(graph.edges)) throw new Error("The verified Evidence Graph or Cytoscape runtime is unavailable.");
     const elements = [
@@ -8567,6 +8643,7 @@ function createComposerEventSync({
       state.evidenceGraphPath = null;
       render();
     });
+    cy.on("pan zoom dragfree", queueEvidenceGraphInspectorPlacement);
     host.dataset.evidenceGraphReady = "true";
     host.dataset.nodeCount = String(graph.nodes.length);
     host.dataset.edgeCount = String(graph.edges.length);
@@ -8575,6 +8652,7 @@ function createComposerEventSync({
     host.dataset.contradictionEdgeCount = String(graph.edges.filter((edge) => edge.kind === "contradicts").length);
     host.dataset.invalidatedNodeCount = String(graph.nodes.filter((node) => node.epistemicStatus === "invalidated").length);
     state.activeCytoscape = cy;
+    queueEvidenceGraphInspectorPlacement();
     return cy;
   }
 
@@ -10719,6 +10797,7 @@ function createComposerEventSync({
     }
     if (target.dataset.action === "decide-hypothesis") { void decideHypothesis(target.dataset); return; }
     if (target.dataset.action === "refresh-evidence-graph") { void refreshEvidenceGraph(); return; }
+    if (target.dataset.action === "close-evidence-graph-inspector") { closeEvidenceGraphInspector(); return; }
     if (target.dataset.action === "open-evidence-graph-exact") { openEvidenceGraphExactRecord(target.dataset.evidenceGraphNodeId); return; }
     if (target.dataset.action === "anchor-evidence-graph-path") {
       state.evidenceGraphPathAnchorId = target.dataset.evidenceGraphNodeId || null;
@@ -11703,6 +11782,11 @@ function createComposerEventSync({
         }
       }
     }
+    if (event.key === "Escape" && !dialog && (state.selectedEvidenceGraphNodeId || state.selectedEvidenceGraphCandidateId)) {
+      event.preventDefault();
+      closeEvidenceGraphInspector();
+      return;
+    }
     if (event.key === "Escape" && !state.railCollapsed && window.matchMedia("(max-width: 680px)").matches && !document.querySelector("[role=dialog]")) {
       event.preventDefault();
       setRailCollapsed(true);
@@ -11741,12 +11825,31 @@ function createComposerEventSync({
     void startComposerTurn();
   });
 
+  // Cytoscape canvas clicks leave focus on BODY, so the app-root keydown
+  // delegation above cannot receive Escape. Keep the graph dismissal global
+  // while preserving any visible dialog's own Escape handling.
+  document.addEventListener("keydown", (event) => {
+    if (event.defaultPrevented || event.key !== "Escape" || !(state.selectedEvidenceGraphNodeId || state.selectedEvidenceGraphCandidateId)) return;
+    const visibleDialog = [...document.querySelectorAll('[role="dialog"]')].find((dialog) => {
+      const rect = dialog.getBoundingClientRect();
+      const style = window.getComputedStyle(dialog);
+      return rect.width > 0 && rect.height > 0 && style.display !== "none" && style.visibility !== "hidden";
+    });
+    if (visibleDialog) return;
+    event.preventDefault();
+    closeEvidenceGraphInspector();
+  });
+
   root.addEventListener("scroll", (event) => {
     if (event.target?.matches?.("[data-workspace-tabs]")) syncWorkspaceTabOverflow();
+  }, true);
+  root.addEventListener("toggle", (event) => {
+    if (event.target?.matches?.(".evidenceGraphTechnicalDetails")) queueEvidenceGraphInspectorPlacement();
   }, true);
   window.addEventListener("resize", () => {
     if (state.drawer && window.matchMedia("(max-width: 680px)").matches) state.railCollapsed = true;
     syncRailPresentation();
+    queueEvidenceGraphInspectorPlacement();
     requestAnimationFrame(() => {
       revealActiveWorkspaceTab();
       requestAnimationFrame(syncWorkspaceTabOverflow);

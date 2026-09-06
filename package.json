@@ -96,7 +96,7 @@
     "test:automation-attention": "npm run build:electron && node scripts/automation-attention-contract.cjs",
     "test:owner-cloud-shelf-paging": "npm run build:electron && node scripts/owner-cloud-shelf-paging-contract.cjs",
     "test:schedule-describe": "npm run build:electron && node scripts/schedule-describe-contract.cjs",
-    "test:goal-completion": "npm run build:electron && ELECTRON_RUN_AS_NODE=1 electron scripts/goal-completion-contract.cjs",
+    "test:goal-completion": "npm run build:electron && electron scripts/goal-completion-contract.cjs",
     "parity:hep-build": "npm run build:electron && node scripts/hep-build-parity.mjs",
     "verify:browser-rail": "npm run build:electron && node scripts/verify-browser-rail.mjs",
     "verify:keychain-boundary": "node scripts/verify-keychain-boundary.mjs",

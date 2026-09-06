@@ -16,7 +16,8 @@
  *
  * 사용 파일: dist/electron/** (build:electron 산출물)
  *
- * 실행: ELECTRON_RUN_AS_NODE=1 electron scripts/goal-completion-contract.cjs
+ * 실행: electron scripts/goal-completion-contract.cjs (ELECTRON_RUN_AS_NODE 금지 —
+ * 아래 참고)
  *
  * ★2026-09-03(e3e7095b) 이후 ensureGoalLedgerGoal 등은 Python 원장이 아니라
  *   dist/electron/store/long-runs.js(=better-sqlite3, Electron ABI)로 간다.
@@ -25,6 +26,29 @@
  *   try/catch 가 그것을 삼켜 "goal 생성 실패"라는 엉뚱한 단언만 남겼다.
  *   store 초기화 자체가 빠진 낡은 게이트였다(플레인 node 로는 better-sqlite3 의
  *   Electron ABI 도 못 연다). 격리 store 를 실제로 초기화하도록 고친다.
+ *
+ * ★2026-09-06 두 번째 결함: 위 수리가 `app.setPath`/`app.whenReady()`를 쓰는데
+ *   npm 스크립트는 여전히 `ELECTRON_RUN_AS_NODE=1`을 달고 있었다. 그 플래그가 서면
+ *   `require("electron")`은 앱 모듈이 아니라 바이너리 경로 문자열을 돌려주므로
+ *   `app`이 `undefined`가 되어 `app.setPath`에서 즉시 던진다(better-sqlite3의
+ *   Electron ABI 자체는 이 플래그와 무관하게 이미 맞다 — 같은 바이너리다). 형제
+ *   게이트 goal-reinjection-contract.cjs 가 쓰는 대로 플래그 없이 `electron`으로만
+ *   돈다.
+ *
+ * ★2026-09-06 세 번째 결함(진짜 남은 것): closeOpenGoalLedgerTasks 는 더 이상 task 를
+ *   직접 닫지 않는다 — electron/long-run/verifier.ts 의 verifyGoalCompletionClaim 을
+ *   불러 수용 기준마다 judgeRequired(연결된 모델)에게 진짜 판정을 묻는다.
+ *   collectDurableGoalVerificationEvidence 가 invocationRunId 로 완료된 실행과
+ *   구체적 도구 결과를 못 찾으면(ready:false) 판정 자체를 건너뛰고 전부
+ *   inconclusive 로 죽는다 — 그러면 이 왕복은 영원히 통과 못 한다.
+ *   이 머신은 `claude` CLI 가 설치·로그인돼 있어(AGENTLAS_JUDGE_RUNTIME 은 별개 —
+ *   그건 Ollama/LM Studio/MLX 같은 로컬 HTTP 런타임 아래서 OS 파이썬 엔진에게만
+ *   쓰인다; CLI 구독은 이 데스크탑 자체의 judgment.ts 판정 서비스가 처리한다),
+ *   완료된 invocation(run_events: invoke_started → mcp_tool-use(toolResultPreview
+ *   있음) → invoke_completed)을 먼저 심어 ready:true 를 만들고 실제 모델 판정을
+ *   받는다. 판정 호출은 agentRunCwd()(userData 아래 scratch, 이 저장소 밖)에서
+ *   `--setting-sources ""`로 스폰돼(judgment.ts의 untrustedNoTools 경로) 이
+ *   저장소의 CLAUDE.md/페르소나가 분류 요청을 인사말로 삼키는 사고를 이미 막는다.
  */
 const assert = require("node:assert");
 const fs = require("node:fs");
@@ -215,6 +239,7 @@ const { GOAL_COMPLETE_MARKER, stripGoalCompleteMarker, goalCompletionVerdict } =
       finish();
       ok("Hephaestus 런타임이 없으면 원장 호출이 fail-soft 로 기존 동작을 유지한다 (왕복은 건너뜀)");
       console.log(`\ngoal completion contract: ${checks.length} checks passed (ledger round-trip skipped: engine absent)`);
+      process.exit(0);
     })().catch((err) => {
       finish();
       console.error(err);
@@ -225,10 +250,30 @@ const { GOAL_COMPLETE_MARKER, stripGoalCompleteMarker, goalCompletionVerdict } =
 
   (async () => {
     const goalId = `goal:gate:${process.pid}`;
+    // 완료 판정은 마커·판정 규칙만으로 안 끝난다 — closeOpenGoalLedgerTasks 는
+    // verifyGoalCompletionClaim(long-run/verifier.ts)을 실제로 불러 수용 기준마다
+    // **연결된 모델의 판정**(judgeRequired)을 받는다. 증빙(invocationRunId)이 없으면
+    // collectDurableGoalVerificationEvidence 가 ready:false 로 판정 자체를 건너뛰고
+    // 모든 항목이 inconclusive 로 죽는다 — 그래서 이 라이브 왕복은 host가 실제로 갖고
+    // 있는 원장 증빙(완료된 invocation + 구체적 도구 결과)을 먼저 심는다.
+    const runEvents = require(path.join(ROOT, "dist/electron/store/run-events.js"));
+    const invocationRunId = `run:gate:${process.pid}`;
+    runEvents.recordRunEvent({ runId: invocationRunId, kind: "invoke_started", payload: {} });
+    runEvents.recordRunEvent({
+      runId: invocationRunId,
+      kind: "mcp_tool-use",
+      payload: {
+        toolName: "Write",
+        toolArgs: JSON.stringify({ file_path: "hello.txt", content: "hello" }),
+        toolResultPreview: "hello.txt 23B 생성 확인",
+      },
+    });
+    runEvents.recordRunEvent({ runId: invocationRunId, kind: "invoke_completed", payload: {} });
+
     const created = await ledger.ensureGoalLedgerGoal({
       goalId,
       objective: "게이트 왕복 검증",
-      acceptanceCriteria: ["원장이 완료로 닫힌다"],
+      acceptanceCriteria: ["도구 결과가 hello.txt 파일 생성을 확인한다"],
       projectDir,
     });
     assert.equal(created, true, "goal 생성 실패");
@@ -245,12 +290,18 @@ const { GOAL_COMPLETE_MARKER, stripGoalCompleteMarker, goalCompletionVerdict } =
     assert.equal(before.reason, "open_tasks_remain", "미완 task 가 있는데 사유가 다르다");
     assert.equal(before.continue, true);
 
+    // 이 호출이 실제 연결된 모델(이 머신은 claude CLI 로그인 상태)에 판정을 묻는다 —
+    // 소스 문장이 아니라 실행되는 판정 함수를 잰다. 판정 서비스는 판정 호출을
+    // agentRunCwd()(scratch, 프로젝트 밖)에서 --setting-sources "" 로 스폰해
+    // 이 저장소의 CLAUDE.md/페르소나가 분류 요청을 삼키지 못하게 이미 격리한다.
     const closedCount = await ledger.closeOpenGoalLedgerTasks({
       goalId,
-      evidence: "gate: 왕복 검증",
+      evidence: "gate: hello.txt 생성 확인",
+      outcomeText: "hello.txt 파일을 만들고 생성을 확인했습니다.",
+      invocationRunId,
       projectDir,
     });
-    assert.ok(closedCount >= 1, "미완 task 를 하나도 닫지 못했다");
+    assert.ok(closedCount >= 1, "미완 task 를 하나도 닫지 못했다 — 연결된 모델 판정이 통과(passed)를 내지 못했다");
 
     const after = await ledger.goalLedgerShouldContinue(goalId, projectDir);
     assert.equal(
@@ -285,6 +336,10 @@ const { GOAL_COMPLETE_MARKER, stripGoalCompleteMarker, goalCompletionVerdict } =
     finish();
     ok("라이브 원장 왕복: create → bootstrap task → 닫기 → no_open_tasks → completed");
     console.log(`\ngoal completion contract: ${checks.length} checks passed`);
+    // ★2026-09-06 네 번째 결함: 이 성공 경로엔 process.exit(0)이 없었다. 실패 경로만
+    // (catch에서) 종료해서, 이 왕복이 실제로 끝까지 통과한 첫 실행에서 Electron 프로세스가
+    // 무기한 살아남았다(실측: 22분 뒤에도 살아있어 직접 kill). CI 라면 그대로 행에 걸린다.
+    process.exit(0);
   })().catch((err) => {
     finish();
     console.error(err);

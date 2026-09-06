@@ -506,6 +506,59 @@ function createComposerEventSync({
     if (!compiled || typeof compiled !== "object" || Array.isArray(compiled)) throw new Error("science-vega-lite-compile-failed");
     return compiled;
   }
+  function paleontologyInteractiveSpec(spec, availableWidth) {
+    if (!spec || typeof spec !== "object" || Array.isArray(spec) || !(availableWidth > 0)) return spec;
+    const responsive = JSON.parse(JSON.stringify(spec));
+    const measuredWidth = Math.max(1, Number(availableWidth) || 1);
+    const narrow = measuredWidth < 260;
+    const medium = measuredWidth < 480;
+    const leftPadding = narrow ? Math.min(88, Math.max(60, Math.floor(measuredWidth * 0.46))) : medium ? 112 : 150;
+    const rightPadding = narrow ? 8 : medium ? 12 : 24;
+    const rowCount = Number(responsive.data?.find?.((entry) => entry?.name === "occurrences")?.values?.length) || 1;
+    const plotWidth = Math.max(1, Math.floor(measuredWidth - leftPadding - rightPadding));
+    const plotHeight = Math.max(narrow ? 120 : 160, rowCount * (narrow ? 14 : medium ? 17 : 18));
+    const sourceTitle = String(responsive.title?.text || "PBDB fossil-occurrence intervals");
+    const taxonName = sourceTitle.replace(/\s+fossil-occurrence age intervals$/iu, "").trim() || "PBDB";
+    const titleSuffix = " intervals";
+    const titleCharacterLimit = narrow ? Math.max(16, Math.floor(measuredWidth / 7)) : medium ? Math.max(34, Math.floor(measuredWidth / 7)) : Infinity;
+    const taxonCharacterLimit = Number.isFinite(titleCharacterLimit) ? Math.max(4, titleCharacterLimit - titleSuffix.length - 1) : Infinity;
+    const compactTaxonName = taxonName.length > taxonCharacterLimit
+      ? `${taxonName.slice(0, taxonCharacterLimit).trimEnd()}…`
+      : taxonName;
+    responsive.autosize = { type: "none" };
+    responsive.width = plotWidth;
+    responsive.height = plotHeight;
+    responsive.padding = { left: leftPadding, right: rightPadding, top: narrow ? 26 : medium ? 34 : 44, bottom: narrow || medium ? 96 : 82 };
+    responsive.title = {
+      ...responsive.title,
+      text: narrow ? "Age intervals" : medium ? `${compactTaxonName}${titleSuffix}` : sourceTitle,
+      subtitle: narrow ? "PBDB age bounds (Ma)" : medium ? "PBDB bounds in Ma" : responsive.title?.subtitle,
+      fontSize: narrow ? 13 : medium ? 14 : responsive.title?.fontSize,
+      subtitleFontSize: narrow ? 9 : medium ? 10 : responsive.title?.subtitleFontSize,
+      align: narrow || medium ? "left" : responsive.title?.align,
+      limit: narrow || medium ? Math.max(80, measuredWidth - 8) : responsive.title?.limit,
+    };
+    responsive.axes = (Array.isArray(responsive.axes) ? responsive.axes : []).map((axis) => {
+      if (axis.orient === "left") return { ...axis, labelLimit: Math.max(60, leftPadding - 6), labelFontSize: narrow ? 9 : medium ? 10 : axis.labelFontSize };
+      if (axis.orient === "bottom") return {
+        ...axis,
+        title: narrow ? "Age (Ma)" : medium ? "Age before present (Ma)" : axis.title,
+        tickCount: narrow ? 4 : medium ? 6 : axis.tickCount,
+        labelFontSize: narrow ? 9 : medium ? 10 : axis.labelFontSize,
+      };
+      return axis;
+    });
+    const legendColumns = narrow || medium ? 1 : 2;
+    responsive.legends = (Array.isArray(responsive.legends) ? responsive.legends : []).map((legend) => ({
+      ...legend,
+      orient: "bottom",
+      columns: legendColumns,
+      labelLimit: narrow || medium ? Math.min(180, Math.max(40, plotWidth - 8)) : Math.max(40, Math.floor(plotWidth / 2)),
+      labelFontSize: narrow ? 9 : medium ? 10 : legend.labelFontSize,
+      titleFontSize: narrow ? 9 : medium ? 10 : legend.titleFontSize,
+    }));
+    return responsive;
+  }
   function fitArtifactVegaCanvas(host, { capture = false, gutter = 10, maxHeight = Infinity } = {}) {
     const canvas = host?.querySelector?.("canvas");
     if (!canvas) throw new Error("science-vega-canvas-missing");
@@ -8219,7 +8272,13 @@ function createComposerEventSync({
     if (view === "figure") {
       if (!window.vega || !window.vegaExpressionInterpreter) throw new Error("science-paleontology-vega-runtime-missing");
       content.classList.add("statisticsChartHost");
-      const runtime = window.vega.parse(compileArtifactVegaSpec(payload.spec), undefined, { ast: true });
+      const sourceSpec = compileArtifactVegaSpec(payload.spec);
+      const chartStyle = getComputedStyle(content);
+      const horizontalPadding = (Number.parseFloat(chartStyle.paddingLeft) || 0) + (Number.parseFloat(chartStyle.paddingRight) || 0);
+      const availableWidth = Math.max(1, content.clientWidth - horizontalPadding);
+      const displaySpec = interactive ? paleontologyInteractiveSpec(sourceSpec, availableWidth) : sourceSpec;
+      content.dataset.vegaDisplayLayout = interactive ? "responsive" : "source";
+      const runtime = window.vega.parse(displaySpec, undefined, { ast: true });
       state.activeVegaView = new window.vega.View(runtime, { expr: window.vegaExpressionInterpreter }).renderer("canvas").initialize(content).hover();
       await state.activeVegaView.runAsync();
       const canvas = content.querySelector("canvas");
@@ -8227,8 +8286,8 @@ function createComposerEventSync({
       canvas.style.maxWidth = "none";
       await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
       // The verification capture remains fitted. The interactive Lab restores
-      // the exact Vega dimensions afterwards so every occurrence label is
-      // readable by scrolling, rather than compressing 70 rows into a thumbnail.
+      // the exact responsive Vega dimensions afterwards so the first view is
+      // readable while the full interval set remains available to inspect.
       if (interactive) restoreInteractiveView = () => {
         if (!canvas.isConnected) return;
         canvas.style.width = `${canvas.dataset.vegaNaturalCssWidth}px`;

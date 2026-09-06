@@ -5057,6 +5057,7 @@ button:has(> span:only-child > .uiIcon:only-child) {
   max-height: 100%;
   min-height: 0;
 }
+.visualArtifactFrame.paleontologyVisualFrame .statisticsChartHost { scrollbar-gutter: stable; }
 .visualArtifactFrame > .artifactViewToolbar {
   position: relative;
   z-index: 2;
@@ -5199,7 +5200,45 @@ button:has(> span:only-child > .uiIcon:only-child) {
 }
 
 @container science-center (max-width: 320px) {
-  .artifactViewToolbarActions { grid-template-columns: repeat(4, max-content); }
+  .visualArtifactFrame.paleontologyVisualFrame .statisticsAnalysisHeader {
+    gap: 6px;
+    padding: 8px 10px;
+  }
+  .visualArtifactFrame.paleontologyVisualFrame .statisticsAnalysisHeader > div > span {
+    max-width: 100%;
+    overflow: hidden;
+    font-size: 9px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .visualArtifactFrame.paleontologyVisualFrame .statisticsAnalysisHeader > div > strong { margin-top: 2px; font-size: 12px; }
+  .visualArtifactFrame.paleontologyVisualFrame .statisticsAnalysisHeader code { margin-left: 5px; font-size: 7px; }
+  .visualArtifactFrame.paleontologyVisualFrame .statisticsAnalysisHeader nav { gap: 4px; }
+  .visualArtifactFrame.paleontologyVisualFrame .statisticsAnalysisHeader nav button { min-height: 30px; padding: 0 5px; font-size: 10px; }
+  .artifactViewToolbar {
+    gap: 4px;
+    padding: 6px 8px;
+  }
+  .artifactViewToolbarTitle strong { font-size: 12px; }
+  .artifactViewToolbarTitle span { font-size: 10px; }
+  .artifactViewToolbarActions {
+    grid-template-columns: repeat(5, max-content);
+    gap: 4px;
+  }
+  .artifactViewToolbarActions button {
+    min-height: 32px;
+    height: 32px;
+    padding: 0 7px;
+    font-size: 12px;
+  }
+  .artifactViewToolbarActions button[data-artifact-view-action="zoom-out"],
+  .artifactViewToolbarActions button[data-artifact-view-action="zoom-in"] {
+    width: 32px;
+    min-width: 32px;
+    height: 32px;
+    min-height: 32px;
+    font-size: 16px;
+  }
 }
 
 /* Overview research responses borrow the public Updates article's reading

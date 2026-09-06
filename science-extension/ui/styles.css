@@ -99,12 +99,12 @@
      movement, not decoration. */
   --motion-state: 160ms cubic-bezier(.2,0,0,1);
   --motion-rail: 200ms cubic-bezier(.32,.72,0,1);
-  font-family: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-family: "Pretendard", Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
 }
 
 * { box-sizing: border-box; }
 html, body, #app { width: 100%; height: 100%; margin: 0; overflow: hidden; }
-body { background: var(--app-bg); color: var(--ink); }
+body { background: var(--app-bg); color: var(--ink); word-break: keep-all; overflow-wrap: break-word; }
 button, input, textarea, select { font: inherit; }
 button { cursor: pointer; color: inherit; }
 .uiIcon { width: 16px; height: 16px; display: block; fill: none; stroke: currentColor; stroke-width: 1.5; }
@@ -415,7 +415,7 @@ button { cursor: pointer; color: inherit; }
 .researchView { min-height: 100%; padding: 31px 28px 72px; }
 .answerColumn { max-width: 720px; margin: 0; }
 .researchKicker { color: var(--muted); font-size: 12px; font-weight: 700; letter-spacing: .04em; margin-bottom: 10px; }
-.answerColumn > h1 { margin: 0 0 24px; font-family: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; font-size: clamp(18px, 1.8vw, 23px); line-height: 1.3; letter-spacing: -.02em; font-weight: 680; }
+.answerColumn > h1 { margin: 0 0 24px; font-family: "Pretendard", Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; font-size: clamp(18px, 1.8vw, 23px); line-height: 1.3; letter-spacing: -.02em; font-weight: 680; }
 .researchContractNotice { width: 100%; min-height: 54px; display: flex; align-items: center; justify-content: space-between; gap: 16px; margin: -8px 0 18px; border: 1px solid var(--line-strong); border-radius: 11px; background: var(--surface-muted); padding: 10px 13px; text-align: left; }
 .researchContractNotice:hover { background: #f1f1f1; }
 .researchContractNotice > span { min-width: 0; display: flex; align-items: center; gap: 9px; }
@@ -428,7 +428,7 @@ button { cursor: pointer; color: inherit; }
 .answer { max-width: 690px; }
 .answer:focus-visible { outline: 2px solid var(--ink); outline-offset: 8px; border-radius: 5px; }
 .answerMeta { color: var(--muted); font-size: 12px; margin-bottom: 10px; }
-.answer p, .answerBlock p { margin: 0; font-family: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; font-size: 13px; line-height: 1.72; white-space: pre-wrap; overflow-wrap: anywhere; }
+.answer p, .answerBlock p { margin: 0; font-family: "Pretendard", Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; font-size: 13px; line-height: 1.72; white-space: pre-wrap; overflow-wrap: anywhere; }
 .answerBlock { margin-bottom: 15px; }
 .inlineArtifacts { display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; margin-top: 18px; }
 .inlineArtifactItem { min-width: 0; display: grid; }
@@ -611,7 +611,7 @@ button { cursor: pointer; color: inherit; }
 .episodeResultReviewSheet > header { min-width: 0; min-height: 80px; flex: 0 0 auto; align-items: center; border-bottom: 1px solid var(--line); padding: 16px 20px 15px 24px; }
 .episodeResultReviewSheet > header > div { min-width: 0; }
 .episodeResultReviewSheet > header span { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.bottomSheet.episodeResultReviewSheet > header h2 { margin-top: 6px; font-family: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; font-size: 18px; font-weight: 690; line-height: 1.3; overflow-wrap: anywhere; }
+.bottomSheet.episodeResultReviewSheet > header h2 { margin-top: 6px; font-family: "Pretendard", Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; font-size: 18px; font-weight: 690; line-height: 1.3; overflow-wrap: anywhere; }
 .bottomSheet.episodeResultReviewSheet > header button { width: auto; height: 32px; flex: 0 0 auto; border: 0; border-radius: 8px; background: transparent; padding: 0 10px; color: var(--muted-deep); font-size: 11px; font-weight: 650; white-space: nowrap; }
 .bottomSheet.episodeResultReviewSheet > header button:hover { background: var(--soft); color: var(--ink); }
 .resultReviewBody { min-width: 0; min-height: 0; flex: 1 1 auto; display: grid; grid-template-columns: minmax(0, 1fr) 310px; align-items: start; gap: 16px; overflow-x: hidden; overflow-y: auto; padding: 18px 24px 22px; scrollbar-gutter: stable; }
@@ -871,7 +871,7 @@ button.manuscriptBinding:hover { border-color: var(--line-strong); background: v
 .submissionSheet > .sheetHandle { flex: 0 0 auto; }
 .submissionSheet > header { min-height: 65px; flex: 0 0 65px; align-items: center; padding: 0 24px 13px; }
 .submissionSheet > header span { font-size: 12px; }
-.submissionSheet > header h2 { font-family: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; font-size: 23px; font-weight: 650; letter-spacing: -.02em; }
+.submissionSheet > header h2 { font-family: "Pretendard", Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; font-size: 23px; font-weight: 650; letter-spacing: -.02em; }
 .submissionSteps { min-height: 56px; flex: 0 0 56px; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); padding: 0 24px; }
 .submissionSteps button { position: relative; display: flex; align-items: center; justify-content: center; gap: 9px; border: 0; background: transparent; color: var(--muted); font-size: 12px; }
 .submissionSteps button:not(:last-child)::after { content: ""; position: absolute; top: 50%; left: calc(50% + 52px); right: calc(-50% + 52px); height: 1px; background: var(--line); }
@@ -920,7 +920,7 @@ button.manuscriptBinding:hover { border-color: var(--line-strong); background: v
 .researchDecisionSheet { width: min(980px, calc(100vw - 48px)); max-height: calc(100vh - 88px); display: flex; flex-direction: column; overflow: hidden; padding: 13px 0 0; border-radius: 22px 22px 0 0; }
 .researchDecisionSheet > .sheetHandle { flex: 0 0 auto; }
 .researchDecisionSheet > header { min-height: 65px; flex: 0 0 65px; align-items: center; border-bottom: 1px solid var(--line); padding: 0 24px 13px; }
-.researchDecisionSheet > header h2 { font-family: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; font-size: 23px; font-weight: 660; letter-spacing: -.02em; }
+.researchDecisionSheet > header h2 { font-family: "Pretendard", Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; font-size: 23px; font-weight: 660; letter-spacing: -.02em; }
 .decisionSheetBody { min-width: 0; min-height: 0; flex: 1 1 auto; overflow-y: auto; overflow-x: hidden; padding: 22px 24px 24px; scrollbar-gutter: stable; }
 .decisionQuestion > p { max-width: 760px; margin: 0; font-size: 16px; font-weight: 620; line-height: 1.55; }
 .decisionWhy { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin-top: 16px; }
@@ -963,7 +963,7 @@ button.manuscriptBinding:hover { border-color: var(--line-strong); background: v
 .analysisPlanReviewButton { margin-top: 10px; white-space: nowrap; }
 .analysisPlanReviewSheet { width: min(920px, calc(100vw - 48px)); max-height: calc(100vh - 72px); display: flex; flex-direction: column; overflow: hidden; padding: 13px 0 0; border-radius: 22px 22px 0 0; }
 .analysisPlanReviewSheet > header { min-height: 65px; flex: 0 0 65px; align-items: center; border-bottom: 1px solid var(--line); padding: 0 28px 13px; }
-.analysisPlanReviewSheet > header h2 { font-family: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; font-size: 23px; font-weight: 660; letter-spacing: -.02em; }
+.analysisPlanReviewSheet > header h2 { font-family: "Pretendard", Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; font-size: 23px; font-weight: 660; letter-spacing: -.02em; }
 .analysisPlanReviewBody { min-width: 0; min-height: 0; flex: 1 1 auto; overflow-y: auto; padding: 22px 28px 26px; }
 .analysisPlanReviewIdentity { border: 1px solid var(--line-strong); border-radius: 12px; background: var(--surface-subtle); padding: 14px 16px; }
 .analysisPlanReviewIdentity > strong { display: block; margin-bottom: 10px; font-size: 14px; }
@@ -1003,7 +1003,7 @@ button.manuscriptBinding:hover { border-color: var(--line-strong); background: v
 .contractHeaderCopy { min-width: 0; }
 .contractHeaderMeta { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 12px; font-weight: 620; }
 .contractStatusPill { display: inline-flex; align-items: center; min-height: 22px; border: 1px solid #dcdcdc; border-radius: 999px; background: #f3f3f3; padding: 0 8px; color: #435047; font-size: 11px; font-weight: 720; }
-.researchContractSheet > header h2 { margin-top: 7px; font-family: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; font-size: 20px; font-weight: 680; letter-spacing: -.02em; }
+.researchContractSheet > header h2 { margin-top: 7px; font-family: "Pretendard", Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; font-size: 20px; font-weight: 680; letter-spacing: -.02em; }
 .researchContractSheet > header p { margin: 5px 0 0; color: var(--muted); font-size: 11px; line-height: 1.45; }
 .researchContractSheet > header .contractCloseButton { width: auto; height: 32px; border: 0; border-radius: 7px; background: transparent; padding: 0 9px; color: #696969; font-size: 11px; font-weight: 620; }
 .researchContractSheet > header .contractCloseButton:hover { background: #f2f2f2; color: var(--ink); }
@@ -1100,7 +1100,7 @@ button.manuscriptBinding:hover { border-color: var(--line-strong); background: v
 
 .scienceDialog > header > div { min-width: 0; }
 .scienceDialog > header span { color: #7b8185; font-size: 12px; font-weight: 700; letter-spacing: .055em; text-transform: uppercase; }
-.scienceDialog > header h2 { margin: 5px 0 0; color: #202326; font-family: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; font-size: 18px; font-weight: 660; letter-spacing: -.015em; line-height: 1.28; }
+.scienceDialog > header h2 { margin: 5px 0 0; color: #202326; font-family: "Pretendard", Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; font-size: 18px; font-weight: 660; letter-spacing: -.015em; line-height: 1.28; }
 .scienceDialog > header button { width: 34px; height: 34px; display: grid; place-items: center; border: 0; border-radius: 8px; background: transparent; color: #202326; font-size: 20px; line-height: 1; }
 .scienceDialog > header button:hover { background: #f3f4f4; }
 .scienceDialog > header button:focus-visible { outline: 0; box-shadow: 0 0 0 3px rgba(46, 52, 49, .16); }
@@ -1696,7 +1696,7 @@ button.manuscriptBinding:hover { border-color: var(--line-strong); background: v
 .jbrowseGenomeCanvas { min-height: 0; display: block; overflow: hidden; padding: 0; background: var(--surface); }
 .jbrowseCaptureSurface, .jbrowseMountTarget { width: 100%; height: 100%; min-width: 0; min-height: 0; }
 .jbrowseCaptureSurface { overflow: hidden; background: var(--surface); padding: 10px; }
-.jbrowseMountTarget { overflow: auto; color: #242424; font-family: Inter, ui-sans-serif, system-ui, sans-serif; }
+.jbrowseMountTarget { overflow: auto; color: #242424; font-family: "Pretendard", Inter, ui-sans-serif, system-ui, sans-serif; }
 .jbrowseMountTarget > div { min-width: 0; }
 .artifactCanvas canvas, .artifactCanvas svg { display: block; max-width: 100%; }
 .historicalFrame { background: var(--surface); }
@@ -1932,8 +1932,8 @@ button.manuscriptBinding:hover { border-color: var(--line-strong); background: v
 .libraryProjectFolder img { width: 100%; height: 100%; display: block; object-fit: cover; }
 .libraryProjectCopy { min-width: 0; }
 .libraryProjectMeta { display: block; overflow: hidden; color: var(--grey-500); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
-.libraryProjectCopy > strong { display: -webkit-box; overflow: hidden; margin-top: 7px; font-size: 14px; line-height: 1.35; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow-wrap: anywhere; }
-.libraryProjectCopy > em { display: -webkit-box; overflow: hidden; margin-top: 7px; color: var(--grey-600); font-size: 11px; font-style: normal; line-height: 1.5; -webkit-box-orient: vertical; -webkit-line-clamp: 3; overflow-wrap: anywhere; }
+.libraryProjectCopy > strong { display: -webkit-box; overflow: hidden; margin-top: 7px; font-size: 14px; line-height: 1.35; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow-wrap: break-word; }
+.libraryProjectCopy > em { display: -webkit-box; overflow: hidden; margin-top: 7px; color: var(--grey-600); font-size: 11px; font-style: normal; line-height: 1.5; -webkit-box-orient: vertical; -webkit-line-clamp: 3; overflow-wrap: break-word; }
 .libraryProjectMetrics { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 3px; margin-top: 11px; }
 .libraryProjectMetrics > span { min-width: 0; display: grid; gap: 2px; }
 .libraryProjectMetrics strong { color: var(--ink); font-size: 11px; line-height: 1; }
@@ -1952,8 +1952,8 @@ button.manuscriptBinding:hover { border-color: var(--line-strong); background: v
 .projectFolderHeroAsset img { width: 100%; height: 100%; display: block; object-fit: cover; }
 .projectFolderHeroCopy { min-width: 0; }
 .projectFolderHeroCopy > span, .projectFolderContents > header span { color: var(--grey-500); font-size: 10px; font-weight: 720; letter-spacing: .08em; text-transform: uppercase; }
-.projectFolderHeroCopy h1 { overflow-wrap: anywhere; margin: 6px 0 6px; font-size: clamp(24px, 3.2vw, 38px); line-height: 1.12; letter-spacing: 0; word-spacing: .06em; }
-.projectFolderHeroCopy p { max-width: 720px; margin: 0; color: var(--grey-600); font-size: 12px; line-height: 1.55; overflow-wrap: anywhere; }
+.projectFolderHeroCopy h1 { overflow-wrap: break-word; margin: 6px 0 6px; font-size: clamp(24px, 3.2vw, 38px); line-height: 1.12; letter-spacing: 0; word-spacing: .06em; }
+.projectFolderHeroCopy p { max-width: 720px; margin: 0; color: var(--grey-600); font-size: 12px; line-height: 1.55; overflow-wrap: break-word; }
 .projectFolderHero > .primaryButton { min-height: 40px; display: inline-flex; align-items: center; gap: 7px; white-space: nowrap; }
 .projectFolderHero > .primaryButton .uiIcon { width: 14px; height: 14px; }
 .projectFolderMetrics { max-width: 440px; margin-top: 14px; }
@@ -2020,7 +2020,7 @@ button.manuscriptBinding:hover { border-color: var(--line-strong); background: v
 .projectHubHeading { display: flex; align-items: end; justify-content: space-between; gap: 20px; }
 .projectHubHeading > div { min-width: 0; }
 .projectHubHeading > div > span { color: var(--grey-500); font-size: 10px; font-weight: 720; letter-spacing: .08em; text-transform: uppercase; }
-.projectHubHeading h1 { overflow-wrap: anywhere; margin: 6px 0 4px; font-size: clamp(27px, 3vw, 36px); line-height: 1.08; letter-spacing: -.04em; }
+.projectHubHeading h1 { overflow-wrap: break-word; margin: 6px 0 4px; font-size: clamp(27px, 3vw, 36px); line-height: 1.08; letter-spacing: -.04em; }
 .projectHubHeading p { max-width: 620px; margin: 0; color: var(--grey-600); font-size: 11px; line-height: 1.5; }
 .projectHubHeading > .primaryButton { min-height: 36px; flex: 0 0 auto; display: inline-flex; align-items: center; gap: 7px; white-space: nowrap; }
 .projectHubHeading > .primaryButton .uiIcon { width: 14px; height: 14px; }
@@ -2038,12 +2038,12 @@ button.manuscriptBinding:hover { border-color: var(--line-strong); background: v
 .projectHubCard > .projectFolderGlyph .uiIcon { width: 46px; height: 46px; }
 .projectHubCardBody { min-width: 0; flex: 1 1 auto; display: flex; flex-direction: column; padding: 10px; }
 .projectHubCardBody > small { overflow: hidden; color: var(--grey-500); font-size: 9px; font-weight: 690; text-overflow: ellipsis; white-space: nowrap; }
-.projectHubCardBody > strong { display: -webkit-box; overflow: hidden; margin-top: 5px; font-size: 13px; line-height: 1.3; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow-wrap: anywhere; }
-.projectHubCardBody > em { display: -webkit-box; overflow: hidden; min-height: 28px; margin-top: 4px; color: var(--grey-600); font-size: 10px; font-style: normal; line-height: 1.4; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow-wrap: anywhere; }
+.projectHubCardBody > strong { display: -webkit-box; overflow: hidden; margin-top: 5px; font-size: 13px; line-height: 1.3; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow-wrap: break-word; }
+.projectHubCardBody > em { display: -webkit-box; overflow: hidden; min-height: 28px; margin-top: 4px; color: var(--grey-600); font-size: 10px; font-style: normal; line-height: 1.4; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow-wrap: break-word; }
 .projectHubCardMetrics { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 5px; margin-top: auto; padding-top: 9px; }
 .projectHubCardMetrics span, .projectHubDetailMetrics span, .projectHubFolderMetrics span { min-width: 0; display: grid; gap: 2px; }
-.projectHubCardMetrics strong, .projectHubDetailMetrics strong, .projectHubFolderMetrics strong { font-size: 11px; line-height: 1; }
-.projectHubCardMetrics em, .projectHubDetailMetrics em, .projectHubFolderMetrics em { overflow: hidden; color: var(--grey-500); font-size: 8px; font-style: normal; text-overflow: ellipsis; white-space: nowrap; }
+.projectHubCardMetrics strong, .projectHubDetailMetrics strong, .projectHubFolderMetrics strong { font-size: 11px; font-weight: 700; line-height: 1; }
+.projectHubCardMetrics em, .projectHubDetailMetrics em, .projectHubFolderMetrics em { overflow: hidden; color: var(--grey-500); font-size: 8px; font-style: normal; font-weight: 550; text-overflow: ellipsis; white-space: nowrap; }
 .projectHubCardMetrics .projectHubMetricUnavailable, .projectHubDetailMetrics .projectHubMetricUnavailable, .projectHubFolderMetrics .projectHubMetricUnavailable { grid-column: 1 / -1; color: var(--grey-500); font-size: 9px; font-weight: 620; }
 .projectHubCardMobileOpen { display: none; }
 .projectHubEmpty { grid-column: 1 / -1; min-height: 188px; display: grid; place-items: center; align-content: center; gap: 6px; border: 1px dashed var(--grey-300); border-radius: var(--science-radius-card); padding: 20px; color: var(--grey-500); text-align: center; }
@@ -2059,7 +2059,7 @@ button.manuscriptBinding:hover { border-color: var(--line-strong); background: v
 .projectHubShortcuts button:hover { color: var(--ink); }
 .projectHubShortcuts img { width: 98px; height: 66px; display: block; border: 1px solid var(--grey-200); border-radius: var(--science-radius-control); background: #f8f4ed; object-fit: contain; }
 .projectHubShortcuts button:hover img { border-color: var(--grey-400); }
-.projectHubShortcuts button span { display: -webkit-box; overflow: hidden; min-height: 33px; font-size: 9px; font-weight: 620; line-height: 1.25; -webkit-box-orient: vertical; -webkit-line-clamp: 3; overflow-wrap: anywhere; }
+.projectHubShortcuts button span { display: -webkit-box; overflow: hidden; min-height: 33px; font-size: 9px; font-weight: 620; line-height: 1.25; -webkit-box-orient: vertical; -webkit-line-clamp: 3; overflow-wrap: break-word; }
 
 .projectHubDetail { min-width: 0; overflow-y: auto; border-left: 1px solid var(--grey-200); background: #fbfbfa; padding: 18px 14px 24px; scrollbar-width: thin; }
 .projectHubDetail > header { padding-bottom: 10px; border-bottom: 1px solid var(--grey-200); }
@@ -2068,8 +2068,8 @@ button.manuscriptBinding:hover { border-color: var(--line-strong); background: v
 .projectFolderDetailGlyph { width: 100%; aspect-ratio: 4 / 3; display: grid; place-items: center; background: var(--grey-50); color: var(--grey-600); }
 .projectFolderDetailGlyph .uiIcon { width: 52px; height: 52px; }
 .projectHubDetailLabel { position: absolute; right: 8px; bottom: 8px; max-width: calc(100% - 16px); overflow: hidden; border-radius: 999px; background: rgba(255,255,255,.9); padding: 4px 7px; color: var(--grey-700); font-size: 8px; font-weight: 700; text-overflow: ellipsis; white-space: nowrap; backdrop-filter: blur(5px); }
-.projectHubDetail > h2 { overflow-wrap: anywhere; margin: 15px 0 7px; font-size: 18px; line-height: 1.25; letter-spacing: -.025em; }
-.projectHubDetail > p { margin: 0; color: var(--grey-600); font-size: 10px; line-height: 1.55; overflow-wrap: anywhere; }
+.projectHubDetail > h2 { overflow-wrap: break-word; margin: 15px 0 7px; font-size: 18px; line-height: 1.25; letter-spacing: -.025em; }
+.projectHubDetail > p { margin: 0; color: var(--grey-600); font-size: 10px; line-height: 1.55; overflow-wrap: break-word; }
 .projectHubFacts { display: grid; gap: 0; margin: 15px 0 0; }
 .projectHubFacts > div { display: grid; grid-template-columns: 58px minmax(0, 1fr); gap: 8px; border-top: 1px solid var(--grey-200); padding: 8px 0; font-size: 9px; }
 .projectHubFacts dt { color: var(--grey-500); }
@@ -2083,15 +2083,15 @@ button.manuscriptBinding:hover { border-color: var(--line-strong); background: v
 .projectHubDetailActions .uiIcon { width: 14px; height: 14px; }
 .projectHubDetailEmpty { min-height: 240px; display: grid; place-items: center; align-content: center; gap: 7px; color: var(--grey-500); text-align: center; }
 .projectHubDetailEmpty .uiIcon { width: 24px; height: 24px; }
-.projectHubDetailEmpty strong { color: var(--ink); font-size: 12px; }
-.projectHubDetailEmpty span { max-width: 180px; font-size: 9px; line-height: 1.5; }
+.projectHubDetailEmpty strong { color: var(--ink); font-size: 12px; font-weight: 680; }
+.projectHubDetailEmpty span { max-width: 180px; font-size: 9px; font-weight: 450; line-height: 1.5; overflow-wrap: break-word; }
 
 .projectHubFolderHeading { align-items: start; }
 .projectHubFolderHeading h1 { max-width: 720px; font-size: clamp(24px, 2.5vw, 32px); letter-spacing: -.025em; }
-.projectHubInlineBack { min-height: 28px; display: inline-flex; align-items: center; gap: 5px; margin: 0 12px 8px -8px; border: 0; border-radius: var(--science-radius-control); background: transparent; padding: 0 8px; color: var(--grey-600); font-size: 10px; }
+.projectHubInlineBack { min-height: 28px; display: inline-flex; align-items: center; gap: 5px; margin: 0 12px 8px -8px; border: 0; border-radius: var(--science-radius-control); background: transparent; padding: 0 8px; color: var(--grey-600); font-size: 10px; font-weight: 620; white-space: nowrap; }
 .projectHubInlineBack:hover { background: var(--grey-50); color: var(--ink); }
 .projectHubInlineBack .uiIcon { width: 12px; height: 12px; }
-.projectHubInlineBack + span { display: inline-flex; border-left: 1px solid var(--grey-200); padding-left: 12px; }
+.projectHubInlineBack + span { display: inline-flex; max-width: 100%; overflow: hidden; border-left: 1px solid var(--grey-200); padding-left: 12px; text-overflow: ellipsis; white-space: nowrap; }
 .projectHubFolderMetrics { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 8px; margin-top: 22px; border: 1px solid var(--grey-200); border-radius: var(--science-radius-card); background: var(--grey-50); padding: 12px; }
 .projectHubFiles { margin-top: 26px; }
 .projectHubFileGrid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
@@ -2104,7 +2104,7 @@ button.manuscriptBinding:hover { border-color: var(--line-strong); background: v
 .projectHubFileCard > span:nth-child(2) { min-width: 0; display: block; }
 .projectHubFileCard small, .projectHubFileCard strong, .projectHubFileCard em { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .projectHubFileCard small { color: var(--grey-500); font-size: 8px; font-weight: 700; }
-.projectHubFileCard strong { display: -webkit-box; margin-top: 4px; font-size: 11px; line-height: 1.35; white-space: normal; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow-wrap: anywhere; }
+.projectHubFileCard strong { display: -webkit-box; margin-top: 4px; font-size: 11px; line-height: 1.35; white-space: normal; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow-wrap: break-word; }
 .projectHubFileCard em { margin-top: 4px; color: var(--grey-500); font-size: 9px; font-style: normal; }
 .projectHubFileCard time { grid-column: 2; color: var(--grey-500); font-size: 8px; }
 .projectHubDetailKind { display: inline-flex; margin-top: 16px; border: 1px solid var(--grey-200); border-radius: 999px; padding: 4px 7px; color: var(--grey-600); font-size: 8px; font-weight: 700; }
@@ -2233,7 +2233,7 @@ button.manuscriptBinding:hover { border-color: var(--line-strong); background: v
 .researchTemplateCard > img { width: 104px; height: 78px; display: block; border-radius: var(--science-radius-control); object-fit: cover; }
 .researchTemplateCard > span { min-width: 0; }
 .researchTemplateCard strong, .researchTemplateCard em { display: block; }
-.researchTemplateCard strong { color: var(--ink); font-size: 15px; font-weight: 600; line-height: 20px; overflow-wrap: anywhere; }
+.researchTemplateCard strong { color: var(--ink); font-size: 15px; font-weight: 600; line-height: 20px; overflow-wrap: break-word; }
 .researchTemplateCard em { display: block; margin-top: 5px; color: var(--grey-600); font-size: 12px; font-style: normal; line-height: 16px; }
 .researchTemplateCard > i { position: absolute; top: 7px; right: 7px; width: 20px; height: 20px; display: none; place-items: center; border-radius: 50%; background: var(--ink); color: #fff; font-size: 11px; font-style: normal; }
 .researchTemplateCard[aria-pressed="true"] > i { display: grid; }
@@ -2878,7 +2878,7 @@ button.manuscriptBinding:hover { border-color: var(--line-strong); background: v
   border-radius: 4px;
   padding: 6px 10px 5px;
   color: rgba(120,79,62,.46);
-  font-family: Inter, ui-sans-serif, system-ui, sans-serif;
+  font-family: "Pretendard", Inter, ui-sans-serif, system-ui, sans-serif;
   font-size: 14px;
   font-weight: 780;
   letter-spacing: .16em;
@@ -3038,7 +3038,7 @@ button.manuscriptBinding:hover { border-color: var(--line-strong); background: v
   letter-spacing: -.018em;
   text-align: center;
 }
-.manuscriptBlockPaper .manuscriptDocumentTitle p { max-width: 520px; margin: 12px auto 0; color: #7b7b7b; font-family: Inter, ui-sans-serif, system-ui, sans-serif; font-size: 11px; line-height: 1.55; text-align: center; }
+.manuscriptBlockPaper .manuscriptDocumentTitle p { max-width: 520px; margin: 12px auto 0; color: #7b7b7b; font-family: "Pretendard", Inter, ui-sans-serif, system-ui, sans-serif; font-size: 11px; line-height: 1.55; text-align: center; }
 .manuscriptBlocks { margin-top: 22px; }
 /*
  * A block is invisible at rest and lifts on hover.
@@ -3136,7 +3136,7 @@ button.manuscriptBinding:hover { border-color: var(--line-strong); background: v
 .manuscriptEmbeddedFigure img { width: auto; max-width: 100%; max-height: 430px; display: block; margin: 0 auto; object-fit: contain; background: var(--surface); }
 .manuscriptEmbeddedFigure figcaption { margin-top: 8px; color: #333; font-family: "Times New Roman", "Nimbus Roman No9 L", "Liberation Serif", Georgia, serif; font-size: 11px; line-height: 1.35; text-align: left; }
 .manuscriptEmbeddedFigure figcaption strong { font-weight: 700; }
-.manuscriptEmbeddedFigureMissing { min-height: 170px; display: grid; place-content: center; gap: 7px; border: 1px dashed #d3d3d3; color: #838383; font-family: Inter, ui-sans-serif, system-ui, sans-serif; font-size: 11px; }
+.manuscriptEmbeddedFigureMissing { min-height: 170px; display: grid; place-content: center; gap: 7px; border: 1px dashed #d3d3d3; color: #838383; font-family: "Pretendard", Inter, ui-sans-serif, system-ui, sans-serif; font-size: 11px; }
 .manuscriptEmbeddedFigureMissing .uiIcon { width: 22px; height: 22px; margin: 0 auto; }
 .manuscriptRuleBlock hr { border: 0; border-top: 1px solid #dedede; }
 
@@ -3840,8 +3840,8 @@ button.manuscriptBinding:hover { border-color: var(--line-strong); background: v
 .analysisRunOutputs { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; }
 .analysisRunOutput { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 3px 12px; align-items: center; border-radius: 8px; background: var(--grey-50); padding: 9px 11px; color: var(--grey-600); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; line-height: 1.6; }
 .analysisRunOutput > strong, .analysisRunOutput > span, .analysisRunOutput > em { grid-column: 1; }
-.analysisRunOutput > em { color: var(--grey-600); font-family: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; font-size: 11px; font-style: normal; }
-.analysisRunArtifactOpen { grid-column: 2; grid-row: 1 / span 3; display: inline-flex; align-items: center; gap: 5px; min-height: 32px; border: 1px solid var(--grey-300); border-radius: var(--science-radius-button-s); background: var(--surface); padding: 0 11px; color: var(--ink); font-family: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; font-size: 11px; font-weight: 650; white-space: nowrap; }
+.analysisRunOutput > em { color: var(--grey-600); font-family: "Pretendard", Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; font-size: 11px; font-style: normal; }
+.analysisRunArtifactOpen { grid-column: 2; grid-row: 1 / span 3; display: inline-flex; align-items: center; gap: 5px; min-height: 32px; border: 1px solid var(--grey-300); border-radius: var(--science-radius-button-s); background: var(--surface); padding: 0 11px; color: var(--ink); font-family: "Pretendard", Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; font-size: 11px; font-weight: 650; white-space: nowrap; }
 .analysisRunArtifactOpen:hover, .analysisRunArtifactOpen:focus-visible { border-color: var(--grey-500); }
 .analysisRunArtifactOpen:focus-visible { outline: 2px solid var(--brand-coral); outline-offset: 2px; }
 .analysisRunArtifactOpen .uiIcon { width: 12px; height: 12px; }
@@ -4672,8 +4672,8 @@ select,
   padding: 0;
 }
 
-button:has(> .uiIcon:only-child):not(.primaryButton):not(.secondaryButton):not(.newButton):not(.projectLibraryBack):not(.railBackButton),
-button:has(> span:only-child > .uiIcon:only-child) {
+button:has(> .uiIcon:only-child):not(.primaryButton):not(.secondaryButton):not(.newButton):not(.projectLibraryBack):not(.projectHubInlineBack):not(.railBackButton),
+button:has(> span:only-child > .uiIcon:only-child):not(.projectHubInlineBack) {
   width: var(--science-icon-button-size);
   height: var(--science-icon-button-size) !important;
   min-width: var(--science-icon-button-size);

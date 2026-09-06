@@ -432,6 +432,8 @@ const api: AgentlasIpc = {
       ipcRenderer.invoke("agentEvolution:rollback", proposalId),
     listGrowth: (limit?: number) =>
       ipcRenderer.invoke("agentEvolution:listGrowth", limit),
+    deleteGrowthSession: (proposalId: string) =>
+      ipcRenderer.invoke("agentEvolution:deleteGrowthSession", proposalId),
   },
   // 엔진 텍스트 자산(스킬·훅·어댑터 매니페스트) 직접 편집.
   runtimeFiles: {

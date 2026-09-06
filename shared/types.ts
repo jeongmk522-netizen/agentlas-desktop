@@ -6782,6 +6782,8 @@ export interface AgentlasIpc {
     rollback: (proposalId: string) => Promise<AgentEvolutionProposalUi>;
     /** 4표면 발화 UX — 전역 성장 제안(고위험 pending + 저위험 자동적용분). */
     listGrowth: (limit?: number) => Promise<GrowthProposalInbox>;
+    /** Hide one growth-proposal session without changing the governed asset or receipts. */
+    deleteGrowthSession: (proposalId: string) => Promise<AgentEvolutionProposalUi>;
   };
   /** 유휴 드리밍 큐레이션 — 옵트인(기본 OFF). 유휴+슬롯 완전 유휴+쿨다운 가드로 메모리 통합. */
   memoryDreaming: {

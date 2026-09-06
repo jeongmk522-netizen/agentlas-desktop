@@ -160,6 +160,7 @@ import { listAgentFiles, readAgentFile, readAgentPromptSource, writeAgentFile } 
 import {
   approveAndApplyAgentEvolutionProposal,
   createAgentEvolutionProposal,
+  deleteAgentGrowthProposalSession,
   listAgentEvolutionProposals,
   listPendingGrowthProposals,
   markAgentEvolutionProposalMeasured,
@@ -3190,6 +3191,9 @@ export function registerIpcHandlers(): void {
   // 4표면 발화 UX — 에이전트 무관 전역 "성장 제안"(고위험 pending + 저위험 자동적용분).
   ipcMain.handle("agentEvolution:listGrowth", (_e, limit?: number) =>
     listPendingGrowthProposals(limit),
+  );
+  ipcMain.handle("agentEvolution:deleteGrowthSession", (_e, proposalId: string) =>
+    deleteAgentGrowthProposalSession(proposalId),
   );
 
   // ── skills (주입 가능한 스킬 카탈로그 — 엔진 skills/ 디렉토리 실측) ──

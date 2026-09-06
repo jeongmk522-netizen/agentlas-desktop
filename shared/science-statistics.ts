@@ -1,3 +1,4 @@
+import { SCIENCE_TABLE_LIMITS } from "./science-table";
 import { createHash } from "node:crypto";
 import {
   validateScienceFigureSpec,
@@ -692,7 +693,7 @@ function validateScienceStatisticsDataTableProjectionReceiptV1(value: unknown): 
     "includedRowCount", "includedRowsSha256", "projectedDataSha256", "receiptSha256",
   ]) || receipt.schema !== SCIENCE_STATISTICS_DATA_TABLE_PROJECTION_RECEIPT_SCHEMA
     || typeof receipt.sourceTableSha256 !== "string" || !SHA256_RE.test(receipt.sourceTableSha256)
-    || !Number.isSafeInteger(receipt.includedRowCount) || Number(receipt.includedRowCount) < 1 || Number(receipt.includedRowCount) > 5_000
+    || !Number.isSafeInteger(receipt.includedRowCount) || Number(receipt.includedRowCount) < 1 || Number(receipt.includedRowCount) > SCIENCE_TABLE_LIMITS.maxRows
     || typeof receipt.includedRowsSha256 !== "string" || !SHA256_RE.test(receipt.includedRowsSha256)
     || typeof receipt.projectedDataSha256 !== "string" || !SHA256_RE.test(receipt.projectedDataSha256)
     || typeof receipt.receiptSha256 !== "string" || !SHA256_RE.test(receipt.receiptSha256)) {

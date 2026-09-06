@@ -1,10 +1,11 @@
+import { SCIENCE_TABLE_LIMITS } from "../../../shared/science-table";
 import fs from "node:fs";
 import path from "node:path";
 import { createHash } from "node:crypto";
 import type { ScienceDatasetCell, ScienceDatasetTablePayload } from "../../../shared/science-contract";
 
 const MAX_RAW_BYTES = 8 * 1024 * 1024;
-const MAX_ROWS = 5_000;
+const MAX_ROWS = SCIENCE_TABLE_LIMITS.maxRows;
 const MAX_NORMALIZED_BYTES = 4 * 1024 * 1024;
 const MAX_COLUMNS = 1_000;
 

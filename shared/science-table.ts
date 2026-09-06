@@ -116,7 +116,7 @@ export function alignSciencePairedSeries(
   return { rows, nullCount, completePairCount };
 }
 export const SCIENCE_TABLE_LIMITS = {
-  maxPayloadBytes: 4 * 1024 * 1024, maxColumns: 1_000, maxRows: 5_000,
+  maxPayloadBytes: 4 * 1024 * 1024, maxColumns: 1_000, maxRows: 100_000,
   maxCells: 250_000, maxCellTextBytes: 16 * 1024, maxColumnNameBytes: 240,
 } as const;
 

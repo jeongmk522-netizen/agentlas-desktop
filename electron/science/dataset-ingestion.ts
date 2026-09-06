@@ -1,3 +1,4 @@
+import { SCIENCE_TABLE_LIMITS } from "../../shared/science-table";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -97,7 +98,7 @@ export class ScienceDatasetIngestionService {
       arch: process.arch,
       network: "denied",
       rawLimitBytes: MAX_RAW_BYTES,
-      rowLimit: 5_000,
+      rowLimit: SCIENCE_TABLE_LIMITS.maxRows,
       normalizedLimitBytes: MAX_NORMALIZED_BYTES,
     }));
     const jobRoot = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "agentlas-science-dataset-")));

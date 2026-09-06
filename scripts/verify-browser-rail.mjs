@@ -37,6 +37,27 @@ function check(name, ok, detail) {
   if (!ok) failures.push(`${name}: ${detail}`);
 }
 
+function hasLauncherContractMarker(source, expectedContract, { compiled = false } = {}) {
+  if (!Number.isInteger(expectedContract) || expectedContract <= 0) return false;
+  if (!compiled) {
+    const declared = source.match(/BROWSER_CDP_LAUNCHER_CONTRACT\s*=\s*(\d+)/);
+    const declarationMatches = Number(declared?.[1]) === expectedContract;
+    return declarationMatches && (
+      /@agentlas-browser-cdp-contract\s+\$\{BROWSER_CDP_LAUNCHER_CONTRACT\}/.test(source)
+        || /LAUNCHER_CONTRACT_MARKER\}\s*\$\{BROWSER_CDP_LAUNCHER_CONTRACT\}/.test(source)
+    );
+  }
+  const marker = source.match(
+    /@agentlas-browser-cdp-contract\s+(\$\{(?:BROWSER_CDP_LAUNCHER_CONTRACT|exports\.BROWSER_CDP_LAUNCHER_CONTRACT)\}|\d+)/,
+  );
+  return Boolean(
+    marker
+      && (marker[1] === "${BROWSER_CDP_LAUNCHER_CONTRACT}"
+        || marker[1] === "${exports.BROWSER_CDP_LAUNCHER_CONTRACT}"
+        || Number(marker[1]) === expectedContract),
+  );
+}
+
 // 1) 카탈로그의 브라우저 항목이 자기 프로필을 들지 않는다.
 const catalog = read("electron/mcp-tools/catalog.ts");
 if (catalog) {
@@ -182,17 +203,16 @@ if (launcher) {
   const built = path.join(root, "dist/electron/mcp-tools/browser-cdp-launcher.js");
   if (fs.existsSync(built)) {
     const mod = fs.readFileSync(built, "utf8");
-    const emitted = mod.match(/@agentlas-browser-cdp-contract\s*(\$\{[^}]+\}|\d+)/);
-  check(
-    "launcher-source-carries-marker",
-      Boolean(emitted),
-      "빌드된 런처 소스에 계약 표식이 없습니다. 설치된 파일이 자기 번호를 들고 있어야 상대 writer 가 읽을 수 있습니다.",
+    check(
+      "launcher-source-carries-marker",
+      hasLauncherContractMarker(mod, Number(declared?.[1]), { compiled: true }),
+      "빌드된 런처 소스에 현재 계약 번호의 표식이 없습니다. 설치된 파일이 자기 번호를 들고 있어야 상대 writer 가 읽을 수 있습니다.",
     );
   } else {
     check(
       "launcher-source-carries-marker",
-      /LAUNCHER_CONTRACT_MARKER\}\s*\$\{BROWSER_CDP_LAUNCHER_CONTRACT\}/.test(launcher),
-      "런처 소스 본문에 계약 표식이 실리지 않습니다(dist 가 없어 소스로 검사했습니다).",
+      hasLauncherContractMarker(launcher, Number(declared?.[1])),
+      "런처 소스 본문에 현재 계약 표식이 실리지 않습니다(dist 가 없어 소스로 검사했습니다).",
     );
   }
   check(

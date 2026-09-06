@@ -1158,9 +1158,36 @@ contextBridge.exposeInMainWorld("agentlasEvents", {
    * 메시지로 오므로 도구는 결과를 못 받는다. 이 채널은 답이 올 때까지 실행이 기다린다.
    */
   onAskUser: (handler: (req: AskUserRequestEvent) => void) => {
-    const wrapped = (_evt: Electron.IpcRendererEvent, req: AskUserRequestEvent) => handler(req);
+    let active = true;
+    let snapshotPending = true;
+    const observed = new Set<string>();
+    const wrapped = (_evt: Electron.IpcRendererEvent, req: AskUserRequestEvent) => {
+      if (!active) return;
+      // Both active events and expiry tombstones supersede an older snapshot.
+      if (snapshotPending) observed.add(req.requestId);
+      handler(req);
+    };
     ipcRenderer.on("agentlas:ask-user", wrapped);
-    return () => ipcRenderer.removeListener("agentlas:ask-user", wrapped);
+    // Subscribe first: a reply arriving during this read must not resurrect a
+    // finished card. Replay through the same event contract, not a new answer.
+    void ipcRenderer.invoke("confirm:listPendingAskUser").then((rows: AskUserRequestEvent[]) => {
+      if (!active) return;
+      for (const req of rows) {
+        if (!active) break;
+        if (observed.has(req.requestId) || req.expiresAt <= Date.now()) continue;
+        observed.add(req.requestId);
+        handler(req);
+      }
+    }).catch(() => {
+      // Older/unavailable Main: keep the live subscription usable.
+    }).finally(() => {
+      snapshotPending = false;
+      observed.clear();
+    });
+    return () => {
+      active = false;
+      ipcRenderer.removeListener("agentlas:ask-user", wrapped);
+    };
   },
   // Site Copilot의 사용자용 상태/피드백 스트림. 내부 모델 추론이나 원문 HTML은 보내지 않는다.
   onSiteActivity: (handler: (event: SiteActivityEvent) => void) => {

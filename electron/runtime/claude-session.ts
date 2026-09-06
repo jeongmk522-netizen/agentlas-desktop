@@ -255,6 +255,7 @@ export function residencyDisabledFor(kind: string, env: NodeJS.ProcessEnv = proc
 export function claudePoolKey(input: {
   chatId: string;
   fingerprint: string;
+  executableGeneration: string;
   cwd: string;
   bin: string;
   mcpConfigPath?: string;
@@ -274,6 +275,7 @@ export function claudePoolKey(input: {
     .update("claude-pool-v1\0")
     .update(input.chatId).update("\0")
     .update(input.fingerprint).update("\0")
+    .update(input.executableGeneration).update("\0")
     .update(input.cwd).update("\0")
     .update(input.bin).update("\0")
     .update(input.mcpConfigPath ?? "").update("\0")

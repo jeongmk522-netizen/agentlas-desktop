@@ -68,6 +68,8 @@ export interface ScienceProject {
   researchTemplateId?: ScienceResearchTemplateId | null;
   /** The first Lab bound by the creation template. It is stored independently for auditability. */
   initialLabId?: ScienceResearchTemplateId | null;
+  /** Canonical folder explicitly selected in the Science UI; absent for legacy projects. */
+  folderPath?: string | null;
   status: "draft" | "active" | "paused" | "archived";
   version: number;
   createdAt: string;
@@ -736,6 +738,8 @@ export interface ReconcileScienceMessageEvidenceResult {
 
 export interface CreateScienceProjectInput {
   requestId: string;
+  /** Opaque Main-issued folder selection. Raw paths are not accepted from the renderer. */
+  folderSelectionId?: string;
   question: string;
   title?: string;
   domain: ScienceDomain;
@@ -745,6 +749,10 @@ export interface CreateScienceProjectInput {
   /** Labs to bind at creation, deduplicated in selection order after the active initialLabId. */
   initialLabIds?: ScienceResearchTemplateId[];
 }
+
+export type PickScienceProjectFolderResult =
+  | { canceled: true }
+  | { canceled: false; selectionId: string; path: string };
 
 export interface CreateScienceProjectResult {
   project: ScienceProject;

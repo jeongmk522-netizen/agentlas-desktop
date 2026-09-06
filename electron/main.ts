@@ -35,6 +35,7 @@ import {
   type InstallIdentity,
 } from "./install-identity";
 import { registerIpcHandlers } from "./ipc";
+import { ScienceProjectFolderSelections, validateScienceProjectFolderPath } from "./science/project-folder-selection";
 import { listPendingAskUserRequests, submitAskUserAnswer } from "./confirm/ask-user";
 import { buildAppMenu } from "./menu";
 import { closeStore, initStore, runPostContinuityStoreRepairs } from "./store/db";
@@ -137,6 +138,7 @@ import {
   installScienceExtension,
   installScienceSuite,
   scienceExtensionStatus,
+  activeScienceExtension,
   scienceSuiteStatus,
   scienceRendererPackStatuses,
   resolveVerifiedScienceRenderer,
@@ -1668,10 +1670,79 @@ app.whenReady().then(async () => {
     assertScienceSender(event, input);
     return scienceStore().listProjectLibrarySummaries();
   });
-  ipcMain.handle("science:projects:create", (event, envelope: unknown) => {
+  const scienceProjectFolders = new ScienceProjectFolderSelections();
+  const scienceFolderPickers = new Set<number>();
+  const scienceFolderDocuments = new Map<number, number>();
+  const trackScienceFolderDocument = (sender: Electron.WebContents) => {
+    if (scienceFolderDocuments.has(sender.id)) return;
+    scienceFolderDocuments.set(sender.id, 0);
+    sender.once("destroyed", () => { scienceProjectFolders.clear(sender.id); scienceFolderDocuments.delete(sender.id); });
+    sender.on("did-start-navigation", (_navigationEvent, _url, isInPlace, isMainFrame) => {
+      if (isMainFrame && !isInPlace) {
+        scienceProjectFolders.clear(sender.id);
+        scienceFolderDocuments.set(sender.id, (scienceFolderDocuments.get(sender.id) ?? 0) + 1);
+      }
+    });
+  };
+  const assertScienceProjectDocument = (event: Electron.IpcMainInvokeEvent, envelope: unknown): string => {
     assertScienceSender(event, envelope);
+    if (!event.senderFrame || event.senderFrame !== event.sender.mainFrame) throw new Error("science-extension-subframe-denied");
+    const release = activeScienceExtension();
+    const actualUrl = new URL(event.senderFrame.url);
+    actualUrl.hash = "";
+    if (!release || actualUrl.href !== pathToFileURL(release.entryPath).href) throw new Error("science-project-folder-origin-denied");
+    trackScienceFolderDocument(event.sender);
+    return `${event.senderFrame.processId}:${event.senderFrame.routingId}:${scienceFolderDocuments.get(event.sender.id)}:${actualUrl.href}`;
+  };
+  ipcMain.handle("science:projects:pickFolder", async (event, envelope: unknown) => {
+    const documentId = assertScienceProjectDocument(event, envelope);
+    const senderId = event.sender.id;
+    if (scienceFolderPickers.has(senderId)) throw new Error("science-project-folder-picker-busy");
+    scienceFolderPickers.add(senderId);
+    try {
+      // Read activation in an isolated world without manufacturing a user gesture.
+      const active = await event.sender.executeJavaScriptInIsolatedWorld(1007, [{ code: "navigator.userActivation.isActive === true" }]);
+      if (active !== true) throw new Error("science-project-folder-user-gesture-required");
+      if (assertScienceProjectDocument(event, envelope) !== documentId) throw new Error("science-project-folder-document-changed");
+      const owner = BrowserWindow.fromWebContents(event.sender) ?? mainWindow;
+      if (!owner || owner.isDestroyed()) throw new Error("science-owner-window-missing");
+      const selected = await dialog.showOpenDialog(owner, { title: "Choose project folder", properties: ["openDirectory"] });
+      if (assertScienceProjectDocument(event, envelope) !== documentId) throw new Error("science-project-folder-document-changed");
+      if (selected.canceled) return { canceled: true };
+      if (selected.filePaths.length !== 1) throw new Error("science-project-folder-selection-invalid");
+      return { canceled: false, ...scienceProjectFolders.select(senderId, documentId, selected.filePaths[0]) };
+    } finally {
+      scienceFolderPickers.delete(senderId);
+    }
+  });
+  ipcMain.handle("science:projects:create", (event, envelope: unknown) => {
+    const documentId = assertScienceProjectDocument(event, envelope);
     const input = envelope && typeof envelope === "object" && "input" in envelope ? (envelope as { input?: unknown }).input : null;
-    return scienceStore().createProject(input as CreateScienceProjectInput);
+    if (!input || typeof input !== "object" || Array.isArray(input)) throw new Error("science-project-input-invalid");
+    if ("folderPath" in input) throw new Error("science-project-folder-raw-path-forbidden");
+    const request = input as CreateScienceProjectInput;
+    const selectedPath = request.folderSelectionId === undefined ? undefined
+      : scienceProjectFolders.resolve(request.folderSelectionId, event.sender.id, documentId, request.requestId);
+    const result = scienceStore().createProject(request, selectedPath);
+    if (request.folderSelectionId) scienceProjectFolders.commit(request.folderSelectionId, request.requestId);
+    return result;
+  });
+  ipcMain.handle("science:projects:openFolder", async (event, envelope: unknown) => {
+    const documentId = assertScienceProjectDocument(event, envelope);
+    const active = await event.sender.executeJavaScriptInIsolatedWorld(1007, [{ code: "navigator.userActivation.isActive === true" }]);
+    if (active !== true) throw new Error("science-project-folder-user-gesture-required");
+    if (assertScienceProjectDocument(event, envelope) !== documentId) throw new Error("science-project-folder-document-changed");
+    const projectId = envelope && typeof envelope === "object" && "projectId" in envelope
+      ? (envelope as { projectId?: unknown }).projectId : null;
+    if (typeof projectId !== "string") throw new Error("science-project-id-invalid");
+    const project = scienceStore().getProject(projectId);
+    if (!project) throw new Error("science-project-not-found");
+    if (!project.folderPath) throw new Error("science-project-folder-not-selected");
+    const canonical = validateScienceProjectFolderPath(project.folderPath);
+    if (canonical !== project.folderPath) throw new Error("science-project-folder-selection-changed");
+    const error = await shell.openPath(canonical);
+    if (error) throw new Error("science-project-folder-open-failed");
+    return { opened: true };
   });
   ipcMain.handle("science:projects:get", (event, input: unknown) => {
     assertScienceSender(event, input);

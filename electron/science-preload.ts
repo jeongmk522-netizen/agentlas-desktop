@@ -34,6 +34,14 @@ contextBridge.exposeInMainWorld("agentlasScience", Object.freeze({
     },
   }),
   projects: Object.freeze({
+    pickFolder: () => {
+      if (!navigator.userActivation?.isActive) return Promise.reject(new Error("science-project-folder-user-gesture-required"));
+      return ipcRenderer.invoke("science:projects:pickFolder", { extensionId });
+    },
+    openFolder: (projectId: string) => {
+      if (!navigator.userActivation?.isActive) return Promise.reject(new Error("science-project-folder-user-gesture-required"));
+      return ipcRenderer.invoke("science:projects:openFolder", { extensionId, projectId });
+    },
     list: () => ipcRenderer.invoke("science:projects:list", { extensionId }),
     library: () => ipcRenderer.invoke("science:projects:library", { extensionId }),
     create: (input: unknown) => ipcRenderer.invoke("science:projects:create", { extensionId, input }),

@@ -4,6 +4,7 @@ import path from "node:path";
 import { createHash, randomUUID } from "node:crypto";
 import { TextDecoder } from "node:util";
 import { strFromU8, unzipSync } from "fflate";
+import { validateScienceProjectFolderPath } from "./project-folder-selection";
 import {
   SCIENCE_ARTIFACT_KINDS,
   SCIENCE_ARTIFACT_ORIGIN_SURFACES,
@@ -2024,6 +2025,7 @@ function projectFromRow(row: Record<string, unknown>, relatedDomains: ScienceDom
     relatedDomains,
     researchTemplateId: row.research_template_id === null || row.research_template_id === undefined ? null : safeResearchTemplateId(row.research_template_id),
     initialLabId: row.initial_lab_id === null || row.initial_lab_id === undefined ? null : safeResearchTemplateId(row.initial_lab_id),
+    folderPath: row.folder_path === null || row.folder_path === undefined ? null : String(row.folder_path),
     status: String(row.status) as ScienceProject["status"],
     version: Number(row.version),
     createdAt: String(row.created_at),
@@ -4199,11 +4201,21 @@ export class ScienceStore {
     `);
   }
 
+  private ensureProjectFolderColumn(): void {
+    const columns = this.db.pragma("table_info('projects')") as Array<{ name: string }>;
+    if (columns.length > 0 && !columns.some((column) => column.name === "folder_path")) {
+      this.db.exec("ALTER TABLE projects ADD COLUMN folder_path TEXT");
+    }
+  }
+
   private migrate(): void {
     const found = Number(this.db.pragma("user_version", { simple: true }));
     if (!Number.isSafeInteger(found) || found < 0 || found > SCIENCE_SCHEMA_VERSION) throw new Error("science-schema-incompatible");
     if (found === SCIENCE_SCHEMA_VERSION) {
       this.db.transaction(() => {
+        // Optional project folders are an additive schema-57 extension; old
+        // projects retain NULL and existing installations remain compatible.
+        this.ensureProjectFolderColumn();
         // The visibility/origin extension is a backward-compatible minor
         // migration retained at schema 55 so existing contract fixtures and
         // installed databases do not need a destructive version jump.
@@ -4306,6 +4318,7 @@ export class ScienceStore {
           domain TEXT NOT NULL CHECK (domain IN ('general','life-science','chemistry','physics','materials-science','genomics','astronomy','earth-ecology','statistics','economics','finance')),
           research_template_id TEXT CHECK (research_template_id IS NULL OR research_template_id IN ('data-table','statistics-analysis','data-visualization','economic-indicators','literature-network','astronomy-sky','biodiversity-map','paleontology-evidence','earthquake-observations','physics-data','materials-structures','genomics-variants','comparative-genomics','molecular-structure','chemistry')),
           initial_lab_id TEXT CHECK (initial_lab_id IS NULL OR initial_lab_id IN ('data-table','statistics-analysis','data-visualization','economic-indicators','literature-network','astronomy-sky','biodiversity-map','paleontology-evidence','earthquake-observations','physics-data','materials-structures','genomics-variants','comparative-genomics','molecular-structure','chemistry')),
+          folder_path TEXT,
           status TEXT NOT NULL CHECK (status IN ('draft','active','paused','archived')),
           version INTEGER NOT NULL CHECK (version >= 1),
           created_at TEXT NOT NULL,
@@ -8983,6 +8996,7 @@ export class ScienceStore {
             BEFORE DELETE ON analysis_plan_review_receipts BEGIN SELECT RAISE(ABORT, 'science-analysis-plan-review-immutable'); END;
           `);
         }
+        this.ensureProjectFolderColumn();
         const migrationForeignKeyViolations = this.db.pragma("foreign_key_check") as Array<Record<string, unknown>>;
         if (migrationForeignKeyViolations.length > 0) throw new Error("science-schema-foreign-key-invalid");
         this.db.pragma(`user_version = ${SCIENCE_SCHEMA_VERSION}`);
@@ -9888,8 +9902,13 @@ export class ScienceStore {
     return ids.map((id) => summaries.get(id)!);
   }
 
-  createProject(input: CreateScienceProjectInput): CreateScienceProjectResult {
+  createProject(input: CreateScienceProjectInput, selectedFolderPath?: string): CreateScienceProjectResult {
     if (!input || typeof input !== "object" || !UUID_RE.test(String(input.requestId ?? ""))) throw new Error("science-request-id-invalid");
+    const folderSelectionId = input.folderSelectionId;
+    if (folderSelectionId !== undefined && (typeof folderSelectionId !== "string" || !UUID_RE.test(folderSelectionId))) {
+      throw new Error("science-project-folder-selection-invalid");
+    }
+    if (folderSelectionId === undefined && selectedFolderPath !== undefined) throw new Error("science-project-folder-selection-required");
     const question = safeText(input.question, 20_000, "question");
     const title = input.title === undefined || input.title === "" ? defaultTitle(question) : safeText(input.title, 160, "title");
     const domain = safeDomain(input.domain);
@@ -9911,7 +9930,10 @@ export class ScienceStore {
     const hashInput = researchTemplateId
       ? { question, title, domain, relatedDomains, researchTemplateId, initialLabId }
       : { question, title, domain, relatedDomains };
-    const inputSha256 = sha256Json(input.initialLabIds === undefined ? hashInput : { ...hashInput, initialLabIds });
+    const labHashInput = input.initialLabIds === undefined ? hashInput : { ...hashInput, initialLabIds };
+    // Hash the Main-owned immutable selection identity, never renderer paths.
+    // Omission preserves the exact legacy digest and its replay compatibility.
+    const inputSha256 = sha256Json(folderSelectionId === undefined ? labHashInput : { ...labHashInput, folderSelectionId });
     const result = this.db.transaction(() => {
       const prior = this.replay<CreateScienceProjectResult>(input.requestId, "project.create", inputSha256);
       if (prior) {
@@ -9921,12 +9943,16 @@ export class ScienceStore {
         if (!lifecycle) throw new Error("science-research-lifecycle-not-found");
         return { ...prior, project, lifecycle, replayed: true };
       }
+      // Successful retries are resolved above, even after Main's ephemeral
+      // selection grant expires or the selected directory is later removed.
+      if (folderSelectionId !== undefined && selectedFolderPath === undefined) throw new Error("science-project-folder-selection-required");
+      const folderPath = folderSelectionId === undefined ? null : validateScienceProjectFolderPath(selectedFolderPath);
       const now = new Date().toISOString();
-      const project: ScienceProject = { id: randomUUID(), title, question, domain, relatedDomains, researchTemplateId, initialLabId, status: "draft", version: 1, createdAt: now, updatedAt: now };
+      const project: ScienceProject = { id: randomUUID(), title, question, domain, relatedDomains, researchTemplateId, initialLabId, folderPath, status: "draft", version: 1, createdAt: now, updatedAt: now };
       const conversation: ScienceConversation = { id: randomUUID(), projectId: project.id, title, createdAt: now, updatedAt: now };
       const message: ScienceMessage = { id: randomUUID(), projectId: project.id, conversationId: conversation.id, role: "user", visibility: "visible", content: question, createdAt: now };
-      this.db.prepare("INSERT INTO projects (id,title,question,domain,research_template_id,initial_lab_id,status,version,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?)")
-        .run(project.id, project.title, project.question, project.domain, project.researchTemplateId, project.initialLabId, project.status, project.version, now, now);
+      this.db.prepare("INSERT INTO projects (id,title,question,domain,research_template_id,initial_lab_id,folder_path,status,version,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)")
+        .run(project.id, project.title, project.question, project.domain, project.researchTemplateId, project.initialLabId, project.folderPath, project.status, project.version, now, now);
       this.db.prepare("INSERT INTO conversations (id,project_id,title,created_at,updated_at) VALUES (?,?,?,?,?)")
         .run(conversation.id, conversation.projectId, conversation.title, now, now);
       this.db.prepare("INSERT INTO messages (id,project_id,conversation_id,role,visibility,content,created_at) VALUES (?,?,?,?,?,?,?)")

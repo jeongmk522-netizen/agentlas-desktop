@@ -35,6 +35,7 @@ import type {
   WorkflowGraph,
   WorkflowNode,
   WorkflowNodeRunState,
+  WorkflowRunSnapshot,
 } from "@/lib/types";
 import { layoutGraph, needsLayout } from "@shared/graph-layout";
 import { validateWorkflow, type WorkflowIssue } from "@/lib/workflow-validate";
@@ -101,6 +102,13 @@ type TerminalCloseRunSnapshot = Awaited<ReturnType<NonNullable<ReturnType<typeof
 type TerminalCloseInput = AutomationGraphTerminalCloseInput;
 type TerminalCloseReceipt = AutomationGraphTerminalCloseReceipt;
 type TerminalCloseCandidate = AutomationGraphTerminalCloseCandidate;
+
+function isCurrentAutomationRunSnapshot(
+  snapshot: WorkflowRunSnapshot | null | undefined,
+  automationId: string,
+): snapshot is WorkflowRunSnapshot {
+  return Boolean(snapshot && snapshot.automationId === automationId);
+}
 
 /** 좌/우 패널 접힘 상태 — 화면을 다시 열어도 사용자가 정한 레이아웃을 유지한다. */
 const PANEL_STATE_KEY = "agentlas.automation.flow.panels";
@@ -275,6 +283,12 @@ function AutomationFlowPage() {
     },
     [],
   );
+  const clearRunSnapshot = useCallback(() => {
+    setRunStates({});
+    setNodeProgress({});
+    setNodeFailures({});
+    setRunStartedAt(null);
+  }, []);
   // 자연어로 그래프를 고치는 제안 — 적용 전까지는 저장된 그래프를 건드리지 않는다.
   const [architectDraft, setArchitectDraft] = useState("");
   const [architectBusy, setArchitectBusy] = useState(false);
@@ -529,9 +543,15 @@ function AutomationFlowPage() {
     let cancelled = false;
     // 초기 하이드레이트.
     void api?.automations.latestRun(automation.id).then((snap) => {
-      if (!cancelled && snap && snap.nodeStates) setRunStates(snap.nodeStates);
-      if (!cancelled) applySnapshotFailures(snap?.nodeFailures);
-      if (!cancelled) setRunStartedAt(snap?.startedAt ?? null);
+      if (cancelled) return;
+      if (!snap) {
+        clearRunSnapshot();
+        return;
+      }
+      if (!isCurrentAutomationRunSnapshot(snap, automation.id)) return;
+      setRunStates(snap.nodeStates);
+      applySnapshotFailures(snap.nodeFailures);
+      setRunStartedAt(snap.startedAt);
     });
     if (!events) return;
     const channel = api?.automations.liveRunChannel(automation.id);
@@ -602,7 +622,7 @@ function AutomationFlowPage() {
       cancelled = true;
       off();
     };
-  }, [automation]);
+  }, [automation, applySnapshotFailures, clearRunSnapshot]);
 
   /* ★실행이 끝났는데 화면이 왜 멈췄는지 말을 못 하던 자리.
      라이브 이벤트는 `nodeState: "failed"` 만 실어 오고, **사유는 실려 오지 않는다** —
@@ -617,22 +637,25 @@ function AutomationFlowPage() {
     let cancelled = false;
     const pull = () => {
       void api.automations.latestRun(automation.id).then((snap) => {
-        if (cancelled || !snap) return;
-        if (snap.nodeStates) {
-          const next = snap.nodeStates;
-          // 무변경 틱마다 새 객체를 넣으면 노드/엣지 재구성 이펙트가 3초마다
-          // 캔버스 전체를 다시 그린다 — 값이 같으면 이전 참조를 유지한다.
-          setRunStates((prev) => {
-            const prevKeys = Object.keys(prev);
-            const nextKeys = Object.keys(next);
-            if (prevKeys.length === nextKeys.length && nextKeys.every((k) => prev[k] === next[k])) {
-              return prev;
-            }
-            return next;
-          });
+        if (cancelled) return;
+        if (!snap) {
+          clearRunSnapshot();
+          return;
         }
+        if (!isCurrentAutomationRunSnapshot(snap, automation.id)) return;
+        const next = snap.nodeStates;
+        // 무변경 틱마다 새 객체를 넣으면 노드/엣지 재구성 이펙트가 3초마다
+        // 캔버스 전체를 다시 그린다 — 값이 같으면 이전 참조를 유지한다.
+        setRunStates((prev) => {
+          const prevKeys = Object.keys(prev);
+          const nextKeys = Object.keys(next);
+          if (prevKeys.length === nextKeys.length && nextKeys.every((k) => prev[k] === next[k])) {
+            return prev;
+          }
+          return next;
+        });
         applySnapshotFailures(snap.nodeFailures);
-        setRunStartedAt(snap.startedAt ?? null);
+        setRunStartedAt(snap.startedAt);
       }).catch(() => undefined);
     };
     if (liveRunning) {
@@ -650,7 +673,7 @@ function AutomationFlowPage() {
     // 마지막 노드 이벤트와 커널의 마무리 쓰기 사이에 틈이 있다 — 끝난 뒤 한 번 더.
     const id = window.setTimeout(pull, 1_200);
     return () => { cancelled = true; window.clearTimeout(id); };
-  }, [automation, liveRunning]);
+  }, [automation, applySnapshotFailures, clearRunSnapshot, liveRunning]);
 
   // runStates가 바뀔 때마다 노드 data.runState 주입(캔버스가 테두리/펄스로 애니메이션).
   useEffect(() => {

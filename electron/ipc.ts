@@ -804,6 +804,11 @@ import {
   reconcileParkedTriggerEvent,
 } from "./store/trigger-events";
 import {
+  getAutomationGraphTerminalCloseCandidate,
+  terminalCloseAutomationGraph,
+} from "./store/graph-terminal-close";
+import type { AutomationGraphTerminalCloseInput } from "../shared/types";
+import {
   getAutomationGraphReconciliation,
   reconcileAutomationGraph,
 } from "./store/graph-reconciliation";
@@ -4882,6 +4887,12 @@ export function registerIpcHandlers(): void {
       };
     },
   );
+  ipcMain.handle("automations:terminalCloseCandidate", (_e, automationId: string) =>
+    getAutomationGraphTerminalCloseCandidate(automationId),
+  );
+  ipcMain.handle("automations:terminalClose", (_e, input: AutomationGraphTerminalCloseInput) =>
+    terminalCloseAutomationGraph(input),
+  );
   ipcMain.handle("automations:getGraphReconciliation", (_e, automationId: string) =>
     getAutomationGraphReconciliation(automationId),
   );
@@ -5471,7 +5482,7 @@ export function registerIpcHandlers(): void {
   ipcMain.handle("automations:runNow", async (
     _e,
     id: string,
-    opts?: { dryRun?: boolean; input?: Record<string, unknown> },
+    opts?: { dryRun?: boolean; input?: Record<string, unknown>; fresh?: boolean },
   ) => {
     // 켜도 되는가의 판단은 **한 곳**에서 한다(shared/graph-run-request).
     // 입구마다 각자 검사하면 같은 그래프가 부르는 쪽에 따라 다르게 돈다 — 지금 터미널은
@@ -5502,11 +5513,11 @@ export function registerIpcHandlers(): void {
     // not block a side-effect-proof simulation used to diagnose the graph.
     // runGraph also mode-matches durable checkpoints, so this simulation starts
     // a fresh occurrence and can never inherit or consume the live coordinate.
-    if (!dryRun && getAutomationGraphReconciliation(id)) {
+    if (!dryRun && opts?.fresh !== true && getAutomationGraphReconciliation(id)) {
       throw new Error("automation_reconciliation_pending");
     }
     const { runAutomationNow } = await import("./automation-scheduler");
-    const result = await runAutomationNow(id, dryRun ? { dryRun: true } : undefined);
+    const result = await runAutomationNow(id, { ...(dryRun ? { dryRun: true } : {}), ...(opts?.fresh === true ? { fresh: true } : {}) });
     if (!result.accepted) {
       const error = new Error("automation_run_not_accepted") as Error & { code?: string };
       error.code = "automation_run_not_accepted";

@@ -15,6 +15,9 @@ import type {
   Automation,
   AutomationCreateInput,
   AutomationGraphReconcileInput,
+  AutomationGraphTerminalCloseCandidate,
+  AutomationGraphTerminalCloseInput,
+  AutomationGraphTerminalCloseReceipt,
   AutomationTriggerEventReconcileInput,
   FsPathGrant,
   FsReadScope,
@@ -816,7 +819,7 @@ const api: AgentlasIpc = {
         | { ok: true; automationId: string; versionId: string; automation: Automation }
         | { ok: false; reason: string }
       >,
-    runNow: (id: string, opts?: { dryRun?: boolean; input?: Record<string, unknown> }) =>
+    runNow: (id: string, opts?: { dryRun?: boolean; fresh?: boolean; input?: Record<string, unknown> }) =>
       ipcRenderer.invoke("automations:runNow", id, opts) as Promise<import("../shared/types").AutomationRunNowResult>,
     inputRequirement: (id: string) => ipcRenderer.invoke("automations:inputRequirement", id),
     connectionReport: (id: string) => ipcRenderer.invoke("automations:connectionReport", id),
@@ -866,6 +869,10 @@ const api: AgentlasIpc = {
       ipcRenderer.invoke("automations:listTriggerAttention", automationId),
     reconcileTriggerEvent: (input: AutomationTriggerEventReconcileInput) =>
       ipcRenderer.invoke("automations:reconcileTriggerEvent", input),
+    terminalCloseCandidate: (automationId: string) =>
+      ipcRenderer.invoke("automations:terminalCloseCandidate", automationId) as Promise<AutomationGraphTerminalCloseCandidate | null>,
+    terminalClose: (input: AutomationGraphTerminalCloseInput) =>
+      ipcRenderer.invoke("automations:terminalClose", input) as Promise<AutomationGraphTerminalCloseReceipt>,
     getGraphReconciliation: (automationId: string) =>
       ipcRenderer.invoke("automations:getGraphReconciliation", automationId),
     reconcileGraph: (input: AutomationGraphReconcileInput) =>

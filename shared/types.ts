@@ -2196,6 +2196,40 @@ export interface AutomationGraphReconciliation {
   nodes: AutomationGraphReconciliationNode[];
 }
 
+/** Exact failed occurrence reviewed before explicitly starting a new run. */
+export interface AutomationGraphTerminalCloseInput {
+  automationId: string;
+  runId: string;
+  occurrenceId: string;
+  graphDigest: string;
+  checkpointDigest: string;
+  expectedUpdatedAt: string;
+  decision: "reviewed_external_effects";
+}
+
+export interface AutomationGraphTerminalCloseReceipt {
+  automationId: string;
+  runId: string;
+  occurrenceId: string;
+  graphDigest: string;
+  checkpointDigest: string;
+  closedAt: string;
+  status: "closed" | "already-closed";
+  consequence: "fresh_occurrence_may_repeat_completed_effects";
+}
+
+export interface AutomationGraphTerminalCloseCandidate {
+  automationId: string;
+  runId: string;
+  occurrenceId: string;
+  graphDigest: string;
+  checkpointDigest: string;
+  updatedAt: string;
+  simulation: boolean;
+  unresolvedNodeIds: string[];
+  completedEffectNodeIds: string[];
+}
+
 export interface AutomationGraphReconciliationDecision {
   nodeId: string;
   /** completed = it happened; retry = it definitely did not happen. */
@@ -7565,7 +7599,7 @@ export interface AgentlasIpc {
       | { ok: false; reason: string }
     >;
     /** opts.dryRun: 시뮬레이션 실행 — 외부 변경을 막고 무엇이 막혔는지 남긴다. */
-    runNow: (id: string, opts?: { dryRun?: boolean; input?: Record<string, unknown> }) => Promise<AutomationRunNowResult>;
+    runNow: (id: string, opts?: { dryRun?: boolean; input?: Record<string, unknown>; fresh?: boolean }) => Promise<AutomationRunNowResult>;
     /** 이 그래프가 시작할 때 사람에게 받아야 하는 값(없으면 null). */
     inputRequirement: (id: string) => Promise<{ required: boolean; varName: string; label: string } | null>;
     /** 이 그래프가 연결돼야 하는 것 — 공급자 묶음별로. 켜기 게이트와 같은 계산을 쓴다. */
@@ -7713,6 +7747,8 @@ export interface AgentlasIpc {
     reconcileTriggerEvent: (
       input: AutomationTriggerEventReconcileInput,
     ) => Promise<AutomationTriggerEventReconcileResult>;
+    terminalCloseCandidate: (automationId: string) => Promise<AutomationGraphTerminalCloseCandidate | null>;
+    terminalClose: (input: AutomationGraphTerminalCloseInput) => Promise<AutomationGraphTerminalCloseReceipt>;
     getGraphReconciliation: (
       automationId: string,
     ) => Promise<AutomationGraphReconciliation | null>;

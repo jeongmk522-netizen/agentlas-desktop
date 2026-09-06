@@ -11420,12 +11420,14 @@ button[data-toggle-state="on"] {
   color: var(--white);
 }
 .automation-bottom-status {
+  flex: 1 1 0;
+  min-width: 0;
   margin-left: auto;
   margin-right: 6px;
-  max-width: 46%;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  max-width: none;
+  overflow: visible;
+  text-overflow: clip;
+  white-space: normal;
   color: var(--ink-soft);
   font-size: 11px;
 }

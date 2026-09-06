@@ -388,7 +388,7 @@ function createComposerEventSync({
     locale: "en",
     projects: [], selectedId: null, lifecycle: null, researchLoopInspection: null, researchLoopActionBusy: false, researchLoopActionError: "", conversations: [], selectedConversationId: null, messages: [], sources: [], sourceFigures: [], runs: [], artifacts: [], labs: [], workspaceLabBindings: [], labCatalog: [], labDecisionProjections: [], rendererPacks: [], manuscripts: [], claimLedger: null, journalProfiles: [], submissionExports: [], analysisSpecs: [], decisions: [],
     artifactContextsByMessage: new Map(), labContextsById: new Map(), artifactHistoryById: new Map(), selectedLabId: null, selectedArtifactOriginVersion: null, inspectedArtifactVersion: null, inspectedArtifactContext: null, artifactComparison: null, draftHistoryGuard: null, labsExpanded: true, expandedLabGroups: new Set(["chemistry"]), expandedLabDecisions: new Set(), projectMenuOpen: false, projectFolderOpen: false, projectLibrarySummaries: new Map(), projectLibrarySummaryState: "loading", librarySearch: "", librarySelectedProjectId: null, projectFolderSelectedKey: null, newProjectStep: "details", selectedResearchTemplateId: null, newProjectDraft: blankNewProjectDraft(), newProjectFolderError: "", newProjectFolderBusy: false, newProjectGeneration: 0, newProjectRequestId: null, newProjectRequestSignature: "", labManagerOpen: false, labManagerBusyId: null, labManagerGeneration: 0, labManagerError: "", historyOpen: false, railCollapsed: readRailCollapsed(),
-    blocksByMessage: new Map(), citationsByMessage: new Map(), evidenceById: new Map(), selectedSourceId: null, selectedArtifactId: null,
+    blocksByMessage: new Map(), citationsByMessage: new Map(), evidenceById: new Map(), selectedSourceId: null, sourceVersionsByKey: new Map(), sourceLookupRequestId: null, sourceLookupCitationId: null, sourceLookupLoading: false, sourceLookupError: "", selectedArtifactId: null,
     evidenceGraph: null, evidenceGraphReviews: [], evidenceGraphLoading: false, evidenceGraphRefreshId: null, evidenceGraphError: "", selectedEvidenceGraphNodeId: null, selectedEvidenceGraphCandidateId: null, evidenceGraphExactRecordRequestId: null, evidenceGraphExactRecordNodeId: null, evidenceGraphExactRecordLoading: false, evidenceGraphExactRecordError: "", evidenceGraphReviewSheet: false, evidenceGraphReviewDecision: "accepted", evidenceGraphReviewBusy: false, evidenceGraphReviewError: "", evidenceGraphPathAnchorId: null, evidenceGraphPath: null,
     mode: "session", drawer: null, modal: false, manuscriptModal: false, saving: false, loadingProject: false, projectError: "", projectFolderOpenBusy: false, projectFolderOpenError: "", activeVegaView: null, activeCytoscape: null, activeNumericSurface: null, activeJBrowseTarget: null, scrollByMode: { session: 0, lab: 0, manuscript: 0 }, returnMessageId: null,
     workspaceTabs: [{ id: "research", kind: "research", dirty: false }], activeWorkspaceTabId: "research", currentDestination: "overview", hypotheses: [], hypothesesError: "", approvalPolicy: null, approvalPolicyError: "", workspaceSyncError: "",
@@ -904,8 +904,72 @@ function createComposerEventSync({
     if (bytes < 1_000_000) return `${(bytes / 1_000).toFixed(bytes < 10_000 ? 1 : 0)} KB`;
     return `${(bytes / 1_000_000).toFixed(bytes < 10_000_000 ? 1 : 0)} MB`;
   };
+  const sourceVersionKey = (projectId, sourceId, sourceVersionId) => [projectId, sourceId, sourceVersionId].map((value) => String(value || "")).join("\u0000");
   const sourceById = (id) => state.sources.find((source) => source.id === id) || null;
   const citationById = (id) => [...state.citationsByMessage.values()].flat().find((citation) => citation.id === id) || null;
+  const sourceByVersion = (projectId, sourceId, sourceVersionId) => {
+    if (!sourceVersionId) return sourceById(sourceId);
+    const current = state.sources.find((source) => source.id === sourceId && source.version?.id === sourceVersionId);
+    return current || state.sourceVersionsByKey.get(sourceVersionKey(projectId, sourceId, sourceVersionId)) || null;
+  };
+  function rememberSourceVersion(source) {
+    if (!source?.projectId || !source?.id || !source.version?.id) return source;
+    state.sourceVersionsByKey.set(sourceVersionKey(source.projectId, source.id, source.version.id), source);
+    return source;
+  }
+  function rememberSourceVersions(projectId, sources) {
+    state.sourceVersionsByKey = new Map();
+    for (const source of Array.isArray(sources) ? sources : []) {
+      if (source?.projectId === projectId) rememberSourceVersion(source);
+    }
+  }
+  function invalidateSourceVersionLookup() {
+    state.sourceLookupRequestId = null;
+    state.sourceLookupCitationId = null;
+    state.sourceLookupLoading = false;
+    state.sourceLookupError = "";
+  }
+  function beginSourceVersionLookup(citation) {
+    invalidateEvidenceGraphExactRecord();
+    const projectId = state.selectedId;
+    if (!projectId || !citation?.id) return null;
+    const requestId = crypto.randomUUID();
+    state.sourceLookupRequestId = requestId;
+    state.sourceLookupCitationId = citation.id;
+    state.sourceLookupLoading = true;
+    state.sourceLookupError = "";
+    state.selectedSourceId = citation.sourceId || null;
+    state.drawer = { kind: "citation", id: citation.id, sourceVersionId: citation.sourceVersionId || null };
+    render();
+    return {
+      projectId,
+      citationId: citation.id,
+      requestId,
+      isCurrent: () => state.selectedId === projectId
+        && state.sourceLookupRequestId === requestId
+        && state.sourceLookupCitationId === citation.id
+        && state.drawer?.kind === "citation"
+        && state.drawer?.id === citation.id,
+    };
+  }
+  function finishSourceVersionLookup(lookup) {
+    if (!lookup?.isCurrent()) return false;
+    state.sourceLookupRequestId = null;
+    state.sourceLookupCitationId = null;
+    state.sourceLookupLoading = false;
+    state.sourceLookupError = "";
+    render();
+    return true;
+  }
+  function failSourceVersionLookup(lookup, error) {
+    if (!lookup?.isCurrent()) return false;
+    state.sourceLookupRequestId = null;
+    state.sourceLookupCitationId = null;
+    state.sourceLookupLoading = false;
+    state.sourceLookupError = error instanceof Error ? error.message : String(error);
+    render();
+    return true;
+  }
   function invalidateEvidenceGraphExactRecord() {
     state.evidenceGraphExactRecordRequestId = null;
     state.evidenceGraphExactRecordNodeId = null;
@@ -914,6 +978,7 @@ function createComposerEventSync({
   }
 
   function beginEvidenceGraphExactRecordLookup(nodeId) {
+    invalidateSourceVersionLookup();
     const projectId = state.selectedId;
     if (!projectId) return null;
     const requestId = crypto.randomUUID();
@@ -1988,6 +2053,8 @@ function createComposerEventSync({
     state.citationsByMessage = new Map();
     state.evidenceById = new Map();
     state.selectedSourceId = null;
+    state.sourceVersionsByKey = new Map();
+    invalidateSourceVersionLookup();
     state.selectedArtifactId = null;
     state.evidenceGraph = null;
     state.evidenceGraphReviews = [];
@@ -2102,6 +2169,7 @@ function createComposerEventSync({
       state.conversations = safeConversations;
       state.selectedConversationId = conversation?.id || null;
       state.sources = safeSources;
+      rememberSourceVersions(projectId, safeSources);
       state.sourceFigures = Array.isArray(sourceFigures) ? sourceFigures : [];
       state.runs = Array.isArray(runs) ? runs : [];
       state.artifacts = safeArtifacts;
@@ -6922,7 +6990,11 @@ function createComposerEventSync({
   function contextDrawer() {
     const selectedCitation = state.drawer?.kind === "citation" ? citationById(state.drawer.id) : null;
     const selectedEvidence = selectedCitation ? state.evidenceById.get(selectedCitation.evidenceSpanId) || null : null;
-    const selectedSource = sourceById(selectedCitation?.sourceId || (state.drawer?.kind === "source" ? state.drawer.id : state.selectedSourceId));
+    const selectedSourceId = selectedCitation?.sourceId || (state.drawer?.kind === "source" ? state.drawer.id : state.selectedSourceId);
+    const selectedSourceVersionId = state.drawer?.sourceVersionId || selectedCitation?.sourceVersionId || null;
+    const selectedSource = selectedSourceVersionId
+      ? sourceByVersion(state.selectedId, selectedSourceId, selectedSourceVersionId)
+      : sourceById(selectedSourceId);
     const selectedArtifact = state.artifacts.find((item) => item.id === (state.drawer?.kind === "artifact" ? state.drawer.id : state.selectedArtifactId)) || null;
     const selectedArtifactVersion = state.mode === "lab" && state.inspectedArtifactVersion
       ? state.inspectedArtifactContext && !state.inspectedArtifactContext.error ? state.inspectedArtifactContext.selectedVersion : null
@@ -6944,8 +7016,13 @@ function createComposerEventSync({
       const statisticsRunId = selectedArtifactVersion?.provenance?.sourceRunId || selectedArtifact?.version?.provenance?.sourceRunId || "";
       const statisticsLineage = statisticsProjectionReceipt && selectedArtifact ? `<section class="drawerSection" data-statistics-lineage data-projection-schema="${escapeHtml(statisticsProjectionReceipt.schema)}" data-source-artifact-id="${escapeHtml(statisticsProjectionReceipt.sourceArtifact.artifactId)}" data-source-artifact-version="${escapeHtml(statisticsProjectionReceipt.sourceArtifact.artifactVersion)}" data-source-artifact-sha256="${escapeHtml(statisticsProjectionReceipt.sourceArtifact.contentSha256)}" data-projection-receipt-sha256="${escapeHtml(statisticsProjectionReceipt.receiptSha256)}" data-run-id="${escapeHtml(statisticsRunId)}" data-output-artifact-id="${escapeHtml(selectedArtifact.id)}" data-output-artifact-version="${escapeHtml(selectedArtifactVersion.version)}" data-output-artifact-sha256="${escapeHtml(selectedArtifactVersion.contentSha256)}"><div class="drawerLabel">Source-bound statistics lineage</div><strong>${escapeHtml(statisticsMethodLabel(selectedArtifactVersion.payload.method))}</strong><p>${escapeHtml(`${statisticsProjectionMappingLabel(statisticsProjectionReceipt)} · ${statisticsProjectionReceipt.includedRowCount} projected rows`)}</p><dl class="factList"><div><dt>Source artifact</dt><dd><code>${escapeHtml(statisticsProjectionReceipt.sourceArtifact.artifactId)}</code></dd></div><div><dt>Source version</dt><dd>v${escapeHtml(statisticsProjectionReceipt.sourceArtifact.artifactVersion)}</dd></div><div><dt>Source content</dt><dd><code>${escapeHtml(statisticsProjectionReceipt.sourceArtifact.contentSha256)}</code></dd></div><div><dt>Table</dt><dd><code>${escapeHtml(statisticsProjectionReceipt.sourceTableSha256)}</code></dd></div><div><dt>Projection</dt><dd><code>${escapeHtml(statisticsProjectionReceipt.receiptSha256)}</code></dd></div><div><dt>Included rows</dt><dd><code>${escapeHtml(statisticsProjectionReceipt.includedRowsSha256)}</code></dd></div><div><dt>Projected data</dt><dd><code>${escapeHtml(statisticsProjectionReceipt.projectedDataSha256)}</code></dd></div><div><dt>Run</dt><dd><code>${escapeHtml(statisticsRunId)}</code></dd></div><div><dt>Artifact</dt><dd><code>${escapeHtml(selectedArtifact.id)}</code> · v${escapeHtml(selectedArtifactVersion.version)}</dd></div><div><dt>Artifact content</dt><dd><code>${escapeHtml(selectedArtifactVersion.contentSha256)}</code></dd></div></dl></section>` : "";
       content = `<section class="drawerSection"><div class="drawerLabel">Renderer runtime</div>${packRows || `<p class="drawerEmpty">검증된 renderer 상태가 없습니다.</p>`}</section>${selectedArtifact && selectedArtifactVersion ? `<section class="drawerSection"><div class="drawerLabel">${state.inspectedArtifactVersion ? "과거 버전" : "선택한 아티팩트"}</div><strong>${escapeHtml(selectedArtifact.title)}</strong><p>${escapeHtml(selectedArtifactVersion.semantic?.summary || "")}</p><dl class="factList"><div><dt>Renderer</dt><dd>${escapeHtml(selectedArtifactVersion.rendererId)}</dd></div><div><dt>Version</dt><dd>v${escapeHtml(selectedArtifactVersion.version)} · ${escapeHtml(selectedArtifactVersion.rendererVersion)}</dd></div><div><dt>Mode</dt><dd>${state.inspectedArtifactVersion ? "읽기 전용 기록" : "현재 편집 버전"}</dd></div><div><dt>Content</dt><dd><code>${escapeHtml(selectedArtifactVersion.contentSha256.slice(0, 12))}…</code></dd></div></dl></section>${economicLineage}${statisticsLineage}` : state.inspectedArtifactVersion ? `<section class="drawerSection"><div class="drawerLabel">과거 버전</div><strong>v${escapeHtml(state.inspectedArtifactVersion)} 기록 검증 중</strong><p>현재 버전 정보로 대체하지 않습니다.</p></section>` : ""}`;
+    } else if (selectedCitation && !selectedSource) {
+      const exactSourceMessage = state.sourceLookupLoading
+        ? uiCopy("정확한 source version을 불러오는 중입니다.", "Looking up the exact source version…")
+        : state.sourceLookupError || uiCopy("정확한 source version을 현재 프로젝트에서 찾지 못했습니다.", "The exact source version is not available in this project.");
+      content = `<section class="drawerSection" role="alert"><div class="drawerLabel">Exact source</div><strong>${escapeHtml(exactSourceMessage)}</strong><p>${escapeHtml(uiCopy("최신 source로 대체하지 않았습니다. 프로젝트와 source version ID를 확인한 뒤 다시 시도하세요.", "The latest source was not substituted. Verify the project and source version ID, then try again."))}</p></section>`;
     } else if (selectedSource) {
-      content = `${selectedCitation && selectedEvidence ? `<section class="drawerSection evidenceCard"><div class="drawerLabel">Exact evidence</div><blockquote>${escapeHtml(selectedEvidence.excerpt)}</blockquote><dl class="factList"><div><dt>Locator</dt><dd>${escapeHtml(selectedEvidence.locator)}</dd></div><div><dt>Bytes</dt><dd>${escapeHtml(selectedEvidence.startByte)}–${escapeHtml(selectedEvidence.endByte)}</dd></div><div><dt>Relation</dt><dd>${escapeHtml(selectedCitation.relation)}</dd></div><div><dt>Check</dt><dd>${escapeHtml(selectedCitation.verificationStatus)}</dd></div></dl></section>` : ""}<section class="drawerSection"><div class="drawerLabel">Source</div><strong>${escapeHtml(selectedSource.title)}</strong><p>${escapeHtml(selectedSource.abstract || "저장된 초록이 없습니다.")}</p><dl class="factList"><div><dt>Type</dt><dd>${escapeHtml(selectedSource.kind)}</dd></div><div><dt>Access</dt><dd>${escapeHtml(selectedSource.version.accessState)}</dd></div><div><dt>Verified</dt><dd>${escapeHtml(selectedSource.verificationStatus)}</dd></div><div><dt>Version</dt><dd>${escapeHtml(selectedSource.currentVersion)}</dd></div><div><dt>Hash</dt><dd>${selectedSource.version.contentSha256 ? `<code>${escapeHtml(selectedSource.version.contentSha256.slice(0, 12))}…</code>` : "metadata only"}</dd></div></dl><div class="sourceUri">${escapeHtml(selectedSource.canonicalUri)}</div></section>`;
+      content = `${selectedCitation && selectedEvidence ? `<section class="drawerSection evidenceCard"><div class="drawerLabel">Exact evidence</div><blockquote>${escapeHtml(selectedEvidence.excerpt)}</blockquote><dl class="factList"><div><dt>Locator</dt><dd>${escapeHtml(selectedEvidence.locator)}</dd></div><div><dt>Bytes</dt><dd>${escapeHtml(selectedEvidence.startByte)}–${escapeHtml(selectedEvidence.endByte)}</dd></div><div><dt>Relation</dt><dd>${escapeHtml(selectedCitation.relation)}</dd></div><div><dt>Check</dt><dd>${escapeHtml(selectedCitation.verificationStatus)}</dd></div></dl></section>` : ""}<section class="drawerSection"><div class="drawerLabel">Source</div><strong>${escapeHtml(selectedSource.title)}</strong><p>${escapeHtml(selectedSource.abstract || "저장된 초록이 없습니다.")}</p><dl class="factList"><div><dt>Type</dt><dd>${escapeHtml(selectedSource.kind)}</dd></div><div><dt>Access</dt><dd>${escapeHtml(selectedSource.version.accessState)}</dd></div><div><dt>Verified</dt><dd>${escapeHtml(selectedSource.verificationStatus)}</dd></div><div><dt>Version</dt><dd>${escapeHtml(selectedSource.version.version ?? selectedSource.currentVersion)}</dd></div><div><dt>Hash</dt><dd>${selectedSource.version.contentSha256 ? `<code>${escapeHtml(selectedSource.version.contentSha256.slice(0, 12))}…</code>` : "metadata only"}</dd></div></dl><div class="sourceUri">${escapeHtml(selectedSource.canonicalUri)}</div></section>`;
     } else {
       content = `<section class="drawerSection"><div class="drawerLabel">Sources</div><strong>선택된 근거가 없습니다.</strong><p>인용 번호나 출처 행을 선택하면 해당 source version, evidence locator, 검증 상태를 여기서 확인할 수 있습니다.</p><div class="drawerMetric"><span>저장된 출처</span><strong>${state.sources.length}</strong></div></section>`;
     }
@@ -10309,6 +10386,34 @@ function createComposerEventSync({
     }
   }
 
+  async function openCitationExact(citationId) {
+    const citation = citationById(citationId);
+    if (!citation) return;
+    const lookup = beginSourceVersionLookup(citation);
+    if (!lookup) return;
+    try {
+      if (!citation.sourceVersionId) {
+        throw new Error(uiCopy("이 인용에는 source version ID가 없어 정확한 출처를 열 수 없습니다.", "This citation has no source version ID, so its exact source cannot be opened."));
+      }
+      let source = sourceByVersion(lookup.projectId, citation.sourceId, citation.sourceVersionId);
+      if (!source) source = await science.sources.getVersion(lookup.projectId, citation.sourceVersionId);
+      if (!lookup.isCurrent()) return;
+      const exactSource = source?.projectId === lookup.projectId
+        && source.id === citation.sourceId
+        && source.version?.sourceId === source.id
+        && source.version?.id === citation.sourceVersionId;
+      if (!exactSource) {
+        throw new Error(uiCopy("정확한 source version을 현재 프로젝트에서 찾지 못했습니다.", "The exact source version is not available in this project."));
+      }
+      rememberSourceVersion(source);
+      state.selectedSourceId = source.id;
+      state.drawer = { kind: "citation", id: citation.id, sourceVersionId: citation.sourceVersionId };
+      finishSourceVersionLookup(lookup);
+    } catch (error) {
+      failSourceVersionLookup(lookup, error);
+    }
+  }
+
   async function openEvidenceGraphEvidenceSpan(nodeId, evidenceSpanId) {
     const lookup = beginEvidenceGraphExactRecordLookup(nodeId);
     if (!lookup) return;
@@ -10326,9 +10431,9 @@ function createComposerEventSync({
       const priorCitations = state.citationsByMessage.get(citation.messageId) || [];
       if (!priorCitations.some((item) => item.id === citation.id)) state.citationsByMessage.set(citation.messageId, [...priorCitations, citation]);
       state.evidenceById.set(result.evidence.id, result.evidence);
-      state.sources = [...state.sources.filter((item) => item.id !== source.id), source];
+      rememberSourceVersion(source);
       state.selectedSourceId = source.id;
-      state.drawer = { kind: "citation", id: citation.id };
+      state.drawer = { kind: "citation", id: citation.id, sourceVersionId: result.evidence.sourceVersionId };
       finishEvidenceGraphExactRecordLookup(lookup);
     } catch (error) {
       failEvidenceGraphExactRecordLookup(lookup, error);
@@ -10352,9 +10457,9 @@ function createComposerEventSync({
       if (!lookup.isCurrent()) return;
       if (!source) throw new Error(uiCopy("정확한 source version을 현재 프로젝트에서 찾지 못했습니다.", "The exact source version is not available in this project."));
       if (!exactVersion(source)) throw new Error(uiCopy("정확한 source version을 현재 프로젝트에서 찾지 못했습니다.", "The exact source version is not available in this project."));
-      state.sources = [...state.sources.filter((item) => item.id !== source.id), source];
+      rememberSourceVersion(source);
       state.selectedSourceId = source.id;
-      state.drawer = { kind: "source", id: source.id };
+      state.drawer = { kind: "source", id: source.id, sourceVersionId: source.version.id };
       finishEvidenceGraphExactRecordLookup(lookup);
     } catch (error) {
       failEvidenceGraphExactRecordLookup(lookup, error);
@@ -10600,6 +10705,8 @@ function createComposerEventSync({
         state.visualViewportByArtifact = new Map();
         state.projectFolderOpen = false;
         state.selectedConversationId = null;
+        invalidateSourceVersionLookup();
+        invalidateEvidenceGraphExactRecord();
         state.drawer = null;
         state.projectMenuOpen = false;
         render();
@@ -10661,6 +10768,8 @@ function createComposerEventSync({
       state.mode = "session";
       state.activeWorkspaceTabId = RESEARCH_TAB_ID;
       state.currentDestination = "literature";
+      invalidateSourceVersionLookup();
+      invalidateEvidenceGraphExactRecord();
       state.selectedSourceId = target.dataset.sourceId || null;
       state.drawer = state.selectedSourceId ? { kind: "source", id: state.selectedSourceId } : null;
       render();
@@ -10997,8 +11106,8 @@ function createComposerEventSync({
       return;
     }
     if (target.dataset.action === "retry-project" && state.selectedId) { void selectProject(state.selectedId); return; }
-    if (target.dataset.action === "toggle-drawer") { rememberScroll(); state.drawer = state.drawer ? null : { kind: state.mode === "lab" ? "artifact" : state.mode === "manuscript" ? "manuscript" : "source", id: state.mode === "lab" ? state.selectedArtifactId : state.mode === "manuscript" ? state.selectedManuscriptId : state.selectedSourceId }; render(); return; }
-    if (target.dataset.action === "close-drawer") { rememberScroll(); state.drawer = null; render(); return; }
+    if (target.dataset.action === "toggle-drawer") { rememberScroll(); invalidateSourceVersionLookup(); invalidateEvidenceGraphExactRecord(); state.drawer = state.drawer ? null : { kind: state.mode === "lab" ? "artifact" : state.mode === "manuscript" ? "manuscript" : "source", id: state.mode === "lab" ? state.selectedArtifactId : state.mode === "manuscript" ? state.selectedManuscriptId : state.selectedSourceId }; render(); return; }
+    if (target.dataset.action === "close-drawer") { rememberScroll(); invalidateSourceVersionLookup(); invalidateEvidenceGraphExactRecord(); state.drawer = null; render(); return; }
     if (target.dataset.action === "project-research") { if (!guardArtifactDraftNavigation(returnToSession)) returnToSession(); return; }
     if (target.dataset.projectDestination) {
       const destination = target.dataset.projectDestination;
@@ -11077,8 +11186,8 @@ function createComposerEventSync({
     }
     if (target.dataset.inlineArtifactId || target.dataset.chatArtifactId) { const action = () => void openConversationArtifact(target); if (!guardArtifactDraftNavigation(action)) action(); return; }
     if (target.dataset.artifactHistoryVersion) { void inspectArtifactVersion(Number(target.dataset.artifactHistoryVersion)); return; }
-    if (target.dataset.citationId) { rememberScroll(); state.selectedSourceId = target.dataset.sourceId; state.drawer = { kind: "citation", id: target.dataset.citationId }; render(); return; }
-    if (target.dataset.sourceId) { rememberScroll(); state.selectedSourceId = target.dataset.sourceId; state.drawer = { kind: "source", id: target.dataset.sourceId }; render(); return; }
+    if (target.dataset.citationId) { rememberScroll(); void openCitationExact(target.dataset.citationId); return; }
+    if (target.dataset.sourceId) { rememberScroll(); invalidateSourceVersionLookup(); invalidateEvidenceGraphExactRecord(); state.selectedSourceId = target.dataset.sourceId; state.drawer = { kind: "source", id: target.dataset.sourceId }; render(); return; }
     if (target.dataset.artifactId) { const action = () => void openLab(state.selectedLabId, target.dataset.artifactId, null); if (!guardArtifactDraftNavigation(action)) action(); }
   });
 

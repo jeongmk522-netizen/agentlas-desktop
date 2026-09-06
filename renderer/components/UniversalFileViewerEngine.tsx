@@ -1,6 +1,7 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { findFileViewerZoomProvider } from "@file-viewer/core";
 import FileViewer, { type FileViewerHandle, type ViewerOptions, type ViewerState } from "@file-viewer/react";
 import officePreset from "@file-viewer/preset-office";
 import litePreset from "@file-viewer/preset-lite";
@@ -80,6 +81,36 @@ export function UniversalFileViewerEngine({
   const userZoomedRef = useRef(false);
   const layoutCompatibilityRef = useRef<PresentationLayoutCompatibility | null>(null);
   const documentChromeRef = useRef<PagedDocumentChrome | null>(null);
+  const zoomFrameRef = useRef<number | null>(null);
+  const zoomRevisionRef = useRef(0);
+  const syncRenderedZoom = useCallback(() => {
+    const host = hostRef.current;
+    const handle = viewerRef.current;
+    const provider = host && findFileViewerZoomProvider(host);
+    if (!host || !handle || !provider) return;
+    const revision = ++zoomRevisionRef.current;
+    if (zoomFrameRef.current !== null) window.cancelAnimationFrame(zoomFrameRef.current);
+    // PPTX setZoom resolves before its scheduled resize updates provider state.
+    // Read that same live provider after layout, never its earlier action result.
+    zoomFrameRef.current = window.requestAnimationFrame(() => {
+      zoomFrameRef.current = window.requestAnimationFrame(() => {
+        zoomFrameRef.current = null;
+        if (revision !== zoomRevisionRef.current || host !== hostRef.current
+          || handle !== viewerRef.current || provider !== findFileViewerZoomProvider(host)) return;
+        const state = provider.getState();
+        if (state.label) setZoomLabel(state.label);
+        else if (Number.isFinite(state.scale)) setZoomLabel(`${Math.round(state.scale * 100)}%`);
+        setAvailability((current) => current ? {
+          ...current, zoomIn: state.canZoomIn, zoomOut: state.canZoomOut,
+        } : current);
+      });
+    });
+  }, []);
+  useLayoutEffect(() => () => {
+    ++zoomRevisionRef.current;
+    if (zoomFrameRef.current !== null) window.cancelAnimationFrame(zoomFrameRef.current);
+    zoomFrameRef.current = null;
+  }, [source, name, mimeType]);
   useEffect(() => {
     userZoomedRef.current = false;
     setZoomLabel("100%");
@@ -88,12 +119,19 @@ export function UniversalFileViewerEngine({
     setError(null);
   }, [source, name, mimeType]);
   const fitSelectedPage = useCallback(() => {
-    if (userZoomedRef.current) return;
+    if (userZoomedRef.current) {
+      syncRenderedZoom();
+      return;
+    }
+    const handle = viewerRef.current;
+    const chrome = documentChromeRef.current;
     void (async () => {
-      const presentationFit = await documentChromeRef.current?.fitSelectedPage();
-      if (!presentationFit) await viewerRef.current?.fitToView();
+      const presentationFit = await chrome?.fitSelectedPage();
+      if (handle !== viewerRef.current || chrome !== documentChromeRef.current) return;
+      if (!presentationFit) await handle?.fitToView();
+      if (handle === viewerRef.current) syncRenderedZoom();
     })();
-  }, []);
+  }, [syncRenderedZoom]);
   useEffect(() => {
     if (!hostRef.current) return undefined;
     const compatibility = installPresentationLayoutCompatibility(hostRef.current);
@@ -203,13 +241,10 @@ export function UniversalFileViewerEngine({
     const handle = viewerRef.current;
     if (!handle) return;
     userZoomedRef.current = direction !== "fit";
-    const next = direction === "in"
-      ? await handle.zoomIn()
-      : direction === "out"
-        ? await handle.zoomOut()
-        : await documentChromeRef.current?.fitSelectedPage() ?? await handle.fitToView();
-    if (next && "label" in next && next.label) setZoomLabel(next.label);
-    else if (next && "scale" in next && typeof next.scale === "number") setZoomLabel(`${Math.round(next.scale * 100)}%`);
+    if (direction === "in") await handle.zoomIn();
+    else if (direction === "out") await handle.zoomOut();
+    else if (!await documentChromeRef.current?.fitSelectedPage()) await handle.fitToView();
+    if (handle === viewerRef.current) syncRenderedZoom();
   };
 
   // @file-viewer treats callback identity as part of its mount options. Keep
@@ -220,11 +255,11 @@ export function UniversalFileViewerEngine({
       layoutCompatibilityRef.current?.refresh();
       documentChromeRef.current?.refresh();
     }
-    if (state.zoom?.label) setZoomLabel(state.zoom.label);
+    syncRenderedZoom();
     setAvailability(state.availability);
     if (state.error) setError(state.error instanceof Error ? state.error.message : String(state.error));
     else if (state.ready) setError(null);
-  }, []);
+  }, [syncRenderedZoom]);
 
   return (
     <div ref={hostRef} className={styles.documentEngine} data-compact={compact ? "true" : "false"} data-fill={fill ? "true" : "false"} data-testid="universal-file-viewer">

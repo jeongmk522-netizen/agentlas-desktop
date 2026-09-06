@@ -568,7 +568,7 @@ function createComposerEventSync({
     const panLabel = uiCopy("그림 이동 모드", "Pan figure");
     return `<section class="artifactViewToolbar" data-artifact-view-toolbar aria-label="${escapeHtml(uiCopy("그림 보기 도구", "Figure view controls"))}"><div class="artifactViewToolbarTitle"><strong>${escapeHtml(uiCopy("그림 보기", "Figure view"))}</strong><span data-artifact-view-status aria-live="polite">100%</span></div><div class="artifactViewToolbarActions"><button type="button" data-artifact-view-action="fit" aria-label="${escapeHtml(fitLabel)}" title="${escapeHtml(fitLabel)}">${escapeHtml(uiCopy("맞춤", "Fit"))}</button><button type="button" data-artifact-view-action="zoom-out" aria-label="${escapeHtml(zoomOutLabel)}" title="${escapeHtml(zoomOutLabel)}">−</button><button type="button" data-artifact-view-action="zoom-in" aria-label="${escapeHtml(zoomInLabel)}" title="${escapeHtml(zoomInLabel)}">+</button><button type="button" data-artifact-view-action="reset" aria-label="${escapeHtml(resetLabel)}" title="${escapeHtml(resetLabel)}">${escapeHtml(uiCopy("초기화", "Reset"))}</button><button type="button" data-artifact-view-action="toggle-pan" aria-pressed="false" aria-label="${escapeHtml(panLabel)}" title="${escapeHtml(panLabel)}">${escapeHtml(uiCopy("이동", "Pan"))}</button></div></section>`;
   }
-  function bindArtifactVisualViewport(host, { kind = "chart" } = {}) {
+  function bindArtifactVisualViewport(host, { kind = "chart", initialFit = true } = {}) {
     if (!host) return;
     if (typeof host.__scienceVisualViewerCleanup === "function") host.__scienceVisualViewerCleanup();
     if (host.dataset.visualViewerBound === "true") return;
@@ -798,7 +798,8 @@ function createComposerEventSync({
       rememberViewport();
       return true;
     };
-    if (!restoreRememberedViewport()) applyFit();
+    const restoredRememberedViewport = restoreRememberedViewport();
+    if (!restoredRememberedViewport && initialFit) applyFit();
     updateStatus();
   }
   const formatByteSize = (value) => {
@@ -9379,7 +9380,7 @@ function createComposerEventSync({
             if (errorNode) errorNode.textContent = error instanceof Error ? error.message : String(error);
           } finally {
             rendered.restoreInteractiveView?.();
-            if (rendered.view === "figure") bindArtifactVisualViewport(host, { kind: "chart" });
+            if (rendered.view === "figure") bindArtifactVisualViewport(host, { kind: "chart", initialFit: false });
           }
         }
       } catch (error) {

@@ -12,6 +12,14 @@ on:
       tag:
         description: "GitHub release tag"
         required: true
+      science_catalog_url:
+        description: "Optional published Science candidate catalog URL; requires its SHA-256"
+        required: false
+        type: string
+      science_catalog_sha256:
+        description: "SHA-256 of the exact Science candidate catalog bytes"
+        required: false
+        type: string
       draft:
         description: "Create or keep the GitHub release as draft"
         required: true
@@ -49,6 +57,8 @@ jobs:
     runs-on: macos-15
     timeout-minutes: 90
     env:
+      AGENTLAS_SCIENCE_RELEASE_CATALOG_URL: ${{ inputs.science_catalog_url }}
+      AGENTLAS_SCIENCE_RELEASE_CATALOG_SHA256: ${{ inputs.science_catalog_sha256 }}
       # Publish installers to the SEPARATE public releases repository.
       AGENTLAS_DESKTOP_GITHUB_REPO: agentlas-ai/agentlas-desktop-releases
       AGENTLAS_PUBLIC_RELEASE: "1"

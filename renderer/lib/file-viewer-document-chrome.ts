@@ -892,7 +892,8 @@ export function installPagedDocumentChrome(host: HTMLElement, locale: "ko" | "en
     const shell = root.querySelector<HTMLElement>(".pptx-viewer-shell");
     const surface = shell?.querySelector<HTMLElement>(":scope > .pptx-render-surface");
     if (!shell || !surface) return false;
-    ensureNavigationToggle(shell, locale, "slide", onPageSelected);
+    let schedulePresentationFit = () => {};
+    ensureNavigationToggle(shell, locale, "slide", () => schedulePresentationFit());
     let nav = shell.querySelector<HTMLElement>(":scope > .agentlas-pptx-nav");
     if (!nav) {
       nav = document.createElement("aside");
@@ -902,7 +903,7 @@ export function installPagedDocumentChrome(host: HTMLElement, locale: "ko" | "en
     }
     if (managedSurface === surface && surfaceObserver) return true;
 
-    const schedulePresentationFit = () => {
+    schedulePresentationFit = () => {
       if (presentationFitFrame) window.cancelAnimationFrame(presentationFitFrame);
       // The provider updates fitScale in its own resize frame after a compact
       // rail opens or closes. Wait for that layout, then run a second fit after

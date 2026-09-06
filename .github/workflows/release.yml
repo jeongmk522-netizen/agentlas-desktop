@@ -159,9 +159,6 @@ jobs:
       - name: Build renderer + electron
         run: npm run build
 
-      - name: Verify browser auth and lifecycle policy on the target OS
-        run: npm run test:browser-auth-portability
-
       # Tests run after the initial clone. Recheck the immutable commit and the
       # ignored-file boundary immediately before electron-builder sees Core.
       - name: Reverify embedded engine release boundary

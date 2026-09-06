@@ -604,9 +604,8 @@ export function formatToolRunSummary(summary: ToolRunSummary, locale: "ko" | "en
  * 같은 이름을 도구 기록이 절대경로로 갖고 있으면 그 기록이 정본이다. 찍어 만든 경로를
  * 산출물로 함께 올리면 결과 레일이 "만든 적 없는 파일"을 한 줄 더 보여준다.
  *
- * 실측(2026-09-05, 실제 claude-code 실행): Write 는 `/private/tmp/<project>/hello.md`
- * 한 번뿐이었는데, 답변 본문의 `` `hello.md` `` 가 `<userData>/agent-cwd/hello.md` 로
- * 찍혀 레일에 산출물이 두 줄로 떴고 그중 한 줄은 디스크에 없었다.
+ * 답변 본문과 도구 기록이 같은 파일을 가리키면 도구가 기록한 절대경로만 유지해
+ * 추정 경로로 인한 중복 산출물과 존재하지 않는 파일 링크를 방지한다.
  */
 export function shadowsToolRecordedPath(
   candidatePath: string | undefined | null,

@@ -223,6 +223,22 @@ export function pickRunner(active: RuntimeStatus): { runner: Runner; label: stri
       }),
     };
   }
+  if (runtimeModelUnavailable(active, active.model)) {
+    return {
+      label: RUNNER_LABEL[active.kind] ?? active.label ?? active.kind,
+      runner: async (req) => ({
+        text: "",
+        failure: {
+          kind: "unsupported",
+          runtime: active.kind === "byok" ? `byok:${active.backend}` : active.kind,
+          source: "marker",
+          message: req.locale === "ko"
+            ? `선택한 모델 ${active.model}이 현재 ${active.kind} 모델 목록에 없습니다. 연결을 다시 확인하거나 사용 가능한 모델을 선택해 주세요.`
+            : `The selected model ${active.model} is absent from the current ${active.kind} model list. Refresh the connection or select an available model.`,
+        },
+      }),
+    };
+  }
   if (active.kind === "claude-code") return { runner: runClaudeCodeSlotted, label: RUNNER_LABEL["claude-code"] };
   if (active.kind === "codex") return { runner: runCodexSlotted, label: RUNNER_LABEL.codex };
   if (active.kind === "antigravity") {
@@ -349,7 +365,9 @@ export function pickActive(
     );
     if (orchestrator) return applyRoleSelection(orchestrator, "orchestrator");
   }
-  return list[0] ? { ...list[0], active: true } : null;
+  // Detection initializes a new store. An unmarked list can instead mean the
+  // saved executable disappeared; detection order must not replace that choice.
+  return null;
 }
 
 function runtimeMatchesOverride(runtime: RuntimeStatus, override: AgentRuntimeOverride): boolean {
@@ -363,6 +381,18 @@ function runtimeMatchesOverride(runtime: RuntimeStatus, override: AgentRuntimeOv
 const QUOTA_FALLBACK_PERCENT = 90;
 const LOCAL_AUTHORITATIVE_MODEL_KINDS = new Set<RuntimeStatus["kind"]>(["ollama", "lmstudio", "mlx"]);
 
+function runtimeModelUnavailable(runtime: RuntimeStatus, selectedModel: string | null | undefined): boolean {
+  const model = selectedModel?.trim();
+  if (!model || isRuntimeCredentialUnavailable(runtime)) return false;
+  const discovery = runtime.modelDiscovery;
+  // Failed/empty/stale discovery cannot prove that an explicit model was removed.
+  if (discovery && (discovery.status !== "ok" || discovery.stale)) return false;
+  const authoritative = LOCAL_AUTHORITATIVE_MODEL_KINDS.has(runtime.kind)
+    || discovery?.status === "ok";
+  return authoritative && (runtime.availableModels?.length ?? 0) > 0
+    && !runtime.availableModels!.includes(model);
+}
+
 function runtimeSelectionUnavailableReason(
   runtime: RuntimeStatus | undefined,
   selection: Pick<import("../../shared/types").RuntimeSelection, "kind" | "model">,
@@ -371,16 +401,7 @@ function runtimeSelectionUnavailableReason(
   // Preserve this selected identity and let its marker failure explain storage
   // access. A display catalog or cached quota cannot justify a silent swap.
   if (isRuntimeCredentialUnavailable(runtime)) return null;
-  const model = selection.model?.trim();
-  const modelListIsAuthoritative = runtime.kind === "byok"
-    || LOCAL_AUTHORITATIVE_MODEL_KINDS.has(runtime.kind)
-    || runtime.modelDiscovery?.status === "ok";
-  if (
-    model
-    && modelListIsAuthoritative
-    && (runtime.availableModels?.length ?? 0) > 0
-    && !runtime.availableModels!.includes(model)
-  ) return "model-unavailable";
+  if (runtimeModelUnavailable(runtime, selection.model)) return "model-unavailable";
   const used = peekProviderUsedPercent(selection.kind);
   if (used !== null && used >= QUOTA_FALLBACK_PERCENT) return "quota-exceeded";
   return null;
@@ -482,9 +503,6 @@ export function rolePriorityRuntimes(
   // runtime may be smuggled in ahead of its DB rows.
   const legacyActive = pickActive(runtimes, role);
   pushCandidate(legacyActive);
-  if (out.length === 0) {
-    for (const runtime of runtimes) pushCandidate({ ...runtime, active: true });
-  }
   return out;
 }
 

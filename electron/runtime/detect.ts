@@ -40,7 +40,6 @@ import type {
 import {
   byokModels,
   cliModels,
-  cliModelsAreDiscovered,
   defaultByokModel,
 } from "../../shared/models";
 import { recallRuntimeSelection, rememberRuntimeSelection } from "./selection-memory";
@@ -164,18 +163,18 @@ function byokLongOf(backend: RuntimeBackend, active: ActiveRuntimeRow | null): b
   return recallRuntimeSelection("byok", backend)?.longContext ?? false;
 }
 
-/** CLI 런타임의 활성 모델 — 설치된 CLI가 실제 노출한 목록에 있으면 복원한다. */
+/** Preserve an explicit model across catalog updates; availability is a separate gate. */
 function cliModelOf(
   kind: RuntimeKind,
   active: ActiveRuntimeRow | null,
-  availableModels = cliModels(kind).map((model) => model.id),
+  _availableModels = cliModels(kind).map((model) => model.id),
   backend?: RuntimeBackend,
 ): string | undefined {
   const candidate =
     active?.kind === kind && (!backend || active.backend === backend)
       ? active.model
       : recallRuntimeSelection(kind, backend)?.model;
-  return candidate && availableModels.includes(candidate) ? candidate : undefined;
+  return candidate || undefined;
 }
 
 // 작업량(effort) 영속 — active_runtime 컬럼 추가(마이그레이션) 대신 meta(key/value) 테이블 사용.
@@ -849,12 +848,12 @@ async function detectRuntimesUncached(): Promise<RuntimeStatus[]> {
     if (runtime.active) activeAssigned = true;
   }
 
-  // 활성 백엔드 없으면 첫 후보를 자동 활성 — FRE 마찰 0
+  // Initialize only a new store. A missing saved executable is not a new install.
   const activeCredentialUnavailable = active?.kind === "byok" && isRuntimeCredentialUnavailable(
     list.find((runtime) => runtime.kind === "byok" && runtime.backend === active.backend),
   );
   const firstAvailable = list.find((runtime) => !isRuntimeCredentialUnavailable(runtime));
-  if (!list.some((runtime) => runtime.active) && !activeCredentialUnavailable && firstAvailable) {
+  if (!active && !list.some((runtime) => runtime.active) && !activeCredentialUnavailable && firstAvailable) {
     firstAvailable.active = true;
     saveActiveRuntime(firstAvailable);
     setModelRole({
@@ -915,11 +914,7 @@ function rolePoolGates(list: RuntimeStatus[]): {
   isQuotaExceeded: (selection: RuntimeSelection) => boolean;
 } {
   const runtimeFor = (selection: RuntimeSelection): RuntimeStatus | undefined =>
-    list.find(
-      (runtime) =>
-        runtime.kind === selection.kind &&
-        (selection.backend == null || runtime.backend === selection.backend),
-    );
+    list.find((runtime) => runtimeMatchesSelection(runtime, selection));
   return {
     isRuntimeAvailable: (selection) => {
       const runtime = runtimeFor(selection);
@@ -927,7 +922,8 @@ function rolePoolGates(list: RuntimeStatus[]): {
     },
     /**
      * 이 런타임이 실제로 가진 모델인가. **런타임이 광고한 인벤토리가 있을 때만**
-     * 부재를 판정한다(CLI는 발견된 목록, BYOK/로컬은 provider 조회 결과).
+     * 부재를 판정한다(CLI는 발견된 목록, 로컬은 provider 조회 결과).
+     * BYOK의 정적 호스트 카탈로그는 신규 모델의 부재를 증명하지 않는다.
      * 하드코딩 폴백 카탈로그로는 판정하지 않는다 — 계정이 새 모델을 받으면
      * 폴백이 곧바로 낡아 유효 모델을 차단하게 된다(실측: claude-code 폴백에
      * 없는 `fable`이 실제로는 정상 실행됨). 증명 못 하면 통과시키고 실패는
@@ -938,10 +934,9 @@ function rolePoolGates(list: RuntimeStatus[]): {
       if (!model) return false;
       const runtime = runtimeFor(selection);
       if (!runtime) return false;
-      const authoritative =
-        runtime.kind === "byok" ||
-        LOCAL_MODEL_INVENTORY_KINDS.has(runtime.kind) ||
-        cliModelsAreDiscovered(runtime.kind);
+      if (runtime.modelDiscovery && (runtime.modelDiscovery.status !== "ok" || runtime.modelDiscovery.stale)) return false;
+      const authoritative = LOCAL_MODEL_INVENTORY_KINDS.has(runtime.kind)
+        || runtime.modelDiscovery?.status === "ok";
       if (!authoritative) return false;
       const catalog = runtime.availableModels ?? [];
       if (catalog.length === 0) return false;

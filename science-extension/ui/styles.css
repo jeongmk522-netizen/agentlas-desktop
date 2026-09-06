@@ -5410,3 +5410,11 @@ button:has(> span:only-child > .uiIcon:only-child):not(.projectHubInlineBack) {
 .answer .scienceSourceLink:focus-visible { outline: 2px solid #315f52; outline-offset: 3px; }
 .answer .scienceBlockedSourceLink { color: inherit; border-bottom: 1px dotted #aaa59a; }
 .answerBlock + .answerBlock { margin-top: 36px; }
+
+/* Keep evidence counts subordinate to the research map at every pane width. */
+.evidenceGraphMetrics { display: flex; flex-wrap: nowrap; gap: 0; margin-top: 12px; border: 1px solid var(--line); border-radius: 8px; overflow-x: auto; background: var(--surface); }
+.evidenceGraphMetrics > div { flex: 1 0 auto; min-height: 36px; flex-direction: row; align-items: center; justify-content: center; gap: 7px; padding: 6px 10px; border: 0; border-right: 1px solid var(--line); border-radius: 0; background: transparent; }
+.evidenceGraphMetrics > div:last-child { border-right: 0; }
+.evidenceGraphMetrics > div[data-alert="true"] { background: #fff9f8; }
+.evidenceGraphMetrics span { font-size: 10px; }
+.evidenceGraphMetrics strong { margin-top: 0; font-size: 12px; }

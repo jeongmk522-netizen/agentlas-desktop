@@ -2390,6 +2390,7 @@ export type BrowserLiveDispatchResult =
     };
 export interface ComputerUsePreviewSource {
   id: string;
+  kind: "screen" | "window";
   name: string;
   displayId: string | null;
   width: number;
@@ -2397,8 +2398,13 @@ export interface ComputerUsePreviewSource {
   bounds: { x: number; y: number; width: number; height: number } | null;
   scaleFactor: number | null;
 }
+export interface ComputerUseCaptureOptions {
+  /** The default keeps existing computer-control callers on display capture. */
+  mode?: "screen" | "window";
+}
 export interface ComputerUsePreview {
   platform: NodeJS.Platform;
+  captureMode: "screen" | "window";
   screenPermission: "not-determined" | "granted" | "denied" | "restricted" | "unknown";
   accessibility: boolean;
   observationAvailable: boolean;
@@ -2407,9 +2413,11 @@ export interface ComputerUsePreview {
   interactionDriver: "agentlas-native-required" | "agentlas-native";
   sources: ComputerUsePreviewSource[];
   selectedSourceId: string | null;
+  /** Window mode returns candidates without an image until the user chooses one. */
+  selectionRequired: boolean;
   dataUrl: string | null;
   capturedAt: string;
-  error: "screen-unavailable" | "capture-failed" | null;
+  error: "screen-unavailable" | "capture-failed" | "source-stale" | "window-selection-required" | "window-not-found" | null;
 }
 /** electron → renderer 로 밀리는 승인 요청(경량 바텀시트가 받는다). */
 export interface BrowserApprovalRequestEvent {
@@ -7268,7 +7276,7 @@ export interface AgentlasIpc {
     focusLiveTarget: (targetId?: string) => Promise<{ ok: boolean }>;
   };
   computerUse: {
-    capturePreview: (sourceId?: string) => Promise<ComputerUsePreview>;
+    capturePreview: (sourceId?: string, options?: ComputerUseCaptureOptions) => Promise<ComputerUsePreview>;
     revealPreview: () => Promise<{ ok: boolean }>;
   };
   projects: {

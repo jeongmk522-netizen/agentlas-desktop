@@ -1,18 +1,25 @@
 # Changelog
 
-## 1.1.5 — 2026-09-06
+## 1.1.5 — 2026-09-07
 
 Fixes Science startup when packaged runtime dependencies are missing. Desktop
 now ships Sharp and Molstar with the Science services and verifies the final
 archive's native image runtime before packaging can finish. Existing application
 data stays in place; reinstalling a Science extension alone does not repair a
 missing Desktop runtime dependency.
+Existing Science installations can download suite updates from Settings.
+The locked URI parser is updated to include its host-normalization security fixes.
 
 Science manuscript exports follow the selected journal profile and share one
 word-count scope with validation. Ordinary exports remain marked as drafts;
 submission readiness requires the journal checks. Research continuation counts
 the initial turn and preserves explicit stop and stalled-progress boundaries.
 Evidence graph refreshes discard responses from a previously selected project.
+
+Work uses One's execution timeline and result panel. The browser starts its
+managed browser connection when needed. External native windows can be selected,
+captured, and saved to the conversation; saved images remain after reopening it.
+The desktop result panel reserves space beside the conversation and input box.
 
 Graph provides separate refresh, resume, and fresh-run actions. Starting over
 preserves the previous execution record and requires review of already completed

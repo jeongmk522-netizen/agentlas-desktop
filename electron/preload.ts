@@ -597,7 +597,8 @@ const api: AgentlasIpc = {
     focusLiveTarget: (targetId?: string) => ipcRenderer.invoke("browser:focusLiveTarget", targetId),
   },
   computerUse: {
-    capturePreview: (sourceId?: string) => ipcRenderer.invoke("computerUse:capturePreview", sourceId),
+    capturePreview: (sourceId?: string, options?: { mode?: "screen" | "window" }) =>
+      ipcRenderer.invoke("computerUse:capturePreview", sourceId, options),
     revealPreview: () => ipcRenderer.invoke("computerUse:revealPreview"),
   },
   projects: {
@@ -1067,6 +1068,7 @@ contextBridge.exposeInMainWorld("agentlasFiles", {
     snapshot: (input: unknown) => ipcRenderer.invoke("chatFiles:snapshot", input),
     listGroup: (input: unknown) => ipcRenderer.invoke("chatFiles:listGroup", input),
     openExternal: (input: unknown) => ipcRenderer.invoke("chatFiles:openExternal", input),
+    appendMessage: (input: unknown) => ipcRenderer.invoke("chatFiles:appendMessage", input),
   },
   grantForFile: async (file: File): Promise<FsPathGrant | null> => {
     try {

@@ -34,7 +34,7 @@ import {
   pickModelRoleFromPool,
   setModelRoleMembers as setModelRoleMembersStore,
 } from "./store/model-roles";
-import type { RuntimeRole, RuntimeRolePoolState } from "../shared/types";
+import type { ImageAttachment, RuntimeRole, RuntimeRolePoolState } from "../shared/types";
 import { requiredExecutionPermission } from "../shared/graph-node-protocol";
 import { runtimeVersionsWithAutoUpdate } from "./runtime/auto-update";
 import { agentRunCwd } from "./runtime/exec";
@@ -2394,6 +2394,29 @@ export function registerIpcHandlers(): void {
   // arbitrary path into a durable chat file.
   ipcMain.handle("chatFiles:snapshot", (_e, input: unknown) => persistChatFileSnapshot(input as Parameters<typeof persistChatFileSnapshot>[0]));
   ipcMain.handle("chatFiles:listGroup", (_e, input: unknown) => listChatFileSnapshot(input as Parameters<typeof listChatFileSnapshot>[0]));
+  ipcMain.handle("chatFiles:appendMessage", (event, input: unknown) => {
+    assertTrustedSitePublishIpcSender(event);
+    if (!input || typeof input !== "object" || Array.isArray(input)) throw new TypeError("Invalid chat attachment message");
+    const value = input as { chatId?: unknown; text?: unknown; images?: unknown };
+    const chatId = typeof value.chatId === "string" ? value.chatId.trim() : "";
+    const text = typeof value.text === "string" ? value.text.trim() : "";
+    if (!chatId || !text || text.length > 50_000 || /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/u.test(text)) {
+      throw new TypeError("Invalid chat attachment message");
+    }
+    const images = Array.isArray(value.images)
+      ? value.images.map((image): ImageAttachment => {
+          if (!image || typeof image !== "object" || Array.isArray(image)) throw new TypeError("Invalid chat attachment image");
+          const candidate = image as { mediaType?: unknown; name?: unknown; data?: unknown };
+          if (typeof candidate.mediaType !== "string" || typeof candidate.data !== "string") throw new TypeError("Invalid chat attachment image");
+          return {
+            mediaType: candidate.mediaType,
+            name: typeof candidate.name === "string" ? candidate.name : undefined,
+            data: candidate.data,
+          };
+        })
+      : [];
+    return appendChatMessage(chatId, "assistant", text, { images });
+  });
   ipcMain.handle("chatFiles:openExternal", async (_e, input: unknown): Promise<{ ok: boolean; message?: string }> => {
     let root = "";
     try {
@@ -3955,9 +3978,17 @@ export function registerIpcHandlers(): void {
     assertTrustedSitePublishIpcSender(event);
     return focusBrowserLiveTarget(typeof targetId === "string" ? targetId.slice(0, 256) : undefined);
   });
-  ipcMain.handle("computerUse:capturePreview", (event, sourceId?: string) => {
+  ipcMain.handle("computerUse:capturePreview", (event, sourceId?: unknown, rawOptions?: unknown) => {
     assertTrustedSitePublishIpcSender(event);
-    return captureComputerUsePreview(typeof sourceId === "string" ? sourceId.slice(0, 256) : undefined);
+    const options = rawOptions && typeof rawOptions === "object" && !Array.isArray(rawOptions)
+      ? rawOptions as { mode?: unknown }
+      : undefined;
+    return captureComputerUsePreview(
+      typeof sourceId === "string" ? sourceId.slice(0, 256) : undefined,
+      {
+        mode: options?.mode === "window" ? "window" : "screen",
+      },
+    );
   });
   ipcMain.handle("computerUse:revealPreview", (event) => {
     assertTrustedSitePublishIpcSender(event);

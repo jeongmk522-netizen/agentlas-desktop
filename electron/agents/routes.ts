@@ -48,6 +48,12 @@ function routesFile(): string {
   return userDataPath("agent-routes.json");
 }
 
+// Process-local generation for route mutations. Consumers that cache a repair
+// pass can use this to notice a same-process backfill without rescanning the
+// route file on every picker read. A fresh process starts at zero and performs
+// its first repair normally.
+let routesRevision = 0;
+
 function readAll(): Record<string, AgentRoute> {
   try {
     const raw = fs.readFileSync(routesFile(), "utf8");
@@ -76,6 +82,7 @@ function writeAll(map: Record<string, AgentRoute>): void {
     fd = null;
     fs.renameSync(temp, target);
     fsyncDirectoryBestEffort(parent);
+    routesRevision += 1;
   } finally {
     if (fd !== null) fs.closeSync(fd);
     try {
@@ -85,6 +92,10 @@ function writeAll(map: Record<string, AgentRoute>): void {
       // intentionally best-effort; the live routes file was never truncated.
     }
   }
+}
+
+export function getRoutesRevision(): number {
+  return routesRevision;
 }
 
 function fsyncDirectoryBestEffort(directory: string): void {

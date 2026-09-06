@@ -29,8 +29,6 @@ import type {
 type FullListing = SeedListingFull & MarketplaceListing;
 
 type AgentRow = CloudRegistryAgentRow;
-let localDuplicateRepairChecked = false;
-
 function toAgent(row: AgentRow): InstalledAgent {
   let envReqs: AgentEnvRequirement[] = [];
   try {
@@ -142,13 +140,13 @@ export function backfillEntityKinds(): void {
 
 export function listInstalledAgents(): InstalledAgent[] {
   recoverCloudRegistryTransactions();
-  if (!localDuplicateRepairChecked) {
-    localDuplicateRepairChecked = true;
-    try {
-      dedupeLocalInstalledAgents();
-    } catch (error) {
-      console.error("[agents] local duplicate repair failed", error);
-    }
+  try {
+    // The dedupe module owns its route-generation cache. Calling it on every
+    // projection is cheap when unchanged, and lets a deferred definition-hash
+    // backfill trigger a second pass in this process.
+    dedupeLocalInstalledAgents();
+  } catch (error) {
+    console.error("[agents] local duplicate repair failed", error);
   }
   return listInstalledAgentsReadOnly();
 }

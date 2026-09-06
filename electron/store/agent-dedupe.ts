@@ -3,7 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import type Database from "better-sqlite3";
 import { getDb } from "./db";
-import { getRoute, removeRoute, type AgentRoute } from "../agents/routes";
+import { getRoute, getRoutesRevision, removeRoute, type AgentRoute } from "../agents/routes";
 
 type AgentRow = {
   id: string;
@@ -35,6 +35,7 @@ type DedupeResult = {
 };
 
 let localRepairComplete = false;
+let localRepairRevision: number | null = null;
 
 const IDENTIFIER = /^[A-Za-z_][A-Za-z0-9_]*$/;
 
@@ -374,12 +375,20 @@ function canonicalRow(rows: AgentRow[]): AgentRow {
  * team.list(), so a stale renderer can never resurrect rows after repair.
  */
 export function dedupeLocalInstalledAgents(): DedupeResult {
-  if (localRepairComplete) return { groups: 0, merged: 0, firmGroups: 0, firmsMerged: 0 };
+  const routeRevision = getRoutesRevision();
+  if (localRepairComplete && localRepairRevision === routeRevision) {
+    return { groups: 0, merged: 0, firmGroups: 0, firmsMerged: 0 };
+  }
   localRepairComplete = true;
   try {
-    return dedupeLocalInstalledAgentsOnce();
+    const result = dedupeLocalInstalledAgentsOnce();
+    // Route removals during the pass can advance the revision. Record the
+    // final generation so an unchanged route map remains idempotent.
+    localRepairRevision = getRoutesRevision();
+    return result;
   } catch (error) {
     localRepairComplete = false;
+    localRepairRevision = null;
     throw error;
   }
 }

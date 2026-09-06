@@ -11580,7 +11580,7 @@ export class ScienceStore {
     const tableRecord = safeJsonRecord(input.table, 4 * 1024 * 1024, "dataset-table");
     if (!hasExactKeys(tableRecord, ["schema", "columns", "rows", "profile", "receipts"])
       || tableRecord.schema !== "agentlas.science-table/v1" || !Array.isArray(tableRecord.columns)
-      || !Array.isArray(tableRecord.rows) || tableRecord.rows.length < 1 || tableRecord.rows.length > 5_000) {
+      || !Array.isArray(tableRecord.rows) || tableRecord.rows.length < 1 || tableRecord.rows.length > SCIENCE_TABLE_LIMITS.maxRows) {
       throw new Error("science-dataset-table-invalid");
     }
     const table = tableRecord as unknown as ScienceDatasetTablePayload;

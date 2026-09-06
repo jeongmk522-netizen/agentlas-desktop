@@ -3474,6 +3474,16 @@ button.manuscriptBinding:hover { border-color: var(--line-strong); background: v
   }
 }
 
+@container science-center (max-width: 759px) {
+  .evidenceGraphWorkspace { grid-template-columns: minmax(0, 1fr); }
+  .evidenceGraphInspector { min-height: 0; max-height: 620px; }
+}
+
+@container science-center (max-width: 559px) {
+  .evidenceGraphCanvasPane > header { align-items: stretch; flex-direction: column; }
+  .evidenceGraphCanvasControls { min-width: 0; flex-basis: auto; }
+}
+
 /* ============================================================================
    State glyphs — 12x12, shape-carried. 차단 / 실패 / 아직 없음 / 반박됨 / stale
    are five different things and must survive greyscale print, PDF export and

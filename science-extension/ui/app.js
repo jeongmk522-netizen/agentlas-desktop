@@ -3692,7 +3692,7 @@ function createComposerEventSync({
       anchor.remove();
       setTimeout(() => URL.revokeObjectURL(url), 1_000);
       state.manuscriptPreviewWarnings = Array.isArray(result.warnings) ? result.warnings : state.manuscriptPreviewWarnings;
-      if (result.pdf?.degraded) state.manuscriptPreviewWarnings = [...state.manuscriptPreviewWarnings.filter((warning) => !String(warning.code).startsWith("pdf-")), { code: `pdf-${result.pdf.degraded}`, message: result.pdf.degraded === "toolchain-missing" ? "LaTeX 조판기(tectonic)가 없어 HTML 인쇄본 PDF로 내보냈습니다." : `LaTeX 조판에 실패해 HTML 인쇄본 PDF로 내보냈습니다: ${result.pdf.degradedReason || ""}`, line: null }];
+      if (result.pdf?.degraded) state.manuscriptPreviewWarnings = [...state.manuscriptPreviewWarnings.filter((warning) => !String(warning.code).startsWith("pdf-")), { code: `pdf-${result.pdf.degraded}`, message: result.pdf.degraded === "toolchain-missing" ? uiCopy("PDF를 HTML 인쇄 방식으로 생성했습니다. LaTeX 조판기가 설치되어 있지 않습니다.", "Created the PDF using HTML printing because the LaTeX typesetter is not installed.") : uiCopy(`LaTeX 조판에 실패해 HTML 인쇄 방식으로 PDF를 생성했습니다: ${result.pdf.degradedReason || ""}`, `Created the PDF using HTML printing after LaTeX typesetting failed: ${result.pdf.degradedReason || ""}`), line: null }];
     } catch (error) {
       state.manuscriptSaveError = error instanceof Error ? error.message : String(error);
     } finally {
@@ -4507,7 +4507,7 @@ function createComposerEventSync({
       queueMicrotask(() => { void requestManuscriptPreview(); });
     }
     const previewWarnings = state.manuscriptPreviewWarnings.length
-      ? `<div class="manuscriptPaperWarnings" role="status"><strong><span class="stateGlyph" data-state="awaiting-human" aria-hidden="true"></span>${escapeHtml(String(state.manuscriptPreviewWarnings.length))}건 확인 필요</strong><ul>${state.manuscriptPreviewWarnings.slice(0, 12).map((warning) => `<li data-code="${escapeHtml(warning.code)}">${escapeHtml(warning.message)}${warning.line ? ` <em>(line ${escapeHtml(String(warning.line))})</em>` : ""}</li>`).join("")}</ul></div>`
+      ? `<div class="manuscriptPaperWarnings" role="status"><strong><span class="stateGlyph" data-state="awaiting-human" aria-hidden="true"></span>${escapeHtml(uiCopy(`${state.manuscriptPreviewWarnings.length}건 확인 필요`, `${state.manuscriptPreviewWarnings.length} item${state.manuscriptPreviewWarnings.length === 1 ? "" : "s"} to review`))}</strong><ul>${state.manuscriptPreviewWarnings.slice(0, 12).map((warning) => `<li data-code="${escapeHtml(warning.code)}">${escapeHtml(warning.message)}${warning.line ? ` <em>(line ${escapeHtml(String(warning.line))})</em>` : ""}</li>`).join("")}</ul></div>`
       : "";
     const canvas = state.manuscriptView === "preview"
       ? renderedPreview
@@ -4519,8 +4519,8 @@ function createComposerEventSync({
         // journal -- so it is readable here, and downloadable, rather than only inferable.
         ? `<section class="manuscriptLatexWorkspace"><header><div><span>${escapeHtml(uiCopy("초안 생성 소스", "Generated draft source"))}</span><strong>main.tex</strong></div><div><span>${escapeHtml(typesetterStatus)}</span><span>그림 ${escapeHtml(state.manuscriptPreviewReport?.figures?.length || 0)} · 표 ${escapeHtml(state.manuscriptPreviewReport?.tables?.length || 0)} · 인용 ${escapeHtml(state.manuscriptPreviewReport?.citations?.length || 0)}</span></div></header>${previewWarnings}<pre aria-label="Generated LaTeX source"><code>${latexReady ? escapeHtml(state.manuscriptPreviewLatex) : "% LaTeX 소스를 생성하는 중…"}</code></pre>${state.manuscriptPreviewBibtex ? `<details><summary>references.bib</summary><pre><code>${escapeHtml(state.manuscriptPreviewBibtex)}</code></pre></details>` : ""}<footer><span>정확한 원고 버전과 결합된 연구 아티팩트에서 생성됩니다.</span><button class="secondaryButton ghostButton" data-action="export-manuscript" data-format="latex">.tex 내려받기</button></footer></section>`
       : state.manuscriptView === "write"
-        ? manuscriptSourceEditorMarkup(manuscript, draft)
-        : manuscriptBlockPaperMarkup(manuscript, document);
+        ? `${previewWarnings}${manuscriptSourceEditorMarkup(manuscript, draft)}`
+        : `${previewWarnings}${manuscriptBlockPaperMarkup(manuscript, document)}`;
     const sourceOutline = manuscriptOutline(draft.markdown);
     const outlineRows = outline.length
       ? outline.map((item, index) => {

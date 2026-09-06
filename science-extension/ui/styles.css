@@ -3032,6 +3032,13 @@ button.manuscriptBinding:hover { border-color: var(--line-strong); background: v
   grid-template-columns: 136px minmax(0, 1fr);
   background: #f7f7f7;
 }
+
+/* The manuscript surface can become container-narrow while the app window remains desktop-wide.
+   In that state the outline and inspector are intentionally hidden; keep the paper in the only
+   visible track instead of leaving it in the legacy 136px outline column. */
+@container science-center (max-width: 799px) {
+  .manuscriptWorkGrid { grid-template-columns: minmax(0, 1fr); }
+}
 .manuscriptOutline {
   z-index: 2;
   padding: 18px 10px 20px 12px;

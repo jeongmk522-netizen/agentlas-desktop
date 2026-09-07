@@ -32,8 +32,18 @@ console.log("agent-architecture-migration-contract");
 
 check("★부팅이 실제로 마이그레이션을 돌린다", () => {
   assert.match(main, /import \{ migrateRegisteredAgents \}/, "부팅이 마이그레이션을 import 하지 않는다");
-  assert.match(main, /migrateRegisteredAgents\(\)/,
-    "마이그레이션을 부르는 곳이 없다 — 층만 있고 아무에게도 도달하지 않는다");
+  /*
+   * ★"migrateRegisteredAgents()" 라고 **글자 그대로** 적혀 있어야 한다는 요구는 틀렸다
+   *   (실측 2026-09-08). 부팅은 이제 그것을 step("architecture-migrations", fn) 으로
+   *   넘긴다 — 하나가 던져도 뒤가 통째로 멈추지 않게 만든 **의도된 수리**다.
+   *   즉 제품이 나아졌는데 검사가 못 따라와 빨간불이 됐다.
+   *   물어야 할 것은 "부르는가"이지 "어떤 모양으로 부르는가"가 아니다.
+   */
+  assert.ok(
+    /migrateRegisteredAgents\s*\(\)/.test(main)
+    || /step\(\s*["'`][^"'`]*["'`]\s*,\s*migrateRegisteredAgents\s*[,)]/.test(main),
+    "마이그레이션을 부르는 곳이 없다 — 층만 있고 아무에게도 도달하지 않는다",
+  );
 });
 
 check("★스윕 대상은 등록된 전원이다(빈 에이전트만이 아니다)", () => {

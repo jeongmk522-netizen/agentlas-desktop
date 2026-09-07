@@ -210,8 +210,21 @@ async function main() {
 
     assert.ok(parsers.length >= 3, `도구를 파싱하는 러너를 ${parsers.length}개만 찾았다 — 탐지가 깨졌다`);
 
+    /*
+     * ★"이 파일에 onTool 이 있는가" 는 틀린 질문이다 (실측 2026-09-08).
+     *   byok.ts 는 도구 호출을 전부 local-tool-loop 의 runMainToolDispatch 에 넘기고,
+     *   화면에 올리는 일은 **거기서** 한다(onTool 6곳). 그런데 이 검사가 소스 글자만
+     *   보고 "화면에 안 올린다"고 지목했다 — 하마터면 멀쩡한 러너를 고칠 뻔했다.
+     *   위임도 올리는 것이다. 다만 위임처가 실제로 올리는지는 여기서 확인한다.
+     */
+    const dispatcher = fs.readFileSync(path.join(runtimeDir, "local-tool-loop.ts"), "utf8");
+    assert.match(dispatcher, /export async function runMainToolDispatch/,
+      "공용 도구 디스패처가 없어졌다 — 이 검사의 전제가 깨졌다");
+    assert.match(dispatcher, /events\.onTool\??\.?\(/,
+      "공용 디스패처가 도구를 화면에 안 올린다 — 위임한 러너 전부가 조용해진다");
+
     const silent = parsers
-      .filter(({ src }) => !/onTool\??\.?\(/.test(src))
+      .filter(({ src }) => !/onTool\??\.?\(/.test(src) && !/runMainToolDispatch/.test(src))
       .map(({ name }) => name);
     assert.deepEqual(silent, [], `도구를 읽고도 화면에 올리지 않는 러너: ${silent.join(", ")}`);
   });
@@ -404,8 +417,24 @@ async function main() {
       "작업 폴더 폴백이 한 곳에서 정해지지 않는다");
     assert.match(src, /cwd: agyWorkDir,/,
       "스폰 cwd 가 등록 폴더와 다른 식으로 계산된다 — 둘이 갈리면 쓰기가 딴 데로 간다");
-    assert.ok(!/cwd: req\.cwd \?\? agentRunCwd\(\)/.test(src),
-      "스폰 cwd 가 여전히 따로 계산된다");
+    /*
+     * ★"이 문자열이 파일 어디에도 없어야 한다" 는 너무 무딘 질문이다 (실측 2026-09-08).
+     *   같은 모양이 **스폰이 아닌 곳**에도 쓰인다: observeCliExecutableIdentity 는
+     *   어느 실행 파일인지 PATH 로 찾을 때만 cwd 를 쓰고 에이전트를 띄우지 않는다
+     *   (cli-executable-identity.ts — 스폰 호출이 없다). 그것까지 금지하면 멀쩡한 코드를
+     *   고치게 된다. 재야 할 것은 **에이전트를 띄우는 그 자리**의 cwd 다.
+     */
+    const spawnSites = src.split("\n")
+      .map((line, i) => ({ line: line.trim(), no: i + 1 }))
+      .filter(({ line }) => /^cwd:\s/.test(line));
+    assert.ok(spawnSites.length >= 1, "cwd 대입 지점을 못 찾았다 — 탐지가 깨졌다");
+    for (const site of spawnSites) {
+      // 이 자리가 에이전트를 띄우는 자리인지 본다(위쪽 12줄 안에 spawn 이 있는가).
+      const before = src.split("\n").slice(Math.max(0, site.no - 13), site.no).join("\n");
+      if (!/spawn\(|execFile\(|startCli|launch/.test(before)) continue;
+      assert.match(site.line, /agyWorkDir|runReq\.cwd/,
+        `에이전트를 띄우는 cwd 가 등록 폴더와 다른 식으로 계산된다(${site.no}행: ${site.line})`);
+    }
   });
 
   /*

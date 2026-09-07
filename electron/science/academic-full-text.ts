@@ -235,6 +235,19 @@ export class ScienceAcademicFullTextService {
         retrievalMethod: `agentlas-europe-pmc-fulltext/v1:${pmcid}:raw-sha256:${sha256(fullText.bytes)}`,
         license,
       }, parsed.bytes);
+      // Deterministically parsed OA full text from a verified provider IS the content check --
+      // nothing else in the system ever promotes verification_status past "unverified", which
+      // silently made every source permanently ineligible as a manuscript comparable no matter
+      // what a researcher did (the eligibility trigger hard-requires 'content-checked', and this
+      // was the only tool whose own description claimed to satisfy that precondition). Reported
+      // from a live study whose loop diagnosed it as "a host precondition, not my inputs"
+      // (2026-09-07).
+      const checked = this.store.recordSourceCheck({
+        requestId: stableUuid(`${input.requestId}:content-check`), projectId: input.projectId,
+        sourceId, sourceVersionId: appended.source.version.id, status: "content-checked",
+        code: "europe-pmc-oa-fulltext-parsed",
+        summary: `Full text retrieved and deterministically parsed from Europe PMC OA record ${pmcid}.`,
+      }).source;
       const receipt: AcademicFullTextReceipt = {
         provider: "europe-pmc", metadataUrl: metadataUrl.toString(), fullTextUrl: fullTextUrl.toString(),
         metadataRequestSha256: sha256(metadataUrl.toString()), metadataResponseSha256: sha256(metadata.bytes),
@@ -242,7 +255,7 @@ export class ScienceAcademicFullTextService {
         parsedTextSha256: sha256(parsed.bytes), retrievedAt: fullText.retrievedAt, pmcid, license,
         rawByteSize: fullText.bytes.length, parsedByteSize: parsed.bytes.length,
       };
-      const provisional = { schema: "agentlas.academic-full-text-result/v1" as const, evidenceScope: "full-text" as const, source: appended.source, receipt, sectionHeadings: parsed.sectionHeadings, runId: run.id, replayed: false };
+      const provisional = { schema: "agentlas.academic-full-text-result/v1" as const, evidenceScope: "full-text" as const, source: checked, receipt, sectionHeadings: parsed.sectionHeadings, runId: run.id, replayed: false };
       const metadataBlob = this.store.putRunBlob(metadata.bytes);
       const xmlBlob = this.store.putRunBlob(fullText.bytes);
       const parsedBlob = this.store.putRunBlob(parsed.bytes);

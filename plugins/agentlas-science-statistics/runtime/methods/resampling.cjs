@@ -691,12 +691,21 @@ const permutationTest = {
     const monteCarloSe = exact ? 0 : Math.sqrt(pValue * (1 - pValue) / total);
     const nullMean = meanOf(nullValues);
     const nullSd = nullValues.length > 1 ? Math.sqrt(sampleVariance(nullValues)) : 0;
+    const countBasisNote = exact ? "count / total" : "(count + 1) / (B + 1)";
+    // When the prespecified alternative is one-sided, its p value IS pLess or pGreater --
+    // not a third quantity. Emitting `p value (${alternative})` unconditionally duplicated
+    // whichever row already held that same value, under a different note, with nothing on
+    // screen explaining why the identical number appeared twice (reported from a live study,
+    // 2026-09-07). Mark the prespecified row instead of repeating it; only "two-sided" is a
+    // genuinely distinct quantity from both one-sided tails.
     const summaryRows = [
       { quantity: "observed statistic", value: observed, note: `${options.statistic} (${parsed.design})` },
       { quantity: "permutations evaluated", value: total, note: exact ? `exact: ${exactKind}` : `Monte Carlo with seed ${options.seed}` },
-      { quantity: "p value (less)", value: pLess, note: exact ? "count / total" : "(count + 1) / (B + 1)" },
-      { quantity: "p value (greater)", value: pGreater, note: exact ? "count / total" : "(count + 1) / (B + 1)" },
-      { quantity: `p value (${options.alternative})`, value: pValue, note: options.alternative === "two-sided" ? "2 x min(less, greater), capped at 1" : "one-sided" },
+      { quantity: "p value (less)", value: pLess, note: options.alternative === "less" ? `${countBasisNote} -- prespecified alternative` : countBasisNote },
+      { quantity: "p value (greater)", value: pGreater, note: options.alternative === "greater" ? `${countBasisNote} -- prespecified alternative` : countBasisNote },
+      ...(options.alternative === "two-sided"
+        ? [{ quantity: "p value (two-sided)", value: pValue, note: "2 x min(less, greater), capped at 1 -- prespecified alternative" }]
+        : []),
       { quantity: "Monte Carlo SE of p", value: monteCarloSe, note: exact ? "exact enumeration" : "binomial approximation" },
       { quantity: "null distribution mean", value: nullMean, note: "" },
       { quantity: "null distribution SD", value: nullSd, note: "" },

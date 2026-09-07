@@ -393,7 +393,7 @@ function createComposerEventSync({
     artifactContextsByMessage: new Map(), labContextsById: new Map(), artifactHistoryById: new Map(), selectedLabId: null, selectedArtifactOriginVersion: null, inspectedArtifactVersion: null, inspectedArtifactContext: null, artifactComparison: null, draftHistoryGuard: null, labsExpanded: true, expandedLabGroups: new Set(["chemistry"]), expandedLabDecisions: new Set(), projectMenuOpen: false, projectFolderOpen: false, projectLibrarySummaries: new Map(), projectLibrarySummaryState: "loading", librarySearch: "", librarySelectedProjectId: null, projectFolderSelectedKey: null, newProjectStep: "details", selectedResearchTemplateId: null, selectedResearchTemplateIds: [], newProjectDraft: blankNewProjectDraft(), newProjectFolderError: "", newProjectFolderBusy: false, newProjectGeneration: 0, newProjectRequestId: null, newProjectRequestSignature: "", labManagerOpen: false, labManagerBusyId: null, labManagerGeneration: 0, labManagerError: "", historyOpen: false, railCollapsed: readRailCollapsed(),
     blocksByMessage: new Map(), citationsByMessage: new Map(), evidenceById: new Map(), selectedSourceId: null, sourceVersionsByKey: new Map(), sourceLookupRequestId: null, sourceLookupCitationId: null, sourceLookupLoading: false, sourceLookupError: "", selectedArtifactId: null,
     evidenceGraph: null, evidenceGraphReviews: [], evidenceGraphLoading: false, evidenceGraphRefreshId: null, evidenceGraphError: "", selectedEvidenceGraphNodeId: null, selectedEvidenceGraphCandidateId: null, evidenceGraphExactRecordRequestId: null, evidenceGraphExactRecordNodeId: null, evidenceGraphExactRecordLoading: false, evidenceGraphExactRecordError: "", evidenceGraphReviewSheet: false, evidenceGraphReviewDecision: "accepted", evidenceGraphReviewBusy: false, evidenceGraphReviewError: "", evidenceGraphPathAnchorId: null, evidenceGraphPath: null,
-    mode: "session", drawer: null, modal: false, manuscriptModal: false, saving: false, loadingProject: false, projectError: "", projectFolderOpenBusy: false, projectFolderOpenError: "", activeVegaView: null, activeCytoscape: null, activeNumericSurface: null, activeJBrowseTarget: null, scrollByMode: { session: 0, lab: 0, manuscript: 0 }, returnMessageId: null,
+    mode: "session", drawer: null, modal: false, manuscriptModal: false, saving: false, loadingProject: false, projectError: "", projectFolderOpenBusy: false, projectFolderOpenError: "", projectFolderLoadStalled: false, activeVegaView: null, activeCytoscape: null, activeNumericSurface: null, activeJBrowseTarget: null, scrollByMode: { session: 0, lab: 0, manuscript: 0 }, returnMessageId: null,
     workspaceTabs: [{ id: "research", kind: "research", dirty: false }], activeWorkspaceTabId: "research", currentDestination: "overview", hypotheses: [], hypothesesLoaded: false, hypothesesError: "", approvalPolicy: null, approvalPolicyError: "", workspaceSyncError: "",
     analysisRuns: [], analysisRunArtifacts: [], analysisRunsError: "", analysisRunsProjectId: null,
     resultArtifacts: [], resultFigureIds: new Set(), resultValidations: new Map(), resultsError: "", resultsProjectId: null,
@@ -540,6 +540,15 @@ function createComposerEventSync({
 
   const escapeHtml = (value) => String(value ?? "").replace(/[&<>'"]/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;" })[character]);
   const heroIcon = (name, className = "uiIcon") => `<svg class="${escapeHtml(className)}" aria-hidden="true" viewBox="0 0 24 24"><use href="./icons/heroicons-outline.svg#${escapeHtml(name)}"></use></svg>`;
+  // A one-off translation per internal code does not scale: this is the third distinct code
+  // (evidence-graph, then run-parent-binding) to reach a screen as bare machine text with no
+  // human framing, each time costing the researcher the same "is this my fault?" pause before
+  // remembering it never is (reported live, three times across two sessions, 2026-09-08).
+  // Recognized codes still get a specific sentence where one is known; this is the backstop for
+  // every code this file has not been taught yet, so "no plain-English sentence anywhere" can
+  // no longer happen -- the raw code stays visible (never swallowed), just not alone.
+  const BARE_INTERNAL_CODE_RE = /^[a-z][a-z0-9]*(?:[-.][a-z0-9]+){2,}$/;
+  const looksLikeBareInternalCode = (value) => BARE_INTERNAL_CODE_RE.test(String(value || "").trim());
   function compileArtifactVegaSpec(spec) {
     if (!spec || typeof spec !== "object" || Array.isArray(spec)) throw new Error("science-vega-spec-invalid");
     const schema = typeof spec.$schema === "string" ? spec.$schema.toLowerCase() : "";
@@ -2451,6 +2460,27 @@ function createComposerEventSync({
     }
   }
 
+  // The "Saved research contents" preview reuses the full workspace loader, whose several
+  // sequential awaits each re-check a shared epoch against every OTHER selectProject call --
+  // including reactive background refreshes an active research loop fires continually. Every
+  // one of those bumps the same epoch, so a heavily active project can keep superseding this
+  // call before it ever reaches its own completion line, leaving `state.loadingProject` stuck
+  // true forever with no error to show, because a superseded call returns silently by design.
+  // Reported live as "stuck loading across five sessions, never once resolved" (2026-09-08) on
+  // a project whose loop was, at the time, crash-looping and therefore unusually noisy. Rather
+  // than rebuild this preview's loader (a bigger, riskier change), detect the stall honestly and
+  // offer a retry instead of an infinite, silently-lying spinner.
+  function openProjectFolder(projectId) {
+    state.projectFolderLoadStalled = false;
+    void selectProject(projectId, { openFolder: true });
+    window.setTimeout(() => {
+      if (state.loadingProject && state.projectFolderOpen && state.selectedId === projectId) {
+        state.projectFolderLoadStalled = true;
+        render();
+      }
+    }, 8_000);
+  }
+
   function projectRail(project) {
     const summaryByLabId = new Map(state.labs.map((lab) => [lab.labId, lab]));
     const enabledLabIds = new Set(state.workspaceLabBindings.filter((binding) => binding.enabled).map((binding) => binding.labId));
@@ -3752,6 +3782,12 @@ function createComposerEventSync({
     // bare code if it -- or a sibling evidence-graph validation code -- ever recurs.
     if (/^science-evidence-graph-(query|limit|traversal|edge-kind)-invalid$/.test(raw)) {
       return `<div class="failClosed" role="status"><strong>${heroIcon("book")}${uiCopy("연구를 시작하지 못했습니다", "The research did not start")}</strong><p>${uiCopy("연구 에이전트가 근거 그래프를 잘못된 형식으로 요청해 실행이 시작되지 않았습니다. 이는 당신의 입력이 아니라 에이전트 쪽 결함입니다. 다시 시도하면 보통 해결됩니다.", "The research agent asked the Evidence Graph for something in a malformed shape, so the run never started. This is a defect on the agent's side, not anything about your input -- retrying usually resolves it.")}</p></div>`;
+    }
+    // A code this file has not been taught a specific sentence for yet: still say plainly that
+    // this is an internal fault, not the researcher's, before showing what came back -- rather
+    // than showing only the bare code, or swallowing it entirely.
+    if (looksLikeBareInternalCode(raw)) {
+      return `<div class="failClosed" role="status"><strong>${heroIcon("book")}${uiCopy("연구를 시작하지 못했습니다", "The research did not start")}</strong><p>${uiCopy("연구 실행이 내부 오류로 시작되지 않았습니다. 당신의 입력 문제가 아닙니다.", "The research run failed to start because of an internal error. This is not about your input.")} <code>${escapeHtml(raw.slice(0, 200))}</code></p></div>`;
     }
     // Anything else: say that it did not start and show what came back, rather than swallowing it.
     return `<div class="failClosed" role="status"><strong>${heroIcon("book")}연구를 시작하지 못했습니다</strong><p>${escapeHtml(raw.slice(0, 400))}</p></div>`;
@@ -8013,6 +8049,9 @@ function createComposerEventSync({
     if (/^science-evidence-graph-(query|limit|traversal|edge-kind)-invalid$/.test(t)) {
       return uiCopy("연구 에이전트가 근거 그래프를 잘못된 형식으로 요청해 이 실행이 시작되지 않았습니다. 당신의 입력 문제가 아닙니다. 다시 요청하면 보통 해결됩니다.", "The research agent asked the Evidence Graph for something in a malformed shape, so this run never started. This isn't about your input -- retrying usually resolves it.");
     }
+    if (looksLikeBareInternalCode(t)) {
+      return `${uiCopy("내부 오류로 이 단계가 진행되지 않았습니다. 당신의 입력 문제가 아닙니다.", "This step did not proceed because of an internal error. This is not about your input.")} (${t})`;
+    }
     return t;
   }
 
@@ -8192,7 +8231,8 @@ function createComposerEventSync({
     const explained = /^Error invoking remote method/i.test(t)
       || /science-research-director-package-version-mismatch/.test(t)
       || /package-integrity|package-signature/.test(t)
-      || /^science-evidence-graph-(query|limit|traversal|edge-kind)-invalid$/.test(t);
+      || /^science-evidence-graph-(query|limit|traversal|edge-kind)-invalid$/.test(t)
+      || looksLikeBareInternalCode(t);
     // 본문 안내를 가리키려면 그 안내가 실제로 그려져 있어야 한다. 실물로 확인했다 —
     // .failClosed 가 본문 위쪽(303px)에 폭 760 으로 그려진다. 그래서 가리켜도 된다.
     return explained ? "실행을 시작하지 못했습니다 · 위 안내를 확인하세요" : t;
@@ -9102,7 +9142,9 @@ function createComposerEventSync({
     if (selectedRow && state.projectFolderSelectedKey !== selectedRow.key) state.projectFolderSelectedKey = selectedRow.key;
     const fileRows = rows.map((row) => `<button class="projectHubFileCard" type="button" data-action="select-project-folder-item" data-folder-item-key="${escapeHtml(row.key)}" aria-pressed="${row.key === selectedRow?.key}"><span class="projectHubFileIcon">${heroIcon(row.icon)}</span><span><small>${escapeHtml(row.kind)}</small><strong title="${escapeHtml(row.title)}">${escapeHtml(row.title)}</strong><em>${escapeHtml(row.detail)}</em></span><time>${escapeHtml(formatDate(row.stamp))}</time></button>`).join("");
     const body = state.loadingProject
-      ? `<div class="projectHubEmpty" aria-live="polite"><strong>${uiCopy("프로젝트 내용을 불러오는 중…", "Loading project contents…")}</strong></div>`
+      ? state.projectFolderLoadStalled
+        ? `<div class="projectHubEmpty" role="status"><strong>${uiCopy("불러오는 데 예상보다 오래 걸리고 있습니다.", "This is taking longer than expected.")}</strong><span>${uiCopy("연구가 활발히 진행 중이면 이 미리보기가 계속 밀릴 수 있습니다. 다시 시도하거나, 워크스페이스를 열면 현재 데이터를 바로 볼 수 있습니다.", "An actively running study can keep bumping this preview before it finishes loading. Retry, or open the workspace to see current data directly.")}</span><div class="projectHubDetailActions"><button class="secondaryButton" type="button" data-action="retry-project-folder-load" data-library-project-id="${escapeHtml(project.id)}">${uiCopy("다시 시도", "Retry")}</button><button class="primaryButton" type="button" data-action="open-project-workspace">${uiCopy("워크스페이스 열기", "Open workspace")}${heroIcon("chevron-right")}</button></div></div>`
+        : `<div class="projectHubEmpty" aria-live="polite"><strong>${uiCopy("프로젝트 내용을 불러오는 중…", "Loading project contents…")}</strong></div>`
       : state.projectError
         ? `<div class="projectHubEmpty" role="alert"><strong>${escapeHtml(state.projectError)}</strong></div>`
         : fileRows || `<div class="projectHubEmpty"><strong>${uiCopy("아직 저장된 연구 내용이 없습니다.", "No research contents have been saved yet.")}</strong><span>${uiCopy("워크스페이스에서 출처를 추가하거나 Lab을 실행하면 실제 기록이 나타납니다.", "Add a source or run a Lab in the workspace to create a real record.")}</span></div>`;
@@ -11855,8 +11897,14 @@ function createComposerEventSync({
     if (target.dataset.action === "open-library-project" || target.dataset.action === "open-sidebar-project") {
       const projectId = target.dataset.libraryProjectId;
       if (!projectId) return;
-      const action = () => void selectProject(projectId, { openFolder: true });
+      const action = () => openProjectFolder(projectId);
       if (!guardArtifactDraftNavigation(action)) action();
+      return;
+    }
+    if (target.dataset.action === "retry-project-folder-load") {
+      const projectId = target.dataset.libraryProjectId;
+      if (!projectId) return;
+      openProjectFolder(projectId);
       return;
     }
     if (target.dataset.action === "open-project-folder-os") {

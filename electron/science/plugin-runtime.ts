@@ -24,7 +24,7 @@ const SOURCE_MANIFEST_PINS: Readonly<Record<string, string>> = Object.freeze({
   "agentlas-materials-science": "fe4b6a90efb60d0f60c424ef3fb9e063f8728ae6566b5a19452b173903a3725e",
   "agentlas-paleontology": "75915dc8dddc06e2e37a0bd688dd982d3b99793639de26fb0009858ac89f3753",
   "agentlas-economic-data": "d5a92c6e8d64c57f61ee6ee7176ddb2f97181f7a6eaa837a50ce8e71e0a5cf6e",
-  "agentlas-science-statistics": "e8f2ffa2e8529c0eb39ef1ac449a3a712995f455cffac54f122be93b552c5d59",
+  "agentlas-science-statistics": "ccf8158b383d00ecac643d3ae7ac18a11779d006b738badfc8262917c81c2483",
 });
 const PUBLIC_MANIFEST_PINS_SCHEMA = "agentlas.science-public-plugin-manifest-pins/v1";
 let cachedPublicManifestPins: Readonly<Record<string, string>> | null = null;

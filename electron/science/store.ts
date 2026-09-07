@@ -607,7 +607,7 @@ import {
   builtinAgentId,
 } from "../architecture/manifest";
 
-export const SCIENCE_SCHEMA_VERSION = 59;
+export const SCIENCE_SCHEMA_VERSION = 60;
 const UUID_RE = /^[a-f0-9]{8}-[a-f0-9]{4}-[1-8][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/i;
 const SHA256_RE = /^[a-f0-9]{64}$/;
 const SCIENCE_SOURCE_TEXT_CHUNK_MAX_BYTES = 2_400;
@@ -4561,6 +4561,60 @@ export class ScienceStore {
     if (columns.length > 0 && !columns.some((column) => column.name === "folder_path")) {
       this.db.exec("ALTER TABLE projects ADD COLUMN folder_path TEXT");
     }
+  }
+
+  /**
+   * One-time schema-60 promotion. Before this release, nothing ever recorded
+   * `verification_status = 'content-checked'` on a source -- the only function
+   * that could (`recordSourceCheck`) had no caller until academic-full-text.ts
+   * was fixed to call it on a successful retrieval. Every source fetched
+   * before that fix is stuck at 'unverified' forever unless something
+   * retroactively corrects the record, which would otherwise force a
+   * researcher to re-retrieve full text they already hold, one source at a
+   * time, purely to relabel bytes that were never actually in question.
+   *
+   * A source qualifies only if its CURRENT version already has verified,
+   * byte-matching full text on disk (`access_state` parsed/evidence-linked,
+   * a content hash, and a CAS asset_ref that names that exact hash) -- that
+   * is the same standard `verifiedSourceBytes` enforces at use time, checked
+   * here up front so a source whose bytes are missing or corrupt is left
+   * exactly as unverified as it honestly is, not silently waved through.
+   */
+  private promoteAlreadyParsedSourcesToContentChecked(): void {
+    const sourceColumns = new Set((this.db.pragma("table_info('sources')") as Array<{ name: string }>).map((column) => column.name));
+    const versionColumns = new Set((this.db.pragma("table_info('source_versions')") as Array<{ name: string }>).map((column) => column.name));
+    if (!sourceColumns.has("verification_status") || !versionColumns.has("access_state")
+      || !versionColumns.has("content_sha256") || !versionColumns.has("asset_ref")) return;
+    const candidates = this.db.prepare(`
+      SELECT s.id AS sourceId, s.project_id AS projectId, s.current_version AS currentVersion,
+             v.id AS sourceVersionId, v.content_sha256 AS contentSha256
+      FROM sources s JOIN source_versions v ON v.source_id = s.id AND v.version = s.current_version
+      WHERE s.verification_status = 'unverified' AND v.access_state IN ('parsed','evidence-linked')
+        AND v.content_sha256 IS NOT NULL AND v.asset_ref = 'science-source-cas:sha256:' || v.content_sha256
+    `).all() as Array<{ sourceId: string; projectId: string; currentVersion: number; sourceVersionId: string; contentSha256: string }>;
+    const now = new Date().toISOString();
+    const updateSource = this.db.prepare("UPDATE sources SET verification_status = 'content-checked', updated_at = ? WHERE id = ? AND project_id = ? AND current_version = ?");
+    const insertCheck = this.db.prepare("INSERT INTO source_checks (id,project_id,source_id,source_version_id,status,code,summary,created_at) VALUES (?,?,?,?,?,?,?,?)");
+    let promoted = 0;
+    for (const candidate of candidates) {
+      const target = path.join(this.sourceAssetRoot, candidate.contentSha256.slice(0, 2), candidate.contentSha256);
+      let bytes: Buffer;
+      try {
+        const stat = fs.lstatSync(target);
+        if (stat.isSymbolicLink() || !stat.isFile()) continue;
+        bytes = fs.readFileSync(target);
+      } catch {
+        continue; // CAS bytes genuinely missing: leave unverified, fail honestly (science-source-cas-missing) at use time.
+      }
+      if (createHash("sha256").update(bytes).digest("hex") !== candidate.contentSha256) continue;
+      updateSource.run(now, candidate.sourceId, candidate.projectId, candidate.currentVersion);
+      insertCheck.run(randomUUID(), candidate.projectId, candidate.sourceId, candidate.sourceVersionId, "content-checked",
+        "schema-migration-v60-existing-parsed-bytes",
+        "Retroactively recorded as content-checked: this source already held verified, byte-matching full text before this migration ran, but nothing had ever recorded that fact.",
+        now);
+      promoted += 1;
+    }
+    console.log(`[science-store] schema migration v60: promoted ${promoted} of ${candidates.length} already-parsed source(s) to content-checked`);
   }
 
   /**
@@ -9511,6 +9565,7 @@ export class ScienceStore {
             BEFORE DELETE ON analysis_plan_review_receipts BEGIN SELECT RAISE(ABORT, 'science-analysis-plan-review-immutable'); END;
           `);
         }
+        if (found < 60) this.promoteAlreadyParsedSourcesToContentChecked();
         this.ensureProjectFolderColumn();
         this.ensureProjectDataRefreshTables();
         this.ensureResearchContractCompletionScopeColumn();

@@ -82,6 +82,7 @@ export interface ScienceWorkbookNormalizationDictionaryEntry {
 export interface ScienceWorkbookNormalizationInferenceEvidence {
   id: string;
   sheetOrdinal: number;
+  sourceColumn: string;
   address: string;
   observedValue: ScienceDatasetCell;
   note: string;
@@ -341,7 +342,7 @@ function validatePlanShape(book: ScienceWorkbookEnvelope, value: unknown): Scien
     const evidenceIds = new Set<string>();
     const evidence = (rawInference.evidence as unknown[]).map((rawEvidence): ScienceWorkbookNormalizationInferenceEvidence => {
       const evidenceRecord = record(rawEvidence);
-      if (!evidenceRecord || !exactKeys(evidenceRecord, ["id", "sheetOrdinal", "address", "observedValue", "note"])) {
+      if (!evidenceRecord || !exactKeys(evidenceRecord, ["id", "sheetOrdinal", "sourceColumn", "address", "observedValue", "note"])) {
         fail("science-workbook-normalization-inference-evidence-invalid");
       }
       const id = assertText(evidenceRecord.id, "science-workbook-normalization-inference-evidence-invalid", 120);
@@ -350,15 +351,18 @@ function validatePlanShape(book: ScienceWorkbookEnvelope, value: unknown): Scien
       const evidenceSheetOrdinal = assertOrdinal(evidenceRecord.sheetOrdinal, "science-workbook-normalization-inference-evidence-invalid", book.sheets.length - 1);
       const evidenceSheet = sheetFor(book, evidenceSheetOrdinal, "science-workbook-normalization-inference-evidence-invalid");
       const evidenceCells = cellMap(evidenceSheet);
+      const sourceColumn = assertText(evidenceRecord.sourceColumn, "science-workbook-normalization-inference-evidence-invalid", 3);
+      if (!COLUMN_RE.test(sourceColumn) || columnNumber(sourceColumn) > 16_384) fail("science-workbook-normalization-inference-evidence-invalid");
       const address = assertText(evidenceRecord.address, "science-workbook-normalization-inference-evidence-invalid", 12);
-      parseAddress(address);
+      const parsedAddress = parseAddress(address);
+      if (parsedAddress.column !== sourceColumn) fail("science-workbook-normalization-inference-evidence-mismatch");
       const observedValue = assertCellValue(evidenceRecord.observedValue, "science-workbook-normalization-inference-evidence-invalid");
       const observedCell = cellAt(evidenceSheet, evidenceCells, address);
       if (!evidenceCells.has(address) || !compareCellValue(observedCell.value, observedValue) || observedCell.warning !== null) {
         fail("science-workbook-normalization-inference-evidence-mismatch");
       }
       const note = assertText(evidenceRecord.note, "science-workbook-normalization-inference-evidence-invalid", 512);
-      return { id, sheetOrdinal: evidenceSheetOrdinal, address, observedValue, note };
+      return { id, sheetOrdinal: evidenceSheetOrdinal, sourceColumn, address, observedValue, note };
     });
     inference = { mode: "headerless", rationale, evidence };
   } else if (plan.inference !== null) {
@@ -553,7 +557,12 @@ function applyColumnOperations(raw: ScienceDatasetCell, column: ScienceWorkbookN
         if (typeof value === "number") {
           if (!Number.isFinite(value)) fail("science-workbook-normalization-number-invalid");
         } else if (typeof value === "string" && NUMBER_RE.test(value.trim())) {
-          value = Number(value.trim());
+          const literal = value.trim();
+          const parsed = Number(literal);
+          if (!Number.isFinite(parsed)) fail("science-workbook-normalization-number-invalid");
+          const significand = literal.split(/[eE]/u, 1)[0] ?? literal;
+          if (parsed === 0 && /[1-9]/u.test(significand)) fail("science-workbook-normalization-number-underflow");
+          value = parsed;
         } else {
           fail("science-workbook-normalization-number-invalid");
         }

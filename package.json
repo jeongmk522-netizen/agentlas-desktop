@@ -196,6 +196,7 @@
     "test:curator-judgment-ladder": "node scripts/local/curator-uses-the-judgment-ladder-contract.cjs",
     "test:result-rail-truth": "node scripts/local/result-rail-tells-the-truth-contract.cjs",
     "test:denied-tool-way-out": "node scripts/local/denied-tool-offers-a-way-out-contract.cjs",
+    "test:one-bubble-width": "node scripts/local/one-bubble-fits-its-text-contract.cjs",
     "test:comparable-refusal-reason": "node scripts/local/comparable-refusal-names-its-reason-contract.cjs"
   },
   "dependencies": {

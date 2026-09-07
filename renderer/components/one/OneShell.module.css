@@ -1310,11 +1310,27 @@
   min-width: 0;
 }
 
+/*
+ * ★ 이 칸은 **줄 전체 폭**이어야 한다. 말풍선의 `88%` 가 무엇의 88% 인지가 여기서 갈린다.
+ *
+ * 이 칸은 `justify-items: start|end` 를 받는 그리드 자식이라, 폭을 안 정해 두면 **자기
+ * 자식만큼 줄어든다.** 그러면 말풍선의 `max-width: min(790px, 88%)` 가 스레드 폭이 아니라
+ * **자기 자신의 88%** 로 풀려, 모든 말풍선이 필요한 폭의 12% 를 늘 빼앗긴다.
+ *
+ * 실측(657px 스레드, 제품 CSS·폰트): "hello" 는 30.8px 를 원하는데 상자가 24px 로 잡혀
+ * `hell` / `o` 두 줄로 쪼개졌고, 긴 한국어 한 문장도 361px 를 원하는데 343px 를 받아 두 줄로
+ * 흘렀다. 글이 길든 짧든 늘 한 줄이 더 생긴다. `overflow-wrap` 은 이 일과 무관하다 —
+ * `anywhere` 와 `break-word` 가 똑같이 쪼개졌다.
+ *
+ * 폭을 채우면 88% 는 의도대로 스레드 폭 기준이 되고, 좌우 정렬은 이 칸이 상속하는
+ * `justify-items` 가 그대로 맡는다.
+ */
 .messageContent {
   display: grid;
   justify-items: inherit;
   gap: 8px;
   min-width: 0;
+  width: 100%;
   max-width: 100%;
 }
 

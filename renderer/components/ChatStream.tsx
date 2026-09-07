@@ -887,6 +887,21 @@ const Bubble = memo(function Bubble({
   // hook-order crash exactly at that transition.
   const workspaceRootForRun = useContext(WorkspaceRootContext);
   const workActivity = useMemo(() => workActivityStateFromMessage(message), [message]);
+  /*
+   * Which engine ran is host status, not conversation content.
+   *
+   * Every notice already becomes a row inside the work block, which collapses when the turn ends.
+   * Rendering the same rows again as standalone cards meant "This run is connected to ..." stayed
+   * pinned under the answer forever, once per turn, pushing the thing the person actually asked for
+   * up and out of the way. Warnings and errors still get a card, because those are things to act on.
+   */
+  const persistentNotices = useMemo(
+    () => (message.notices ?? []).filter((notice) => {
+      if (notice.level === "error" || notice.level === "warning") return true;
+      return notice.code !== "runtime-selected" && notice.code !== "runtime-fallback";
+    }),
+    [message.notices],
+  );
   const workActivities = useMemo(
     () => message.activityRuns?.length
       ? message.activityRuns.map((run) => ({ runId: run.runId, state: run.state }))
@@ -1091,9 +1106,9 @@ const Bubble = memo(function Bubble({
               ))}
           </div>
         )}
-        {message.notices && message.notices.length > 0 && (
+        {persistentNotices.length > 0 && (
           <div className="agentlas-chat-notices">
-            {message.notices.map((notice) => (
+            {persistentNotices.map((notice) => (
               <ChatNoticeRow key={notice.id} notice={notice} />
             ))}
           </div>

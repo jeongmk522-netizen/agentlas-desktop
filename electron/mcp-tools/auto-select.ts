@@ -67,6 +67,19 @@ export interface AutoSelectedMcpContext {
   needsDecided: boolean;
   /** Value-free note: nothing was decided, or the candidate inventory was capped. */
   needsNote?: string;
+  /**
+   * Why nothing was decided, and whether that cost anything.
+   *
+   * "undecided" and "there was nothing to decide" are different facts with different next actions,
+   * and collapsing them made the product warn on every single message. A plain request with no
+   * optional tool in play produced the same alarming card as a browser task whose judge was dead.
+   */
+  needsOutcome?: {
+    decided: boolean;
+    /** Candidates the judge was actually offered. Zero means there was nothing to decide. */
+    candidateCount: number;
+    reason: string;
+  };
 }
 
 export interface AutoSelectMcpDependencies {
@@ -543,9 +556,11 @@ export async function autoSelectMcpTools(input: {
     }));
 
   // ONE judgment call decides the whole optional tool set — Hub entries offered first.
+  const needsCandidates = [...hubCandidates, ...localCandidates, ...customCandidates];
+  const needsCandidateCount = needsCandidates.length;
   const needs = await deps.resolveNeeds({
     task: taskText,
-    candidates: [...hubCandidates, ...localCandidates, ...customCandidates],
+    candidates: needsCandidates,
     signal: input.signal,
     timeoutMs: 15_000,
   });
@@ -785,6 +800,7 @@ export async function autoSelectMcpTools(input: {
     hubPlugins,
     ...(pendingApprovalTools.length > 0 ? { pendingApprovalTools } : {}),
     needsDecided: needs.decided,
+    needsOutcome: { decided: needs.decided, candidateCount: needsCandidateCount, reason: needs.reason },
     ...(needsNote ? { needsNote } : {}),
     ...(hubInventory.hubPluginError ? { hubPluginError: hubInventory.hubPluginError } : {}),
   };

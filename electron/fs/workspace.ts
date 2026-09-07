@@ -55,7 +55,7 @@ export interface TextFilePreview {
   truncated: boolean;
   size: number;
   /** 텍스트가 아니라고 판정되면 content=''; reason 필드에 사유 */
-  reason?: "binary" | "too-large" | "not-text-ext";
+  reason?: "binary" | "too-large" | "not-text-ext" | "missing" | "not-a-file";
 }
 
 function isHiddenName(name: string): boolean {
@@ -161,10 +161,13 @@ async function readTextFilePreviewResolved(resolved: string): Promise<TextFilePr
   try {
     stat = await fs.lstat(resolved);
   } catch {
-    return { path: resolved, content: "", truncated: false, size: 0, reason: "binary" };
+    // "The file is not there" and "the file is not text" are different facts with different next
+    // actions. Reporting both as `binary` left the result rail saying a freshly written output was
+    // unreadable, with nothing to act on.
+    return { path: resolved, content: "", truncated: false, size: 0, reason: "missing" };
   }
   if (stat.isSymbolicLink() || !stat.isFile()) {
-    return { path: resolved, content: "", truncated: false, size: 0, reason: "binary" };
+    return { path: resolved, content: "", truncated: false, size: 0, reason: "not-a-file" };
   }
   if (!isTextLike(path.basename(resolved))) {
     return { path: resolved, content: "", truncated: false, size: stat.size, reason: "not-text-ext" };

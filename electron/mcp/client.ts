@@ -2746,15 +2746,32 @@ ${effectiveUserPrompt}`;
         reselect: () => autoSelectMcpTools({ ...autoSelectInput, bypassSelectionMemo: true }),
       });
       selectedContext = keyGate.context;
-      if (!selectedContext.needsDecided) {
+      /*
+       * Only say this when it actually cost something.
+       *
+       * "Nothing was decided" and "there was nothing to decide" arrived here as the same boolean, so
+       * a plain request with zero optional tools in play raised the same alarming card as a browser
+       * task whose judge was dead — on every single message, permanently, for anyone whose only
+       * connected runtime cannot prove tool-free isolation. A warning that is always on is a warning
+       * nobody reads, and this one told the person to re-send a request that had nothing wrong with
+       * it.
+       *
+       * The notice now requires a real loss (candidates existed and none could be judged) and names
+       * the cause, because the next action differs: a runtime that refuses judgment outright is not
+       * fixed by waiting or retrying — it is fixed by connecting one that can.
+       */
+      const needsOutcome = selectedContext.needsOutcome;
+      const undecidedCostSomething = !selectedContext.needsDecided && (needsOutcome?.candidateCount ?? 0) > 0;
+      if (undecidedCostSomething) {
+        const cause = needsOutcome?.reason ?? "no connected model answered";
         sink({
           kind: "notice",
           notice: {
             level: "warning",
             code: "mcp-selection-undecided",
             message: locale === "ko"
-              ? "필요한 도구를 고를 판단 모델에 연결되지 않아 판단 모델이 고른 선택형 도구 없이 계속합니다. 브라우저나 컴퓨터 제어가 필요한 결과는 완료로 간주하지 말고, 런타임 연결을 확인한 뒤 같은 요청을 다시 보내 주세요."
-              : "No judgment model was connected to choose the tools this task needs, so the run is continuing without any optional tool chosen by that model. Do not treat browser or computer-control work as complete; check the runtime connection and send the same request again.",
+              ? `이번 실행에서는 어떤 선택형 도구가 필요한지 정해 줄 모델이 대답하지 않아, 미리 지정된 도구만 붙여 진행했습니다(사유: ${cause}). 브라우저나 컴퓨터 제어가 필요한 일이었다면 결과를 완료로 보지 마시고, 격리 실행이 가능한 런타임(예: Claude Code)을 하나 연결한 뒤 다시 보내 주세요.`
+              : `No model answered which optional tools this task needs, so the run continued with only the explicitly configured ones (cause: ${cause}). If this task needed browser or computer control, do not treat the result as complete: connect a runtime that can run isolated judgment (Claude Code, for example) and send it again.`,
           },
         });
       }

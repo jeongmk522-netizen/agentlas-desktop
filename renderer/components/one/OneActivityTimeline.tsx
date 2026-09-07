@@ -1,5 +1,7 @@
 "use client";
 
+import { filePreviewEmptyMessage } from "@/lib/file-preview-reason";
+
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   IconArrowLeft,
@@ -617,7 +619,7 @@ function ChatFileOpenViewer({ file, locale, onExpand }: { file: ChatFileItem; lo
     </div>}
     <div style={{ minHeight: 0, flex: 1, overflow: liveKind ? "hidden" : "auto" }}>
       {file.kind === "directory" || ["markdown", "json", "text"].includes(preview.viewerKind) ? (
-        <pre style={{ margin: 0, padding: 12, fontFamily: "var(--font-mono)", fontSize: 11.5, lineHeight: 1.55, whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>{preview.content || (locale === "ko" ? "내용을 읽을 수 없습니다." : "The file content is unavailable.")}</pre>
+        <pre style={{ margin: 0, padding: 12, fontFamily: "var(--font-mono)", fontSize: 11.5, lineHeight: 1.55, whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>{preview.content || filePreviewEmptyMessage(preview.reason, locale, preview.name)}</pre>
       ) : liveKind && file.fileUrl ? (
         <LiveOutputViewer
           source={file.fileUrl}

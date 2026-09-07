@@ -1,5 +1,7 @@
 // ProjectTask cockpit — 프로젝트 소유 작업의 대화, 실행, inspector.
 "use client";
+
+import { filePreviewEmptyMessage } from "@/lib/file-preview-reason";
 import { Suspense, useCallback, useEffect, useRef, useState, useMemo, type CSSProperties, type Dispatch, type SetStateAction } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { grantForPastedImage, ipc, ipcEvents } from "@/lib/ipc";
@@ -720,7 +722,7 @@ function WorkRailResult({
     return <Markdown text={preview.content || ""} messageId={`work-rail:${preview.path || preview.fileUrl}`} />;
   }
   if (preview.viewerKind === "json" || preview.viewerKind === "text") {
-    return <pre style={{ margin: 0, padding: 16, whiteSpace: "pre-wrap", overflow: "auto", fontFamily: "var(--font-mono)", fontSize: 12, lineHeight: 1.55 }}>{preview.content || (locale === "ko" ? "내용을 읽을 수 없습니다." : "The file content is unavailable.")}</pre>;
+    return <pre style={{ margin: 0, padding: 16, whiteSpace: "pre-wrap", overflow: "auto", fontFamily: "var(--font-mono)", fontSize: 12, lineHeight: 1.55 }}>{preview.content || filePreviewEmptyMessage(preview.reason, locale, preview.name)}</pre>;
   }
   return (
     <div

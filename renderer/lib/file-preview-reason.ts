@@ -1,0 +1,47 @@
+/**
+ * Why a text preview came back empty, said out loud.
+ *
+ * The reader has always known the reason and passed it up. Both result rails threw it away and
+ * printed one sentence — "The file content is unavailable." — for a missing file, a binary file, an
+ * unrecognised extension, and a file that is simply empty. A person watching a run finish and then
+ * being told the output cannot be read, with no cause and nothing to do, reasonably concludes the
+ * product is broken.
+ *
+ * An empty file is not a failure and must not be dressed as one.
+ */
+export type FilePreviewReason = "binary" | "too-large" | "not-text-ext" | "missing" | "not-a-file";
+
+export function filePreviewEmptyMessage(
+  reason: FilePreviewReason | undefined,
+  locale: string,
+  name?: string,
+): string {
+  const ko = locale === "ko";
+  const subject = name ? `"${name}"` : ko ? "이 파일" : "this file";
+  switch (reason) {
+    case "missing":
+      return ko
+        ? `${subject}이(가) 있던 자리에 없습니다. 실행이 끝난 뒤 옮겨지거나 지워졌을 수 있습니다.`
+        : `${subject} is no longer where it was recorded. It may have been moved or removed after the run finished.`;
+    case "not-a-file":
+      return ko
+        ? `${subject}은(는) 일반 파일이 아니라 폴더이거나 바로가기입니다.`
+        : `${subject} is not a regular file — it is a directory or a link.`;
+    case "binary":
+      return ko
+        ? `${subject}은(는) 글자가 아닌 파일이라 여기서는 못 보여 줍니다. 외부 앱으로 열어 보세요.`
+        : `${subject} is not text, so it cannot be shown here. Open it in an external application.`;
+    case "not-text-ext":
+      return ko
+        ? `${subject}의 형식은 미리보기가 지원되지 않습니다. 외부 앱으로 열어 보세요.`
+        : `${subject} has a format this preview does not support. Open it in an external application.`;
+    case "too-large":
+      return ko
+        ? `${subject}이(가) 미리보기 한도보다 커서 앞부분만 읽었습니다.`
+        : `${subject} is larger than the preview limit, so only the beginning was read.`;
+    default:
+      // No reason and no content means the file really is empty. Say that plainly rather than
+      // implying a failure.
+      return ko ? `${subject}은(는) 비어 있습니다.` : `${subject} is empty.`;
+  }
+}

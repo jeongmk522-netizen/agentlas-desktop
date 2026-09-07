@@ -211,7 +211,9 @@
     "styled-exceljs": "0.21.1",
     "three": "0.173.0",
     "ws": "^8.18.0",
-    "zod": "^3.23.8"
+    "zod": "^3.23.8",
+    "sharp": ">=0.35.0",
+    "molstar": "5.11.0"
   },
   "devDependencies": {
     "@electron/fuses": "^1.8.0",

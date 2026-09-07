@@ -132,16 +132,21 @@ function sourceGeometry(sourceId: string | null): {
     const known = sourceGeometries.get(sourceId);
     if (known) return known;
   }
-  const displays = screen.getAllDisplays();
-  if (displays.length === 0) return null;
-  const sourceDisplayId = sourceId?.match(/^screen:(\d+):/)?.[1] ?? null;
-  const display = displays.find((candidate) => String(candidate.id) === sourceDisplayId) ?? screen.getPrimaryDisplay();
-  return {
-    sourceId,
-    frameWidth: 1120,
-    frameHeight: 700,
-    bounds: display.bounds,
-  };
+  /*
+   * ★프레임 크기를 지어내지 않는다 (실측 2026-09-07).
+   *
+   * 예전에는 잰 적 없는 화면에도 `frameWidth: 1120, frameHeight: 700` 을 돌려줬다.
+   * 그 700 은 우리가 **요청한** 썸네일 크기이고, 실제로 돌아오는 프레임은 화면 비율에
+   * 맞춰 줄어든다 — 실측에서 1120×**630** 이었다. 그래서 같은 좌표가 이렇게 갈렸다:
+   *     잰 기하로:  화면 중앙 y=540
+   *     지어낸 값:  y=486        ← 10% 어긋난 자리를 누른다
+   * 그리고 그 클릭은 **성공으로 보고된다.** 조용히 틀린 좌표는 실패보다 나쁘다:
+   * 에이전트는 눌렀다고 믿고 다음 단계로 넘어간다.
+   *
+   * 프레임 좌표는 캡처가 있어야만 뜻이 있다. 잰 기하가 없으면 정직하게 없다고 답하고,
+   * 호출자는 화면을 먼저 찍으면 된다(그때 sourceGeometries 가 채워진다).
+   */
+  return null;
 }
 
 function mapPoint(body: Record<string, unknown>, prefix = ""): Point | null {
@@ -238,7 +243,24 @@ async function runAction(body: Record<string, unknown>): Promise<NativeInputResu
     }
   }
 
-  if (!request) return { ok: false, error: "invalid-arguments", message: "Computer Use action arguments were rejected." };
+  if (!request) {
+    /*
+     * ★거절에는 푸는 길이 있어야 한다. 이 자리에서 압도적으로 흔한 사유는 "좌표는 왔는데
+     * 그 화면을 잰 적이 없다"이다 — 프레임 좌표는 캡처가 있어야만 뜻이 있고, 잰 기하가
+     * 없으면 mapPoint 가 null 을 돌려준다(예전에는 1120×700 을 지어내 10% 어긋난 자리를
+     * 조용히 눌렀다). 그럴 땐 무엇을 하면 되는지 말한다: 화면을 먼저 찍어라.
+     */
+    const wantsPoint = finiteNumber(body.x) !== null && finiteNumber(body.y) !== null;
+    const sourceId = typeof body.sourceId === "string" ? body.sourceId : null;
+    if (wantsPoint && !sourceGeometry(sourceId)) {
+      return {
+        ok: false,
+        error: "screen-not-measured",
+        message: "Capture the screen first: frame coordinates only mean something after get_screen, which measures this display.",
+      };
+    }
+    return { ok: false, error: "invalid-arguments", message: "Computer Use action arguments were rejected." };
+  }
   const result = await invokeNativeInputDriver(request);
   recordAudit(action, result, action === "typeText" && typeof body.text === "string" ? body.text.length : undefined);
   return result;

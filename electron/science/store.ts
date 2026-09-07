@@ -11801,6 +11801,10 @@ export class ScienceStore {
       if (prior) {
         const artifact = this.getArtifactForProject(input.projectId, prior.artifact.id);
         if (!artifact?.sourceRunId) throw new Error("science-workbook-projection-replay-invalid");
+        if (artifact.currentVersion !== prior.artifact.currentVersion
+          || artifact.version.contentSha256 !== prior.artifact.version.contentSha256) {
+          throw new Error("science-workbook-projection-version-conflict");
+        }
         this.verifiedDatasetTableForRun(input.projectId, artifact.sourceRunId);
         return { artifact, replayed: true };
       }

@@ -1,6 +1,7 @@
 "use client";
 
 import { useRouter, useSearchParams } from "next/navigation";
+import { failureMessage, isChatBusyFailure } from "@/lib/invocation-failure";
 import {
   type CSSProperties,
   Fragment,
@@ -4647,6 +4648,26 @@ export function OneShell() {
         setTurnOverrides(overrideSnapshot);
         setTurnAgentIds(turnAgentIds);
       }
+      /*
+       * ★되돌려 주는 것만으로는 부족하다 — **왜 안 갔는지**도 말해야 한다 (2026-09-08).
+       *
+       *   위 두 갈래(새 대화 실패·첨부 준비 실패)만 문구를 냈고, **그 밖의 전부**는
+       *   글만 조용히 작성창으로 돌아왔다. 사용자 입장에서는 보낸 글이 되돌아온 것과
+       *   아무 일도 안 일어난 것이 구별되지 않는다.
+       *   오너 2026-09-07: "아무것도 안떠서 되는지 안 되는지 알 수 없잖아".
+       *
+       *   `setError` 는 이 화면에서 **한 번도 그려지지 않는 상태**였다(설정만 하고 읽는
+       *   자리가 없다). 그래서 이미 화면에 그려지는 actionNotice 로 낸다.
+       */
+      const raw = failureMessage(cause);
+      setActionNotice(
+        isChatBusyFailure(cause)
+          // 엔진이 이미 "무엇을 하면 되는지"까지 담아 보낸 문장이다. 덮어쓰지 않는다.
+          ? raw
+          : appLocale === "ko"
+            ? `보내지 못했습니다${raw ? `: ${raw}` : " (이유가 오지 않았습니다)"}. 글과 첨부는 작성창에 그대로 있습니다 — 다시 보내 주세요.`
+            : `The message was not sent${raw ? `: ${raw}` : " (no reason came back)"}. Your text and attachments are still in the composer; send it again.`,
+      );
       requestOneOperationalRecovery("one-submit", cause);
       setError(null);
     }

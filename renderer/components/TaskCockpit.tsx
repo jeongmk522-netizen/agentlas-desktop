@@ -3,6 +3,7 @@
 
 import { filePreviewEmptyMessage } from "@/lib/file-preview-reason";
 import { isPlaceholderTaskTitle, taskTitleForDisplay } from "@/lib/task-title";
+import { failureMessage, isChatBusyFailure } from "@/lib/invocation-failure";
 import { Suspense, useCallback, useEffect, useRef, useState, useMemo, type CSSProperties, type Dispatch, type SetStateAction } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { grantForPastedImage, ipc, ipcEvents } from "@/lib/ipc";
@@ -114,6 +115,34 @@ import {
 
 function uid(): string {
   return Math.random().toString(36).slice(2);
+}
+
+/**
+ * 실행이 시작조차 못 했을 때 그 자리에 남길 문장.
+ *
+ * ★왜 (2026-09-08): 예전 문구는 이유와 무관하게 늘 "실행 환경을 확인한 뒤 다시 보내
+ *   주세요" 였다. 그런데 실패 이유는 여러 가지고, 그중 "이 대화가 아직 앞 요청을 돌리는
+ *   중"은 실행 환경과 아무 상관이 없다 — 엉뚱한 곳을 확인하게 만든다.
+ *   엔진이 이유를 코드와 함께 보내 주면 그 문장을 그대로 쓴다(엔진 쪽이 이미
+ *   "무엇을 하면 되는지"까지 담아 보낸다).
+ */
+function startFailureText(cause: unknown, locale: string, hadImages: boolean): string {
+  const raw = failureMessage(cause);
+  const ko = locale === "ko";
+  const restored = ko
+    ? `입력은 작성창에 되돌려 놓았습니다${hadImages ? " (사진은 다시 첨부해 주세요)" : ""}.`
+    : `Your text is back in the composer${hadImages ? " (please attach the image again)" : ""}.`;
+  if (isChatBusyFailure(cause) && raw) {
+    return ko
+      ? `이 대화가 아직 앞 요청을 돌리는 중이라 시작하지 못했습니다. ${restored} ${raw}`
+      : `This turn did not start because the chat is still running an earlier request. ${restored} ${raw}`;
+  }
+  const why = raw
+    ? (ko ? ` 이유: ${raw}` : ` Reason: ${raw}`)
+    : (ko ? " 이유가 오지 않았습니다." : " No reason came back.");
+  return ko
+    ? `작업을 시작하지 못해 이 턴은 기록에 남지 않았습니다. ${restored}${why} 다시 보내 주세요.`
+    : `The task did not start, so this turn was not recorded. ${restored}${why} Send it again.`;
 }
 
 function taskTitleFromFirstPrompt(value: string): string {
@@ -4323,7 +4352,7 @@ function ChatPage() {
         // runId 도착 전에 Stop을 눌렀다면(레이스) 구독을 건 직후 즉시 취소 — abort 종료 이벤트를 수신해 busy 해제.
         if (cancelRequestedRef.current) requestRunCancellation(runId);
         return true;
-      } catch {
+      } catch (cause) {
         if (!isCurrentChat()) return false;
         // invoke 실패 — 미리 건 구독을 정리해 유령 리스너가 남지 않게 한다.
         subRef.current?.();
@@ -4365,9 +4394,7 @@ function ChatPage() {
               ? {
                   id: msg.id,
                   role: "system",
-                  text: locale === "ko"
-                    ? `작업을 시작하지 못해 이 턴은 기록에 남지 않았습니다. 입력은 작성창에 되돌려 놓았습니다${hadImages ? " (사진은 다시 첨부해 주세요)" : ""}. 실행 환경을 확인한 뒤 다시 보내 주세요.`
-                    : `The task did not start, so this turn was not recorded. Your text is back in the composer${hadImages ? " (please attach the image again)" : ""}. Check the runtime and send it again.`,
+                  text: startFailureText(cause, locale, hadImages),
                 }
               : msg,
           ),

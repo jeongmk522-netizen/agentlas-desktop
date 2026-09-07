@@ -2,6 +2,7 @@
 "use client";
 
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type DragEvent, type PointerEvent as ReactPointerEvent } from "react";
+import { failureMessage } from "@/lib/invocation-failure";
 import { taskTitleForDisplay } from "@/lib/task-title";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
@@ -418,7 +419,9 @@ function ProjectPage() {
       window.dispatchEvent(new Event("agentlas:tasks-changed"));
       navigate(`/workspace/task?id=${encodeURIComponent(target.chatId)}&task=${encodeURIComponent(target.taskId)}&projectId=${encodeURIComponent(project.id)}`);
     } catch (error) {
-      const raw = (error instanceof Error ? error.message : String(error ?? "")).replace(/^(Error:\s*)+/, "").trim();
+      // IPC 포장("Error invoking remote method '...': Error: ")까지 벗긴다 —
+      // 사용자에게 remote method 이름을 보여 줄 이유가 없다.
+      const raw = failureMessage(error);
       /*
        * 엔진이 내는 이유는 셋뿐이다(electron/ipc.ts "tasks:createProject").
        * 그 영어 문장을 그대로 보여 주면 "무엇을 해야 하는지"가 없다 — 뜻과 다음 할 일로 옮긴다.

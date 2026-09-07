@@ -129,6 +129,23 @@ export function startWebhookServer(): Promise<number> {
           res.writeHead(503, { "content-type": "application/json", "retry-after": "5" })
             .end('{"ok":false,"error":"enqueue_failed"}');
         }
+      }).catch((error) => {
+        /*
+         * ★거부된 약속에 답이 없으면 **요청이 영영 매달린다** (2026-09-07).
+         *
+         * 여기까지 오면 본문 읽기가 실패한 것이다(연결 끊김·인코딩 오류 등). catch 가
+         * 없으면 이 요청에는 아무 응답도 안 나가고, 보낸 쪽은 자기 타임아웃까지 기다린다.
+         * 같은 병을 컴퓨터 유즈 /capture 에서도 잡았다 — 성공 뒤 뒷정리가 던져 응답이
+         * 안 나가고 요청이 매달렸다. **응답은 무조건 나간다**가 규칙이다.
+         * 재시도 가능한 실패이므로 503 + retry-after 로 답한다.
+         */
+        console.error("[triggers] webhook body read failed:", error);
+        try {
+          res.writeHead(503, { "content-type": "application/json", "retry-after": "5" })
+            .end('{"ok":false,"error":"body_read_failed"}');
+        } catch {
+          // 소켓이 이미 닫혔다 — 더 할 수 있는 일이 없다.
+        }
       });
     });
 

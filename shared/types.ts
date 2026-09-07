@@ -4794,6 +4794,14 @@ export interface AuthSession {
   workspaceId?: string;
   /** 세션이 만료될 epoch ms — 알 수 없으면 미설정 */
   expiresAt?: number;
+  /**
+   * 로그인이 **실패로 끝난** 이유. signedIn:false 일 때만 실린다.
+   *
+   * ★왜 (2026-09-07): 브라우저 로그인을 마쳤는데 저장이 실패하면(키체인 잠김 등)
+   * 예전에는 아무도 그 사실을 말하지 않고 3분 타임아웃 뒤 그냥 "로그인 안 됨"이 됐다.
+   * 실패한 로그인은 왜 실패했는지 말할 수 있어야 한다.
+   */
+  error?: string;
 }
 
 // ── LLM 엔진 사용량 (구독 rate-limit 창 + 크레딧) ──────────────

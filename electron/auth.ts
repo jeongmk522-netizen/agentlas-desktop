@@ -952,7 +952,21 @@ export async function signInWithBrowser(): Promise<AuthSession> {
       res.writeHead(value ? 200 : 400, { "content-type": "text/html; charset=utf-8" });
       res.end(callbackHtml(!!value));
       if (!value) return;
-      void persistSession(value).then((session) => finish(session, server));
+      /*
+       * ★거부된 약속에 catch 가 없으면 로그인이 **3분간 매달린다** (2026-09-07).
+       *
+       * persistSession 이 던지면(키체인 잠김·디스크 오류·검증 실패) 이 then 은 안 돌고
+       * finish 도 안 불린다. 그러면 아래 setTimeout(180000) 만 남아, 사용자는 브라우저에서
+       * 로그인을 마쳤는데도 3분을 기다린 끝에 이유 없는 "로그인 안 됨"을 받는다.
+       * 실패는 즉시, 그리고 사유와 함께 끝내야 한다.
+       */
+      void persistSession(value)
+        .then((session) => finish(session, server))
+        .catch((error) => {
+          const reason = error instanceof Error ? error.message : String(error);
+          console.error("[auth] sign-in callback could not be saved:", reason);
+          finish({ signedIn: false, error: reason.slice(0, 300) }, server);
+        });
     });
 
     server.on("error", () => finish({ signedIn: false }));

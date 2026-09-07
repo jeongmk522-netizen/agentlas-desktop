@@ -290,6 +290,17 @@ function toolFilePathsFromSteps(
      * 사람을 있지도 않은 파일로 보낸다.
      */
     if (detail.type === "shell") {
+      /*
+       * ★실패한 명령이 쓰려던 곳은 산출물이 아니다 (QA 실측 2026-09-08).
+       *
+       * exit 1 로 죽은 명령의 리다이렉션 대상까지 결과 레일에 올리고 있었다. 그 명령은
+       * 파일을 만들지 못했는데 레일은 만들어졌다고 말한 셈이다 — 사람을 없는 파일로
+       * 보내는 것이라, 없는 항목보다 나쁘다.
+       *
+       * 종료 코드를 **모르는 경우**(undefined/null)는 그대로 수집한다. 모르는 것을
+       * 실패로 단정하면 종료 코드를 안 싣는 런타임에서 산출물이 통째로 사라진다.
+       */
+      if (typeof detail.exitCode === "number" && detail.exitCode !== 0) continue;
       for (const written of shellWrittenPaths(detail.command)) {
         if (seen.has(written)) continue;
         seen.add(written);
@@ -2463,10 +2474,17 @@ function ChatPage() {
           reason: text.reason,
         };
       } else {
-        // A persisted transcript link can outlive the file it referenced.
-        // Keep the tab and show an explicit unavailable state instead of an
-        // empty viewer that looks like a successfully opened blank document.
-        next = { ...next, content: "", available: false };
+        /*
+         * A persisted transcript link can outlive the file it referenced.
+         * Keep the tab and show an explicit unavailable state instead of an
+         * empty viewer that looks like a successfully opened blank document.
+         *
+         * ★사유도 함께 바꿔야 한다 (QA 실측 2026-09-08). 여기서 available 만 내리고
+         * reason 을 그대로 두면 자리표시 문장("아직 읽지 않았습니다. 외부 앱으로 열어
+         * 보세요")이 남는다. 파일이 없는데 사람을 파인더로 보내 없는 파일을 찾게 만든다.
+         * 읽기가 실패했다는 것은 최소한 "여기서 못 읽었다"이므로, 부재로 말한다.
+         */
+        next = { ...next, content: "", available: false, reason: "missing" };
       }
     }
     // 읽은 내용으로 채운다. 자리는 위에서 이미 열었으므로 여기서 다시 열지 않는다.
@@ -5587,7 +5605,19 @@ function ChatPage() {
     : liveWorkbenchSurface
       ? `surface:${liveWorkbenchSurface.id}`
       : mediaPreview
+        /*
+         * ★키에 "읽었는가"가 들어가야 한다 (QA 실측 2026-09-08).
+         *
+         * 미리보기는 먼저 자리표시로 열리고(내용 없음, 사유 not-read) 그 다음 실제로 읽어
+         * 내용·사유·경로를 채운다. 그런데 키가 경로와 판번호뿐이라 채워져도 값이 같았고,
+         * 결과 레일은 **자리표시를 계속 그렸다.** 화면에는 "아직 읽지 않았습니다"가 남고,
+         * 패널을 껐다 켜야 비로소 읽힌 내용이 보인다.
+         *
+         * 사유와 내용 유무를 키에 넣으면 채워진 순간 한 번 다시 그린다. 읽기는 파일당
+         * 한 번이라 깜빡임이 늘지 않는다.
+         */
         ? `preview:${mediaPreview.path || mediaPreview.fileUrl}:${mediaPreview.revision ?? ""}`
+          + `:${mediaPreview.reason ?? ""}:${mediaPreview.content ? "read" : "empty"}`
         : null;
   const workAppPreview = useMemo<OneLiveAppPreview | null>(() => {
     const currentSurface = liveWorkbenchSurface;

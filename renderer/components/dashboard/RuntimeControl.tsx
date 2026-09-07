@@ -16,7 +16,8 @@ import {
 } from "./RuntimeModelPicker";
 import { runtimeUsesEngineModelSetting } from "@shared/models";
 
-type ModelRow = { id: string; label: string; tag?: string };
+// resolvedId: 별칭이 실제로 어느 모델로 풀렸는지(실행이 알려준 값). 없으면 모르는 것.
+type ModelRow = { id: string; label: string; tag?: string; resolvedId?: string };
 
 /**
  * 이 행이 고를 수 있는 작업량.
@@ -346,6 +347,7 @@ export function RuntimeControl() {
           model: model.id,
           label: model.label,
           tag: model.tag,
+          ...(model.resolvedId ? { resolvedId: model.resolvedId } : {}),
           runtime,
         });
       }

@@ -143,6 +143,7 @@
     "test:store-isolation": "node scripts/store-isolation-contract.mjs",
     "test:stdio-epipe-guard": "tsc -p electron/tsconfig.json && node scripts/stdio-epipe-guard-contract.cjs",
     "test:runtime-fallback-choice": "tsc -p electron/tsconfig.json && node scripts/runtime-fallback-does-not-change-choice-contract.cjs",
+    "test:resolved-model": "tsc -p electron/tsconfig.json && node scripts/resolved-model-is-read-not-written-contract.cjs",
     "probe:permission-vectors": "tsc -p electron/tsconfig.json && node scripts/probe-runtime-permission-bypass.mjs",
     "probe:permission-live": "tsc -p electron/tsconfig.json && node scripts/probe-runtime-permission-bypass.mjs --live --check",
     "test:store-sidecar-lock-safety": "tsc -p electron/tsconfig.json && electron scripts/store-sidecar-lock-safety-contract.cjs",

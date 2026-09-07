@@ -624,6 +624,12 @@ export interface RunnerResult {
   observedUsage?: { inputTokens: number; outputTokens: number };
   /** Exact effort explicitly applied by the runner; null means no explicit effort was sent. */
   appliedEffort?: string | null;
+  /**
+   * 이번 실행이 **실제로 쓴 모델 id**. 우리가 보낸 값이 벤더 별칭일 때만 의미가 있다
+   * (claude-code 는 모델 목록 명령이 없어 `opus|sonnet|haiku` 별칭만 보낼 수 있다).
+   * 값의 출처는 런타임이 돌려준 사실 하나뿐이라, 벤더가 세대를 올려도 저절로 따라간다.
+   */
+  observedModel?: string;
   /** Present only when a Workforce runtime has verified and enforced its main-minted grant. */
   workforcePermissionEnforcement?: WorkforcePermissionEnforcementReceipt;
 }

@@ -6,7 +6,7 @@ import { clearCodexBinCache, probeCodex } from "./codex";
 import { readCodexModelDiscovery } from "./codex-models";
 import { summarizeDiscovery, unsupportedDiscovery, type DiscoveryOutcome } from "../../shared/model-discovery";
 import { POOL_AUTOPICK_ROLES, RUNTIME_ROLES, type RuntimeRole } from "../../shared/runtime-roles";
-import { reportDiscoveryLoudly } from "./model-discovery-store";
+import { reportDiscoveryLoudly , storedResolvedAliases } from "./model-discovery-store";
 import { registerProbeModels } from "./model-catalog";
 import { ACP_AGENTS, acpDisabledFor, probeAcpModelsCached } from "./acp";
 import { listAcpKindSpecs, resolveAcpCommand } from "./acp-agents";
@@ -41,6 +41,7 @@ import {
   byokModels,
   cliModels,
   defaultByokModel,
+  setResolvedCliModelAlias,
 } from "../../shared/models";
 import { recallRuntimeSelection, rememberRuntimeSelection } from "./selection-memory";
 import { clearCliVersionProbeCache } from "./exec";
@@ -274,8 +275,27 @@ function saveActiveRuntime(status: RuntimeStatus | RuntimeSelection): void {
  * 모든 런타임을 병렬로 감지. 메인 프로세스에서만 호출.
  * - 로컬 CLI 3종 + BYOK API 키 3종 = 최대 6개 후보 반환
  */
+/*
+ * 별칭 해석은 실행이 남긴 사실이라 앱을 껐다 켜면 메모리에서 사라진다. 감지 때 한 번
+ * 되살려 두면, 아직 한 번도 안 돌린 상태에서도 화면이 마지막으로 확인된 실제 모델을
+ * 보여 준다. 벤더가 세대를 올리면 다음 실행이 알아서 덮는다.
+ */
+let resolvedAliasesHydrated = false;
+function hydrateResolvedAliasesOnce(): void {
+  if (resolvedAliasesHydrated) return;
+  resolvedAliasesHydrated = true;
+  try {
+    for (const item of storedResolvedAliases()) {
+      setResolvedCliModelAlias(item.runtime, item.alias, item.model);
+    }
+  } catch {
+    // 저장본이 없거나 깨졌으면 별칭만 보인다 — 감지를 막을 이유는 아니다.
+  }
+}
+
 export async function detectRuntimes(force = false): Promise<RuntimeStatus[]> {
   if (process.env.AGENTLAS_DISABLE_RUNTIME_PROBES === "1") return [];
+  hydrateResolvedAliasesOnce();
   if (force) {
     // A normal Dashboard/Sidebar probe may already be running. Reusing it would
     // make the explicit "Run checks" action stale even after cache invalidation.

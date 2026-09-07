@@ -180,6 +180,35 @@ export const WRITE_MODE_PRE_ALLOWED_TOOLS = ["Bash", "BashOutput", "KillShell", 
  * 적을 수밖에 없다.** 베낀 사본은 러너가 바뀌어도 안 바뀌므로, 프로브가 초록인데
  * 제품은 막히는 상태가 만들어진다. 프로브는 이 함수를 그대로 부른다.
  */
+/**
+ * 이번 실행이 **실제로 쓴 모델 id** 를 result 이벤트에서 읽는다 — 순수 함수.
+ *
+ * ★왜 (오너 2026-09-07: "버전 바뀌어도 알아서 읽게 해라"). claude-code 에는 모델 목록
+ *   명령이 없어(detect.ts `no-list-concept:cli-aliases`) 우리가 보낼 수 있는 것은 벤더
+ *   별칭 `opus|sonnet|haiku|fable` 뿐이고, 화면에도 그것만 보였다. 버전을 코드에 적어
+ *   두면 벤더가 세대를 올리는 순간 거짓이 된다.
+ *
+ *   그런데 CLI 는 이미 답을 주고 있었다. 실측(2.1.263)한 result 이벤트:
+ *     "modelUsage": { "claude-opus-5[1m]": { …토큰… } }
+ *   대괄호 뒤는 컨텍스트 창 표식(1m)이라 잘라낸다. 여러 모델이 섞이면(서브에이전트 등)
+ *   토큰을 가장 많이 쓴 쪽이 이 턴의 주 모델이다.
+ *
+ * @returns 모델 id, 못 읽으면 null(짐작하지 않는다)
+ */
+export function observedClaudeModelId(modelUsage: unknown): string | null {
+  if (!modelUsage || typeof modelUsage !== "object" || Array.isArray(modelUsage)) return null;
+  let best: { id: string; tokens: number } | null = null;
+  for (const [rawKey, value] of Object.entries(modelUsage as Record<string, unknown>)) {
+    const id = String(rawKey).replace(/\[[^\]]*\]\s*$/, "").trim();
+    if (!id || id.length > 128 || /[\s"']/.test(id)) continue;
+    const usage = value && typeof value === "object" ? value as Record<string, unknown> : {};
+    const tokens = ["inputTokens", "outputTokens", "cacheReadInputTokens", "cacheCreationInputTokens"]
+      .reduce((sum, field) => sum + (typeof usage[field] === "number" ? usage[field] as number : 0), 0);
+    if (!best || tokens > best.tokens) best = { id, tokens };
+  }
+  return best ? best.id : null;
+}
+
 export function claudePermissionArgs(
   permission: RunnerRequest["permission"],
   opts: { browserOnly?: boolean; untrustedNoTools?: boolean } = {},
@@ -1127,6 +1156,8 @@ const runClaudeTurn = async (
     let finalText = "";
     let tokens: number | undefined;
     let observedUsage: { inputTokens: number; outputTokens: number } | undefined;
+    /** 이번 턴이 실제로 쓴 모델 id — 별칭(opus)이 어느 세대로 풀렸는지. */
+    let observedModel: string | undefined;
     let stderr = "";
     let structuredRuntimeError: Error | null = null;
     /** 스트림 표식이 말한 실패 — 있으면 종료코드와 무관하게 이 턴은 답이 아니다. */
@@ -1364,6 +1395,12 @@ const runClaudeTurn = async (
         cache_read_input_tokens?: number;
         cache_creation_input_tokens?: number;
       };
+      /*
+       * ★어느 모델이 실제로 돌았는지 — 벤더가 result 이벤트에 직접 싣는다.
+       * 실측(claude 2.1.263): {"modelUsage":{"claude-opus-5[1m]":{…}}}.
+       * 우리가 보낸 것은 별칭 `opus` 뿐이므로, 세대를 아는 유일한 길이 이 칸이다.
+       */
+      modelUsage?: Record<string, unknown>;
       error?: unknown;
       is_error?: boolean;
       terminal_reason?: string;
@@ -1560,6 +1597,8 @@ const runClaudeTurn = async (
         runnerFailure = claudeFailureFromEvent(ev, finalText, runnerFailure);
       } else if (ev.type === "result") {
         if (typeof ev.result === "string") finalText = ev.result;
+        // 별칭이 어느 세대로 풀렸는지는 이 이벤트만 안다(위 observedClaudeModelId 주석).
+        observedModel = observedClaudeModelId(ev.modelUsage) ?? observedModel;
         if (ev.usage?.output_tokens != null) tokens = ev.usage.output_tokens;
         if (ev.usage) {
           // `inputTokens` 는 **모델에 실제로 들어간 토큰 전부**로 센다:
@@ -1720,6 +1759,7 @@ const runClaudeTurn = async (
           sessionId,
           tokens,
           observedUsage,
+          ...(observedModel ? { observedModel } : {}),
           workforcePermissionEnforcement: hostAuthorityWorkforce
             ? observedHostEnforcement
             : hasExactWorkforceMcpGrant
@@ -1745,6 +1785,7 @@ const runClaudeTurn = async (
             failure: runnerFailure,
             tokens,
             observedUsage,
+            ...(observedModel ? { observedModel } : {}),
             workforcePermissionEnforcement: hostAuthorityWorkforce
             ? undefined
             : hasExactWorkforceMcpGrant

@@ -160,6 +160,8 @@ import { autoSelectMcpTools, buildMcpAutoSelectionPrompt } from "../mcp-tools/au
 import { runMcpKeyElicitationGate } from "./run-key-elicitation";
 import { bridgeHubPluginCandidates } from "../mcp-tools/hub-plugin-bridge";
 import { noteRuntimeFailure, noteRuntimeSucceeded, runtimeCooldown, clearRuntimeCooldown } from "../runtime/runtime-cooldown";
+import { recordResolvedAlias } from "../runtime/model-discovery-store";
+import { setResolvedCliModelAlias } from "../../shared/models";
 import { buildMcpConfigFile } from "../mcp-tools/mcp-config";
 import {
   refreshBrowserCredentialsIfDue,
@@ -6057,6 +6059,20 @@ ${effectiveUserPrompt}`;
       // 세션 워터마크 전진 — 이 kind의 세션은 방금 답변까지 봤다. 다음 resume 턴의
       // gap-replay가 자기 답변을 중복 주입하지 않고, 스웜/다른 러너 턴만 메우게 된다.
       if (sessionCapableRuntime) touchRuntimeSession(chat.id, active.kind, agent.id);
+    }
+    /*
+     * ★어느 세대가 실제로 돌았는지 기록한다 (오너 2026-09-07: "버전 바뀌어도 알아서
+     * 읽게 해라"). claude-code 는 모델 목록 명령이 없어 우리가 보낼 수 있는 것이 벤더
+     * 별칭(`opus`)뿐이고 화면에도 그것만 보였다. 실행 결과가 실제 id 를 싣고 오므로
+     * 그것을 남긴다 — 벤더가 세대를 올리면 다음 실행이 알아서 덮는다. 우리가 적는 값은 없다.
+     */
+    if (result.observedModel && active.model && result.observedModel !== active.model) {
+      setResolvedCliModelAlias(active.kind, active.model, result.observedModel);
+      try {
+        recordResolvedAlias(active.kind, active.model, result.observedModel);
+      } catch {
+        // 저장 실패는 이번 세션의 표시를 막지 않는다(메모리 레지스트리는 이미 갱신됐다).
+      }
     }
     const finalObservedTokens = Math.max(result.tokens ?? 0, liveUsageHigh);
     if (finalObservedTokens > 0) {

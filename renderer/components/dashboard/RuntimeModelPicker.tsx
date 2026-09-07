@@ -13,6 +13,12 @@ export type RuntimeModelPickerOption = {
   runtime: RuntimeStatus;
   isDefault?: boolean;
   unavailable?: boolean;
+  /**
+   * 이 별칭이 실제로 어느 모델로 풀렸는지 — 실행이 알려준 값(우리가 적은 값이 아니다).
+   * claude-code 는 모델 목록 명령이 없어 화면에 별칭 `opus` 만 보였다. 세대가 바뀌면
+   * 다음 실행이 새 값으로 덮으므로 하드코딩과 달리 낡지 않는다.
+   */
+  resolvedId?: string;
 };
 
 const RUNTIME_LABEL: Record<string, string> = {
@@ -237,7 +243,13 @@ export function RuntimeModelPicker({
   );
   const selected = selectedIndex >= 0 ? options[selectedIndex] : null;
   const selectedProvider = selected ? runtimeProviderLabel(selected.runtime) : "";
-  const selectedIdentity = selected ? runtimeProviderEngineLabel(selected.runtime) : "";
+  const identityWithModel = (option: RuntimeModelPickerOption, base: string): string => (
+    // 별칭이 어느 세대로 풀렸는지 아는 경우에만 덧붙인다. 모르면 아무 말도 하지 않는다.
+    option.resolvedId ? (base ? `${base} · ${option.resolvedId}` : option.resolvedId) : base
+  );
+  const selectedIdentity = selected
+    ? identityWithModel(selected, runtimeProviderEngineLabel(selected.runtime))
+    : "";
   const selectedLogo = selected
     ? llmLogoSrc({
         model: selected.model,
@@ -393,7 +405,7 @@ export function RuntimeModelPicker({
                   </span>
                   <span className="dashboard-runtime-model-picker-option-copy">
                     <strong>{optionModelLabel(option, locale)}</strong>
-                    <small>{identity}</small>
+                    <small>{identityWithModel(option, identity)}</small>
                     {option.tag && <em>{cliModelTagLabel(option.tag, locale)}</em>}
                   </span>
                   {option.key === value && <span className="dashboard-runtime-model-picker-check" aria-hidden="true">✓</span>}

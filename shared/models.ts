@@ -248,6 +248,18 @@ export interface CliModelOption {
   workforceTier?: "economy" | "balanced" | "frontier";
   /** 보조 표기 키(로케일 무관). 표시 라벨은 cliModelTagLabel(tag, locale). */
   tag?: CliModelTag;
+  /**
+   * 이 별칭이 **실제로 어느 모델로 풀렸는지** — 실행이 알려준 값이지 우리가 적은 값이 아니다.
+   *
+   * ★왜 필요한가 (오너 2026-09-07: "왜 클로드는 opus 5.0이 아니고 opus라고 나오냐",
+   *   "버전 바뀌어도 알아서 읽게 해라"). claude-code 는 모델 목록 명령이 없어서
+   *   (detect.ts: `no-list-concept:cli-aliases`) 화면에 벤더 별칭 `opus` 만 보였다.
+   *   버전을 여기 적어 두는 것은 답이 아니다 — 벤더가 세대를 올리는 순간 거짓이 된다
+   *   (이 파일 아래 주석의 2026-07-28 실측이 같은 교훈이다).
+   *   대신 실행 결과가 실제 모델 id 를 싣고 온다(claude `result.modelUsage` 키:
+   *   "claude-opus-5[1m]"). 그것을 기록해 보여주면 세대가 바뀌어도 저절로 따라간다.
+   */
+  resolvedId?: string;
 }
 
 // tag 키 → 로케일별 표시 라벨. IPC로는 키만 넘기고, 렌더러에서 로케일에 맞춰 변환.
@@ -362,10 +374,41 @@ export function cliModelsAreDiscovered(kind: string): boolean {
   return DISCOVERED_CLI_MODELS.has(kind);
 }
 
+/**
+ * 별칭 → 실행에서 관측된 실제 모델 id. 키는 `${kind}:${alias}`.
+ * 값의 출처는 오직 실행 결과다 — 여기에 손으로 넣는 값은 없다.
+ */
+const RESOLVED_CLI_ALIASES = new Map<string, string>();
+
+/** 실행이 알려준 실제 모델을 기록한다. 별칭과 같은 값이면 덧붙일 것이 없다. */
+export function setResolvedCliModelAlias(kind: string, alias: string, resolvedId: string): void {
+  const key = `${kind}:${alias}`;
+  const value = resolvedId.trim();
+  if (!value || value === alias) {
+    RESOLVED_CLI_ALIASES.delete(key);
+    return;
+  }
+  RESOLVED_CLI_ALIASES.set(key, value);
+}
+
+export function resolvedCliModelAlias(kind: string, alias: string): string | null {
+  return RESOLVED_CLI_ALIASES.get(`${kind}:${alias}`) ?? null;
+}
+
 export function cliModels(kind: string): CliModelOption[] {
-  return DISCOVERED_CLI_MODELS.get(kind) ??
+  const base = DISCOVERED_CLI_MODELS.get(kind) ??
     (CLI_MODELS as Record<string, CliModelOption[] | undefined>)[kind] ??
     [];
+  if (RESOLVED_CLI_ALIASES.size === 0) return base;
+  // 관측값이 있는 항목만 새 객체를 만든다 — 없으면 원본을 그대로 돌려준다.
+  let annotated = false;
+  const next = base.map((option) => {
+    const resolved = RESOLVED_CLI_ALIASES.get(`${kind}:${option.id}`);
+    if (!resolved) return option;
+    annotated = true;
+    return { ...option, resolvedId: resolved };
+  });
+  return annotated ? next : base;
 }
 
 // ── 작업량(reasoning effort) — installed runtime discovery only ─────

@@ -6453,7 +6453,7 @@ export function OneShell() {
                     aria-haspopup="menu"
                     aria-expanded={taskMenuOpen}
                     onClick={() => setTaskMenuOpen((value) => !value)}
-                  >MENU</button>
+                  >{appLocale === "ko" ? "메뉴" : "MENU"}</button>
                   {taskMenuOpen && (
                     <div className={styles.taskToolbarMenuPopover} role="menu">
                       {selected && (

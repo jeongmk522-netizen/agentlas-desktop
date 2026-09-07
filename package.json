@@ -195,7 +195,8 @@
     "test:science-chat-does-not-lose-work": "node scripts/local/science-chat-does-not-lose-work-contract.cjs",
     "test:curator-judgment-ladder": "node scripts/local/curator-uses-the-judgment-ladder-contract.cjs",
     "test:result-rail-truth": "node scripts/local/result-rail-tells-the-truth-contract.cjs",
-    "test:denied-tool-way-out": "node scripts/local/denied-tool-offers-a-way-out-contract.cjs"
+    "test:denied-tool-way-out": "node scripts/local/denied-tool-offers-a-way-out-contract.cjs",
+    "test:comparable-refusal-reason": "node scripts/local/comparable-refusal-names-its-reason-contract.cjs"
   },
   "dependencies": {
     "@file-viewer/preset-lite": "^2.3.0",

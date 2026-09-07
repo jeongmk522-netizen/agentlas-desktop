@@ -22025,13 +22025,37 @@ export class ScienceStore {
     const current = this.getSourceForProject(input.projectId, input.sourceId);
     const expectedVersion = safePositiveInteger(input.expectedSourceVersion, 1, Number.MAX_SAFE_INTEGER, "manuscript-comparable-source-version");
     const expectedSha256 = safeSha256(input.expectedSourceContentSha256, "manuscript-comparable-source-sha256");
-    if (!source || !current || current.verificationStatus !== "content-checked" || current.currentVersion !== expectedVersion
-      || current.version.id !== input.expectedSourceVersionId || current.version.contentSha256 !== expectedSha256
-      || source.version.version !== expectedVersion || source.version.contentSha256 !== expectedSha256
-      || !["parsed", "evidence-linked"].includes(source.version.accessState)
-      || !["journal-article", "preprint", "book"].includes(source.kind)) {
-      throw new Error("science-manuscript-comparable-eligibility-source-invalid");
-    }
+    /*
+     * ★거절은 어느 조건이 막았는지 말해야 한다.
+     *
+     * 여덟 가지 서로 다른 이유가 `source-invalid` 코드 하나로 나갔다. 그래서 연구자는 진짜로
+     * 좋은 참고문헌 다섯 편을 넣고도 전부 같은 한 줄로 거부당했고, 자기 해시를 의심하며
+     * 해시 바꾸기·필드 채우기·초록 대 전문을 차례로 시험하는 진단을 돌렸다 — 실제 원인은
+     * 대개 **전문을 아직 안 받았다** 하나였는데(실측 2026-09-07, 연구가 원고 단계에서 정지).
+     *
+     * 관문 자체는 옳다: 실제로 갖고 있지 않은 논문에 자기 결과를 맞출 수는 없다. 옳은 관문이
+     * 침묵하면 그건 벽이 아니라 함정이 된다.
+     */
+    const sourceRefusal = !current
+      ? "science-manuscript-comparable-source-not-in-project"
+      : !source
+        ? "science-manuscript-comparable-source-version-not-found"
+        : current.verificationStatus !== "content-checked"
+          ? "science-manuscript-comparable-source-full-text-required"
+          : !["parsed", "evidence-linked"].includes(source.version.accessState)
+            ? "science-manuscript-comparable-source-full-text-required"
+            : !["journal-article", "preprint", "book"].includes(source.kind)
+              ? "science-manuscript-comparable-source-kind-unsupported"
+              : current.currentVersion !== expectedVersion || source.version.version !== expectedVersion
+                ? "science-manuscript-comparable-source-version-advanced"
+                : current.version.id !== input.expectedSourceVersionId
+                  ? "science-manuscript-comparable-source-version-id-mismatch"
+                  : current.version.contentSha256 !== expectedSha256 || source.version.contentSha256 !== expectedSha256
+                    ? "science-manuscript-comparable-source-content-changed"
+                    : null;
+    if (sourceRefusal) throw new Error(sourceRefusal);
+    // 위 사다리가 둘 다 존재함을 이미 증명했다 — 타입 검사에도 그렇게 말해 준다.
+    if (!source || !current) throw new Error("science-manuscript-comparable-source-not-in-project");
     const sourceDomain = safeDomain(input.sourceDomain);
     if (!SCIENCE_MANUSCRIPT_ARTICLE_FAMILIES.includes(input.articleFamily)
       || !SCIENCE_MANUSCRIPT_COMPARABLE_DECISIONS.includes(input.decision)

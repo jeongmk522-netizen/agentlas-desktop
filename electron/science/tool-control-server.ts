@@ -2096,7 +2096,7 @@ const PLATFORM_TOOLS: McpTool[] = [
   {
     name: "record_manuscript_comparable_eligibility",
     route: "/v1/platform/manuscript-comparable-eligibility/record",
-    description: "Attest whether one exact, content-checked full-text SourceVersion may calibrate the target manuscript family. The Research Director must quote exact UTF-8 byte ranges for its field and article-family classification. Cross-field work may be retained only as a rhetorical analogue and can never influence quantitative corpus targets. Evaluator identity is injected from the trusted grant, never caller supplied.",
+    description: "Attest whether one exact, content-checked full-text SourceVersion may calibrate the target manuscript family. PREREQUISITE: the source must already hold retrieved full text — verification_status 'content-checked' and access_state 'parsed' or 'evidence-linked'. A source found by literature search holds only its abstract until retrieve_open_access_full_text succeeds on it, and an abstract can never calibrate a manuscript. If this refuses with science-manuscript-comparable-source-full-text-required, retrieve the full text first; if the paper is not open access, say so and choose a different comparable rather than retrying. The Research Director must quote exact UTF-8 byte ranges for its field and article-family classification. Cross-field work may be retained only as a rhetorical analogue and can never influence quantitative corpus targets. Evaluator identity is injected from the trusted grant, never caller supplied.",
     inputSchema: {
       type: "object",
       properties: {

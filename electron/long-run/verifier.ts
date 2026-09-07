@@ -11,6 +11,7 @@ import {
   settleLongRunWorkerAttempt,
   startLongRunWorkerAttempt,
   tryCompleteVerifiedLongRun,
+  transitionLongRun,
 } from "../store/long-runs";
 import { getInvocationRunReceipt, listRunEvents } from "../store/run-events";
 import { latestDurableAssistantMessage } from "../store/chats";
@@ -289,6 +290,35 @@ export async function verifyGoalCompletionClaim(input: {
       });
     }
     const completed = tryCompleteVerifiedLongRun(run.id);
+    /*
+     * ★`verifying` 은 지나가는 자리지 머무는 자리가 아니다.
+     *
+     * 판정이 통과가 아니면 그동안 아무도 이 실행을 그 상태에서 꺼내지 않았다. 실행 원장이
+     * 아직 없거나(`missing_invocation_run`) 증거가 애매하면 모든 기준이 inconclusive 로 기록되고
+     * 함수는 completed=false 로 조용히 끝났다 — 그래서 goal 은 영원히 `verifying` 이었고,
+     * "계속할까?" 는 goal_verifying 으로 멈췄고, 완료는 false 를 돌려줬다. 사용자에게는
+     * 닫지도 못하고 이어가지도 못하는 목표만 남았다(격리 저장소 실측 2026-09-07).
+     *
+     * 통과하지 못한 검증은 사유를 달고 `blocked` 으로 내려놓는다. 막힘은 끝이 아니라 사람이
+     * 손댈 수 있는 자리다 — 재개 경로가 blocked 을 받아들인다.
+     */
+    if (!completed) {
+      const current = getLongRunByGoalId(input.goalId);
+      if (current && current.status === "verifying") {
+        const firstUnmet = verdicts.find((verdict) => verdict.verdict !== "passed");
+        try {
+          transitionLongRun({
+            runId: current.id,
+            to: "blocked",
+            actorKind: "host",
+            reason: firstUnmet?.verdict === "failed" ? "verification_failed" : "verification_inconclusive",
+          });
+        } catch (error) {
+          // 상태를 못 옮겨도 판정 기록은 남는다 — 조용히 삼키지 않는다.
+          console.error("[long-run-verifier] could not leave verifying:", error);
+        }
+      }
+    }
     return { runId: run.id, verifierWorkerId: workerId, verdicts, completed };
   } catch (error) {
     settleLongRunWorkerAttempt({

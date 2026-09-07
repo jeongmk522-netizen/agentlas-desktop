@@ -1025,9 +1025,31 @@ export class InvocationService {
       && isRemoteInvocationWorkspaceBindingSource(runWorkspaceBinding.source));
     const controller = new AbortController();
     const startedAt = new Date().toISOString();
-    const preparedOneTeamPreflight = requestedOneTeamPreflightRef
-      ? prepareOneTeamPreflightClaim(requestedOneTeamPreflightRef, chat.id)
-      : null;
+    /*
+     * ★청구가 실패하면 **예약을 반드시 풀어 준다** (오너 기기 로그 실측 2026-09-07:
+     *   `Error: One team preflight Task binding changed`).
+     *
+     * 이 호출은 try/catch 없이 던지고 있었다. 그러면 실행은 시작도 못 했는데 제안은
+     * `workforce_reserved` 로 남고, 화면에는 이유 없는 "이어갈 수 없다" 배너만 계속
+     * 뜬다(One 화면의 recovery 줄이 그 상태를 본다). 사용자는 같은 요청을 다시 보내고,
+     * 바인딩은 여전히 어긋나 있으니 같은 자리에서 또 죽는다 — 빠져나갈 길이 없다.
+     *
+     * failOneTeamPreflightStart 는 예약을 놓고 제안을 recovery_required 로 옮긴다.
+     * 그래야 다음 전송이 팀을 새로 준비하는 정상 경로로 들어간다.
+     */
+    let preparedOneTeamPreflight: PreparedOneTeamPreflightClaim | null = null;
+    if (requestedOneTeamPreflightRef) {
+      try {
+        preparedOneTeamPreflight = prepareOneTeamPreflightClaim(requestedOneTeamPreflightRef, chat.id);
+      } catch (error) {
+        try {
+          failOneTeamPreflightStart(requestedOneTeamPreflightRef);
+        } catch {
+          // 예약 해제 실패가 원래 사유를 덮으면 안 된다 — 아래에서 원래 오류를 던진다.
+        }
+        throw error;
+      }
+    }
     if (preparedOneTeamPreflight && teamProposalRequiresOneAttachments(preparedOneTeamPreflight.proposalId) && !requestedOneAttachmentRef) {
       throw new Error("This team proposal requires its exact prepared One attachment capability");
     }

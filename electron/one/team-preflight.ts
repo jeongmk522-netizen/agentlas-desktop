@@ -1598,7 +1598,19 @@ export function prepareOneTeamPreflightClaim(
       ref.mode === "team" ? "team_reserved" : ref.mode === "workforce" ? "workforce_reserved" : "solo_reserved"
     )
   ) throw new Error("One team preflight reservation changed");
-  if (!exactTaskAndChat(record, deps)) throw new Error("One team preflight Task binding changed");
+  /*
+   * ★사람이 읽을 수 있는 사유를 준다 (오너 기기 로그 2026-09-07: 이 영어 한 줄이
+   * 화면까지 갔고, 그 뒤 대화에는 이유 없는 "이어갈 수 없다" 배너만 남았다).
+   * 이 상태는 "팀을 준비한 뒤 그 작업이나 대화가 달라졌다"는 뜻이고, 답은 다시 보내는
+   * 것이다 — 예약은 호출부가 풀어 주므로 다음 전송은 팀을 새로 준비한다.
+   */
+  if (!exactTaskAndChat(record, deps)) {
+    const error = new Error(
+      "The task or conversation changed after this team was prepared, so it was not started. Send the request again to prepare the team fresh.",
+    ) as Error & { code?: string };
+    error.code = "one_team_preflight_stale_binding";
+    throw error;
+  }
   if (!exactCandidateSnapshots(record, deps)) throw new Error("One team preflight candidate binding changed");
   const boundChat = (deps.getChat ?? getChat)(chatId);
   if (!boundChat || !exactRosterBinding(record, boundChat, deps)) throw new Error("One team preflight roster binding changed");

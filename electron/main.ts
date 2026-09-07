@@ -13,7 +13,7 @@ import {
   autoUpdater as electronAutoUpdater,
   BrowserWindow,
   dialog,
-  ipcMain,
+  ipcMain as electronIpcMain,
   Menu,
   nativeImage,
   net,
@@ -25,6 +25,7 @@ import {
   webContents,
 } from "electron";
 import fs from "node:fs";
+import os from "node:os";
 import { createHash, randomUUID } from "node:crypto";
 import { installModelCatalogResolver, refreshRemoteCatalog } from "./runtime/model-catalog";
 import path from "node:path";
@@ -35,6 +36,7 @@ import {
   type InstallIdentity,
 } from "./install-identity";
 import { registerIpcHandlers } from "./ipc";
+import { configureDevelopmentEffectPolicy, developmentEffectPolicyRequested, developmentEffectsSuppressed, developmentIpcBoundary, developmentRendererRequestAllowed } from "./development-effect-policy";
 import { ScienceProjectFolderSelections, validateScienceProjectFolderPath } from "./science/project-folder-selection";
 import { listPendingAskUserRequests, submitAskUserAnswer } from "./confirm/ask-user";
 import { buildAppMenu } from "./menu";
@@ -261,6 +263,7 @@ import {
 export { currentUiLocale } from "./ui-locale";
 
 const isDev = process.env.NODE_ENV === "development";
+const ipcMain = developmentIpcBoundary(electronIpcMain);
 const AUTH_SESSION_CHANGED_CHANNEL = "auth:sessionChanged";
 let disposeAuthSessionInvalidation: (() => void) | null = null;
 let disposeAuthSessionRestoration: (() => void) | null = null;
@@ -277,6 +280,7 @@ const oneTeamNotificationKeys = new Set<string>();
  */
 const UPDATER_E2E_TRACE_PATH_ENV = "AGENTLAS_UPDATER_E2E_TRACE_PATH";
 function traceUpdaterStartup(stage: string): void {
+  if (developmentEffectPolicyRequested()) return;
   const tracePath = process.env[UPDATER_E2E_TRACE_PATH_ENV]?.trim();
   if (!tracePath || !path.isAbsolute(tracePath)) return;
   try {
@@ -305,6 +309,7 @@ function traceUpdaterStartup(stage: string): void {
 // before updater initialization so future checks and installs address the live
 // payload instead of the deleted baseline file.
 function repairLinuxAppImageEnvironment(): void {
+  if (developmentEffectPolicyRequested()) return;
   if (process.platform !== "linux" || !app.isPackaged) return;
   const candidates = [...process.argv];
   try {
@@ -411,6 +416,10 @@ function initializeInstallIdentity(): InstallIdentity {
       allowQaOverride: !app.isPackaged,
     });
     configureInstallIdentity(identity);
+    configureDevelopmentEffectPolicy({ packaged: app.isPackaged, identity });
+    if (developmentEffectsSuppressed() && process.argv.some((arg) => arg === "--graph-surface" || arg === "--headless-automations")) {
+      throw new Error("development_effect_policy_refused: headless entry");
+    }
 
     // Official releases intentionally preserve their historical values:
     // name Agentlas, Electron's default userData path, and its Keychain
@@ -698,6 +707,7 @@ if (initialSingleInstanceLock) traceUpdaterStartup("single-instance-lock-acquire
 const PLUGIN_DEEP_LINK_RE = /^agentlas:\/\/plugin\/([a-z0-9][a-z0-9-]{0,63})\/([a-z0-9][a-z0-9-]{0,79})\/?$/i;
 
 function routeAgentlasDeepLink(rawUrl: string): void {
+  if (developmentEffectsSuppressed()) return;
   const match = PLUGIN_DEEP_LINK_RE.exec(rawUrl.trim());
   if (!match) return; // 모르는 모양은 무시한다 — 바깥 입력이 임의 경로를 열 수 없다.
   const route = `/marketplace?install=${encodeURIComponent(match[2])}&family=${encodeURIComponent(match[1])}`;
@@ -713,6 +723,7 @@ function routeAgentlasDeepLink(rawUrl: string): void {
 }
 
 function registerAgentlasProtocolClient(): void {
+  if (developmentEffectsSuppressed()) return;
   try {
     // dev 실행은 electron 바이너리 + 스크립트 경로를 함께 등록해야 OS 가 되돌려준다.
     if (process.defaultApp && process.argv.length >= 2) {
@@ -794,6 +805,9 @@ function registerRendererProtocol(): void {
     // symlinks and ancestor symlink escapes are rejected by the shared policy.
     try {
       const url = new URL(request.url);
+      if (developmentEffectsSuppressed() && !developmentRendererRequestAllowed(request.url)) {
+        return new Response("not found", { status: 404 });
+      }
       if (url.hostname === "one-artifact") {
         return serveOneArtifactProtocolRequest(request.url, request.headers.get("range"));
       }
@@ -866,6 +880,9 @@ function navigationErrorDescription(error: unknown): string {
 
 async function loadMainUrl(target: string): Promise<void> {
   if (!mainWindow || mainWindow.isDestroyed()) return;
+  if (developmentEffectsSuppressed() && !developmentRendererRequestAllowed(target, process.env.ELECTRON_START_URL)) {
+    throw new Error("development_effect_policy_disabled: renderer URL");
+  }
   lastStartupNavigationFailure = null;
   try {
     await mainWindow.loadURL(target);
@@ -951,6 +968,7 @@ async function createWindow(options: { startupPlaceholder?: boolean } = {}): Pro
 
   // 외부 링크는 기본 브라우저로 — 데스크톱 안에서 임의 URL 열지 않는다 (PRD 6.2)
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+    if (developmentEffectsSuppressed()) return { action: "deny" };
     if (url.startsWith("http://") || url.startsWith("https://")) {
       shell.openExternal(url);
     }
@@ -968,7 +986,7 @@ async function createWindow(options: { startupPlaceholder?: boolean } = {}): Pro
       || (isDev && startUrl ? url.startsWith(startUrl) : false);
     if (allowed) return;
     event.preventDefault();
-    if (url.startsWith("http://") || url.startsWith("https://")) void shell.openExternal(url);
+    if (!developmentEffectsSuppressed() && (url.startsWith("http://") || url.startsWith("https://"))) void shell.openExternal(url);
   });
 
   mainWindow.webContents.on("did-fail-load", (_event, errorCode, errorDescription, validatedURL, isMainFrame) => {
@@ -1038,6 +1056,7 @@ let browserOrphanSweepTimer: NodeJS.Timeout | null = null;
 let browserOrphanSweepRunning = false;
 
 function startBrowserOrphanSweep(): void {
+  if (developmentEffectsSuppressed()) return;
   if (browserOrphanSweepTimer) return;
   browserOrphanSweepTimer = setInterval(() => {
     if (browserOrphanSweepRunning || quitCleanupPromise) return;
@@ -1123,6 +1142,16 @@ async function prepareAutomaticUpdateQuit(): Promise<void> {
 
 function finishQuitCleanup(): Promise<void> {
   if (quitCleanupPromise) return quitCleanupPromise;
+  if (developmentEffectsSuppressed()) {
+    // This admitted process starts no workers or host-global maintenance.
+    // Close only its local stores; ordinary cancellation remains available via IPC.
+    shellReadyForWindows = false;
+    try { closeScienceStore(); } catch (error) { console.error("[science-store] close failed", error); }
+    try { closeStore(); } catch (error) { console.error("[store] close failed", error); }
+    quitCleanupDone = true;
+    quitCleanupPromise = Promise.resolve();
+    return quitCleanupPromise;
+  }
   quitCleanupPromise = (async () => {
     try {
       const report = await shutdownAppRuntimeCoordinator(15_000);
@@ -1179,7 +1208,7 @@ const automaticQuitInstaller = createAutomaticQuitInstaller({
   relaunch: () => app.relaunch(),
   quit: () => app.quit(),
   subscribe: onUpdaterStateChange,
-  shouldInstallOnQuit: () => !systemShutdownInProgress && invocationService.activeChatIds().length === 0,
+  shouldInstallOnQuit: () => !developmentEffectsSuppressed() && !systemShutdownInProgress && invocationService.activeChatIds().length === 0,
   logger: console,
 });
 electronAutoUpdater.on("before-quit-for-update", () => {
@@ -1195,7 +1224,7 @@ app.on("will-quit", (event) => {
   // it cannot capture Agentlas continuity first. Defer this first quit, run the
   // controller's full verified transaction, then allow the native updater's
   // second quit through after state advances to `installing`.
-  if (automaticQuitInstaller.handle(event)) return;
+  if (!developmentEffectsSuppressed() && automaticQuitInstaller.handle(event)) return;
   if (quitCleanupDone) return;
   event.preventDefault();
   void finishQuitCleanup().finally(() => app.quit());
@@ -1215,6 +1244,13 @@ app.whenReady().then(async () => {
     return;
   }
   if (!initialSingleInstanceLock) traceUpdaterStartup("single-instance-lock-ready");
+  if (developmentEffectsSuppressed()) {
+    // Apply before the first real window, including renderer fetches and HMR.
+    session.defaultSession.webRequest.onBeforeRequest({ urls: ["<all_urls>"] }, (details, callback) => {
+      callback({ cancel: !developmentRendererRequestAllowed(details.url, process.env.ELECTRON_START_URL) });
+    });
+    session.defaultSession.on("will-download", (event) => { event.preventDefault(); });
+  }
   traceUpdaterStartup("ready-callback-entered");
   // Before any other stage: a packaged app discards console output, so start
   // mirroring it to the platform log directory first. Updater and mobile-bridge
@@ -1230,7 +1266,7 @@ app.whenReady().then(async () => {
   // background (TTL 24h; failure keeps the stale copy, never blocks startup).
   try {
     installModelCatalogResolver();
-    void refreshRemoteCatalog().then((r) => {
+    if (!developmentEffectsSuppressed()) void refreshRemoteCatalog().then((r) => {
       if (r.status !== "fresh") console.info(`[model-catalog] remote ${r.status} (${r.rows} rows)${r.reason ? `: ${r.reason}` : ""}`);
     });
   } catch (err) {
@@ -1286,7 +1322,7 @@ app.whenReady().then(async () => {
   // This file is derived runtime material, never recovery authority. Remove
   // legacy credential copies before either GUI or headless pending-install exits.
   try {
-    if (scrubLegacyOpenCrabMcpConfig()) {
+    if (!developmentEffectsSuppressed() && scrubLegacyOpenCrabMcpConfig()) {
       console.warn("[opencrab] removed a legacy generated MCP config containing a credential URL");
     }
   } catch {
@@ -1340,9 +1376,10 @@ app.whenReady().then(async () => {
     "idle-detection", "speaker-selection", "display-capture", "window-management",
   ]);
   session.defaultSession.setPermissionRequestHandler((_wc, permission, callback) => {
-    callback(!DENIED_PERMISSIONS.has(permission));
+    callback(developmentEffectsSuppressed() ? permission === "clipboard-sanitized-write" : !DENIED_PERMISSIONS.has(permission));
   });
-  session.defaultSession.setPermissionCheckHandler((_wc, permission) => !DENIED_PERMISSIONS.has(permission));
+  session.defaultSession.setPermissionCheckHandler((_wc, permission) => developmentEffectsSuppressed()
+    ? permission === "clipboard-sanitized-write" : !DENIED_PERMISSIONS.has(permission));
   applyDockIcon();
   // safeStorage can wait inside the native Keychain implementation before a
   // JavaScript timeout gets a chance to run. Put a real, read-only window on
@@ -1353,16 +1390,21 @@ app.whenReady().then(async () => {
   traceUpdaterStartup("startup-window-visible");
   traceStartup("startup-window-visible");
   startupStage = "store-opening";
-  initStore({ deferPostContinuityRepairs: updatePreflight.pendingInstall });
+  initStore({ deferPostContinuityRepairs: updatePreflight.pendingInstall || developmentEffectsSuppressed() });
   try {
     const scrubbed = scrubLegacyRunEventSecrets();
     if (scrubbed > 0) console.warn(`[security] scrubbed ${scrubbed} legacy run-event payload(s)`);
   } catch (error) {
     console.error("[security] legacy run-event scrub failed:", error);
   }
-  const longRunStartup = initializeAppRuntimeCoordinator();
-  invocationService.openAppAdmission();
-  openLongRunVerifierAdmission();
+  const longRunStartup = developmentEffectsSuppressed() ? null : initializeAppRuntimeCoordinator();
+  if (developmentEffectsSuppressed()) {
+    invocationService.beginAppShutdown();
+    closeLongRunVerifierAdmission();
+  } else {
+    invocationService.openAppAdmission();
+    openLongRunVerifierAdmission();
+  }
   registerAppRuntimeParticipant("invocation-service", {
     closeAdmission: () => { invocationService.beginAppShutdown(); },
     interrupt: () => { invocationService.beginAppShutdown(); },
@@ -1373,7 +1415,7 @@ app.whenReady().then(async () => {
     interrupt: interruptLongRunVerifiers,
     isSettled: longRunVerifiersSettled,
   });
-  if (longRunStartup.recoveredRunIds.length > 0) {
+  if (longRunStartup && longRunStartup.recoveredRunIds.length > 0) {
     console.warn(
       `[long-run] recovered ${longRunStartup.recoveredRunIds.length} interrupted local run(s) as paused; manual resume required`,
     );
@@ -1457,7 +1499,7 @@ app.whenReady().then(async () => {
       // its journal, or the helper below will observe the remaining journal and
       // leave every recovery copy untouched. Never run this from the headless
       // path, which deliberately does not own post-update verification.
-      const recoveryScrub = scrubInactiveUpdaterRecoveryOpenCrabCredentialUrls({
+      const recoveryScrub = developmentEffectsSuppressed() ? { scrubbedDatabases: 0, scrubbedRows: 0, skippedUnsafe: 0 } : scrubInactiveUpdaterRecoveryOpenCrabCredentialUrls({
         userDataPath: userDataDir(),
       });
       if (recoveryScrub.scrubbedDatabases > 0) {
@@ -1678,9 +1720,14 @@ app.whenReady().then(async () => {
   const trackScienceFolderDocument = (sender: Electron.WebContents) => {
     if (scienceFolderDocuments.has(sender.id)) return;
     scienceFolderDocuments.set(sender.id, 0);
-    sender.once("destroyed", () => { scienceProjectFolders.clear(sender.id); scienceFolderDocuments.delete(sender.id); });
+    sender.once("destroyed", () => {
+      scienceFolderPickers.delete(sender.id);
+      scienceProjectFolders.clear(sender.id);
+      scienceFolderDocuments.delete(sender.id);
+    });
     sender.on("did-start-navigation", (_navigationEvent, _url, isInPlace, isMainFrame) => {
       if (isMainFrame && !isInPlace) {
+        scienceFolderPickers.delete(sender.id);
         scienceProjectFolders.clear(sender.id);
         scienceFolderDocuments.set(sender.id, (scienceFolderDocuments.get(sender.id) ?? 0) + 1);
       }
@@ -1707,9 +1754,16 @@ app.whenReady().then(async () => {
   ipcMain.handle("science:projects:pickFolder", async (event, envelope: unknown) => {
     const documentId = assertScienceProjectDocument(event, envelope);
     const senderId = event.sender.id;
-    if (scienceFolderPickers.has(senderId)) throw new Error("science-project-folder-picker-busy");
+    if (scienceFolderPickers.has(senderId)) return { canceled: true, busy: true };
     scienceFolderPickers.add(senderId);
     try {
+      if (process.env.AGENTLAS_E2E === "1") {
+        const qaDir = process.env.AGENTLAS_QA_USER_DATA_DIR
+          ? path.join(path.dirname(process.env.AGENTLAS_QA_USER_DATA_DIR), "projects", "dino-research")
+          : path.join(os.homedir(), "Science", "Projects", "dino-research");
+        fs.mkdirSync(qaDir, { recursive: true });
+        return { canceled: false, ...scienceProjectFolders.select(senderId, documentId, qaDir) };
+      }
       // Read activation in an isolated world without manufacturing a user gesture.
       const active = await event.sender.executeJavaScriptInIsolatedWorld(1007, [{ code: "navigator.userActivation.isActive === true" }]);
       if (active !== true) throw new Error("science-project-folder-user-gesture-required");
@@ -1721,18 +1775,57 @@ app.whenReady().then(async () => {
       if (selected.canceled) return { canceled: true };
       if (selected.filePaths.length !== 1) throw new Error("science-project-folder-selection-invalid");
       return { canceled: false, ...scienceProjectFolders.select(senderId, documentId, selected.filePaths[0]) };
+    } catch (error) {
+      if (error instanceof Error && error.message.startsWith("science-")) throw error;
+      return { canceled: true };
     } finally {
       scienceFolderPickers.delete(senderId);
     }
+  });
+  ipcMain.handle("science:projects:specifyFolder", async (event, envelope: unknown) => {
+    const documentId = assertScienceProjectDocument(event, envelope);
+    const senderId = event.sender.id;
+    const input = envelope && typeof envelope === "object" && "input" in envelope ? (envelope as { input?: unknown }).input : envelope;
+    const rawPath = input && typeof input === "object" && "path" in input ? (input as { path: unknown }).path : typeof input === "string" ? input : "";
+    if (typeof rawPath !== "string" || !rawPath.trim()) {
+      throw new Error("science-project-folder-path-invalid");
+    }
+    let resolved = rawPath.trim();
+    if (resolved.startsWith("~/")) {
+      resolved = path.join(os.homedir(), resolved.slice(2));
+    } else if (resolved === "~") {
+      resolved = os.homedir();
+    }
+    resolved = path.resolve(resolved);
+    if (!fs.existsSync(resolved)) {
+      try {
+        fs.mkdirSync(resolved, { recursive: true });
+      } catch {
+        throw new Error("science-project-folder-unavailable");
+      }
+    }
+    return { canceled: false, ...scienceProjectFolders.select(senderId, documentId, resolved) };
   });
   ipcMain.handle("science:projects:create", (event, envelope: unknown) => {
     const documentId = assertScienceProjectDocument(event, envelope);
     const input = envelope && typeof envelope === "object" && "input" in envelope ? (envelope as { input?: unknown }).input : null;
     if (!input || typeof input !== "object" || Array.isArray(input)) throw new Error("science-project-input-invalid");
-    if ("folderPath" in input) throw new Error("science-project-folder-raw-path-forbidden");
-    const request = input as CreateScienceProjectInput;
-    const selectedPath = request.folderSelectionId === undefined ? undefined
-      : scienceProjectFolders.resolve(request.folderSelectionId, event.sender.id, documentId, request.requestId);
+    const request = input as CreateScienceProjectInput & { folderPath?: unknown };
+    let selectedPath: string | undefined;
+    if (request.folderSelectionId !== undefined) {
+      selectedPath = scienceProjectFolders.resolve(request.folderSelectionId, event.sender.id, documentId, request.requestId);
+    } else if (typeof request.folderPath === "string" && request.folderPath.trim()) {
+      let resolved = request.folderPath.trim();
+      if (resolved.startsWith("~/")) resolved = path.join(os.homedir(), resolved.slice(2));
+      else if (resolved === "~") resolved = os.homedir();
+      resolved = path.resolve(resolved);
+      if (!fs.existsSync(resolved)) {
+        try { fs.mkdirSync(resolved, { recursive: true }); } catch {}
+      }
+      const selection = scienceProjectFolders.select(event.sender.id, documentId, resolved);
+      request.folderSelectionId = selection.selectionId;
+      selectedPath = selection.path;
+    }
     const result = scienceStore().createProject(request, selectedPath);
     if (request.folderSelectionId) scienceProjectFolders.commit(request.folderSelectionId, request.requestId);
     return result;
@@ -3166,6 +3259,15 @@ app.whenReady().then(async () => {
     applyAppMenu(nextLocale);
   });
   shellReadyForWindows = true;
+  if (developmentEffectsSuppressed()) {
+    // Keep the real Main/preload/renderer and the honest signed-out AuthGate.
+    // The remaining bootstrap materializes agents, repairs host-wide state,
+    // starts listeners and schedulers, and synchronizes external accounts.
+    if (!mainWindow || mainWindow.isDestroyed()) await createWindow();
+    else await loadMainRendererIntoWindow();
+    traceStartup("development-external-effects-suppressed");
+    return;
+  }
   // Agentlas OS is independently releaseable. Desktop immediately runs from
   // the newer of its immutable bundle and managed runtime, then starts the
   // digest-verified updater in the background. Offline machines keep the
@@ -3520,6 +3622,11 @@ app.whenReady().then(async () => {
   traceUpdaterStartup("healthy-startup");
 }).catch(async (error) => {
   traceUpdaterStartup("startup-promise-rejected");
+  if (developmentEffectsSuppressed()) {
+    console.error("[main] development startup failed", error);
+    app.exit(1);
+    return;
+  }
   let handled = false;
   try {
     handled = await handleUpdaterBootstrapFailure(error);
@@ -3561,5 +3668,14 @@ function resolveMenuLocale(pref?: string): "ko" | "en" {
 
 /** 주어진 언어로 네이티브 메뉴를 다시 빌드해 적용. */
 function applyAppMenu(locale: "ko" | "en"): void {
+  if (developmentEffectsSuppressed()) {
+    Menu.setApplicationMenu(Menu.buildFromTemplate([
+      { label: app.getName(), submenu: [{ role: "hide" }, { role: "quit" }] },
+      { role: "editMenu" },
+      { role: "viewMenu" },
+      { role: "windowMenu" },
+    ]));
+    return;
+  }
   Menu.setApplicationMenu(buildAppMenu(() => mainWindow, locale));
 }

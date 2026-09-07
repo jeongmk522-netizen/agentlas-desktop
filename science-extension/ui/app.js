@@ -386,11 +386,11 @@ function createComposerEventSync({
   const readRailCollapsed = () => {
     try { return window.localStorage.getItem(RAIL_COLLAPSED_STORAGE_KEY) === "true"; } catch { return false; }
   };
-  const blankNewProjectDraft = () => ({ title: "", question: "", folderSelectionId: null, folderPath: "" });
+  const blankNewProjectDraft = () => ({ title: "", question: "", folderSelectionId: null, folderPath: "~/Science/Project" });
   const state = {
     locale: "en",
     projects: [], selectedId: null, lifecycle: null, researchLoopInspection: null, researchLoopActionBusy: false, researchLoopActionError: "", conversations: [], selectedConversationId: null, messages: [], sources: [], sourceFigures: [], runs: [], artifacts: [], labs: [], workspaceLabBindings: [], labCatalog: [], labDecisionProjections: [], rendererPacks: [], manuscripts: [], claimLedger: null, journalProfiles: [], submissionExports: [], analysisSpecs: [], decisions: [],
-    artifactContextsByMessage: new Map(), labContextsById: new Map(), artifactHistoryById: new Map(), selectedLabId: null, selectedArtifactOriginVersion: null, inspectedArtifactVersion: null, inspectedArtifactContext: null, artifactComparison: null, draftHistoryGuard: null, labsExpanded: true, expandedLabGroups: new Set(["chemistry"]), expandedLabDecisions: new Set(), projectMenuOpen: false, projectFolderOpen: false, projectLibrarySummaries: new Map(), projectLibrarySummaryState: "loading", librarySearch: "", librarySelectedProjectId: null, projectFolderSelectedKey: null, newProjectStep: "details", selectedResearchTemplateId: null, newProjectDraft: blankNewProjectDraft(), newProjectFolderError: "", newProjectFolderBusy: false, newProjectGeneration: 0, newProjectRequestId: null, newProjectRequestSignature: "", labManagerOpen: false, labManagerBusyId: null, labManagerGeneration: 0, labManagerError: "", historyOpen: false, railCollapsed: readRailCollapsed(),
+    artifactContextsByMessage: new Map(), labContextsById: new Map(), artifactHistoryById: new Map(), selectedLabId: null, selectedArtifactOriginVersion: null, inspectedArtifactVersion: null, inspectedArtifactContext: null, artifactComparison: null, draftHistoryGuard: null, labsExpanded: true, expandedLabGroups: new Set(["chemistry"]), expandedLabDecisions: new Set(), projectMenuOpen: false, projectFolderOpen: false, projectLibrarySummaries: new Map(), projectLibrarySummaryState: "loading", librarySearch: "", librarySelectedProjectId: null, projectFolderSelectedKey: null, newProjectStep: "details", selectedResearchTemplateId: null, selectedResearchTemplateIds: [], newProjectDraft: blankNewProjectDraft(), newProjectFolderError: "", newProjectFolderBusy: false, newProjectGeneration: 0, newProjectRequestId: null, newProjectRequestSignature: "", labManagerOpen: false, labManagerBusyId: null, labManagerGeneration: 0, labManagerError: "", historyOpen: false, railCollapsed: readRailCollapsed(),
     blocksByMessage: new Map(), citationsByMessage: new Map(), evidenceById: new Map(), selectedSourceId: null, sourceVersionsByKey: new Map(), sourceLookupRequestId: null, sourceLookupCitationId: null, sourceLookupLoading: false, sourceLookupError: "", selectedArtifactId: null,
     evidenceGraph: null, evidenceGraphReviews: [], evidenceGraphLoading: false, evidenceGraphRefreshId: null, evidenceGraphError: "", selectedEvidenceGraphNodeId: null, selectedEvidenceGraphCandidateId: null, evidenceGraphExactRecordRequestId: null, evidenceGraphExactRecordNodeId: null, evidenceGraphExactRecordLoading: false, evidenceGraphExactRecordError: "", evidenceGraphReviewSheet: false, evidenceGraphReviewDecision: "accepted", evidenceGraphReviewBusy: false, evidenceGraphReviewError: "", evidenceGraphPathAnchorId: null, evidenceGraphPath: null,
     mode: "session", drawer: null, modal: false, manuscriptModal: false, saving: false, loadingProject: false, projectError: "", projectFolderOpenBusy: false, projectFolderOpenError: "", activeVegaView: null, activeCytoscape: null, activeNumericSurface: null, activeJBrowseTarget: null, scrollByMode: { session: 0, lab: 0, manuscript: 0 }, returnMessageId: null,
@@ -503,24 +503,29 @@ function createComposerEventSync({
     { id: "materials", label: "Materials", icon: "cube", labIds: ["materials-structures"] },
   ];
   const labIcons = { chemistry: "beaker", "molecular-structure": "cube", "literature-network": "book", "data-visualization": "chart", "data-table": "table", "statistics-analysis": "chart", "economic-indicators": "chart", "physics-data": "chart", "materials-structures": "cube", imaging: "photo", "astronomy-sky": "globe", "biodiversity-map": "globe", "earthquake-observations": "globe", "paleontology-evidence": "chart", "genomics-variants": "table", "comparative-genomics": "chart" };
+  // 화면 이름은 영어 고정 문자열이었다. 번역기는 한국어 원문을 영어로 바꾸는 방향만 있어서,
+  // 한국어로 쓰는 사람에게도 왼쪽 메뉴 전체가 영어로 남았다 -- 본문은 한국어인데 메뉴만 영어인
+  // 섞임의 뿌리가 여기다. 다른 문구와 같은 통로(uiCopy)를 태워 설정 언어를 따르게 한다.
+  /** 라벨은 그릴 때 고른다. 모듈 상수로 굳히면 언어를 바꿔도 메뉴가 안 바뀐다. */
+  const destinationLabel = (item) => uiCopy(item.ko, item.en);
   const projectDestinationGroups = [
-    { label: "Project", items: [
-      { id: "overview", label: "Overview", icon: "grid" },
-      { id: "logbook", label: "Logbook", icon: "book" },
+    { ko: "프로젝트", en: "Project", items: [
+      { id: "overview", ko: "한눈에 보기", en: "Overview", icon: "grid" },
+      { id: "logbook", ko: "연구 일지", en: "Logbook", icon: "book" },
     ] },
-    { label: "Research", items: [
-      { id: "scope", label: "Scope", icon: "grid" },
-      { id: "literature", label: "Literature & Prior Evidence", icon: "book" },
-      { id: "hypotheses", label: "Hypotheses", icon: "sparkles" },
-      { id: "plan-protocols", label: "Plan & Protocols", icon: "table" },
-      { id: "acquisition", label: "Acquisition", icon: "arrow-down-tray" },
-      { id: "analysis-runs", label: "Analysis & Runs", icon: "chart" },
-      { id: "interpretation", label: "Interpretation & Decisions", icon: "chart" },
+    { ko: "연구", en: "Research", items: [
+      { id: "scope", ko: "연구 범위", en: "Scope", icon: "grid" },
+      { id: "literature", ko: "문헌·선행근거", en: "Literature & Prior Evidence", icon: "book" },
+      { id: "hypotheses", ko: "가설", en: "Hypotheses", icon: "sparkles" },
+      { id: "plan-protocols", ko: "계획·프로토콜", en: "Plan & Protocols", icon: "table" },
+      { id: "acquisition", ko: "데이터 수집", en: "Acquisition", icon: "arrow-down-tray" },
+      { id: "analysis-runs", ko: "분석 실행", en: "Analysis & Runs", icon: "chart" },
+      { id: "interpretation", ko: "해석·결정", en: "Interpretation & Decisions", icon: "chart" },
     ] },
-    { label: "Outputs", items: [
-      { id: "results", label: "Results & Figures", icon: "photo" },
-      { id: "manuscript", label: "Manuscript", icon: "book" },
-      { id: "submission-archive", label: "Submission & Archive", icon: "arrow-down-tray" },
+    { ko: "결과물", en: "Outputs", items: [
+      { id: "results", ko: "결과와 그림", en: "Results & Figures", icon: "photo" },
+      { id: "manuscript", ko: "원고", en: "Manuscript", icon: "book" },
+      { id: "submission-archive", ko: "제출·보관", en: "Submission & Archive", icon: "arrow-down-tray" },
     ] },
   ];
   const projectDestinationIds = new Set(projectDestinationGroups.flatMap((group) => group.items.map((item) => item.id)));
@@ -2472,9 +2477,9 @@ function createComposerEventSync({
     const destinationBadge = (id) => (id === "hypotheses" && pendingHypotheses
       ? `<em class="destinationPending" title="${escapeHtml(String(pendingHypotheses))}건이 연구자의 결정을 기다립니다">${escapeHtml(String(pendingHypotheses))}</em>`
       : "");
-    const destinations = projectDestinationGroups.map((group) => `<section class="projectNavGroup"><div class="projectNavLabel">${escapeHtml(group.label)}</div>${group.items.map((item) => `<button data-project-destination="${escapeHtml(item.id)}" aria-current="${state.currentDestination === item.id}" aria-label="${escapeHtml(item.label)}" title="${escapeHtml(item.label)}" ${item.id === "hypotheses" && pendingHypotheses ? `data-pending-decisions="${escapeHtml(String(pendingHypotheses))}"` : ""}>${heroIcon(item.icon)}<span>${escapeHtml(item.label)}</span>${destinationBadge(item.id)}</button>`).join("")}</section>`).join("");
+    const destinations = projectDestinationGroups.map((group) => `<section class="projectNavGroup"><div class="projectNavLabel">${escapeHtml(destinationLabel(group))}</div>${group.items.map((item) => `<button data-project-destination="${escapeHtml(item.id)}" aria-current="${state.currentDestination === item.id}" aria-label="${escapeHtml(destinationLabel(item))}" title="${escapeHtml(destinationLabel(item))}" ${item.id === "hypotheses" && pendingHypotheses ? `data-pending-decisions="${escapeHtml(String(pendingHypotheses))}"` : ""}>${heroIcon(item.icon)}<span>${escapeHtml(destinationLabel(item))}</span>${destinationBadge(item.id)}</button>`).join("")}</section>`).join("");
     return `<aside class="rail" data-rail-mode="${escapeHtml(state.mode)}">
-      <div class="railBrand"><span class="railBrandLockup"><img class="railBrandMark" src="./assets/agentlas-mark.png" alt="" aria-hidden="true"><span class="railBrandWordmark"><strong><span class="brandAgentlas">Agentlas</span><span class="brandScience">Science<span class="brandStar">*</span></span></strong></span></span></div>
+      <div class="railBrand"><span class="railBrandLockup"><img class="railBrandMark" src="./assets/agentlas-mark.png" alt="" aria-hidden="true"><span class="railBrandWordmark"><strong><span class="brandAgentlas">Agentlas</span><span class="brandScience">Science</span></strong></span></span></div>
       <button class="railBackButton" data-action="back-to-work" aria-label="${uiCopy("Agentlas Work로 돌아가기", "Back to Agentlas Work")}" title="${uiCopy("Agentlas Work로 돌아가기", "Back to Agentlas Work")}">${heroIcon("chevron-right", "uiIcon isReverse")}<strong>${uiCopy("Agentlas Work로 돌아가기", "Back to Agentlas Work")}</strong></button>
       <button class="projectLibraryBack" data-action="back-to-projects" aria-label="${uiCopy("프로젝트로 돌아가기", "Back to projects")}" title="${uiCopy("프로젝트로 돌아가기", "Back to projects")}">${heroIcon("chevron-right", "uiIcon isReverse")}<span>${uiCopy("프로젝트로 돌아가기", "Back to projects")}</span></button>
       <section class="railProjectIdentity"><strong title="${escapeHtml(project.title)}">${escapeHtml(project.title)}</strong><span>${escapeHtml(domainLabel(project.domain))}</span></section>
@@ -2872,18 +2877,19 @@ function createComposerEventSync({
       ? uiCopy("등록된 데이터셋", "Registered dataset")
       : `${source.kind || "kind 미기록"}`;
     const spanBody = spans.length === 0
-      ? `<div class="literatureSpanEmpty"><strong>${escapeHtml(uiCopy("승격된 근거 구간이 없습니다.", "No evidence span has been promoted yet."))}</strong><p>${escapeHtml(emptySpanGuidance)}</p></div>`
+      ? `<p class="literatureSpanEmpty" title="${escapeHtml(emptySpanGuidance)}">${escapeHtml(uiCopy("아직 인용할 수 있는 구간이 없습니다.", "No citable span yet."))}</p>`
       : `<ul class="literatureSpanList">${spans.map((span) => `<li class="literatureSpan" data-evidence-span-id="${escapeHtml(span.id)}" data-evidence-scope="${escapeHtml(span.scope)}" data-evidence-status="${escapeHtml(span.status)}">
           <div class="literatureSpanMeta"><code>${escapeHtml(span.locator || "위치 표기 없음")}</code><span>${escapeHtml(literatureSpanScopeLabels[span.scope] || "구간 범위가 기록되지 않음")}</span>${span.status === "invalidated" ? `<em>무효화됨</em>` : ""}<code title="${escapeHtml(span.contentSha256)}">${escapeHtml(literatureShortHash(span.contentSha256))}</code></div>
           <blockquote class="literatureSpanExcerpt">${escapeHtml(span.excerpt || "발췌 본문이 기록되지 않았습니다.")}</blockquote>
         </li>`).join("")}</ul>`;
     return `<article class="literatureSource" data-source-id="${escapeHtml(source.id)}" data-access-state="${escapeHtml(version?.accessState || "unknown")}" data-text-scope="${escapeHtml(scope)}" data-verification-status="${escapeHtml(source.verificationStatus || "unverified")}">
       <header class="literatureSourceHeader">
-        <strong>${escapeHtml(source.title || "제목이 기록되지 않은 출처")}</strong>
+        <strong>${escapeHtml(source.title || uiCopy("제목이 기록되지 않은 출처", "Source with no recorded title"))}</strong>
+        <span class="literatureCitable" data-citable="${spans.length > 0}">${spans.length > 0 ? uiCopy(`인용 가능 · 근거 ${spans.length}`, `Citable · ${spans.length} span${spans.length === 1 ? "" : "s"}`) : uiCopy("아직 인용 불가", "Not citable yet")}</span>
         <button class="literatureSourceOpen" type="button" data-source-id="${escapeHtml(source.id)}"><span>${uiCopy("파일 열기", "Open file")}</span> ${heroIcon("chevron-right")}</button>
         <span class="literatureSourceKind">${escapeHtml(sourceKindLabel)}${source.publicationYear ? ` · ${escapeHtml(source.publicationYear)}` : ""}${source.containerTitle ? ` · ${escapeHtml(source.containerTitle)}` : ""}</span>
       </header>
-      <p class="literatureSourceUri"><code>${escapeHtml(source.canonicalUri || "정규 URI가 기록되지 않았습니다.")}</code></p>
+      <details class="literatureSourceIdentity"><summary>${uiCopy("출처 식별자", "Source identity")}</summary><code>${escapeHtml(source.canonicalUri || uiCopy("정규 URI가 기록되지 않았습니다.", "No canonical URI recorded."))}</code></details>
       <dl class="literatureSourceFacts">
         <div><dt>확보 상태</dt><dd>${escapeHtml(literatureAccessLabels[version?.accessState] || version?.accessState || "기록 없음")}</dd></div>
         <div><dt>본문 범위</dt><dd>${escapeHtml(literatureScopeLabels[scope])}</dd></div>
@@ -2895,7 +2901,7 @@ function createComposerEventSync({
       ${scope === "full-text" ? "" : `<p class="literatureAbstractOnly" role="note">${scope === "abstract"
         ? "초록만 확보된 출처입니다. 초록은 논문 본문 주장을 뒷받침할 수 없습니다 — 본문을 확보하기 전에는 본문 근거로 인용하지 마세요."
         : "서지정보만 있는 출처입니다. 아직 읽은 본문이 없으므로 어떤 주장도 이 출처에 기댈 수 없습니다."}</p>`}
-      <section class="literatureSpans"><h3>근거 구간 ${escapeHtml(spans.length)}개</h3>${spanBody}</section>
+      ${spans.length > 0 ? `<section class="literatureSpans"><h3>${uiCopy(`근거 구간 ${spans.length}개`, `${spans.length} evidence span${spans.length === 1 ? "" : "s"}`)}</h3>${spanBody}</section>` : ""}
     </article>`;
   }
 
@@ -2910,10 +2916,21 @@ function createComposerEventSync({
       : sources.length === 0
         ? `<div class="emptyCopy pageEmpty"><strong>아직 이 연구에 등록된 출처가 없습니다.</strong><p>연구 채팅에서 문헌 검색을 실행하거나 DOI·URL을 알려주면, 정규화된 출처와 확보된 원문 바이트가 여기에 쌓입니다.</p></div>`
         : sources.map((source) => literatureSourceCard(source, spansBySourceVersion, unresolved.has(source.id))).join("");
+    // 이 화면이 답해야 하는 것: **이 연구가 무엇에 기대고 있고, 그중 무엇을 인용할 수 있나.**
+    // 예전에는 들어서자마자 경고문 한 문단이 먼저 나오고, 정작 출처는 원시 해시와 상태 네 칸에
+    // 파묻혀 있었다. 이제 맨 위는 셈이다 -- 몇 건이 있고 그중 몇 건을 실제로 인용할 수 있는지.
+    const citable = sources.filter((source) => {
+      const versionId = source.version?.id;
+      return versionId ? (spansBySourceVersion.get(versionId) || []).length > 0 : false;
+    }).length;
+    const summary = sources.length === 0 ? "" : `<p class="literatureTally">${
+      uiCopy(`출처 ${sources.length}건 중 ${citable}건을 인용할 수 있습니다.`,
+             `${citable} of ${sources.length} source${sources.length === 1 ? "" : "s"} can be cited.`)
+    }${citable < sources.length ? ` ${uiCopy("나머지는 아직 근거 구간이 없습니다.", "The rest have no evidence span yet.")}` : ""}</p>`;
     return `<section class="researchView literatureView" data-research-destination="literature"><div class="answerColumn">
-      <div class="researchKicker"><span>${escapeHtml(domainLabel(project.domain))}</span> · <span>문헌·선행근거</span></div>
-      <h1>${escapeHtml(project.title)}</h1>
-      <p class="literatureBoundary">출처가 목록에 있다는 것과 그 출처로 인용할 수 있다는 것은 다릅니다. 확보 범위와 근거 구간을 확인한 뒤 인용하세요.</p>
+      <div class="researchKicker"><span>${escapeHtml(domainLabel(project.domain))}</span> · <span>${escapeHtml(project.title)}</span></div>
+      <h1>${uiCopy("문헌·선행근거", "Literature & Prior Evidence")}</h1>
+      ${summary}
       ${state.literatureError ? `<div class="errorCopy" role="alert">${escapeHtml(state.literatureError)}</div>` : ""}
       ${body}
     </div></section>`;
@@ -3617,7 +3634,7 @@ function createComposerEventSync({
       : "";
     const destination = projectDestinationById(state.currentDestination);
     return `<section class="researchView" data-empty="${assistantCount === 0 && !messages ? "true" : "false"}" data-research-destination="${escapeHtml(destination.id)}"><div class="answerColumn">
-      <div class="researchKicker"><span>${escapeHtml(domainLabel(project.domain))}</span> · ${escapeHtml(destination.label)} · ${escapeHtml(lifecycleLabel())}</div>
+      <div class="researchKicker"><span>${escapeHtml(domainLabel(project.domain))}</span> · ${escapeHtml(destinationLabel(destination))} · ${escapeHtml(lifecycleLabel())}</div>
       <h1>${escapeHtml(project.title)}</h1>
       ${contractNotice}
       ${runFailureNotice()}
@@ -6911,7 +6928,8 @@ function createComposerEventSync({
 
   function researchWorkspaceTabButton() {
     const selected = state.activeWorkspaceTabId === RESEARCH_TAB_ID;
-    const label = state.mode === "session" ? projectDestinationById(state.currentDestination)?.label || "Research" : "Research";
+    const current = state.mode === "session" ? projectDestinationById(state.currentDestination) : null;
+    const label = current ? destinationLabel(current) : uiCopy("연구", "Research");
     return `<button class="workspaceTab workspaceResearchTab" role="tab" id="${workspaceTabDomId(RESEARCH_TAB_ID)}" aria-controls="science-workspace-panel" data-workspace-tab-id="${RESEARCH_TAB_ID}" aria-selected="${selected}" tabindex="${selected ? "0" : "-1"}">${heroIcon("book", "workspaceTabIcon")}<span class="workspaceTabLabel">${escapeHtml(label)}</span></button>`;
   }
 
@@ -8371,6 +8389,8 @@ function createComposerEventSync({
     const message = error instanceof Error ? error.message : String(error || "");
     if (message.includes("expired")) return uiCopy("폴더 선택이 만료되었습니다. 폴더를 다시 선택해 주세요.", "The folder selection expired. Choose the folder again.");
     if (message.includes("folder-selection") || message.includes("folder selection")) return uiCopy("폴더를 다시 선택해 주세요.", "Choose the folder again.");
+    if (message.includes("busy")) return uiCopy("폴더 선택 창이 이미 열려 있거나 준비 중입니다. 경로를 직접 입력할 수도 있습니다.", "Folder picker is busy. You can also enter the folder path directly.");
+    if (message.includes("path-invalid") || message.includes("not-directory") || message.includes("unavailable")) return uiCopy("올바른 폴더 경로를 입력해 주세요.", "Please enter a valid directory path.");
     return message || uiCopy("폴더를 선택하지 못했습니다.", "The folder could not be selected.");
   }
 
@@ -8386,7 +8406,12 @@ function createComposerEventSync({
       render();
       const result = await pendingSelection;
       if (generation !== state.newProjectGeneration || !state.modal) return;
-      if (!result || result.canceled === true) return;
+      if (!result || result.canceled === true) {
+        if (result?.busy) {
+          state.newProjectFolderError = uiCopy("폴더 선택 창이 이미 열려 있거나 준비 중입니다. 경로를 직접 입력할 수도 있습니다.", "Folder picker is busy. You can also enter the folder path directly.");
+        }
+        return;
+      }
       const selectionId = typeof result.selectionId === "string" ? result.selectionId.trim() : "";
       const folderPath = typeof result.path === "string" ? result.path : "";
       if (!selectionId || !folderPath.trim()) throw new Error("science-folder-selection-invalid");
@@ -8400,23 +8425,47 @@ function createComposerEventSync({
       if (generation !== state.newProjectGeneration || !state.modal) return;
       state.newProjectFolderBusy = false;
       render();
-      requestAnimationFrame(() => document.querySelector('[data-action="pick-project-folder"]')?.focus({ preventScroll: true }));
+      requestAnimationFrame(() => document.querySelector('.projectFolderPathInput')?.focus({ preventScroll: true }));
     }
   }
 
   function resetNewProjectDraft() {
     state.newProjectDraft = blankNewProjectDraft();
     state.newProjectFolderError = "";
+    state.selectedResearchTemplateId = null;
+    state.selectedResearchTemplateIds = [];
   }
 
   function modal() {
     if (!state.modal) return "";
-    const template = researchTemplateById(state.selectedResearchTemplateId);
-    const classification = template ? `<div class="projectClassificationHint"><img src="./assets/research-templates/${escapeHtml(template.id)}.png" alt=""><span><small>${uiCopy("바로가기에서 선택한 분류", "Classification from shortcut")}</small><strong>${escapeHtml(researchTemplateLabel(template))}</strong></span><button type="button" data-action="clear-project-classification">${uiCopy("분류 지우기", "Clear")}</button></div>` : "";
+    const selectedTemplateIds = state.selectedResearchTemplateIds || (state.selectedResearchTemplateId ? [state.selectedResearchTemplateId] : []);
+    const availableTemplates = researchTemplates.filter((t) => !selectedTemplateIds.includes(t.id));
+    const tags = selectedTemplateIds.map((id) => {
+      const t = researchTemplateById(id);
+      if (!t) return "";
+      return `<span class="projectClassificationTag"><img src="./assets/research-templates/${escapeHtml(t.id)}.png" alt=""><strong>${escapeHtml(researchTemplateLabel(t))}</strong><button type="button" data-action="remove-project-classification" data-template-id="${escapeHtml(t.id)}" aria-label="${uiCopy("분류 제거", "Remove")}">×</button></span>`;
+    }).join("");
+    const classification = `
+      <div class="projectClassificationSection">
+        <div class="projectClassificationHeader">
+          <small>${uiCopy("연구 분야 바로가기 (복수 선택 가능)", "Research fields (multi-disciplinary)")}</small>
+          ${selectedTemplateIds.length > 0 ? `<button type="button" class="projectClassificationClear" data-action="clear-project-classification">${uiCopy("분류 지우기", "Clear all")}</button>` : ""}
+        </div>
+        <div class="projectClassificationRow">
+          <div class="projectClassificationTags">${tags}</div>
+          ${availableTemplates.length > 0 ? `<select class="projectClassificationAddSelect" data-action="add-project-classification" aria-label="${uiCopy("연구 분야 추가", "Add research field")}"><option value="">${uiCopy("+ 연구 분야 추가…", "+ Add research field…")}</option>${availableTemplates.map((t) => `<option value="${escapeHtml(t.id)}">${escapeHtml(researchTemplateLabel(t))}</option>`).join("")}</select>` : ""}
+        </div>
+      </div>`;
     const folderPath = typeof state.newProjectDraft.folderPath === "string" ? state.newProjectDraft.folderPath : "";
-    const hasFolder = Boolean(state.newProjectDraft.folderSelectionId && folderPath.trim());
-    const folderPicker = `<label class="field projectFolderField"><span>${uiCopy("프로젝트 폴더", "Project folder")}</span><button class="projectFolderPicker" type="button" data-action="pick-project-folder" ${state.saving || state.newProjectFolderBusy ? "disabled" : ""}><span class="projectFolderPickerIcon" aria-hidden="true">${heroIcon("folder")}</span><span class="projectFolderPickerCopy"><strong>${hasFolder ? uiCopy("폴더가 선택되었습니다", "Folder selected") : uiCopy("폴더 선택", "Choose a folder")}</strong><small class="projectFolderPickerPath${hasFolder ? "" : " isPlaceholder"}"${hasFolder ? ` title="${escapeHtml(folderPath)}"` : ""}>${hasFolder ? escapeHtml(folderPath) : uiCopy("프로젝트에 연결할 폴더를 선택하세요", "Choose a folder for this project")}</small></span><span class="projectFolderPickerArrow" aria-hidden="true">${heroIcon("chevron-right")}</span></button>${state.newProjectFolderError ? `<span class="formError projectFolderError" role="alert">${escapeHtml(state.newProjectFolderError)}</span>` : ""}</label>`;
-    return `<div class="modalBackdrop projectCreationBackdrop" role="presentation"><form class="modal newProjectModal projectDetailsModal" id="new-project-form" role="dialog" aria-modal="true" aria-labelledby="new-project-title"><header><div><span>${uiCopy("새 프로젝트", "New project")}</span><h2 id="new-project-title">${uiCopy("프로젝트를 시작해 보세요", "Start a project")}</h2></div><button class="newProjectClose" type="button" data-action="cancel" aria-label="${uiCopy("새 프로젝트 닫기", "Close new project")}">×</button></header><p class="modalLead">${uiCopy("프로젝트 이름과 개요를 입력하고 연결할 폴더를 선택하세요.", "Enter a name and overview, then choose a folder for this project.")}</p>${classification}<label class="field"><span>${uiCopy("프로젝트 이름", "Project name")}</span><input name="title" required maxlength="80" autocomplete="off" value="${escapeHtml(state.newProjectDraft.title)}" placeholder="${uiCopy("연구를 구분하기 쉬운 짧은 이름", "A short name to identify your research")}" /></label><label class="field"><span>${uiCopy("개요", "Overview")}</span><textarea name="question" required maxlength="20000" placeholder="${uiCopy("이 프로젝트에서 발견하거나 검증하고 싶은 내용을 적어 주세요.", "Describe what you want to discover or test in this project.")}">${escapeHtml(state.newProjectDraft.question)}</textarea></label>${folderPicker}<div class="formError" id="form-error" role="alert"></div><div class="modalActions"><button class="primaryButton" type="submit" ${state.saving || state.newProjectFolderBusy ? "disabled" : ""}>${state.saving ? uiCopy("저장 중…", "Saving…") : uiCopy("프로젝트 만들기", "Create project")}</button></div></form></div>`;
+    const folderPicker = `<label class="field projectFolderField">
+      <div class="fieldLabelRow"><span>${uiCopy("프로젝트 폴더", "Project folder")}</span><small class="fieldHint">${uiCopy("직접 경로를 입력하거나 찾아보기를 누르세요", "Type or paste a folder path, or browse")}</small></div>
+      <div class="projectFolderInputRow">
+        <input name="folderPath" type="text" class="projectFolderPathInput" value="${escapeHtml(folderPath)}" placeholder="${uiCopy("~/Science/ 또는 폴더 경로 입력...", "~/Science/ or enter folder path...")}" autocomplete="off" spellcheck="false" />
+        <button class="secondaryButton projectFolderBrowseButton" type="button" data-action="pick-project-folder" ${state.saving || state.newProjectFolderBusy ? "disabled" : ""}>${uiCopy("찾아보기…", "Browse…")}</button>
+      </div>
+      ${state.newProjectFolderError ? `<span class="formError projectFolderError" role="alert">${escapeHtml(state.newProjectFolderError)}</span>` : ""}
+    </label>`;
+    return `<div class="modalBackdrop projectCreationBackdrop" role="presentation"><form class="modal newProjectModal projectDetailsModal" id="new-project-form" role="dialog" aria-modal="true" aria-labelledby="new-project-title"><header><div><span>${uiCopy("새 프로젝트", "New project")}</span><h2 id="new-project-title">${uiCopy("프로젝트를 시작해 보세요", "Start a project")}</h2></div><button class="newProjectClose" type="button" data-action="cancel" aria-label="${uiCopy("새 프로젝트 닫기", "Close new project")}">×</button></header><p class="modalLead">${uiCopy("프로젝트 이름과 개요를 입력하고 연결할 폴더를 선택하세요.", "Enter a name and overview, then choose a folder for this project.")}</p>${classification}<label class="field"><div class="fieldLabelRow"><span>${uiCopy("프로젝트 이름", "Project name")}</span><small class="fieldCounter">(${state.newProjectDraft.title.length}/240)</small></div><input name="title" required maxlength="240" autocomplete="off" value="${escapeHtml(state.newProjectDraft.title)}" placeholder="${uiCopy("연구를 구분하기 쉬운 이름", "A descriptive name to identify your research")}" /></label><label class="field"><span>${uiCopy("개요", "Overview")}</span><textarea name="question" required maxlength="20000" placeholder="${uiCopy("이 프로젝트에서 발견하거나 검증하고 싶은 내용을 적어 주세요.", "Describe what you want to discover or test in this project.")}">${escapeHtml(state.newProjectDraft.question)}</textarea></label>${folderPicker}<div class="formError" id="form-error" role="alert"></div><div class="modalActions"><button class="primaryButton" type="submit" ${state.saving || state.newProjectFolderBusy ? "disabled" : ""}>${state.saving ? uiCopy("저장 중…", "Saving…") : uiCopy("프로젝트 만들기", "Create project")}</button></div></form></div>`;
   }
 
   function labManagerModal() {
@@ -8794,7 +8843,7 @@ function createComposerEventSync({
       return `<button type="button" data-action="${folderMode ? "open-sidebar-project" : "select-library-project"}" data-library-project-id="${escapeHtml(project.id)}" aria-current="${project.id === selectedProjectId ? "page" : "false"}"><span class="projectFolderGlyph" aria-hidden="true">${heroIcon("folder")}</span><span title="${escapeHtml(project.title)}">${escapeHtml(project.title)}</span></button>`;
     }).join("");
     const backToWorkLabel = uiCopy("Agentlas Work로 돌아가기", "Back to Agentlas Work");
-    return `<aside class="projectHubSidebar"><header><span class="projectHubBrand"><img src="./assets/agentlas-mark.png" alt=""><strong>Agentlas <em>Science*</em></strong></span></header><button class="projectHubBack" type="button" data-action="back-to-work" aria-label="${backToWorkLabel}" title="${backToWorkLabel}"><strong>${backToWorkLabel}</strong></button><label class="projectHubSideSearch">${heroIcon("search")}<input type="search" data-project-search="side" value="${escapeHtml(state.librarySearch)}" placeholder="${uiCopy("프로젝트 검색", "Search projects")}" aria-label="${uiCopy("프로젝트 검색", "Search projects")}"></label><nav class="projectHubPrimaryNav" aria-label="${uiCopy("연구 보관함 메뉴", "Research library menu")}"><button type="button" class="isActive" data-action="back-to-projects">${heroIcon("grid")}<span>${uiCopy("프로젝트", "Projects")}</span></button><button type="button" data-action="new">${heroIcon("plus")}<span>${uiCopy("새 연구", "New research")}</span></button></nav><section class="projectHubProjectList"><header><strong>${uiCopy("프로젝트", "Projects")}</strong><span>${escapeHtml(state.projects.length)}</span></header><div>${projectLinks || `<p>${uiCopy("아직 프로젝트가 없습니다.", "No projects yet.")}</p>`}</div></section></aside>`;
+    return `<aside class="projectHubSidebar"><header><span class="projectHubBrand"><img src="./assets/agentlas-mark.png" alt=""><strong>Agentlas <em>Science</em></strong></span></header><button class="projectHubBack" type="button" data-action="back-to-work" aria-label="${backToWorkLabel}" title="${backToWorkLabel}"><strong>${backToWorkLabel}</strong></button><label class="projectHubSideSearch">${heroIcon("search")}<input type="search" data-project-search="side" value="${escapeHtml(state.librarySearch)}" placeholder="${uiCopy("프로젝트 검색", "Search projects")}" aria-label="${uiCopy("프로젝트 검색", "Search projects")}"></label><nav class="projectHubPrimaryNav" aria-label="${uiCopy("연구 보관함 메뉴", "Research library menu")}"><button type="button" class="isActive" data-action="back-to-projects">${heroIcon("grid")}<span>${uiCopy("프로젝트", "Projects")}</span></button></nav><section class="projectHubProjectList"><header><strong>${uiCopy("프로젝트", "Projects")}</strong><span>${escapeHtml(state.projects.length)}</span></header><div>${projectLinks || `<p>${uiCopy("아직 프로젝트가 없습니다.", "No projects yet.")}</p>`}</div></section></aside>`;
   }
 
   function projectLibrary() {
@@ -8820,7 +8869,7 @@ function createComposerEventSync({
     const folderFact = selectedFolderPath.trim() ? `<div><dt>${uiCopy("폴더", "Folder")}</dt><dd class="projectHubPathValue" title="${escapeHtml(selectedFolderPath)}">${escapeHtml(selectedFolderPath)}</dd></div>` : "";
     const detail = selectedProject ? `<div class="projectHubDetailHero"><span class="projectFolderDetailGlyph" aria-hidden="true">${heroIcon("folder")}</span><span class="projectHubDetailLabel">${escapeHtml(selectedTemplate ? researchTemplateLabel(selectedTemplate) : domainLabel(selectedProject.domain))}</span></div><h2>${escapeHtml(selectedProject.title)}</h2><p>${escapeHtml(selectedProject.question)}</p><dl class="projectHubFacts"><div><dt>${uiCopy("업데이트", "Updated")}</dt><dd>${escapeHtml(formatDate(selectedProject.updatedAt))}</dd></div><div><dt>${uiCopy("분야", "Field")}</dt><dd>${escapeHtml(selectedTemplate ? researchTemplateLabel(selectedTemplate) : domainLabel(selectedProject.domain))}</dd></div>${folderFact}</dl><div class="projectHubDetailMetrics">${projectMetricMarkup(summary, false, state.projectLibrarySummaries.has(selectedProject.id))}</div>${state.projectFolderOpenError ? `<p class="projectHubActionError" role="alert">${escapeHtml(state.projectFolderOpenError)}</p>` : ""}<div class="projectHubDetailActions">${selectedFolderPath.trim() ? `<button class="secondaryButton" type="button" data-action="open-project-folder-os" data-project-id="${escapeHtml(selectedProject.id)}" ${state.projectFolderOpenBusy ? "disabled" : ""}>${state.projectFolderOpenBusy ? uiCopy("폴더 여는 중…", "Opening folder…") : uiCopy("폴더 열기", "Open folder")}</button>` : ""}<button class="primaryButton" type="button" data-action="open-library-project" data-library-project-id="${escapeHtml(selectedProject.id)}">${uiCopy("프로젝트 내용 열기", "Open project contents")}${heroIcon("chevron-right")}</button></div>` : `<div class="projectHubDetailEmpty">${heroIcon("folder")}<strong>${uiCopy("프로젝트를 선택하세요", "Select a project")}</strong><span>${uiCopy("실제 프로젝트 정보와 저장 항목 수가 여기에 표시됩니다.", "Project metadata and saved-item counts appear here.")}</span></div>`;
     const projectCount = state.locale === "ko" ? `${filteredProjects.length}개 프로젝트` : `${filteredProjects.length} ${filteredProjects.length === 1 ? "project" : "projects"}`;
-    return `<section class="projectHub">${projectHubSidebar(selectedProject?.id || null)}<main class="projectHubMain"><header class="projectHubHeading"><div><span>Research library</span><h1>${uiCopy("연구 프로젝트", "Research projects")}</h1><p>${uiCopy("근거, 데이터, 분석과 원고가 연결된 프로젝트를 엽니다.", "Open projects that connect evidence, data, analysis, and manuscripts.")}</p></div><button class="primaryButton" type="button" data-action="new">${heroIcon("plus")}${uiCopy("새 연구", "New research")}</button></header><label class="projectHubMainSearch">${heroIcon("search")}<input type="search" data-project-search="main" value="${escapeHtml(state.librarySearch)}" placeholder="${uiCopy("이름, 질문 또는 분야로 검색", "Search by name, question, or field")}" aria-label="${uiCopy("연구 프로젝트 검색", "Search research projects")}"><span>${escapeHtml(projectCount)}</span></label><div class="projectHubGrid">${cards || `<div class="projectHubEmpty"><strong>${query ? uiCopy("검색 결과가 없습니다.", "No matching projects.") : uiCopy("아직 연구 프로젝트가 없습니다.", "No research projects yet.")}</strong><span>${query ? uiCopy("다른 이름이나 분야를 검색해 보세요.", "Try another project name or field.") : uiCopy("15개 연구 분야 중 하나를 골라 시작하세요.", "Choose one of 15 research fields to begin.")}</span>${query ? "" : `<button class="secondaryButton" type="button" data-action="new">${uiCopy("새 연구 시작", "Start new research")}</button>`}</div>`}</div><section class="projectHubShortcuts"><header><h2>${uiCopy("연구 분야 바로가기", "Research field shortcuts")}</h2><span>${uiCopy("15개 분야", "15 fields")}</span></header><div>${shortcutFields}</div></section></main><aside class="projectHubDetail" aria-label="${uiCopy("선택한 프로젝트 상세", "Selected project details")}"><header><span>${uiCopy("프로젝트 상세", "Project details")}</span></header>${detail}</aside>${modal()}</section>`;
+    return `<section class="projectHub">${projectHubSidebar(selectedProject?.id || null)}<main class="projectHubMain"><header class="projectHubHeading"><div><span>Research library</span><h1>${uiCopy("연구 프로젝트", "Research projects")}</h1><p>${uiCopy("근거, 데이터, 분석과 원고가 연결된 프로젝트를 엽니다.", "Open projects that connect evidence, data, analysis, and manuscripts.")}</p></div><button class="primaryButton" type="button" data-action="new">${heroIcon("plus")}${uiCopy("새 연구", "New research")}</button></header><label class="projectHubMainSearch">${heroIcon("search")}<input type="search" data-project-search="main" value="${escapeHtml(state.librarySearch)}" placeholder="${uiCopy("이름, 질문 또는 분야로 검색", "Search by name, question, or field")}" aria-label="${uiCopy("연구 프로젝트 검색", "Search research projects")}"><span>${escapeHtml(projectCount)}</span></label><div class="projectHubGrid">${cards || `<div class="projectHubEmpty"><strong>${query ? uiCopy("검색 결과가 없습니다.", "No matching projects.") : uiCopy("아직 연구 프로젝트가 없습니다.", "No research projects yet.")}</strong><span>${query ? uiCopy("다른 이름이나 분야를 검색해 보세요.", "Try another project name or field.") : uiCopy("아래 15개 연구 분야 중 하나를 선택하거나 상단의 새 연구 버튼을 누르세요.", "Choose one of the 15 research fields below, or click New research above to begin.")}</span></div>`}</div><section class="projectHubShortcuts"><header><h2>${uiCopy("연구 분야 바로가기", "Research field shortcuts")}</h2><span>${uiCopy("15개 분야", "15 fields")}</span></header><div>${shortcutFields}</div></section></main><aside class="projectHubDetail" aria-label="${uiCopy("선택한 프로젝트 상세", "Selected project details")}"><header><span>${uiCopy("프로젝트 상세", "Project details")}</span></header>${detail}</aside>${modal()}</section>`;
   }
 
   function projectFolderRows() {
@@ -11711,6 +11760,7 @@ function createComposerEventSync({
       if (!template) return;
       state.modal = true;
       state.selectedResearchTemplateId = template.id;
+      state.selectedResearchTemplateIds = [template.id];
       state.newProjectStep = "details";
       state.newProjectFolderError = "";
       state.newProjectFolderBusy = false;
@@ -11759,6 +11809,7 @@ function createComposerEventSync({
         state.saving = false;
         state.newProjectStep = "details";
         state.selectedResearchTemplateId = null;
+        state.selectedResearchTemplateIds = [];
         state.newProjectFolderBusy = false;
         state.newProjectGeneration += 1;
         resetNewProjectDraft();
@@ -11774,8 +11825,18 @@ function createComposerEventSync({
       void pickNewProjectFolder();
       return;
     }
+    if (target.dataset.action === "remove-project-classification") {
+      const id = target.dataset.templateId;
+      state.selectedResearchTemplateIds = (state.selectedResearchTemplateIds || []).filter((item) => item !== id);
+      state.selectedResearchTemplateId = state.selectedResearchTemplateIds[0] || null;
+      state.newProjectRequestId = null;
+      state.newProjectRequestSignature = "";
+      render();
+      return;
+    }
     if (target.dataset.action === "clear-project-classification") {
       state.selectedResearchTemplateId = null;
+      state.selectedResearchTemplateIds = [];
       state.newProjectRequestId = null;
       state.newProjectRequestSignature = "";
       render();
@@ -12107,6 +12168,19 @@ function createComposerEventSync({
   });
 
   root.addEventListener("change", (event) => {
+    const addClassification = event.target.closest('[data-action="add-project-classification"]');
+    if (addClassification && addClassification.value) {
+      const templateId = addClassification.value;
+      if (!state.selectedResearchTemplateIds) state.selectedResearchTemplateIds = [];
+      if (!state.selectedResearchTemplateIds.includes(templateId)) {
+        state.selectedResearchTemplateIds.push(templateId);
+        if (!state.selectedResearchTemplateId) state.selectedResearchTemplateId = templateId;
+      }
+      state.newProjectRequestId = null;
+      state.newProjectRequestSignature = "";
+      render();
+      return;
+    }
     const approvalScope = event.target.closest('input[data-action="toggle-approval-scope"]');
     if (approvalScope) { void toggleApprovalScope(approvalScope.dataset.scope, approvalScope.checked); return; }
     const workbookSheet = event.target.closest("[data-workbook-sheet]");
@@ -12419,7 +12493,12 @@ function createComposerEventSync({
     const newProjectForm = event.target.closest("#new-project-form");
     if (newProjectForm) {
       const form = new FormData(newProjectForm);
-      state.newProjectDraft = { ...state.newProjectDraft, title: String(form.get("title") || ""), question: String(form.get("question") || "") };
+      const title = String(form.get("title") || "");
+      const question = String(form.get("question") || "");
+      const folderPath = String(form.get("folderPath") || "");
+      state.newProjectDraft = { ...state.newProjectDraft, title, question, folderPath };
+      const counter = newProjectForm.querySelector(".fieldCounter");
+      if (counter) counter.textContent = `(${title.length}/240)`;
       return;
     }
     const manuscriptInsertSearch = event.target.closest("[data-manuscript-insert-search]");
@@ -13087,7 +13166,8 @@ function createComposerEventSync({
     event.preventDefault();
     if (state.saving || state.newProjectFolderBusy) return;
     const form = new FormData(event.target);
-    const template = researchTemplateById(state.selectedResearchTemplateId);
+    const selectedTemplateIds = state.selectedResearchTemplateIds || (state.selectedResearchTemplateId ? [state.selectedResearchTemplateId] : []);
+    const primaryTemplate = researchTemplateById(selectedTemplateIds[0]);
     const title = String(form.get("title") || "").trim();
     const question = String(form.get("question") || "").trim();
     if (!title || !question) {
@@ -13095,15 +13175,40 @@ function createComposerEventSync({
       if (errorNode) errorNode.textContent = uiCopy("프로젝트 이름과 개요를 모두 입력해 주세요.", "Enter both a project name and an overview.");
       return;
     }
-    const folderSelectionId = typeof state.newProjectDraft.folderSelectionId === "string" ? state.newProjectDraft.folderSelectionId.trim() : "";
-    if (!folderSelectionId) {
+    let folderSelectionId = typeof state.newProjectDraft.folderSelectionId === "string" ? state.newProjectDraft.folderSelectionId.trim() : "";
+    const folderPath = String(form.get("folderPath") || state.newProjectDraft.folderPath || "").trim();
+    if (!folderPath && !folderSelectionId) {
       const errorNode = document.getElementById("form-error");
-      if (errorNode) errorNode.textContent = uiCopy("프로젝트 폴더를 선택해 주세요.", "Choose a project folder.");
-      requestAnimationFrame(() => document.querySelector('[data-action="pick-project-folder"]')?.focus());
+      if (errorNode) errorNode.textContent = uiCopy("프로젝트 폴더 경로를 입력하거나 선택해 주세요.", "Choose or enter a project folder.");
+      requestAnimationFrame(() => document.querySelector('#new-project-form input[name="folderPath"]')?.focus());
       return;
     }
-    const domain = template?.domain || "general";
-    const requestSignature = JSON.stringify({ title, question, domain, folderSelectionId });
+    if (!folderSelectionId || (folderPath && state.newProjectDraft.folderPath !== folderPath)) {
+      try {
+        state.saving = true;
+        render();
+        const res = await science.projects.specifyFolder({ path: folderPath });
+        if (res && res.selectionId) {
+          folderSelectionId = res.selectionId;
+          state.newProjectDraft.folderSelectionId = folderSelectionId;
+          state.newProjectDraft.folderPath = res.path || folderPath;
+        } else {
+          throw new Error("science-project-folder-path-invalid");
+        }
+      } catch (err) {
+        state.saving = false;
+        render();
+        const errorNode = document.getElementById("form-error");
+        if (errorNode) errorNode.textContent = newProjectFolderErrorMessage(err);
+        return;
+      }
+    }
+    const domain = primaryTemplate?.domain || "general";
+    const otherTemplates = selectedTemplateIds.slice(1).map(researchTemplateById).filter(Boolean);
+    const relatedDomains = [...new Set(otherTemplates.map((t) => t.domain).filter((d) => d && d !== domain))];
+    const initialLabId = primaryTemplate?.id || undefined;
+    const initialLabIds = selectedTemplateIds.length ? selectedTemplateIds : undefined;
+    const requestSignature = JSON.stringify({ title, question, domain, relatedDomains, initialLabId, initialLabIds, folderSelectionId });
     if (!state.newProjectRequestId || state.newProjectRequestSignature !== requestSignature) {
       state.newProjectRequestId = crypto.randomUUID();
       state.newProjectRequestSignature = requestSignature;
@@ -13118,6 +13223,10 @@ function createComposerEventSync({
         question,
         title,
         domain,
+        relatedDomains,
+        initialLabId,
+        initialLabIds,
+        researchTemplateId: initialLabId,
         folderSelectionId,
       });
       state.projects = [result.project, ...state.projects.filter((item) => item.id !== result.project.id)];

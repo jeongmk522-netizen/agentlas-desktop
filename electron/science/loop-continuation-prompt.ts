@@ -19,6 +19,11 @@ export interface ScienceLoopContinuationInput {
   readonly noProgressStreak: number;
   /** 이 프로젝트가 사람 확인 없이 스스로 기록해도 되는 승인 범위. */
   readonly standingApprovalScopes: readonly string[];
+  /**
+   * 이 연구의 산출물 언어. 화면 언어와 다른 축이다 -- 한국어로 대화하면서 영어 논문을 쓰는 것이
+   * 정상이다. null 이면 프로젝트가 아직 고르지 않았다는 뜻이고, 그때는 화면 언어를 넘겨 준다.
+   */
+  readonly outputLanguage: string | null;
 }
 
 const bullet = (lines: readonly string[]): string => lines.map((line) => `- ${line}`).join("\n");
@@ -28,6 +33,10 @@ export function scienceLoopContinuationPrompt(input: ScienceLoopContinuationInpu
     input.episodesRemaining === null ? "Episodes remaining: unknown" : `Episodes remaining: ${input.episodesRemaining}`,
     input.hoursRemaining === null ? "Time to deadline: unknown" : `Time to deadline: ${input.hoursRemaining.toFixed(1)}h`,
   ];
+  const languageName = {
+    ko: "Korean", en: "English", zh: "Simplified Chinese", "zh-Hant": "Traditional Chinese", ja: "Japanese",
+    es: "Spanish", fr: "French", de: "German", pt: "Portuguese", ru: "Russian", it: "Italian", ar: "Arabic", hi: "Hindi",
+  }[input.outputLanguage ?? ""] ?? input.outputLanguage;
   const standing = input.standingApprovalScopes.length
     ? `The researcher has already authorized these without being asked again: ${input.standingApprovalScopes.join(", ")}. Record those decisions yourself and name the standing grant as the authority. Stopping to ask for one of these strands the study at a checkpoint nobody is waiting at.`
     : "This project carries no standing approval. Every authorization needs the accountable human.";
@@ -39,6 +48,14 @@ export function scienceLoopContinuationPrompt(input: ScienceLoopContinuationInpu
     "",
     "Budget:",
     bullet(budget),
+    "",
+    "Output language:",
+    bullet([
+      languageName
+        ? `Write every research output in ${languageName}: hypothesis statements, evidence summaries, analysis commentary, figure captions, and the manuscript. This is the project's choice and is independent of the language the researcher chats in -- do not mirror the chat language instead.`
+        : "This project has not chosen an output language. Keep writing in the language the previous turns used, and do not switch mid-study.",
+      "Identifiers, units, statistical symbols, tool names, and quoted source text keep their original form; do not translate them.",
+    ]),
     "",
     "Standing authority:",
     bullet([standing]),

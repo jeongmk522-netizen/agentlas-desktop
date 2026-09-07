@@ -607,7 +607,7 @@ import {
   builtinAgentId,
 } from "../architecture/manifest";
 
-export const SCIENCE_SCHEMA_VERSION = 58;
+export const SCIENCE_SCHEMA_VERSION = 59;
 const UUID_RE = /^[a-f0-9]{8}-[a-f0-9]{4}-[1-8][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/i;
 const SHA256_RE = /^[a-f0-9]{64}$/;
 const SCIENCE_SOURCE_TEXT_CHUNK_MAX_BYTES = 2_400;
@@ -2169,6 +2169,19 @@ const TITLE_REQUEST_HEADS = [
   /^(?:please|could you|can you|would you|i want you to|i'd like you to)\s+/iu,
 ];
 
+/**
+ * 연구 산출물 언어. 화면 언어와 독립이며, 고르지 않으면 null 로 남겨 화면 언어를 따르게 한다.
+ * 임의 문자열을 그대로 저장하면 프롬프트에 그대로 실려 나가므로 짧은 태그만 받는다.
+ */
+const SCIENCE_OUTPUT_LANGUAGES = new Set(["ko", "en", "zh", "zh-Hant", "ja", "es", "fr", "de", "pt", "ru", "it", "ar", "hi"]);
+function safeOutputLanguage(value: unknown): string | null {
+  if (value === undefined || value === null || value === "") return null;
+  if (typeof value !== "string") throw new Error("science-output-language-invalid");
+  const normalized = value.trim();
+  if (!SCIENCE_OUTPUT_LANGUAGES.has(normalized)) throw new Error("science-output-language-invalid");
+  return normalized;
+}
+
 function defaultTitle(question: string): string {
   const firstLine = question.split("\n", 1)[0].trim();
   // Strip the request wrapper off the WHOLE line first. Doing it after the length cut never fires,
@@ -2216,6 +2229,7 @@ function projectFromRow(row: Record<string, unknown>, relatedDomains: ScienceDom
     researchTemplateId: row.research_template_id === null || row.research_template_id === undefined ? null : safeResearchTemplateId(row.research_template_id),
     initialLabId: row.initial_lab_id === null || row.initial_lab_id === undefined ? null : safeResearchTemplateId(row.initial_lab_id),
     folderPath: row.folder_path === null || row.folder_path === undefined ? null : String(row.folder_path),
+    outputLanguage: row.output_language === null || row.output_language === undefined ? null : String(row.output_language),
     status: String(row.status) as ScienceProject["status"],
     version: Number(row.version),
     createdAt: String(row.created_at),
@@ -4602,12 +4616,12 @@ export class ScienceStore {
       );
       CREATE INDEX IF NOT EXISTS idx_science_project_data_entries_scan_path
         ON science_project_data_entries(scan_id, relative_path, id);
-      CREATE INDEX IF NOT EXISTS idx_science_project_data_entries_project_hash
-        ON science_project_data_entries(project_id, content_sha256, relative_path, id);
       CREATE INDEX IF NOT EXISTS idx_science_project_data_entries_scan_project
         ON science_project_data_entries(project_id, scan_id, id, content_sha256);
       CREATE INDEX IF NOT EXISTS idx_science_project_data_entries_previous_hash
         ON science_project_data_entries(project_id, previous_entry_id, content_sha256);
+      CREATE INDEX IF NOT EXISTS idx_science_project_data_entries_project_hash
+        ON science_project_data_entries(project_id, content_sha256, relative_path, id);
       CREATE TABLE IF NOT EXISTS science_project_data_entry_imports (
         id TEXT PRIMARY KEY,
         project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
@@ -4806,6 +4820,10 @@ export class ScienceStore {
           research_template_id TEXT CHECK (research_template_id IS NULL OR research_template_id IN ('data-table','statistics-analysis','data-visualization','economic-indicators','literature-network','astronomy-sky','biodiversity-map','paleontology-evidence','earthquake-observations','physics-data','materials-structures','genomics-variants','comparative-genomics','molecular-structure','chemistry')),
           initial_lab_id TEXT CHECK (initial_lab_id IS NULL OR initial_lab_id IN ('data-table','statistics-analysis','data-visualization','economic-indicators','literature-network','astronomy-sky','biodiversity-map','paleontology-evidence','earthquake-observations','physics-data','materials-structures','genomics-variants','comparative-genomics','molecular-structure','chemistry')),
           folder_path TEXT,
+          -- 연구 언어. 화면 언어와 다른 축이다: 한국어로 대화하면서 영어 논문을 쓰는 것이
+          -- 정상이고, 반대도 정상이다. NULL 은 "아직 안 골랐다" 이며 그때만 화면 언어를 따른다.
+          -- 옛 프로젝트를 임의의 언어로 메워 넣지 않으려고 NULL 을 남겨 둔다.
+          output_language TEXT,
           status TEXT NOT NULL CHECK (status IN ('draft','active','paused','archived')),
           version INTEGER NOT NULL CHECK (version >= 1),
           created_at TEXT NOT NULL,
@@ -9445,6 +9463,11 @@ export class ScienceStore {
           if (!projectColumns.has("research_template_id")) this.db.exec("ALTER TABLE projects ADD COLUMN research_template_id TEXT");
           if (!projectColumns.has("initial_lab_id")) this.db.exec("ALTER TABLE projects ADD COLUMN initial_lab_id TEXT");
         }
+        if (found < 59) {
+          // 열이 없을 수 있다(고대 스키마). 있으면 건너뛴다 -- 사다리는 몇 번을 돌아도 같아야 한다.
+          const projectColumns = new Set((this.db.pragma("table_info('projects')") as Array<{ name: string }>).map((column) => column.name));
+          if (!projectColumns.has("output_language")) this.db.exec("ALTER TABLE projects ADD COLUMN output_language TEXT");
+        }
         if (found < 57) {
           this.db.exec(`
             CREATE TABLE IF NOT EXISTS analysis_plan_review_receipts (
@@ -10418,7 +10441,7 @@ export class ScienceStore {
     }
     if (folderSelectionId === undefined && selectedFolderPath !== undefined) throw new Error("science-project-folder-selection-required");
     const question = safeText(input.question, 20_000, "question");
-    const title = input.title === undefined || input.title === "" ? defaultTitle(question) : safeText(input.title, 160, "title");
+    const title = input.title === undefined || input.title === "" ? defaultTitle(question) : safeText(input.title, 240, "title");
     const domain = safeDomain(input.domain);
     const relatedDomains = normalizeRelatedDomains(input.relatedDomains, domain);
     const hasResearchTemplate = input.researchTemplateId !== undefined || input.initialLabId !== undefined;
@@ -10456,11 +10479,11 @@ export class ScienceStore {
       if (folderSelectionId !== undefined && selectedFolderPath === undefined) throw new Error("science-project-folder-selection-required");
       const folderPath = folderSelectionId === undefined ? null : validateScienceProjectFolderPath(selectedFolderPath);
       const now = new Date().toISOString();
-      const project: ScienceProject = { id: randomUUID(), title, question, domain, relatedDomains, researchTemplateId, initialLabId, folderPath, status: "draft", version: 1, createdAt: now, updatedAt: now };
+      const project: ScienceProject = { id: randomUUID(), title, question, domain, relatedDomains, researchTemplateId, initialLabId, folderPath, outputLanguage: safeOutputLanguage(input.outputLanguage), status: "draft", version: 1, createdAt: now, updatedAt: now };
       const conversation: ScienceConversation = { id: randomUUID(), projectId: project.id, title, createdAt: now, updatedAt: now };
       const message: ScienceMessage = { id: randomUUID(), projectId: project.id, conversationId: conversation.id, role: "user", visibility: "visible", content: question, createdAt: now };
-      this.db.prepare("INSERT INTO projects (id,title,question,domain,research_template_id,initial_lab_id,folder_path,status,version,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)")
-        .run(project.id, project.title, project.question, project.domain, project.researchTemplateId, project.initialLabId, project.folderPath, project.status, project.version, now, now);
+      this.db.prepare("INSERT INTO projects (id,title,question,domain,research_template_id,initial_lab_id,folder_path,output_language,status,version,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)")
+        .run(project.id, project.title, project.question, project.domain, project.researchTemplateId, project.initialLabId, project.folderPath, project.outputLanguage ?? null, project.status, project.version, now, now);
       this.db.prepare("INSERT INTO conversations (id,project_id,title,created_at,updated_at) VALUES (?,?,?,?,?)")
         .run(conversation.id, conversation.projectId, conversation.title, now, now);
       this.db.prepare("INSERT INTO messages (id,project_id,conversation_id,role,visibility,content,created_at) VALUES (?,?,?,?,?,?,?)")

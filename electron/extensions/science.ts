@@ -546,6 +546,14 @@ function validatedTrustedPublicKeys(value: unknown, allowBare: boolean): Record<
 }
 
 function trustedPublicKeys(): Record<string, string> {
+  if (!app.isPackaged && process.env.AGENTLAS_PRODUCT_EXTENSION_TRUSTED_KEYS_JSON) {
+    try {
+      const value = JSON.parse(process.env.AGENTLAS_PRODUCT_EXTENSION_TRUSTED_KEYS_JSON);
+      return validatedTrustedPublicKeys(value, true);
+    } catch {
+      return {};
+    }
+  }
   for (const candidate of policyCandidates()) {
     try {
       const stat = fs.lstatSync(candidate);
@@ -556,14 +564,6 @@ function trustedPublicKeys(): Record<string, string> {
     } catch {
       // A missing or malformed policy fails closed. The installer reports an
       // untrusted key and never activates package bytes.
-    }
-  }
-  if (!app.isPackaged && process.env.AGENTLAS_PRODUCT_EXTENSION_TRUSTED_KEYS_JSON) {
-    try {
-      const value = JSON.parse(process.env.AGENTLAS_PRODUCT_EXTENSION_TRUSTED_KEYS_JSON);
-      return validatedTrustedPublicKeys(value, true);
-    } catch {
-      return {};
     }
   }
   return {};

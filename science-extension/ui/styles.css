@@ -306,7 +306,9 @@ button { cursor: pointer; color: inherit; }
 .topActions > button, .statusPill { height: 29px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); padding: 0 9px; font-size: 12px; color: var(--muted); }
 .statusPill { display: inline-flex; align-items: center; }
 .workspaceSyncWarning { height: 29px; display: inline-flex; align-items: center; border: 1px solid #efc7c2; border-radius: 8px; background: #fff8f7; padding: 0 9px; color: var(--danger); font-size: 12px; font-weight: 700; }
-.contentPane { min-width: 0; min-height: 0; flex: 1; overflow-y: auto; overflow-x: hidden; background: var(--app-bg); }
+/* 읽는 면은 흰색이다. 회색(--app-bg)은 레일과 창 바탕의 색이지 본문의 색이 아니다 --
+   오른쪽 대화창이 흰색인데 가운데 본문만 회색이라 같은 화면 안에서 종이가 두 장으로 보였다. */
+.contentPane { min-width: 0; min-height: 0; flex: 1; overflow-y: auto; overflow-x: hidden; background: var(--surface); }
 
 .workspaceLocation { min-width: 0; flex: 1; align-self: stretch; display: flex; align-items: center; gap: 6px; overflow: hidden; }
 .workspaceBack { flex: 0 0 auto; align-self: center; }
@@ -356,7 +358,7 @@ button { cursor: pointer; color: inherit; }
   outline: 2px solid var(--ink);
   outline-offset: -3px;
 }
-.workspaceBody { min-width: 0; min-height: 0; flex: 1; display: flex; column-gap: 0; overflow: hidden; background: var(--app-bg); padding-right: 0; }
+.workspaceBody { min-width: 0; min-height: 0; flex: 1; display: flex; column-gap: 0; overflow: hidden; background: var(--surface); padding-right: 0; }
 .workspaceCenter { min-width: 0; flex: 1; container: science-center / inline-size; }
 .workspaceSurface { min-height: 100%; height: 100%; }
 
@@ -2138,8 +2140,8 @@ button.manuscriptBinding:hover { border-color: var(--line-strong); background: v
 .projectHubShortcuts > header, .projectHubFiles > header { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 9px; }
 .projectHubShortcuts h2, .projectHubFiles h2 { margin: 0; font-size: 13px; }
 .projectHubShortcuts > header span, .projectHubFiles > header span { color: var(--muted); font-size: 10px; }
-.projectHubShortcuts > div { display: flex; gap: 11px; overflow-x: auto; padding: 1px 1px 9px; scrollbar-width: thin; scroll-snap-type: x proximity; }
-.projectHubShortcuts button { width: 98px; min-width: 98px; display: grid; gap: 6px; border: 0; background: transparent; padding: 0; color: var(--grey-600); text-align: left; scroll-snap-align: start; }
+.projectHubShortcuts > div { display: flex; flex-wrap: wrap; gap: 11px; padding: 1px 1px 9px; }
+.projectHubShortcuts button { width: 98px; min-width: 98px; display: grid; gap: 6px; border: 0; background: transparent; padding: 0; color: var(--grey-600); text-align: left; }
 .projectHubShortcuts button:hover { color: var(--ink); }
 .projectHubShortcuts img { width: 98px; height: 66px; display: block; border: 1px solid var(--grey-200); border-radius: var(--science-radius-control); background: #f8f4ed; object-fit: contain; }
 .projectHubShortcuts button:hover img { border-color: var(--grey-400); }
@@ -2295,7 +2297,24 @@ button.manuscriptBinding:hover { border-color: var(--line-strong); background: v
 .projectFolderPickerPath { display: block; color: var(--grey-600); font-size: 11px; line-height: 1.35; }
 .projectFolderPickerPath.isPlaceholder { color: var(--muted); }
 .projectFolderPickerArrow { display: grid; place-items: center; color: var(--muted); }
-.projectFolderPickerArrow .uiIcon { width: 14px; height: 14px; }
+.fieldLabelRow { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 5px; }
+.fieldCounter { color: var(--muted); font-size: 11px; font-weight: normal; }
+.fieldHint { color: var(--muted); font-size: 11px; font-weight: normal; }
+.projectFolderInputRow { display: flex; align-items: center; gap: 8px; width: 100%; }
+.projectFolderPathInput { flex: 1 1 auto; min-width: 0; min-height: 38px; border: 1px solid var(--grey-200); border-radius: 10px; padding: 0 12px; font-size: 12px; background: var(--surface); color: var(--ink); }
+.projectFolderPathInput:focus { border-color: var(--ink); outline: none; }
+.projectFolderBrowseButton { flex: 0 0 auto; min-height: 38px; white-space: nowrap; padding: 0 14px; font-size: 12px; border-radius: 10px; }
+.projectClassificationSection { margin: 0 24px 14px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface-subtle); padding: 10px 12px; display: grid; gap: 8px; }
+.projectClassificationHeader { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.projectClassificationHeader small { color: var(--muted); font-size: 10px; font-weight: 650; text-transform: uppercase; letter-spacing: .05em; }
+.projectClassificationClear { border: 0; background: transparent; color: var(--muted-deep); font-size: 11px; cursor: pointer; text-decoration: underline; padding: 0; }
+.projectClassificationRow { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.projectClassificationTags { display: flex; flex-wrap: wrap; gap: 6px; }
+.projectClassificationTag { display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--grey-300); border-radius: 8px; background: #fff; padding: 3px 8px 3px 4px; font-size: 11px; font-weight: 600; color: var(--ink); }
+.projectClassificationTag img { width: 20px; height: 20px; border-radius: 4px; object-fit: cover; }
+.projectClassificationTag button { border: 0; background: transparent; color: var(--muted); font-size: 14px; line-height: 1; cursor: pointer; padding: 0 2px; }
+.projectClassificationTag button:hover { color: var(--alarm); }
+.projectClassificationAddSelect { min-height: 28px; border: 1px dashed var(--grey-300); border-radius: 8px; background: #fff; color: var(--grey-700); font-size: 11px; padding: 2px 8px; cursor: pointer; }
 .projectFolderError { display: block; margin-top: 6px; }
 .projectDomainCard > span { min-height: 50px; display: flex; align-items: center; gap: 7px; border: 1px solid var(--grey-200); border-radius: 12px; background: var(--surface); padding: 0 9px; }
 .projectDomainCard:hover > span { background: var(--grey-50); }

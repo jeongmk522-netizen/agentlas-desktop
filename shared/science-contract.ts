@@ -71,6 +71,13 @@ export interface ScienceProject {
   initialLabId?: ScienceResearchTemplateId | null;
   /** Canonical folder explicitly selected in the Science UI; absent for legacy projects. */
   folderPath?: string | null;
+  /**
+   * 이 연구의 산출물 언어 — 가설 문장, 근거 요약, 분석 해설, 원고가 이 언어로 나온다.
+   * 화면 언어와 다른 축이다: 한국어로 대화하면서 영어 논문을 쓰는 것이 정상이고 반대도 정상이다.
+   * null 은 "아직 고르지 않았다" 이며 그때만 화면 언어를 따른다. 옛 프로젝트를 임의의 언어로
+   * 메워 넣지 않으려고 null 을 남겨 둔다.
+   */
+  outputLanguage?: string | null;
   status: "draft" | "active" | "paused" | "archived";
   version: number;
   createdAt: string;
@@ -754,6 +761,8 @@ export interface CreateScienceProjectInput {
   initialLabId?: ScienceResearchTemplateId;
   /** Labs to bind at creation, deduplicated in selection order after the active initialLabId. */
   initialLabIds?: ScienceResearchTemplateId[];
+  /** 이 연구의 산출물 언어(BCP-47 계열 짧은 태그: ko, en, zh, ja …). 생략하면 아직 안 고른 것이다. */
+  outputLanguage?: string | null;
 }
 
 export type PickScienceProjectFolderResult =

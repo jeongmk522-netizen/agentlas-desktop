@@ -395,6 +395,7 @@ export class ScienceConversationService {
         noProgressStreak: Number(latest.continuationBasis?.noProgressStreak ?? 0) || 0,
         standingApprovalScopes: this.store.approvalPolicy(input.projectId).mode === "autonomous"
           ? this.store.approvalPolicy(input.projectId).scopes : [],
+        outputLanguage: this.store.getProject(input.projectId)?.outputLanguage ?? null,
       }),
       continuationBasis,
       runtimeSelection: session.runtimeSelection,

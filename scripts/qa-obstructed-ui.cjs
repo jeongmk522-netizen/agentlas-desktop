@@ -72,6 +72,52 @@ function auditObstruction(scopeSelector) {
   const clipped = [];
   const covered = [];
   const painted = [];
+  const lowContrast = [];
+  /*
+   * ★글자가 읽히는가 — 반투명 배경은 **조상 위에 합성**해야 실제로 보이는 색이 된다.
+   *   합성 안 하면 rgba(255,255,255,.07) 을 흰색으로 읽어 멀쩡한 화면을 고장으로 본다
+   *   (One 말풍선 수리 때 실제로 한 번 그렇게 틀렸다).
+   */
+  /*
+   * ★색 문자열을 **직접 파싱하면 안 된다** (실측 2026-09-08).
+   *   이 앱의 계산된 배경색은 `oklch(0.977054 0.000916026 210.226 / 0.802431)` 처럼 온다
+   *   (팔레트가 color-mix(in oklch, ...) 를 쓴다). 숫자만 긁으면 0.977 을 R 로 읽어
+   *   **거의 흰 배경을 어두운 남색으로** 계산한다 — 그래서 첫 실행이 저대비 457건을 냈고
+   *   **전부 오탐이었다.** 그대로 올렸으면 457건짜리 거짓 목록이 됐다.
+   *   변환은 브라우저에게 시킨다: 1×1 캔버스에 칠하고 픽셀을 읽으면 어떤 표기든 sRGB 가 된다.
+   */
+  const colorCanvas = document.createElement("canvas");
+  colorCanvas.width = 1; colorCanvas.height = 1;
+  const colorCtx = colorCanvas.getContext("2d", { willReadFrequently: true });
+  const colorCache = new Map();
+  const parseColor = (c) => {
+    const key = c || "";
+    if (colorCache.has(key)) return colorCache.get(key);
+    let out = { r: 0, g: 0, b: 0, a: 1 };
+    try {
+      colorCtx.clearRect(0, 0, 1, 1);
+      colorCtx.fillStyle = "#000";
+      colorCtx.fillStyle = key;          // 못 읽는 값이면 이전 값(#000)이 남는다
+      colorCtx.clearRect(0, 0, 1, 1);
+      colorCtx.fillRect(0, 0, 1, 1);
+      const d = colorCtx.getImageData(0, 0, 1, 1).data;
+      out = { r: d[0], g: d[1], b: d[2], a: d[3] / 255 };
+    } catch { /* 못 읽으면 투명으로 본다 */ out = { r: 0, g: 0, b: 0, a: 0 }; }
+    colorCache.set(key, out);
+    return out;
+  };
+  const effectiveBg = (node) => {
+    let cur = node; const stack = [];
+    while (cur) { const bg = parseColor(getComputedStyle(cur).backgroundColor);
+      if (bg.a > 0) { stack.push(bg); if (bg.a >= 1) break; } cur = cur.parentElement; }
+    let out = { r: 255, g: 255, b: 255 };
+    for (let i = stack.length - 1; i >= 0; i--) { const t = stack[i];
+      out = { r: t.r * t.a + out.r * (1 - t.a), g: t.g * t.a + out.g * (1 - t.a), b: t.b * t.a + out.b * (1 - t.a) }; }
+    return out;
+  };
+  const luminance = (c) => { const f = (v) => { v /= 255; return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); };
+    return 0.2126 * f(c.r) + 0.7152 * f(c.g) + 0.0722 * f(c.b); };
+  const contrast = (a, b) => { const [x, y] = [luminance(a), luminance(b)].sort((m, n) => n - m); return (x + 0.05) / (y + 0.05); };
   /** DOM 순서 — 나중에 오는 것이 (같은 층이면) 위에 그려진다. */
   const order = new Map();
   [...document.querySelectorAll("*")].forEach((node, i) => order.set(node, i));
@@ -113,7 +159,25 @@ function auditObstruction(scopeSelector) {
    * 위에 떠 있는 물체들 — 자리 잡힌(positioned) 요소 중 실제로 보이는 것.
    * pointer-events 를 안 받아도 **그려지기는 한다**. 그것이 이 검사의 요점이다.
    */
-  const floaters = [...scope.querySelectorAll("*")].filter((node) => {
+  /*
+   * ★섀도 DOM 안의 물건도 그려진다 (QA 실측 2026-09-08).
+   *   좌하단의 검은 원이 "우리 코드에 없다"고 나온 이유가 이것이었다 — 그것은
+   *   NEXTJS-PORTAL 의 섀도 루트 안에 있는 개발 표시등(z-index 최대)이었고,
+   *   querySelectorAll 은 섀도 경계를 넘지 않아서 전수 스캔에도 안 잡혔다.
+   *   (그 건 자체는 제품 결함이 아니었지만, **못 보는 자리**가 있다는 사실이 남는다.)
+   */
+  const withShadow = (rootNode) => {
+    const out = [];
+    const walk = (r) => {
+      for (const node of r.querySelectorAll("*")) {
+        out.push(node);
+        if (node.shadowRoot) walk(node.shadowRoot);
+      }
+    };
+    walk(rootNode);
+    return out;
+  };
+  const floaters = withShadow(scope).filter((node) => {
     const style = getComputedStyle(node);
     if (!["absolute", "fixed", "sticky"].includes(style.position)) return false;
     if (style.display === "none" || style.visibility === "hidden" || Number(style.opacity) < 0.5) return false;
@@ -137,6 +201,24 @@ function auditObstruction(scopeSelector) {
     // 글자를 직접 담은 잎사귀만 본다 — 조상까지 세면 같은 사고가 여러 번 잡힌다.
     const ownsText = [...el.childNodes].some((n) => n.nodeType === 3 && (n.nodeValue || "").trim());
     if (!ownsText) continue;
+
+    // ⓪ 대비 — 큰 글자 하한 3.0 미만이면 "읽기 어렵다"가 아니라 "안 보인다"에 가깝다.
+    {
+      const style2 = getComputedStyle(el);
+      const fg = parseColor(style2.color);
+      if (fg.a > 0.3) {
+        const bg = effectiveBg(el);
+        const ratio = contrast(fg, bg);
+        if (ratio < 3) {
+          lowContrast.push({
+            el: describe(el), text,
+            ratio: Number(ratio.toFixed(2)),
+            fg: [fg.r, fg.g, fg.b].map(Math.round),
+            bg: [bg.r, bg.g, bg.b].map(Math.round),
+          });
+        }
+      }
+    }
 
     // ① 잘림 — 넘치는데 그것을 보여 줄 방법이 없을 때만 결함이다.
     const hidesOverflow = style.overflowX !== "visible";
@@ -225,13 +307,36 @@ function auditObstruction(scopeSelector) {
       label: el.getAttribute("aria-label") || "",
     });
   }
-  return { clipped, covered, painted, blank };
+  return { clipped, covered, painted, blank, lowContrast };
 }
 
 async function main() {
   if (!fs.existsSync(path.join(distDir, "one.html"))) throw new Error(`dist 가 없습니다: ${distDir} — npm run build:renderer`);
   const { server, baseUrl } = await startServer();
   const browser = await chromium.launch();
+
+  /*
+   * ★"0건"을 보고하기 전에 **이 검사기가 뭔가를 잡을 수 있는지** 먼저 확인한다.
+   *   대비 검사의 첫 판은 색 문자열을 직접 파싱해서 oklch 를 숫자로 오독했고,
+   *   그 반대편(수리 후)에서는 조용히 0건을 낼 수도 있었다. 0 은 부재의 증거가 아니다.
+   *   흰-흰과 어두운-어두운을 심어 잡히는지, oklch 밝은 배경은 통과하는지 매번 본다.
+   */
+  {
+    const probe = await browser.newPage();
+    await probe.setContent(`<div id="a" style="background:#fff;color:#fff">x</div>`
+      + `<div id="b" style="background:oklch(0.977054 0.000916026 210.226 / 0.802431);color:rgba(0,21,25,0.62)">x</div>`
+      + `<div id="c" style="background:oklch(0.2 0 0);color:oklch(0.25 0 0)">x</div>`);
+    const verdict = await probe.evaluate(auditObstruction, null);
+    await probe.close();
+    const ratios = Object.fromEntries((verdict.lowContrast || []).map((row) => [row.el.split(".")[0] + row.text, row.ratio]));
+    const caught = (verdict.lowContrast || []).length;
+    if (caught < 2) {
+      throw new Error(
+        `대비 검사기가 심어 둔 고장을 못 잡습니다(${caught}건) — 이 실행의 "저대비 0건" 은 의미가 없습니다. ${JSON.stringify(ratios)}`,
+      );
+    }
+  }
+
   /*
    * ★손으로 고른 6개가 아니라 **빌드된 화면 전부**를 훑는다 (2026-09-08).
    *   고른 화면만 재면 안 고른 화면의 결함은 영원히 "0건"으로 보인다.
@@ -370,14 +475,18 @@ async function main() {
   server.close();
 
   console.log("=== 잘리거나 가려진 자리 ===\n");
-  let clip = 0, cover = 0, blankCount = 0, paintedCount = 0;
+  let clip = 0, cover = 0, blankCount = 0, paintedCount = 0, contrastCount = 0;
   for (const r of report) {
     if (r.error) { console.log(`[${r.screen} ${r.size}] 열지 못함 — ${r.error}`); continue; }
-    if (!r.clipped.length && !r.covered.length && !(r.blank || []).length && !(r.painted || []).length) continue;
+    if (!r.clipped.length && !r.covered.length && !(r.blank || []).length && !(r.painted || []).length && !(r.lowContrast || []).length) continue;
     console.log(`[${r.screen} ${r.size}]`);
     for (const c of r.clipped) {
       clip++;
       console.log(`   잘림${c.ellipsis ? "(…표시)" : "★(말없이)"}  ${JSON.stringify(c.text)}  ${c.have}px 자리에 ${c.need}px  <${c.el}>`);
+    }
+    for (const c of (r.lowContrast || [])) {
+      contrastCount++;
+      console.log(`   ★대비 ${c.ratio}  ${JSON.stringify(c.text)}  글자 rgb(${c.fg}) / 배경 rgb(${c.bg})  <${c.el}>`);
     }
     for (const c of (r.painted || [])) {
       paintedCount++;
@@ -393,7 +502,7 @@ async function main() {
     }
     console.log("");
   }
-  console.log(`잘림 ${clip}건 / 가림 ${cover}건 / 덮임 ${paintedCount}건 / 빈 자리 ${blankCount}건`);
+  console.log(`잘림 ${clip}건 / 가림 ${cover}건 / 덮임 ${paintedCount}건 / 빈 자리 ${blankCount}건 / 저대비 ${contrastCount}건`);
   const outFile = path.join(root, "output", "obstructed-ui.json");
   fs.mkdirSync(path.dirname(outFile), { recursive: true });
   fs.writeFileSync(outFile, JSON.stringify(report, null, 2));

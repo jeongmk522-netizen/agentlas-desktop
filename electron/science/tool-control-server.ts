@@ -16,6 +16,8 @@ import {
   SCIENCE_DESKTOP_HOST_API_NAME,
   SCIENCE_DESKTOP_HOST_API_VERSION,
   assertScienceExtensionHostCompatibility,
+  scienceExtensionPlatformToolVerdicts,
+  type ScienceExtensionPlatformToolVerdict,
   scienceExtensionHostCompatibilitySha256,
   type ScienceDesktopHostCompatibilitySnapshot,
 } from "../../shared/science-extension-host-compatibility";
@@ -2752,22 +2754,59 @@ const PLATFORM_TOOLS: McpTool[] = [
   },
 ];
 
-const SCIENCE_EXTENSION_REQUIRED_PLATFORM_TOOL_NAMES = [
-  "build_comparative_genomics_gene_tree",
-  "build_extant_reference_assembly_manifest",
-  "materialize_extant_archosaur_locus_panel",
-] as const;
-
+/**
+ * What this Desktop actually offers, reported from the live tool table.
+ *
+ * This used to walk a hard-coded list of three tool names and throw
+ * `science-desktop-host-contract-tool-missing` if any were absent. Two failure modes came out of
+ * that: a Desktop refactor that renamed one tool crashed the snapshot, which crashed every Science
+ * screen that reads it; and the hard-coded three were all comparative-genomics tools, so one
+ * discipline decided whether the product could describe itself at all.
+ *
+ * Reporting the real table cannot throw. A pin that no longer matches is answered by a per-tool
+ * verdict at the moment that tool is called, not by taking the product down.
+ */
 export function scienceDesktopHostCompatibilitySnapshot(): ScienceDesktopHostCompatibilitySnapshot {
-  const byName = new Map(PLATFORM_TOOLS.map((tool) => [tool.name, tool]));
   return {
     apiName: SCIENCE_DESKTOP_HOST_API_NAME,
     apiVersion: SCIENCE_DESKTOP_HOST_API_VERSION,
-    platformTools: SCIENCE_EXTENSION_REQUIRED_PLATFORM_TOOL_NAMES.map((name) => {
-      const tool = byName.get(name);
-      if (!tool) throw new Error("science-desktop-host-contract-tool-missing");
-      return { name: tool.name, route: tool.route, inputSchemaSha256: scienceExtensionHostCompatibilitySha256(tool.inputSchema) };
-    }),
+    platformTools: PLATFORM_TOOLS.map((tool) => ({
+      name: tool.name,
+      route: tool.route,
+      inputSchemaSha256: scienceExtensionHostCompatibilitySha256(tool.inputSchema),
+    })),
+  };
+}
+
+/**
+ * Per-tool pin verdicts from the last compatibility read.
+ *
+ * A pin that no longer matches disables exactly the tool it pins. It must never decide whether
+ * Science starts: the pinned set is per-discipline, so letting it gate the product means a
+ * comparative-genomics schema change takes chemistry, economics, and physics down with it.
+ */
+let platformToolVerdicts: ReadonlyMap<string, ScienceExtensionPlatformToolVerdict> = new Map();
+
+function recordScienceExtensionPlatformToolVerdicts(verdicts: readonly ScienceExtensionPlatformToolVerdict[]): void {
+  platformToolVerdicts = new Map(verdicts.map((verdict) => [verdict.name, verdict]));
+}
+
+export function scienceExtensionPlatformToolVerdict(name: string): ScienceExtensionPlatformToolVerdict | null {
+  return platformToolVerdicts.get(name) ?? null;
+}
+
+function platformToolRefusal(name: string): { code: string; message: string } | null {
+  const verdict = platformToolVerdicts.get(name);
+  if (!verdict || verdict.satisfied) return null;
+  const cause = verdict.reason === "missing"
+    ? "this Desktop does not provide it"
+    : verdict.reason === "route-changed"
+      ? "this Desktop serves it at a different address"
+      : "this Desktop expects a different input shape for it";
+  return {
+    code: "science-platform-tool-pin-unsatisfied",
+    // The refusal has to name a way out, or it is just a dead end with a longer sentence.
+    message: `The installed Science release pins "${name}" and ${cause}. Update Agentlas Science from Settings → Programs; every other Science tool keeps working.`,
   };
 }
 
@@ -5803,6 +5842,12 @@ async function handle(request: http.IncomingMessage, response: http.ServerRespon
     respond(response, 404, { ok: false, code: "science-tool-control-not-found" });
     return;
   }
+  const pinRefusal = platformTool ? platformToolRefusal(platformTool.name) : null;
+  if (pinRefusal) {
+    console.error(`[science-tool] refused route=${route} code=${pinRefusal.code}`);
+    respond(response, 409, { ok: false, code: pinRefusal.code, message: pinRefusal.message });
+    return;
+  }
   const chunks: Buffer[] = [];
   let size = 0;
   for await (const chunk of request) {
@@ -6231,15 +6276,17 @@ export function assertScienceExtensionReleaseHostCompatibility(release: {
     || createHash("sha256").update(compatibilityBytes).digest("hex") !== compatibilityManifestFile.sha256) {
     throw new Error("science-extension-host-compatibility-integrity-invalid");
   }
-  assertScienceExtensionHostCompatibility(JSON.parse(compatibilityBytes.toString("utf8")), {
+  const desktopHost = scienceDesktopHostCompatibilitySnapshot();
+  const compatibility = assertScienceExtensionHostCompatibility(JSON.parse(compatibilityBytes.toString("utf8")), {
     extensionId: release.manifest.id,
     extensionVersion: release.manifest.version,
     minimumDesktopVersion: release.manifest.minimumDesktopVersion,
     serviceEntry: release.manifest.serviceEntry,
     descriptorSchema: descriptor.schema,
     protocolVersion: descriptor.protocolVersion,
-    desktopHost: scienceDesktopHostCompatibilitySnapshot(),
+    desktopHost,
   });
+  recordScienceExtensionPlatformToolVerdicts(scienceExtensionPlatformToolVerdicts(compatibility, desktopHost));
   return validatedCatalog(descriptorValue);
 }
 

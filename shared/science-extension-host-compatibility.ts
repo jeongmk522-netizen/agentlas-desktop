@@ -115,11 +115,14 @@ export function parseScienceExtensionHostCompatibility(value: unknown): ScienceE
     || extension.serviceEntry !== "service/descriptor.json") fail(code);
   if (!exactKeys(service, ["descriptorSchema", "protocolVersion"])
     || service.descriptorSchema !== "agentlas.science-service/v2" || service.protocolVersion !== 2) fail(code);
+  // The pin list may be empty. It was once required to hold at least one entry, which forced every
+  // Science release to make some discipline's tool a condition of the product existing at all — and
+  // all three entries happen to be comparative-genomics tools. A release that pins nothing is a
+  // release that promises nothing about domain tools, which is a legitimate thing to say.
   if (!exactKeys(desktopHost, ["apiName", "apiVersion", "requiredPlatformTools"])
     || desktopHost.apiName !== SCIENCE_DESKTOP_HOST_API_NAME
     || desktopHost.apiVersion !== SCIENCE_DESKTOP_HOST_API_VERSION
     || !Array.isArray(desktopHost.requiredPlatformTools)
-    || desktopHost.requiredPlatformTools.length < 1
     || desktopHost.requiredPlatformTools.length > 64) fail(code);
   const requiredPlatformTools = desktopHost.requiredPlatformTools.map(parsePlatformToolRequirement);
   if (new Set(requiredPlatformTools.map((tool) => tool.name)).size !== requiredPlatformTools.length
@@ -158,12 +161,57 @@ export function assertScienceExtensionHostCompatibility(
     || compatibility.service.protocolVersion !== context.protocolVersion) fail("science-extension-package-compatibility-mismatch");
   if (compatibility.desktopHost.apiName !== context.desktopHost.apiName
     || compatibility.desktopHost.apiVersion !== context.desktopHost.apiVersion) fail("science-extension-desktop-host-api-incompatible");
-  const actualByName = new Map(context.desktopHost.platformTools.map((tool) => [tool.name, tool]));
-  for (const required of compatibility.desktopHost.requiredPlatformTools) {
-    const actual = actualByName.get(required.name);
-    if (!actual || actual.route !== required.route || actual.inputSchemaSha256 !== required.inputSchemaSha256) {
-      fail("science-extension-desktop-host-tool-incompatible");
-    }
-  }
+  // Platform-tool pins are deliberately NOT asserted here.
+  //
+  // They are per-discipline: one of them materializes an avian/crocodilian locus panel, which only a
+  // palaeogenomics study ever calls. Asserting them at this gate made a single domain tool decide
+  // whether Science starts at all — a chemistry user could not open the lab catalogue, review a
+  // result, or bind a lab because a comparative-genomics schema had moved. Whole-product availability
+  // must not depend on one discipline's tool.
+  //
+  // The pins still exist and are still exact; they are enforced where the mismatch actually matters,
+  // at the moment that specific tool is called, and separately at release time by
+  // assertScienceExtensionPlatformToolsSatisfied.
   return compatibility;
+}
+
+export type ScienceExtensionPlatformToolReason = "satisfied" | "missing" | "route-changed" | "input-schema-changed";
+
+export interface ScienceExtensionPlatformToolVerdict {
+  name: string;
+  route: string;
+  satisfied: boolean;
+  reason: ScienceExtensionPlatformToolReason;
+}
+
+/** Per-tool verdicts. A false verdict disables that one tool, never the product. */
+export function scienceExtensionPlatformToolVerdicts(
+  compatibility: ScienceExtensionHostCompatibility,
+  desktopHost: ScienceExtensionHostCompatibilityContext["desktopHost"],
+): ScienceExtensionPlatformToolVerdict[] {
+  const actualByName = new Map(desktopHost.platformTools.map((tool) => [tool.name, tool]));
+  return compatibility.desktopHost.requiredPlatformTools.map((required) => {
+    const actual = actualByName.get(required.name);
+    const reason: ScienceExtensionPlatformToolReason = !actual
+      ? "missing"
+      : actual.route !== required.route
+        ? "route-changed"
+        : actual.inputSchemaSha256 !== required.inputSchemaSha256
+          ? "input-schema-changed"
+          : "satisfied";
+    return { name: required.name, route: required.route, satisfied: reason === "satisfied", reason };
+  });
+}
+
+/**
+ * Release-time strictness. A Desktop release must satisfy every pin the extension it ships beside
+ * declares; shipping a mismatch is a build defect, not something a user should discover.
+ */
+export function assertScienceExtensionPlatformToolsSatisfied(
+  compatibility: ScienceExtensionHostCompatibility,
+  desktopHost: ScienceExtensionHostCompatibilityContext["desktopHost"],
+): void {
+  if (scienceExtensionPlatformToolVerdicts(compatibility, desktopHost).some((verdict) => !verdict.satisfied)) {
+    fail("science-extension-desktop-host-tool-incompatible");
+  }
 }

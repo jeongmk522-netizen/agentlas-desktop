@@ -79,6 +79,20 @@ export interface ScienceWorkbookNormalizationDictionaryEntry {
   evidence: ScienceWorkbookNormalizationDictionaryEvidence;
 }
 
+export interface ScienceWorkbookNormalizationInferenceEvidence {
+  id: string;
+  sheetOrdinal: number;
+  address: string;
+  observedValue: ScienceDatasetCell;
+  note: string;
+}
+
+export interface ScienceWorkbookNormalizationInference {
+  mode: "headerless";
+  rationale: string;
+  evidence: readonly ScienceWorkbookNormalizationInferenceEvidence[];
+}
+
 export type ScienceWorkbookNormalizationColumnOperation =
   | { id: string; kind: "trim-text" }
   | { id: string; kind: "coerce-number"; integer: boolean }
@@ -87,10 +101,11 @@ export type ScienceWorkbookNormalizationColumnOperation =
 export interface ScienceWorkbookNormalizationColumn {
   sourceColumn: string;
   outputName: string;
-  expectedHeader: string;
+  expectedHeader: string | null;
   logicalType: ScienceWorkbookNormalizationLogicalType;
   nullable: boolean;
   dictionaryId: string | null;
+  inferenceEvidenceIds: readonly string[];
   operations: readonly ScienceWorkbookNormalizationColumnOperation[];
 }
 
@@ -102,7 +117,8 @@ export interface ScienceWorkbookNormalizationPlan {
   schema: typeof SCIENCE_WORKBOOK_NORMALIZATION_SCHEMA;
   source: ScienceWorkbookNormalizationSource;
   sheetOrdinal: number;
-  headerRow: number;
+  headerRow: number | null;
+  inference: ScienceWorkbookNormalizationInference | null;
   ranges: readonly ScienceWorkbookNormalizationRange[];
   dictionary: readonly ScienceWorkbookNormalizationDictionaryEntry[];
   columns: readonly ScienceWorkbookNormalizationColumn[];
@@ -136,6 +152,7 @@ export interface ScienceWorkbookNormalizationResult {
   schema: typeof SCIENCE_WORKBOOK_NORMALIZATION_SCHEMA;
   source: ScienceWorkbookNormalizationSource;
   planSha256: string;
+  inference: ScienceWorkbookNormalizationInference | null;
   columns: Array<{
     name: string;
     logicalType: ScienceWorkbookNormalizationLogicalType;
@@ -290,7 +307,7 @@ function validateOperation(value: unknown, logicalType: ScienceWorkbookNormaliza
 
 function validatePlanShape(book: ScienceWorkbookEnvelope, value: unknown): ScienceWorkbookNormalizationPlan {
   const plan = record(value);
-  if (!plan || !exactKeys(plan, ["schema", "source", "sheetOrdinal", "headerRow", "ranges", "dictionary", "columns", "rowRules"])) {
+  if (!plan || !exactKeys(plan, ["schema", "source", "sheetOrdinal", "headerRow", "inference", "ranges", "dictionary", "columns", "rowRules"])) {
     fail("science-workbook-normalization-plan-invalid");
   }
   if (plan.schema !== SCIENCE_WORKBOOK_NORMALIZATION_SCHEMA) fail("science-workbook-normalization-plan-invalid");
@@ -305,9 +322,48 @@ function validatePlanShape(book: ScienceWorkbookEnvelope, value: unknown): Scien
   if (rawSha256 !== book.rawSha256 || workbookSha256 !== book.workbookSha256) fail("science-workbook-normalization-source-mismatch");
 
   const sheetOrdinal = assertOrdinal(plan.sheetOrdinal, "science-workbook-normalization-sheet-invalid", book.sheets.length - 1);
-  const headerRow = assertPositiveInteger(plan.headerRow, "science-workbook-normalization-header-invalid", 1_048_576);
+  const headerRow = plan.headerRow === null
+    ? null
+    : assertPositiveInteger(plan.headerRow, "science-workbook-normalization-header-invalid", 1_048_576);
   const selectedSheet = sheetFor(book, sheetOrdinal, "science-workbook-normalization-sheet-invalid");
   const selectedCells = cellMap(selectedSheet);
+
+  let inference: ScienceWorkbookNormalizationInference | null = null;
+  if (headerRow === null) {
+    const rawInference = record(plan.inference);
+    if (!rawInference || !exactKeys(rawInference, ["mode", "rationale", "evidence"]) || rawInference.mode !== "headerless") {
+      fail("science-workbook-normalization-inference-invalid");
+    }
+    const rationale = assertText(rawInference.rationale, "science-workbook-normalization-inference-invalid", 4_000);
+    if (!Array.isArray(rawInference.evidence) || rawInference.evidence.length < 1 || rawInference.evidence.length > 128) {
+      fail("science-workbook-normalization-inference-evidence-invalid");
+    }
+    const evidenceIds = new Set<string>();
+    const evidence = (rawInference.evidence as unknown[]).map((rawEvidence): ScienceWorkbookNormalizationInferenceEvidence => {
+      const evidenceRecord = record(rawEvidence);
+      if (!evidenceRecord || !exactKeys(evidenceRecord, ["id", "sheetOrdinal", "address", "observedValue", "note"])) {
+        fail("science-workbook-normalization-inference-evidence-invalid");
+      }
+      const id = assertText(evidenceRecord.id, "science-workbook-normalization-inference-evidence-invalid", 120);
+      if (!OPERATION_ID_RE.test(id) || evidenceIds.has(id)) fail("science-workbook-normalization-inference-evidence-invalid");
+      evidenceIds.add(id);
+      const evidenceSheetOrdinal = assertOrdinal(evidenceRecord.sheetOrdinal, "science-workbook-normalization-inference-evidence-invalid", book.sheets.length - 1);
+      const evidenceSheet = sheetFor(book, evidenceSheetOrdinal, "science-workbook-normalization-inference-evidence-invalid");
+      const evidenceCells = cellMap(evidenceSheet);
+      const address = assertText(evidenceRecord.address, "science-workbook-normalization-inference-evidence-invalid", 12);
+      parseAddress(address);
+      const observedValue = assertCellValue(evidenceRecord.observedValue, "science-workbook-normalization-inference-evidence-invalid");
+      const observedCell = cellAt(evidenceSheet, evidenceCells, address);
+      if (!evidenceCells.has(address) || !compareCellValue(observedCell.value, observedValue) || observedCell.warning !== null) {
+        fail("science-workbook-normalization-inference-evidence-mismatch");
+      }
+      const note = assertText(evidenceRecord.note, "science-workbook-normalization-inference-evidence-invalid", 512);
+      return { id, sheetOrdinal: evidenceSheetOrdinal, address, observedValue, note };
+    });
+    inference = { mode: "headerless", rationale, evidence };
+  } else if (plan.inference !== null) {
+    fail("science-workbook-normalization-inference-invalid");
+  }
 
   if (!Array.isArray(plan.ranges) || plan.ranges.length < 1 || plan.ranges.length > SCIENCE_WORKBOOK_NORMALIZATION_MAX_RANGES) {
     fail("science-workbook-normalization-ranges-invalid");
@@ -321,7 +377,7 @@ function validatePlanShape(book: ScienceWorkbookEnvelope, value: unknown): Scien
     rangeIds.add(id);
     const firstRow = assertPositiveInteger(range.firstRow, "science-workbook-normalization-range-invalid", 1_048_576);
     const lastRow = assertPositiveInteger(range.lastRow, "science-workbook-normalization-range-invalid", 1_048_576);
-    if (lastRow < firstRow || firstRow <= headerRow && headerRow <= lastRow) fail("science-workbook-normalization-range-invalid");
+    if (lastRow < firstRow || (headerRow !== null && firstRow <= headerRow && headerRow <= lastRow)) fail("science-workbook-normalization-range-invalid");
     if (index > 0) {
       const prior = record((plan.ranges as unknown[])[index - 1]);
       if (!prior || firstRow <= Number(prior.lastRow)) fail("science-workbook-normalization-range-overlap");
@@ -375,7 +431,7 @@ function validatePlanShape(book: ScienceWorkbookEnvelope, value: unknown): Scien
   const outputNames = new Set<string>();
   const columns = (plan.columns as unknown[]).map((value): ScienceWorkbookNormalizationColumn => {
     const column = record(value);
-    if (!column || !exactKeys(column, ["sourceColumn", "outputName", "expectedHeader", "logicalType", "nullable", "dictionaryId", "operations"])) {
+    if (!column || !exactKeys(column, ["sourceColumn", "outputName", "expectedHeader", "logicalType", "nullable", "dictionaryId", "inferenceEvidenceIds", "operations"])) {
       fail("science-workbook-normalization-column-invalid");
     }
     const sourceColumn = assertText(column.sourceColumn, "science-workbook-normalization-column-invalid", 3);
@@ -385,7 +441,12 @@ function validatePlanShape(book: ScienceWorkbookEnvelope, value: unknown): Scien
     const outputKey = outputName.toLocaleLowerCase("en-US");
     if (outputNames.has(outputKey)) fail("science-workbook-normalization-column-duplicate");
     outputNames.add(outputKey);
-    const expectedHeader = assertText(column.expectedHeader, "science-workbook-normalization-column-invalid", 240);
+    const expectedHeader = column.expectedHeader === null
+      ? null
+      : assertText(column.expectedHeader, "science-workbook-normalization-column-invalid", 240);
+    if (headerRow === null ? expectedHeader !== null : expectedHeader === null) {
+      fail("science-workbook-normalization-column-header-invalid");
+    }
     if (!(["integer", "number", "boolean", "string"] as readonly string[]).includes(String(column.logicalType))) {
       fail("science-workbook-normalization-column-type-invalid");
     }
@@ -395,12 +456,32 @@ function validatePlanShape(book: ScienceWorkbookEnvelope, value: unknown): Scien
     const dictionaryId = column.dictionaryId as string | null;
     const dictionaryEntry = dictionaryId === null ? null : dictionaries.find((entry) => entry.id === dictionaryId);
     if (dictionaryId !== null && !dictionaryEntry) fail("science-workbook-normalization-column-dictionary-invalid");
-    if (dictionaryEntry && (dictionaryEntry.sourceColumn !== sourceColumn || dictionaryEntry.canonicalName !== outputName || !dictionaryEntry.aliases.includes(expectedHeader))) {
+    if (dictionaryEntry && (dictionaryEntry.sourceColumn !== sourceColumn
+      || dictionaryEntry.canonicalName !== outputName
+      || (expectedHeader !== null && !dictionaryEntry.aliases.includes(expectedHeader)))) {
       fail("science-workbook-normalization-column-dictionary-mismatch");
     }
-    const header = cellAt(selectedSheet, selectedCells, cellAddress(sourceColumn, headerRow));
-    if (typeof header.value !== "string" || header.warning !== null || header.value.normalize("NFC").trim() !== expectedHeader) {
-      fail("science-workbook-normalization-header-mismatch");
+    if (headerRow !== null) {
+      const header = cellAt(selectedSheet, selectedCells, cellAddress(sourceColumn, headerRow));
+      if (typeof header.value !== "string" || header.warning !== null || header.value.normalize("NFC").trim() !== expectedHeader) {
+        fail("science-workbook-normalization-header-mismatch");
+      }
+    }
+    if (!Array.isArray(column.inferenceEvidenceIds) || column.inferenceEvidenceIds.length > 16) {
+      fail("science-workbook-normalization-column-inference-invalid");
+    }
+    const inferenceEvidenceIds = (column.inferenceEvidenceIds as unknown[]).map((evidenceId) => {
+      const id = assertText(evidenceId, "science-workbook-normalization-column-inference-invalid", 120);
+      if (!inference || !inference.evidence.some((evidence) => evidence.id === id)) {
+        fail("science-workbook-normalization-column-inference-invalid");
+      }
+      return id;
+    });
+    if (headerRow === null && inferenceEvidenceIds.length < 1) {
+      fail("science-workbook-normalization-column-inference-invalid");
+    }
+    if (headerRow !== null && inferenceEvidenceIds.length > 0) {
+      fail("science-workbook-normalization-column-inference-invalid");
     }
     if (!Array.isArray(column.operations) || column.operations.length > 4) fail("science-workbook-normalization-operations-invalid");
     const operationIds = new Set<string>();
@@ -408,11 +489,13 @@ function validatePlanShape(book: ScienceWorkbookEnvelope, value: unknown): Scien
     if (logicalType === "integer" && !operations.some((operation) => operation.kind === "coerce-number" && operation.integer)) {
       fail("science-workbook-normalization-integer-coercion-required");
     }
-    return { sourceColumn, outputName, expectedHeader, logicalType, nullable: column.nullable, dictionaryId, operations };
+    return { sourceColumn, outputName, expectedHeader, logicalType, nullable: column.nullable, dictionaryId, inferenceEvidenceIds, operations };
   });
   const duplicateHeaders = new Map<string, number>();
-  columns.forEach((column) => duplicateHeaders.set(column.expectedHeader, (duplicateHeaders.get(column.expectedHeader) ?? 0) + 1));
-  if ([...duplicateHeaders.entries()].some(([header, count]) => count > 1 && columns.filter((column) => column.expectedHeader === header).some((column) => column.dictionaryId === null))) {
+  columns.forEach((column) => {
+    if (column.expectedHeader !== null) duplicateHeaders.set(column.expectedHeader, (duplicateHeaders.get(column.expectedHeader) ?? 0) + 1);
+  });
+  if (headerRow !== null && [...duplicateHeaders.entries()].some(([header, count]) => count > 1 && columns.filter((column) => column.expectedHeader === header).some((column) => column.dictionaryId === null))) {
     fail("science-workbook-normalization-duplicate-header-unresolved");
   }
   if (selectedRowCount * columns.length > SCIENCE_WORKBOOK_NORMALIZATION_MAX_CELLS) {
@@ -445,7 +528,7 @@ function validatePlanShape(book: ScienceWorkbookEnvelope, value: unknown): Scien
     fail("science-workbook-normalization-row-rule-invalid");
   });
 
-  return { schema: SCIENCE_WORKBOOK_NORMALIZATION_SCHEMA, source: { rawSha256, workbookSha256 }, sheetOrdinal, headerRow, ranges, dictionary: dictionaries, columns, rowRules };
+  return { schema: SCIENCE_WORKBOOK_NORMALIZATION_SCHEMA, source: { rawSha256, workbookSha256 }, sheetOrdinal, headerRow, inference, ranges, dictionary: dictionaries, columns, rowRules };
 }
 
 /** Validate both shape and all workbook references before executing an LLM proposal. */
@@ -474,9 +557,11 @@ function applyColumnOperations(raw: ScienceDatasetCell, column: ScienceWorkbookN
         } else {
           fail("science-workbook-normalization-number-invalid");
         }
-        if (typeof value !== "number" || !Number.isFinite(value) || (operation.integer && !Number.isSafeInteger(value))) {
+        if (typeof value !== "number" || !Number.isFinite(value)) {
           fail("science-workbook-normalization-number-invalid");
         }
+        if (Number.isInteger(value) && !Number.isSafeInteger(value)) fail("science-workbook-normalization-number-precision-loss");
+        if (operation.integer && !Number.isSafeInteger(value)) fail("science-workbook-normalization-number-invalid");
       }
     }
     operationIds.push(operation.id);
@@ -567,6 +652,7 @@ export function normalizeScienceWorkbook(workbook: unknown, plan: unknown): Scie
     schema: SCIENCE_WORKBOOK_NORMALIZATION_SCHEMA,
     source: validated.source,
     planSha256: scienceWorkbookNormalizationPlanSha256(validated),
+    inference: validated.inference,
     columns: validated.columns.map((column) => ({
       name: column.outputName,
       logicalType: column.logicalType,

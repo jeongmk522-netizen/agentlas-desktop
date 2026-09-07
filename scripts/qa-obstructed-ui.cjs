@@ -47,8 +47,20 @@ function startServer() {
   return new Promise((resolve) => {
     const server = http.createServer((req, res) => {
       const file = resolveAsset(req.url);
+      /*
+       * ★없는 파일에 스트림을 열면 서버가 통째로 죽는다(ENOENT 는 비동기 error 이벤트로 온다).
+       *   이 저장소는 여러 세션이 공유해서 dist/renderer 가 순회 도중 다시 만들어질 수 있다 —
+       *   그때 검사 전체가 중단되면 "훑었다"가 거짓이 된다. 없는 것은 404 로 답하고 계속한다.
+       */
+      if (!fs.existsSync(file)) {
+        res.writeHead(404, { "content-type": "text/plain; charset=utf-8" });
+        res.end("not found");
+        return;
+      }
       res.writeHead(200, { "content-type": MIME[path.extname(file)] || "application/octet-stream" });
-      fs.createReadStream(file).pipe(res);
+      const stream = fs.createReadStream(file);
+      stream.on("error", () => { res.destroy(); });
+      stream.pipe(res);
     });
     server.listen(0, "127.0.0.1", () => resolve({ server, baseUrl: `http://127.0.0.1:${server.address().port}` }));
   });
@@ -60,6 +72,33 @@ function auditObstruction(scopeSelector) {
   const clipped = [];
   const covered = [];
   const painted = [];
+  /** DOM 순서 — 나중에 오는 것이 (같은 층이면) 위에 그려진다. */
+  const order = new Map();
+  [...document.querySelectorAll("*")].forEach((node, i) => order.set(node, i));
+  const stackRank = (node) => {
+    let z = 0;
+    for (let cur = node; cur && cur !== document.body; cur = cur.parentElement) {
+      const s = getComputedStyle(cur);
+      const v = parseInt(s.zIndex, 10);
+      if (Number.isFinite(v) && s.position !== "static") { z = v; break; }
+    }
+    return z;
+  };
+  /** 조상 중 잘라내는(scroll/hidden) 상자 전부 안에 그 점이 들어 있는가. */
+  const visibleInClippers = (node, x, y) => {
+    for (let cur = node.parentElement; cur && cur !== document.documentElement; cur = cur.parentElement) {
+      const s = getComputedStyle(cur);
+      if (s.overflow === "visible" && s.overflowX === "visible" && s.overflowY === "visible") continue;
+      const r = cur.getBoundingClientRect();
+      if (x < r.left - 1 || x > r.right + 1 || y < r.top - 1 || y > r.bottom + 1) return false;
+    }
+    return true;
+  };
+  const paintsAbove = (layer, target) => {
+    const lz = stackRank(layer), tz = stackRank(target);
+    if (lz !== tz) return lz > tz;
+    return (order.get(layer) ?? 0) > (order.get(target) ?? 0);
+  };
   const label = (el) => (el.innerText || el.textContent || "").trim().replace(/\s+/g, " ").slice(0, 60);
   const describe = (el) => `${el.tagName.toLowerCase()}${el.id ? "#" + el.id : ""}`
     + `${(el.className || "").toString().trim() ? "." + (el.className || "").toString().trim().split(/\s+/)[0] : ""}`;
@@ -117,6 +156,13 @@ function auditObstruction(scopeSelector) {
      */
     for (const layer of floaters) {
       if (layer === el || el.contains(layer) || layer.contains(el)) continue;
+      /*
+       * ★겹친다고 다 덮는 것이 아니다 — **위에 그려져야** 덮는다 (실측 2026-09-08).
+       *   처음엔 겹치기만 하면 셌더니, 화면 전체를 차지하는 <main> 이 뒤에 깔린 것까지
+       *   "100% 덮음"으로 나왔다(104건 중 상당수). 그건 배경이지 덮개가 아니다.
+       *   쌓임 순서를 z-index → DOM 순서로 근사한다(같은 층이면 나중에 오는 것이 위).
+       */
+      if (!paintsAbove(layer, el)) continue;
       const lr = layer.getBoundingClientRect();
       const overlapW = Math.min(rect.right, lr.right) - Math.max(rect.left, lr.left);
       const overlapH = Math.min(rect.bottom, lr.bottom) - Math.max(rect.top, lr.top);
@@ -132,8 +178,24 @@ function auditObstruction(scopeSelector) {
     }
 
     // ② 가림 — 글자 한가운데를 찍는다.
+    /*
+     * ★찍는 점은 **그 글자 안에** 있어야 한다 (실측 2026-09-08).
+     *   예전에는 뷰포트 경계로 clamp 했는데, 화면 아래로 반쯤 걸친 요소를 잴 때 그 점이
+     *   요소 밖(맨 아래 가장자리)으로 밀려 **엉뚱한 이웃**이 잡혔다. 좁은 창의 긴 목록에서
+     *   사이드바 항목 18건이 그렇게 "가림"으로 잡혔다 — 실제로는 겹치지 않는다.
+     *   점이 요소 밖으로 나가면 그 요소는 이 방법으로 잴 수 없으므로 건너뛴다.
+     */
     const x = Math.min(window.innerWidth - 1, Math.max(0, rect.left + Math.min(rect.width / 2, 40)));
     const y = Math.min(window.innerHeight - 1, Math.max(0, rect.top + rect.height / 2));
+    if (x < rect.left || x > rect.right || y < rect.top || y > rect.bottom) continue;
+    /*
+     * ★잘라내는 조상 안에서도 보이는 점이어야 한다 (실측 2026-09-08).
+     *   사이드바처럼 `overflow-y: auto` 로 **스크롤되는 목록**의 마지막 항목은 rect 가
+     *   접힌 선 아래까지 이어진다. 그 자리를 찍으면 그 아래에 있는 **다른 영역**(발 부분)이
+     *   잡혀 "가렸다"로 보고된다 — 실제로는 잘려서 안 보일 뿐 겹치지 않는다.
+     *   이 한 줄이 없어서 화면 6개에서 18건이 거짓으로 잡혔다.
+     */
+    if (!visibleInClippers(el, x, y)) continue;
     const top = document.elementFromPoint(x, y);
     // 범위를 정했다면, 그 범위 밖의 물건이 잡히는 것은 이 검사의 관심사가 아니다.
     const outsideScope = scopeSelector && top && !scope.contains(top);
@@ -170,6 +232,20 @@ async function main() {
   if (!fs.existsSync(path.join(distDir, "one.html"))) throw new Error(`dist 가 없습니다: ${distDir} — npm run build:renderer`);
   const { server, baseUrl } = await startServer();
   const browser = await chromium.launch();
+  /*
+   * ★손으로 고른 6개가 아니라 **빌드된 화면 전부**를 훑는다 (2026-09-08).
+   *   고른 화면만 재면 안 고른 화면의 결함은 영원히 "0건"으로 보인다.
+   *   화면이 열리지 않거나 특정 상태가 필요한 것은 그 사실을 그대로 적는다 —
+   *   "열지 못함"은 통과가 아니다.
+   */
+  const builtRoutes = fs.readdirSync(distDir, { recursive: true })
+    .filter((name) => typeof name === "string" && name.endsWith(".html") && !name.startsWith("404"))
+    .map((name) => ({
+      label: name.replace(/\.html$/, ""),
+      url: `/${name}`,
+      wait: "body",
+    }));
+  const SCREENS_ALL = builtRoutes;
   const SCREENS = [
     { label: "One 홈", url: "/one.html", wait: "main" },
     { label: "Work 채팅", url: "/workspace/task.html?id=chat-1", wait: '[data-chat-input="true"]' },
@@ -189,7 +265,7 @@ async function main() {
    */
   for (const lang of ["ko", "en"]) {
   for (const size of SIZES) {
-    for (const screen of SCREENS) {
+    for (const screen of (process.env.UI_QA_ALL ? SCREENS_ALL : SCREENS)) {
       const context = await browser.newContext({ viewport: size, locale: lang === "ko" ? "ko-KR" : "en-US" });
       await context.addInitScript(setupMockAgentlasBridge, mockBridgeOptions());
       await context.addInitScript((locale) => {

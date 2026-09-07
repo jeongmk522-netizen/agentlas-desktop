@@ -1340,7 +1340,23 @@ function AgentCard({
   const websiteUrl = plugin ? (listing.homepage || listing.manifestUrl || null) : null;
   const cardLabel = entityClassLabel(entityKind, locale);
   const verificationFacts = hubVerificationFacts(listing, locale);
+  /*
+   * ★이 줄은 **늘** 잘리고 있었다 (실측 2026-09-08: 331px 자리에 영어 642px / 한국어 453px).
+   *   "넘치면 말줄임 + 툴팁" 이 설계였는데, 넘치는 게 예외가 아니라 **언제나**여서
+   *   화면에서는 뒷부분(최근 성공일·실패율)을 아무도 본 적이 없다.
+   *   늘 잘리는 문장은 잘림이 아니라 잘못 쓴 문장이다 — 카드에는 짧은 형태를 쓰고,
+   *   전체 문장은 지금처럼 툴팁이 그대로 말한다(정보는 하나도 안 버린다).
+   */
   const statFacts = [
+    listing.totalBorrows
+      ? (ko ? `호출 ${listing.totalBorrows}` : `${listing.totalBorrows} calls`)
+      : null,
+    ...hubVerificationFacts(listing, locale, { compact: true }),
+    listing.cloudPackage
+      ? (ko ? `파일 ${listing.cloudPackage.fileCount}` : `${listing.cloudPackage.fileCount} files`)
+      : null,
+  ].filter((fact): fact is string => Boolean(fact));
+  const statFactsFull = [
     listing.totalBorrows
       ? (ko ? `전체 호출 ${listing.totalBorrows}회` : `${listing.totalBorrows} total calls`)
       : null,
@@ -1430,7 +1446,7 @@ function AgentCard({
       {statFacts.length > 0 && (
         // 실적은 칩 무더기 대신 이력서식 한 줄 요약 — 카드 높이를 흔들지 않고,
         // 넘치면 말줄임 + 툴팁으로 전체를 보여준다.
-        <div className="hub-card-stats" title={statFacts.join(" · ")}>
+        <div className="hub-card-stats" title={statFactsFull.join(" · ")}>
           {statFacts.join(" · ")}
         </div>
       )}

@@ -4,6 +4,9 @@ import { filePreviewEmptyMessage } from "@/lib/file-preview-reason";
 
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { receiptAutoExpanded } from "@/lib/run-receipt-state";
+
+/** 한 번에 그리는 활동 줄 수. 나머지는 "이전 N개 더 보기"로 이어 붙인다. */
+const ACTIVITY_ROW_WINDOW = 120;
 import {
   IconArrowLeft,
   IconCheck,
@@ -389,6 +392,18 @@ export function OneActivityTimeline({
 }) {
   const active = busy || preparing;
   const [expanded, setExpanded] = useState(active);
+  /*
+   * ★증거는 다 갖되, 한 번에 다 그리지는 않는다 (오너 실사용 2026-09-08: "48G 맥에서 렉").
+   *
+   * 실측: 오너 저장소의 한 대화에 실행 이벤트 21,412개, **한 실행에 6,725개**가 붙어 있다.
+   * 이 목록은 상한이 없다 — 예전에 12개에서 조용히 잘라 긴 실행을 감사할 수 없게 만든
+   * 적이 있어 일부러 뺐다. 그 판단은 옳았다. 문제는 **조용히 버린 것**이었지 상한 자체가
+   * 아니었다.
+   *
+   * 그래서 버리지 않고 **최근 것부터 창 단위로** 그린다. 나머지는 사라진 게 아니라 한 번
+   * 더 누르면 나오고, 몇 개가 더 있는지 그 단추가 말한다. DOM 은 작고 증거는 그대로다.
+   */
+  const [shownRows, setShownRows] = useState(ACTIVITY_ROW_WINDOW);
   const liveElapsed = useElapsed(startedAt, active);
   const settledDurationMs = useMemo(
     () => state.items.find((item) => item.kind === "run" && item.durationMs != null)?.durationMs,
@@ -480,7 +495,18 @@ export function OneActivityTimeline({
       {active && <div className={styles.activityEta}><LoadingEstimate locale={locale} operationKey={preparing ? "one-run-prepare" : "one-run-execution"} startedAt={startedAt} expectedSeconds={preparing ? [2, 45] : [30, 600]} /></div>}
       {expanded && visible.length > 0 && (
         <div className={styles.rows}>
-          {visible.map((item) => (
+          {visible.length > shownRows && (
+            <button
+              type="button"
+              className={styles.moreRows}
+              onClick={() => setShownRows((current) => current + ACTIVITY_ROW_WINDOW * 2)}
+            >
+              {locale === "ko"
+                ? `이전 ${visible.length - shownRows}개 더 보기`
+                : `Show ${visible.length - shownRows} earlier`}
+            </button>
+          )}
+          {visible.slice(-shownRows).map((item) => (
             <ActivityRow key={item.id} item={item} locale={locale} workspacePath={workspacePath} />
           ))}
         </div>

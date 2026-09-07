@@ -91,6 +91,22 @@
   padding: 0 0 14px 18px;
 }
 
+/* "이전 N개 더 보기" — 잘라 버린 게 아니라 접어 둔 것임을 그 자리에서 말한다. */
+.moreRows {
+  width: 100%;
+  min-height: 32px;
+  padding: 6px 2px;
+  border: 0;
+  border-top: 1px solid color-mix(in srgb, var(--activity-line) 72%, transparent);
+  background: transparent;
+  color: var(--activity-faint);
+  font-size: 11px;
+  text-align: center;
+  cursor: pointer;
+}
+
+.moreRows:hover { color: var(--activity-ink, inherit); }
+
 .row,
 .rowDetails > summary {
   min-width: 0;

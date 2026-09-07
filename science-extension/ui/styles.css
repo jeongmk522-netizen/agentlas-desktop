@@ -5367,6 +5367,148 @@ button:has(> span:only-child > .uiIcon:only-child):not(.projectHubInlineBack) {
   }
 }
 
+/* Statistical results put the declared input and the observed table first.  Keep the
+   receipt auditable without allowing the execution rail to become a clipped fourth pane. */
+.artifactWorkspace:has(.statisticsAnalysisSurface) .statisticsAnalysisHeader {
+  min-height: 72px;
+  align-items: center;
+  gap: 14px;
+  padding: 10px 16px;
+}
+.artifactWorkspace:has(.statisticsAnalysisSurface) .statisticsAnalysisHeader > div:first-child {
+  min-width: 0;
+  flex: 0 1 42%;
+  display: grid;
+  align-content: center;
+  gap: 2px;
+  overflow: hidden;
+}
+.artifactWorkspace:has(.statisticsAnalysisSurface) .statisticsAnalysisHeader > div:first-child > strong {
+  min-width: 0;
+  margin-top: 0;
+  overflow: hidden;
+  font-size: 14px;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
+}
+.artifactWorkspace:has(.statisticsAnalysisSurface) .statisticsAnalysisHeader > div:first-child > code {
+  display: block;
+  max-width: 100%;
+  margin: 2px 0 0;
+  overflow: hidden;
+  color: var(--muted);
+  font: 9px ui-monospace, SFMono-Regular, Menlo, monospace;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.artifactWorkspace:has(.statisticsAnalysisSurface) .statisticsAnalysisControls {
+  min-width: 0;
+  flex: 1 1 58%;
+  overflow: hidden;
+}
+.artifactWorkspace:has(.statisticsAnalysisSurface) .statisticsAnalysisControls nav {
+  min-width: 0;
+  display: flex;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 6px;
+  overflow: visible;
+}
+.artifactWorkspace:has(.statisticsAnalysisSurface) .statisticsAnalysisControls nav button {
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.artifactWorkspace:has(.statisticsAnalysisSurface) .statisticsExecutionRail {
+  min-height: 122px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  overflow: hidden;
+}
+.artifactWorkspace:has(.statisticsAnalysisSurface) .statisticsExecutionCard {
+  min-width: 0;
+  gap: 6px;
+  padding: 10px 11px 8px;
+  overflow: hidden;
+}
+.artifactWorkspace:has(.statisticsAnalysisSurface) .statisticsExecutionCard header > strong {
+  min-width: 0;
+  overflow: hidden;
+  font-size: 10px;
+  line-height: 1.3;
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+.artifactWorkspace:has(.statisticsAnalysisSurface) .statisticsExecutionCard p {
+  overflow: hidden;
+  font-size: 10px;
+  line-height: 1.35;
+}
+.artifactWorkspace:has(.statisticsAnalysisSurface) .statisticsMappingChips,
+.artifactWorkspace:has(.statisticsAnalysisSurface) .statisticsDiagnosticChips {
+  min-width: 0;
+  overflow: visible;
+}
+.artifactWorkspace:has(.statisticsAnalysisSurface) .statisticsMappingChips strong,
+.artifactWorkspace:has(.statisticsAnalysisSurface) .statisticsDiagnosticChips span {
+  max-width: 100%;
+}
+.artifactWorkspace:has(.statisticsAnalysisSurface) .statisticsExecutionCard footer {
+  min-width: 0;
+  flex-wrap: wrap;
+  gap: 3px 7px;
+  overflow: hidden;
+  white-space: normal;
+}
+.artifactWorkspace:has(.statisticsAnalysisSurface) .statisticsExecutionCard footer > span {
+  flex: 1 1 100%;
+  min-width: 0;
+  overflow: hidden;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+.artifactWorkspace:has(.statisticsAnalysisSurface) .statisticsExecutionCard footer code {
+  max-width: 100%;
+  font-size: 8px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.artifactWorkspace:has(.statisticsAnalysisSurface) .statisticsAnalysisContent > .dataTableViewport {
+  min-width: 0;
+  overflow: auto;
+}
+.artifactWorkspace:has(.statisticsAnalysisSurface) .statisticsAnalysisContent > .dataTableViewport table {
+  width: 100%;
+  min-width: 100%;
+  table-layout: fixed;
+}
+.artifactWorkspace:has(.statisticsAnalysisSurface) .statisticsAnalysisContent > .dataTableViewport th,
+.artifactWorkspace:has(.statisticsAnalysisSurface) .statisticsAnalysisContent > .dataTableViewport td {
+  min-width: 0;
+}
+.artifactWorkspace:has(.statisticsAnalysisSurface) .statisticsAnalysisContent > .dataTableViewport th span {
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+.artifactWorkspace:has(.statisticsAnalysisSurface) .statisticsAnalysisContent > .dataTableViewport td[data-numeric-underflow="true"] {
+  color: var(--ink);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-variant-numeric: tabular-nums;
+}
+.artifactWorkspace:has(.statisticsAnalysisSurface) .statisticsAnalysisContent:has(> .dataTableViewport tbody > tr:only-child) {
+  flex: 0 0 auto;
+}
+.artifactWorkspace:has(.statisticsAnalysisSurface) .statisticsAnalysisContent:has(> .dataTableViewport tbody > tr:only-child) > .dataTableViewport {
+  flex: 0 0 auto;
+  min-height: 0;
+}
+.artifactWorkspace:has(.statisticsAnalysisSurface) .statisticsAnalysisContent:has(> .dataTableViewport tbody > tr:only-child) > footer {
+  flex: 0 0 auto;
+}
+
 /* Overview research responses borrow the public Updates article's reading
    hierarchy without importing publication chrome or changing Science state. */
 .scienceArticleMarkdown { color: #292929; }

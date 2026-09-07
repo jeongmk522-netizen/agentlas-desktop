@@ -1462,6 +1462,8 @@ function createComposerEventSync({
   const isStatisticsProjectionReceipt = (receipt) => Boolean(receipt && [
     "agentlas.science.statistics.data-table-projection-receipt/v1",
     "agentlas.science.statistics.data-table-projection-receipt/v2",
+    "agentlas.science.statistics.data-table-projection-receipt/v3",
+    "agentlas.science.statistics.data-table-projection-receipt/v4",
   ].includes(receipt.schema));
   function statisticsProjectionColumnPairs(receipt) {
     if (!isStatisticsProjectionReceipt(receipt)) return [];
@@ -1473,17 +1475,65 @@ function createComposerEventSync({
     if (receipt.method === "welch_one_way_anova") return [["group", columns.groupColumn], ["value", columns.valueColumn]];
     if (receipt.method === "friedman_test") return [["block", columns.blockColumn], ["condition", columns.conditionColumn], ["value", columns.valueColumn]];
     if (receipt.method === "roc_curve_analysis") return [["outcome", columns.outcomeColumn], ["score", columns.scoreColumn], ...(columns.observationLabelColumn ? [["label", columns.observationLabelColumn]] : [])];
-    return [];
+    if (columns.groups && typeof columns.groups === "object") return [
+      ["group", columns.groups.nameColumn],
+      ["value", columns.groups.valueColumn],
+    ].filter(([, column]) => typeof column === "string" && column.trim());
+    if (columns.values && typeof columns.values === "object" && typeof columns.values.column === "string") return [["value", columns.values.column]];
+    const pairs = [];
+    for (const [property, mapping] of Object.entries(columns)) {
+      if (!mapping || typeof mapping !== "object" || Array.isArray(mapping)) continue;
+      for (const [key, column] of Object.entries(mapping)) {
+        if (!key.endsWith("Column") || typeof column !== "string" || !column.trim()) continue;
+        pairs.push([`${property}.${key.slice(0, -"Column".length)}`, column]);
+      }
+    }
+    return pairs;
   }
   const statisticsProjectionMappingLabel = (receipt) => statisticsProjectionColumnPairs(receipt)
     .map(([role, column]) => `${role} → ${column}`)
     .join(" · ");
   const statisticsShortHash = (value, length = 12) => value ? `${String(value).slice(0, length)}…` : "—";
+  const statisticsProjectionRowCount = (receipt) => {
+    const rowsAfter = Number(receipt?.preparation?.rowsAfter);
+    return Number.isFinite(rowsAfter) ? rowsAfter : receipt?.includedRowCount;
+  };
+  function statisticsPrimaryInputColumn(payload) {
+    const pairs = statisticsProjectionColumnPairs(payload?.projectionReceipt);
+    return pairs.find(([role]) => role === "value")?.[1]
+      || pairs.find(([role]) => String(role).endsWith(".value"))?.[1]
+      || pairs[pairs.length - 1]?.[1]
+      || null;
+  }
+  function statisticsContextualLabel(label, payload) {
+    const text = String(label || "");
+    const column = statisticsPrimaryInputColumn(payload);
+    if (!column) return text;
+    return /\bValue\b/u.test(text) ? text.replace(/\bValue\b/gu, column) : `${text} · ${column}`;
+  }
+  function statisticsTableColumnLabel(column, payload) {
+    const label = String(column?.label || column?.key || "");
+    const columnName = statisticsPrimaryInputColumn(payload);
+    if (!columnName || column?.key !== "value") return label;
+    return label === "Value" ? columnName : `${label} · ${columnName}`;
+  }
+  function statisticsUnderflowDisplay(payload, column, row, value) {
+    // A zero p-value is not universally an underflow: exact/permutation methods may legitimately
+    // report zero. The chi-square tail used by Kruskal-Wallis is strictly positive for finite H/df;
+    // a finite positive result that reached zero here therefore means JS Number underflow.
+    if (payload?.method !== "kruskal_wallis" || column?.key !== "pValue" || value !== 0) return null;
+    const statistic = Number(row?.statistic);
+    const degreesOfFreedom = Number(row?.df);
+    return Number.isFinite(statistic) && statistic > 0 && Number.isFinite(degreesOfFreedom) && degreesOfFreedom > 0
+      ? "<5e-324"
+      : null;
+  }
   function statisticsProjectionLineageMarkup(receipt, runId, artifactId, artifactVersion, artifactSha256) {
     if (!isStatisticsProjectionReceipt(receipt)) return "";
-    const method = receipt.schema.endsWith("/v2") ? statisticsMethodLabel(receipt.method) : "Kaplan–Meier survival";
+    const method = receipt.method ? statisticsMethodLabel(receipt.method) : "Kaplan–Meier survival";
     const mapping = statisticsProjectionMappingLabel(receipt);
-    return `<details class="statisticsLineage provenanceDisclosure" data-statistics-lineage data-projection-schema="${escapeHtml(receipt.schema)}" data-source-artifact-id="${escapeHtml(receipt.sourceArtifact.artifactId)}" data-source-artifact-version="${escapeHtml(receipt.sourceArtifact.artifactVersion)}" data-source-artifact-sha256="${escapeHtml(receipt.sourceArtifact.contentSha256)}" data-projection-receipt-sha256="${escapeHtml(receipt.receiptSha256)}" data-run-id="${escapeHtml(runId)}" data-output-artifact-id="${escapeHtml(artifactId)}" data-output-artifact-version="${escapeHtml(artifactVersion)}" data-output-artifact-sha256="${escapeHtml(artifactSha256)}"><summary><strong>${escapeHtml(uiCopy("근거 연결", "Evidence chain"))}</strong><span>${escapeHtml(method)} · ${escapeHtml(mapping)} · ${escapeHtml(receipt.includedRowCount)} rows</span></summary><div class="provenanceTrail"><span>Source table <code title="${escapeHtml(receipt.sourceArtifact.artifactId)}">${escapeHtml(statisticsShortHash(receipt.sourceArtifact.artifactId))}</code> · v${escapeHtml(receipt.sourceArtifact.artifactVersion)}</span><i aria-hidden="true">→</i><span>${escapeHtml(method)} · ${escapeHtml(mapping)} · ${escapeHtml(receipt.includedRowCount)} rows</span><i aria-hidden="true">→</i><span>Projection <code title="${escapeHtml(receipt.receiptSha256)}">${escapeHtml(statisticsShortHash(receipt.receiptSha256))}</code></span><i aria-hidden="true">→</i><span>Run <code title="${escapeHtml(runId)}">${escapeHtml(statisticsShortHash(runId))}</code></span></div></details>`;
+    const rowCount = statisticsProjectionRowCount(receipt);
+    return `<details class="statisticsLineage provenanceDisclosure" data-statistics-lineage data-projection-schema="${escapeHtml(receipt.schema)}" data-source-artifact-id="${escapeHtml(receipt.sourceArtifact.artifactId)}" data-source-artifact-version="${escapeHtml(receipt.sourceArtifact.artifactVersion)}" data-source-artifact-sha256="${escapeHtml(receipt.sourceArtifact.contentSha256)}" data-projection-receipt-sha256="${escapeHtml(receipt.receiptSha256)}" data-run-id="${escapeHtml(runId)}" data-output-artifact-id="${escapeHtml(artifactId)}" data-output-artifact-version="${escapeHtml(artifactVersion)}" data-output-artifact-sha256="${escapeHtml(artifactSha256)}"><summary><strong>${escapeHtml(uiCopy("근거 연결", "Evidence chain"))}</strong><span>${escapeHtml(method)} · ${escapeHtml(mapping)} · ${escapeHtml(rowCount)} rows</span></summary><div class="provenanceTrail"><span>Source table <code title="${escapeHtml(receipt.sourceArtifact.artifactId)}">${escapeHtml(statisticsShortHash(receipt.sourceArtifact.artifactId))}</code> · v${escapeHtml(receipt.sourceArtifact.artifactVersion)}</span><i aria-hidden="true">→</i><span>${escapeHtml(method)} · ${escapeHtml(mapping)} · ${escapeHtml(rowCount)} rows</span><i aria-hidden="true">→</i><span>Projection <code title="${escapeHtml(receipt.receiptSha256)}">${escapeHtml(statisticsShortHash(receipt.receiptSha256))}</code></span><i aria-hidden="true">→</i><span>Run <code title="${escapeHtml(runId)}">${escapeHtml(statisticsShortHash(runId))}</code></span></div></details>`;
   }
   const labIdForArtifact = (artifactId) => {
     for (const [labId, contexts] of state.labContextsById) {
@@ -8906,7 +8956,7 @@ function createComposerEventSync({
     const mappingChips = projectionReceipt ? statisticsProjectionColumnPairs(projectionReceipt)
       .map(([role, column]) => `<span><em>${escapeHtml(role)}</em><strong>${escapeHtml(column)}</strong></span>`).join("") : `<span><em>binding</em><strong>${escapeHtml(binding.inputArtifacts?.length ? "exact artifact" : "request hash")}</strong></span>`;
     const sourceMeta = projectionReceipt
-      ? `${projectionReceipt.includedRowCount} rows · projection ${statisticsShortHash(projectionReceipt.receiptSha256)}`
+      ? `${statisticsProjectionRowCount(projectionReceipt)} rows · projection ${statisticsShortHash(projectionReceipt.receiptSha256)}`
       : `input ${statisticsShortHash(payload.inputSha256)}`;
     sourceCard.innerHTML = `<header><span>01 · SOURCE MAPPING</span><strong>${escapeHtml(sourceTitle)}</strong></header><div class="statisticsMappingChips">${mappingChips}</div><footer title="${escapeHtml(projectionReceipt?.receiptSha256 || payload.inputSha256 || "")}">${escapeHtml(sourceMeta)}</footer>`;
 
@@ -9007,18 +9057,22 @@ function createComposerEventSync({
     header.className = "statisticsAnalysisHeader";
     const identity = document.createElement("div");
     const kicker = document.createElement("span"); kicker.textContent = "RECEIPT-BOUND STATISTICAL ANALYSIS";
-    const title = document.createElement("strong"); title.textContent = statisticsMethodLabel(payload.method);
-    const receipt = document.createElement("code"); receipt.textContent = `${String(result.receipt?.receiptId || "").slice(0, 12)}…`;
+    const selectedTableTitle = selectedTable?.artifact?.payload?.title || statisticsMethodLabel(payload.method);
+    const title = document.createElement("strong"); title.textContent = statisticsContextualLabel(selectedTableTitle, payload);
+    const receipt = document.createElement("code");
+    const receiptId = String(result.receipt?.receiptId || "");
+    receipt.title = receiptId;
+    receipt.textContent = receiptId ? `receipt ${statisticsShortHash(receiptId)}` : "receipt unavailable";
     identity.append(kicker, title, receipt);
     const switcher = document.createElement("nav"); switcher.setAttribute("aria-label", "통계 결과 산출물");
     for (const entry of tableEntries) {
       const button = document.createElement("button"); button.type = "button"; button.dataset.statisticsView = `table:${entry.index}`;
-      button.textContent = String(entry.artifact.payload.title || `Table ${entry.index + 1}`); button.disabled = !interactive; button.setAttribute("aria-pressed", String(activeKind === "table" && entry.index === selectedTable.index));
+      button.textContent = statisticsContextualLabel(entry.artifact.payload.title || `Table ${entry.index + 1}`, payload); button.disabled = !interactive; button.setAttribute("aria-pressed", String(activeKind === "table" && entry.index === selectedTable.index));
       switcher.append(button);
     }
     for (const entry of chartEntries) {
       const button = document.createElement("button"); button.type = "button"; button.dataset.statisticsView = `chart:${entry.index}`;
-      button.textContent = String(entry.visualization.title || `Figure ${entry.index + 1}`); button.disabled = !interactive; button.setAttribute("aria-pressed", String(activeKind === "chart" && entry.index === selectedChart?.index));
+      button.textContent = statisticsContextualLabel(entry.visualization.title || `Figure ${entry.index + 1}`, payload); button.disabled = !interactive; button.setAttribute("aria-pressed", String(activeKind === "chart" && entry.index === selectedChart?.index));
       switcher.append(button);
     }
     const controls = document.createElement("div"); controls.className = "statisticsAnalysisControls"; controls.append(switcher);
@@ -9061,7 +9115,7 @@ function createComposerEventSync({
       const table = document.createElement("table");
       const thead = document.createElement("thead"); const headRow = document.createElement("tr");
       for (const column of tablePayload.columns) {
-        const th = document.createElement("th"); const label = document.createElement("span"); label.textContent = column.label;
+        const th = document.createElement("th"); const label = document.createElement("span"); label.textContent = statisticsTableColumnLabel(column, payload);
         const type = document.createElement("em"); type.textContent = column.type; th.append(label, type); headRow.append(th);
       }
       thead.append(headRow); const tbody = document.createElement("tbody");
@@ -9071,15 +9125,20 @@ function createComposerEventSync({
           const td = document.createElement("td"); const value = row[column.key]; td.dataset.logicalType = column.type;
           // The exact value stays on the cell: the rounding is for reading, and a reader who needs
           // the full precision must be able to get it without going back to the receipt.
-          td.textContent = formatScienceCell(value, column.type);
-          if (typeof value === "number" && Number.isFinite(value)) td.title = String(value);
+          const underflowDisplay = statisticsUnderflowDisplay(payload, column, row, value);
+          td.textContent = underflowDisplay || formatScienceCell(value, column.type);
+          if (underflowDisplay) {
+            td.dataset.numericUnderflow = "true";
+            td.title = "p-value is below JavaScript Number.MIN_VALUE (5e-324); the exact positive tail is preserved by the run oracle, not replaced with a nonzero estimate.";
+            td.setAttribute("aria-label", "p-value below JavaScript Number.MIN_VALUE");
+          } else if (typeof value === "number" && Number.isFinite(value)) td.title = String(value);
           if (value === null || value === undefined) td.dataset.null = "true"; tr.append(td);
         }
         tbody.append(tr);
       }
       table.append(thead, tbody); viewport.append(table);
       const caption = document.createElement("footer");
-      const copy = document.createElement("div"); const captionText = document.createElement("strong"); captionText.textContent = tablePayload.caption; copy.append(captionText);
+      const copy = document.createElement("div"); const captionText = document.createElement("strong"); captionText.textContent = statisticsContextualLabel(tablePayload.caption, payload); copy.append(captionText);
       if (Array.isArray(tablePayload.notes) && tablePayload.notes.length) { const notes = document.createElement("span"); notes.textContent = tablePayload.notes.join(" · "); copy.append(notes); }
       const count = document.createElement("span"); count.textContent = `${tablePayload.rows.length.toLocaleString()} rows · ${tablePayload.columns.length.toLocaleString()} columns`;
       caption.append(copy, count); content.append(viewport, caption); surface.append(header, executionRail, content); host.replaceChildren(surface);

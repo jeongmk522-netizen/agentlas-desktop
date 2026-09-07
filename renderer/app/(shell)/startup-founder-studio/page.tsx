@@ -102,7 +102,7 @@ export default function StartupFounderStudioPage() {
     <div style={shell}>
       <header className="titlebar-drag" style={header}>
         <Link href="/apps" className="titlebar-nodrag" style={backLink}>
-          <IconChevronRight size={14} style={{ transform: "rotate(180deg)" }} /> Apps
+          <IconChevronRight size={14} style={{ transform: "rotate(180deg)" }} /> {locale === "ko" ? "앱" : "Apps"}
         </Link>
         <div style={divider} />
         <StudioBotLogo size={32} />

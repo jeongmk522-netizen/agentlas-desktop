@@ -7,12 +7,32 @@ import { LoadingEstimate } from "./LoadingEstimate";
 
 // 클래스 컴포넌트라 useT() 훅을 쓸 수 없어, i18n과 동일한 override 키를 직접 읽는다.
 // (lib/i18n.tsx: STORAGE_KEY "agentlas.locale", SSR 기본값 en)
+/*
+ * ★이 함수는 **언제나 "en" 을 돌려주고 있었다** (실측 2026-09-08).
+ *
+ *     if (raw === "en") return "en";
+ *     ...
+ *     return "en";        ← 어느 길로 가도 en
+ *
+ *   그래서 이 화면의 한국어 문구는 **한 번도 그려진 적이 없다.** 코드에는 번역이
+ *   있으니 grep 으로는 "번역돼 있다"로 보인다 — 화면을 훑어서야 잡혔다
+ *   ("화면을 다시 불러오는 중입니다" 가 늘 "Reloading this view" 로 나왔다).
+ *
+ *   클래스 컴포넌트라 useT() 를 못 쓰므로 i18n 과 같은 override 키를 직접 읽는다.
+ *   override 가 없으면 i18n 처럼 OS/브라우저 언어로 떨어진다(그쪽은 IPC 로 읽지만
+ *   여기서는 훅을 못 쓰므로 문서·브라우저 언어까지가 최선이다).
+ */
 function readLocale(): "ko" | "en" {
   try {
     const raw = window.localStorage.getItem("agentlas.locale");
+    if (raw === "ko") return "ko";
     if (raw === "en") return "en";
+    const documentLang = document.documentElement.lang || "";
+    if (documentLang.toLowerCase().startsWith("ko")) return "ko";
+    const navigatorLang = navigator.language || "";
+    if (navigatorLang.toLowerCase().startsWith("ko")) return "ko";
   } catch {
-    // ignore
+    // 저장소를 못 읽어도 화면은 떠야 한다.
   }
   return "en";
 }

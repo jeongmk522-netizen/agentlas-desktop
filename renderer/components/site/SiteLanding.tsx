@@ -138,7 +138,7 @@ function McpIcon() {
   return <Icon size={13}><circle cx="7" cy="12" r="2.2" stroke="currentColor" strokeWidth="1.5" /><circle cx="17" cy="7" r="2.2" stroke="currentColor" strokeWidth="1.5" /><circle cx="17" cy="17" r="2.2" stroke="currentColor" strokeWidth="1.5" /><path d="m9 11 5.8-3M9 13l5.8 3" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" /></Icon>;
 }
 
-function TemplateIllustration({ surface }: { surface: SiteSurface }) {
+function TemplateIllustration({ surface, ko }: { surface: SiteSurface; ko: boolean }) {
   if (surface === "mobile") {
     return (
       <div className={styles.mobileArt} aria-hidden="true">
@@ -156,7 +156,7 @@ function TemplateIllustration({ surface }: { surface: SiteSurface }) {
       <div className={styles.agentArt} aria-hidden="true">
         <span className={styles.agentRail}><i /><i /><i /><i /></span>
         <span className={styles.agentCanvas}>
-          <b>Input</b><i /><i /><em>Run agent</em><strong>Output</strong><u />
+          <b>{ko ? "입력" : "Input"}</b><i /><i /><em>{ko ? "에이전트 실행" : "Run agent"}</em><strong>{ko ? "출력" : "Output"}</strong><u />
         </span>
       </div>
     );
@@ -490,7 +490,7 @@ export function SiteLanding({
           </button>
           <div className={styles.brand}>
             <span className={styles.brandMark} aria-hidden="true"><i /><i /><i /></span>
-            <span><strong>Agentlas Site</strong><small>Build interfaces around intelligence</small></span>
+            <span><strong>Agentlas Site</strong><small>{ko ? "지능 위에 화면을 만듭니다" : "Build interfaces around intelligence"}</small></span>
           </div>
         </div>
         <div className={styles.headerActions}>
@@ -528,7 +528,7 @@ export function SiteLanding({
                 data-selected={surface === item ? "true" : "false"}
                 onClick={() => chooseTemplate(item)}
               >
-                {item === "web" ? "Web" : item === "mobile" ? "Mobile" : "Agent App"}
+                {item === "web" ? (ko ? "웹" : "Web") : item === "mobile" ? (ko ? "모바일" : "Mobile") : (ko ? "에이전트 앱" : "Agent App")}
               </button>
             ))}
           </div>
@@ -634,19 +634,19 @@ export function SiteLanding({
 
       <section className={styles.templates} aria-labelledby="site-template-heading">
         <div className={styles.sectionHeading}>
-          <div><span>STARTING POINTS</span><h2 id="site-template-heading">Use a template</h2></div>
+          <div><span>{ko ? "시작점" : "STARTING POINTS"}</span><h2 id="site-template-heading">{ko ? "템플릿으로 시작하기" : "Use a template"}</h2></div>
           <p>{ko ? "3개의 목적별 레이아웃" : "Three purpose-built layouts"}</p>
         </div>
         <div className={styles.templateGrid}>
           {([[
-            "web", "Web", ko ? "반응형 웹사이트와 대시보드" : "Responsive sites and dashboards",
+            "web", ko ? "웹" : "Web", ko ? "반응형 웹사이트와 대시보드" : "Responsive sites and dashboards",
           ], [
-            "mobile", "Mobile", ko ? "모바일 우선 앱 화면" : "Mobile-first app screens",
+            "mobile", ko ? "모바일" : "Mobile", ko ? "모바일 우선 앱 화면" : "Mobile-first app screens",
           ], [
-            "agent-app", "Agent App", ko ? "에이전트 입출력에 맞춘 Astryx 앱" : "Astryx apps shaped to agent I/O",
+            "agent-app", ko ? "에이전트 앱" : "Agent App", ko ? "에이전트 입출력에 맞춘 Astryx 앱" : "Astryx apps shaped to agent I/O",
           ]] as Array<[SiteSurface, string, string]>).map(([id, label, description]) => (
             <button key={id} type="button" className={styles.templateCard} data-selected={surface === id ? "true" : "false"} onClick={() => chooseTemplate(id)}>
-              <span className={styles.templatePreview}><TemplateIllustration surface={id} /></span>
+              <span className={styles.templatePreview}><TemplateIllustration surface={id} ko={ko} /></span>
               <span className={styles.templateCopy}><b>{label}</b><small>{description}</small></span>
               <span className={styles.templateArrow}>↗</span>
             </button>
@@ -656,7 +656,7 @@ export function SiteLanding({
 
       <section className={styles.agentApps} aria-labelledby="agent-apps-heading">
         <div className={styles.sectionHeading}>
-          <div><span>BUILT WITH ASTRYX</span><h2 id="agent-apps-heading">Agent Apps</h2></div>
+          <div><span>{ko ? "ASTRYX로 만든 것" : "BUILT WITH ASTRYX"}</span><h2 id="agent-apps-heading">{ko ? "에이전트 앱" : "Agent Apps"}</h2></div>
           <p>{ko ? "카드를 선택하면 상단 게시 버튼이 활성화됩니다." : "Select a card to enable the Publish action above."}</p>
         </div>
         <div className={styles.galleryToolbar}>
@@ -761,7 +761,7 @@ export function SiteLanding({
               <article key={project.id}>
                 <button type="button" disabled={busy} onClick={() => onOpenProject(project)}>
                   <span className={styles.surfaceTag}>{project.surface === "mobile" ? "M" : "W"}</span>
-                  <span><b>{project.name}</b><small>{project.surface === "mobile" ? "Mobile" : "Web"} · {formatDate(project.updatedAt, locale)}</small></span>
+                  <span><b>{project.name}</b><small>{project.surface === "mobile" ? (ko ? "모바일" : "Mobile") : (ko ? "웹" : "Web")} · {formatDate(project.updatedAt, locale)}</small></span>
                 </button>
                 <button type="button" className={styles.deleteButton} disabled={busy} onClick={() => onDeleteProject(project.id)}>{ko ? "삭제" : "Delete"}</button>
               </article>

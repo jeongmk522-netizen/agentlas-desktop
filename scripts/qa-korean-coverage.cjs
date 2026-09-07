@@ -95,6 +95,10 @@ async function main() {
   if (!fs.existsSync(path.join(distDir, "one.html"))) throw new Error(`dist 가 없습니다: ${distDir} — npm run build:renderer`);
   const { server, baseUrl } = await startServer();
   const browser = await chromium.launch();
+  // ★빌드된 화면 전부를 훑는다 — 고른 화면만 재면 나머지는 영원히 "0건"이다.
+  const SCREENS_ALL = fs.readdirSync(distDir, { recursive: true })
+    .filter((name) => typeof name === "string" && name.endsWith(".html") && !name.startsWith("404"))
+    .map((name) => ({ label: name.replace(/\.html$/, ""), url: `/${name}`, wait: "body" }));
   const SCREENS = [
     { label: "One 홈", url: "/one.html", wait: "main" },
     { label: "Work 채팅", url: "/workspace/task.html?id=chat-1", wait: '[data-chat-input="true"]' },
@@ -104,7 +108,7 @@ async function main() {
     { label: "라이브러리·MCP", url: "/library/mcps.html", wait: "main" },
   ];
   const report = [];
-  for (const screen of SCREENS) {
+  for (const screen of (process.env.KO_QA_ALL ? SCREENS_ALL : SCREENS)) {
     const context = await browser.newContext({ viewport: { width: 1440, height: 980 }, locale: "ko-KR" });
     await context.addInitScript(setupMockAgentlasBridge, mockBridgeOptions());
     await context.addInitScript(setKorean);

@@ -522,7 +522,7 @@ export default function DocumentStudioPage() {
       <header className="titlebar-drag document-studio-toolbar" style={topToolbar}>
         <Link href="/apps" className="titlebar-nodrag" style={backLink}>
           <IconApps size={15} />
-          Apps
+          {locale === "ko" ? "앱" : "Apps"}
         </Link>
         <button
           type="button"

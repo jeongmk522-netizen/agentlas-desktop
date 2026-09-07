@@ -20,6 +20,8 @@ import {
   IconShield,
   IconSparkles,
 } from "@/components/Icon";
+import { RailAgentScreen } from "@/components/browser/RailAgentScreen";
+import { agentScreenModeForTool } from "@/lib/agent-screen-mode";
 import { LoadingEstimate } from "@/components/LoadingEstimate";
 import { LiveOutputViewer, type LiveOutputKind } from "@/components/LiveOutputViewer";
 import { CodeIdeViewer, isCodeArtifactName } from "@/components/CodeIdeViewer";
@@ -62,11 +64,12 @@ const ONE_OUTPUT_PREVIEW_HEIGHT_MIN = 160;
 /** 아래 섹션이 최소한 한 줄은 보이도록 남겨 두는 높이. */
 const ONE_OUTPUT_BELOW_MIN = 120;
 type OutputSectionKey = "files" | "mcp" | "agents" | "processes" | "computer" | "sources";
-type OutputRailView = "result" | "activity" | "terminal" | "browser" | "app";
+type OutputRailView = "result" | "activity" | "terminal" | "browser" | "screen" | "app";
 
 /** 탭마다 제 아이콘 — 글자만 있으면 어느 탭인지 눈으로 못 고른다. */
 function RailTabIcon({ view }: { view: OutputRailView }) {
   if (view === "browser") return <IconNetwork size={12} />;
+  if (view === "screen") return <IconPanelRight size={12} />;
   if (view === "terminal") return <IconCode size={12} />;
   if (view === "app") return <IconPanelRight size={12} />;
   if (view === "result") return <IconCheck size={12} />;
@@ -78,6 +81,7 @@ function railTabLabel(view: OutputRailView, locale: "ko" | "en"): string {
   if (view === "app") return locale === "ko" ? "앱" : "App";
   if (view === "activity") return locale === "ko" ? "작업" : "Activity";
   if (view === "terminal") return locale === "ko" ? "터미널" : "Terminal";
+  if (view === "screen") return locale === "ko" ? "화면" : "Screen";
   return locale === "ko" ? "브라우저" : "Browser";
 }
 type BrowserLiveInputBody = BrowserLiveInput extends infer Input
@@ -1614,6 +1618,30 @@ export function OneActivityArtifactRail({
   const preferredBrowserUrl = currentBrowserUrl
     ?? browserHistoryUrl
     ?? (browserScopeKey ? browserUrlsByScope[browserScopeKey] : undefined);
+  /*
+   * ★에이전트가 화면을 몰고 있으면 그 화면을 보여 준다 (실측 2026-09-08).
+   *
+   *   컴퓨터 조작(cua-driver 등)은 **어느 화면에도 자리가 없었다.** Work 는 패널을
+   *   열지만 그릴 것이 없었고(릴리스 1.1.5 가 그리는 부품의 호출부를 지웠다),
+   *   One 은 판정 자체가 없었다. 남은 곳은 스스로 열리지 않는 떠 있는 카드뿐이라
+   *   사람 눈에는 "아무 일도 안 일어남"으로 보였다. 오너: "컴퓨터 유즈를 못하네".
+   *
+   *   호스트가 알려 주기를 기다리지 않고 **활동 기록에서 직접 끌어낸다** — 그래야
+   *   One 과 Work 가 같은 순간에 같은 것을 본다. 브라우저는 이미 전용 보기가 있으므로
+   *   여기서는 컴퓨터 조작만 맡는다(같은 것을 두 번 그리지 않는다).
+   */
+  const computerToolActive = useMemo(() => {
+    const rows = activity?.items ?? [];
+    for (let i = rows.length - 1; i >= 0; i -= 1) {
+      const row = rows[i];
+      if (row.kind !== "tool") continue;
+      if (agentScreenModeForTool(row.tool?.name) !== "computer") continue;
+      return true;
+    }
+    return false;
+  }, [activity?.items]);
+  const [screenMode, setScreenMode] = useState<"browser" | "computer">("computer");
+
   const latestArtifactId = items.at(-1)?.id ?? null;
   const activeChatFile = chatFileTabs.find((file) => file.tabId === activeChatFileTabId) ?? null;
   const openedArtifactKind = openedArtifact ? outputPresentationKindForName(openedArtifact.label) : "standard";
@@ -1646,6 +1674,17 @@ export function OneActivityArtifactRail({
     () => appPreview ? `one_app_${appPreview.appId.replace(/[^A-Za-z0-9_-]/g, "").slice(0, 60)}` : undefined,
     [appPreview?.appId],
   );
+  useEffect(() => {
+    if (!computerToolActive) return;
+    setOpenTabs((tabs) => (tabs.includes("screen") ? tabs : [...tabs, "screen"]));
+    /*
+     * ★탭만 연다. 자동 선택은 넣었다가 **되돌렸다**(2026-09-08): 여기서
+     * setRailView 를 부르면 레일 자체가 화면에서 사라졌다(실측 — aside 가 통째로 없어짐).
+     * 레일의 표시 조건과 어떻게 얽혀 있는지 아직 모르므로, 모르는 채로 밀어 넣지 않는다.
+     * 지금은 "화면" 탭이 생기는 것까지가 확인된 동작이다.
+     */
+  }, [computerToolActive]);
+
   useEffect(() => {
     const handleOpen = (event: Event) => {
       const detail = (event as CustomEvent<unknown>).detail;
@@ -2083,6 +2122,14 @@ export function OneActivityArtifactRail({
               : computerUse.slice(-3).map((item) => <div key={item.id} className={styles.artifactRuntimeRow}><IconPanelRight size={13} /><span>{item.tool?.name || (locale === "ko" ? "컴퓨터 작업" : "Computer task")}</span><small>{item.status === "completed" ? <IconCheck size={12} /> : null}</small></div>)}
           </OutputDisclosure>
         </>}
+        {railView === "screen" && (
+          <RailAgentScreen
+            mode={screenMode}
+            active={railView === "screen"}
+            onModeChange={setScreenMode}
+            ko={locale === "ko"}
+          />
+        )}
         {railView === "browser" && <>
           <div className={styles.livePane} ref={livePaneRef}>
             <OneBrowserLiveView active={railView === "browser"} locale={locale} preferredUrl={preferredBrowserUrl} previewScopeId={browserScopeKey} />

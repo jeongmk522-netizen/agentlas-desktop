@@ -104,6 +104,7 @@ import {
 import { CodeIdeViewer, isCodeArtifactName } from "@/components/CodeIdeViewer";
 import { LiveOutputViewer, type LiveOutputKind } from "@/components/LiveOutputViewer";
 import { NativeLiveWebView } from "@/components/NativeLiveWebView";
+import { agentScreenModeForTool } from "@/lib/agent-screen-mode";
 import {
   appendChatFileMarker,
   chatFileItem,
@@ -1104,16 +1105,12 @@ function workflowSnapshotFromLedger(
 
 type ToolEvent = NonNullable<McpInvocationEvent["tool"]>;
 
-function computerUseModeForTool(toolName: string): "browser" | "computer" | null {
-  const name = toolName.toLowerCase();
-  if (name.includes("browser_")) return "browser";
-  if (
-    name.includes("computer-use") ||
-    name.includes("cua-driver") ||
-    /(?:^|__)(?:get_app_state|list_apps|click|drag|scroll|type_text|press_key|set_value|select_text)$/u.test(name)
-  ) return "computer";
-  return null;
-}
+/*
+ * ★판정은 공용 한 곳에 있다(renderer/lib/agent-screen-mode.ts).
+ *   이 규칙이 Work 안에만 있어서 **One 에는 아예 없었다** — 같은 순간에 한쪽만
+ *   화면을 알아보는 상태였다. 사본을 두면 반드시 갈라진다.
+ */
+const computerUseModeForTool = agentScreenModeForTool;
 
 function announceComputerUseActivity(mode: "browser" | "computer" | null, phase: "active" | "finished"): void {
   if (typeof window === "undefined") return;

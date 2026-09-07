@@ -21,6 +21,7 @@ import {
   stripGoalCompleteMarker,
   buildStormbreakerContinuationPrompt,
   CONTINUOUS_MODE_MAX_PASSES,
+  STORMBREAKER_MAX_IDENTICAL_PASSES,
   goalContinuationSchedule,
   STORMBREAKER_LONG_RUN_SCHEDULE,
   STORMBREAKER_LOOP_PROTOCOL,
@@ -4710,7 +4711,19 @@ ${effectiveUserPrompt}`;
     const invokeCurrentRuntime = async (request: RunnerRequest): Promise<Awaited<ReturnType<Runner>>> => {
       const currentPicked = picked;
       if (!currentPicked) throw new Error("no-runner");
-      const recoveryStartedAt = Date.now();
+      /*
+       * The recovery clock measures recovery, not the work.
+       *
+       * It used to start here, before the first attempt, while the budget it feeds is 30 seconds.
+       * So any request that took longer than 30 seconds -- which is every long prompt -- had its
+       * entire recovery budget spent by the work itself: the first failure was immediately ruled
+       * "time-limit", no other runtime was ever tried, and the person got an empty answer with a
+       * notice that said the retry budget had run out before a single retry happened.
+       *
+       * It now starts when the first failure is seen, so the budget covers what it is named after.
+       */
+      let recoveryStartedAt: number | null = null;
+      const recoveryElapsedMs = () => (recoveryStartedAt == null ? 0 : Date.now() - recoveryStartedAt);
       let recoveryRetryEvents = 0;
       let attemptCount = 0;
       let originalFailure: RunnerFailure | null = null;
@@ -4726,7 +4739,7 @@ ${effectiveUserPrompt}`;
         const failure = result.failure;
         if (!failure || terminalNoticeEmitted) return result;
         terminalNoticeEmitted = true;
-        const elapsedMs = Math.max(0, Date.now() - recoveryStartedAt);
+        const elapsedMs = Math.max(0, recoveryElapsedMs());
         const details = JSON.stringify({
           schema: "agentlas.runtime-recovery-terminal/v1",
           code: "runtime-recovery-exhausted",
@@ -4757,8 +4770,7 @@ ${effectiveUserPrompt}`;
       };
       while (attemptCount < DIRECT_RUNTIME_RECOVERY_MAX_ATTEMPTS) {
         if (signal?.aborted) throw new Error(tStatus(locale, "aborted"));
-        if (Date.now() - recoveryStartedAt >= DIRECT_RUNTIME_RECOVERY_MAX_ELAPSED_MS) {
-          if (!originalFailure) throw new Error("runtime recovery time budget exhausted");
+        if (originalFailure && recoveryElapsedMs() >= DIRECT_RUNTIME_RECOVERY_MAX_ELAPSED_MS) {
           return emitTerminalRecoveryFailure({ text: "", failure: originalFailure }, "time-limit");
         }
         attemptCount += 1;
@@ -4786,6 +4798,8 @@ ${effectiveUserPrompt}`;
         }
         if (!result.failure || !directRuntimeFallbackAllowed || signal?.aborted) return result;
         const failed = result.failure;
+        // First failure: this is when recovery actually begins.
+        if (recoveryStartedAt == null) recoveryStartedAt = Date.now();
         originalFailure = originalFailure ?? failed;
         const fallback = rolePriorityRuntimes(runtimes, "orchestrator", {
           failedRuntime: active,
@@ -4799,7 +4813,7 @@ ${effectiveUserPrompt}`;
         if (attemptCount >= DIRECT_RUNTIME_RECOVERY_MAX_ATTEMPTS) {
           return emitTerminalRecoveryFailure(result, "attempt-limit");
         }
-        if (Date.now() - recoveryStartedAt >= DIRECT_RUNTIME_RECOVERY_MAX_ELAPSED_MS) {
+        if (recoveryElapsedMs() >= DIRECT_RUNTIME_RECOVERY_MAX_ELAPSED_MS) {
           return emitTerminalRecoveryFailure(result, "time-limit");
         }
         if (recoveryRetryEvents >= DIRECT_RUNTIME_RECOVERY_MAX_RETRY_EVENTS) {
@@ -4942,6 +4956,9 @@ ${effectiveUserPrompt}`;
     let goalClaimEvidence: string | null = null;
     /** Consecutive transient failures on the current pass; reset by any pass that succeeds. */
     let passFailureTransientAttempts = 0;
+    /** Runaway guard for the marker-driven path, which has no ledger to consult. */
+    let lastPassFingerprint = "";
+    let identicalPassStreak = 0;
     /** Set when a failed pass stopped the loop while leaving the goal open and resumable. */
     let goalPassStop: { reason: string; retryAfterHint?: string } | null = null;
     for (let pass = 2; pass <= maxPasses; pass += 1) {
@@ -4983,6 +5000,34 @@ ${effectiveUserPrompt}`;
             passShouldContinue = true;
             goalDrivenPass = true;
           }
+        }
+      }
+      /*
+       * A marker-driven loop has no ledger to tell it that nothing is happening, so this is its only
+       * runaway guard: output that has not changed at all for three passes running is not work.
+       * Without it, raising the pass cap would hand a stuck model the person's machine.
+       */
+      if (!continuousMode) {
+        const passFingerprint = continuation.text.trim();
+        if (passFingerprint && passFingerprint === lastPassFingerprint) {
+          identicalPassStreak += 1;
+        } else {
+          identicalPassStreak = 0;
+          lastPassFingerprint = passFingerprint;
+        }
+        if (identicalPassStreak + 1 >= STORMBREAKER_MAX_IDENTICAL_PASSES) {
+          sink({
+            kind: "notice",
+            notice: {
+              level: "warning",
+              code: "continuation-no-progress",
+              message: locale === "ko"
+                ? `${STORMBREAKER_MAX_IDENTICAL_PASSES}번 연속으로 같은 결과가 나와 계속 진행을 멈췄습니다. 무엇이 막혔는지 알려 주시면 이어서 하겠습니다.`
+                : `The last ${STORMBREAKER_MAX_IDENTICAL_PASSES} passes produced the same result, so continuation stopped. Tell me what is blocking and I will pick it up from there.`,
+            },
+          });
+          result = { ...result, text: continuation.text };
+          break;
         }
       }
       if (!passShouldContinue || signal?.aborted) {

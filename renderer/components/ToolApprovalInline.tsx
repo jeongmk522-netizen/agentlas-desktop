@@ -301,11 +301,20 @@ export function ToolApprovalInline({
   chatId,
   compact = false,
   chip = false,
+  composerWidth,
 }: {
   chatId: string | null | undefined;
   compact?: boolean;
   /** Enables the Graph approval chip without changing One's existing card. */
   chip?: boolean;
+  /**
+   * The width of the box this surface's person answers from, in px.
+   *
+   * An approval that spans the whole conversation column reads as a full-screen interruption. Each
+   * surface has its own composer width -- One is 920, Work is 740 -- so the ask lines up with the
+   * place the answer is typed instead of with whatever the column happens to be.
+   */
+  composerWidth?: number;
 }) {
   const { queue } = useToolApprovals();
   useEffect(() => markChatVisible(chatId), [chatId]);
@@ -313,7 +322,11 @@ export function ToolApprovalInline({
   const mine = queue.filter((item) => item.chatId === chatId);
   if (mine.length === 0) return null;
   return (
-    <div className={chip ? "tool-approval-inline" : undefined} data-testid="tool-approval-inline">
+    <div
+      className={chip ? "tool-approval-inline" : undefined}
+      data-testid="tool-approval-inline"
+      style={composerWidth ? ({ "--agentlas-composer-width": `${composerWidth}px` } as React.CSSProperties) : undefined}
+    >
       {mine.map((request) => <ToolApprovalCard key={request.id} request={request} compact={compact} chip={chip} />)}
     </div>
   );

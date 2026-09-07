@@ -1758,6 +1758,28 @@ export class InvocationService {
           if (event.kind === "final") permissionEscalationRequested = true;
           event = { ...event, text: stripPermissionEscalationMarker(event.text) };
         }
+        /*
+         * A runtime that denied the tool itself has already given us the signal.
+         *
+         * The marker contract was written on the premise that a read-only run has no tool events at
+         * all -- true where the write tools are removed outright. It is not true on every runtime:
+         * Antigravity keeps the tools and refuses them one by one, emitting a typed
+         * `approval-required` notice each time. On those runs the person watched the model try to
+         * read a file, get denied, try to run a command, get denied, and then start guessing at
+         * localhost ports, while the only way out was a magic phrase the model never said.
+         *
+         * The denial is a stronger signal than the marker, because it is the runtime's own event
+         * rather than a model behaviour. Nothing is escalated here: this only earns the same chip,
+         * which still asks the person and still closes as a refusal if unanswered.
+         */
+        if (
+          permissionEscalationEligible
+          && !event.agentId
+          && event.kind === "notice"
+          && event.notice?.code === "approval-required"
+        ) {
+          permissionEscalationRequested = true;
+        }
         const attributedAgentId = event.runtimeAgentId ?? event.agentId;
         if (attributedAgentId) record.actualAgentId = attributedAgentId;
         const participantPresentation = attributedAgentId
@@ -2304,22 +2326,38 @@ export class InvocationService {
               projectDir: getChatWorkingFolder(chat.id),
             }))
             .then((verification) => {
-              if (!record.automaticGoalId || controller.signal.aborted) return;
+              /*
+               * Close the goal that was verified, not the one that happened to be auto-admitted.
+               *
+               * Every branch here used to be guarded by `record.automaticGoalId`, which is only set
+               * when the host admitted the goal from a plain sentence. A goal started from the Goal
+               * chip has no such id, so this handler returned immediately and nothing acted on the
+               * verdict: the run stayed in `verifying` forever, `should-continue` answered
+               * `goal_verifying`, and completing it returned false. Measured end to end on an
+               * isolated store -- closing the open tasks moved the run to `verifying` and there was
+               * no exit from that state in any code path.
+               *
+               * The goal being verified is named by the claim. That is the identity to act on.
+               */
+              if (controller.signal.aborted) return;
+              const verifiedGoalId = completionClaim.goalId!;
               if (verification?.completed) {
-                completeChatGoalContract(record.automaticGoalId, "completed");
-                if (getChat(chat.id)?.goalId === record.automaticGoalId) setChatGoalBinding(chat.id, null);
+                completeChatGoalContract(verifiedGoalId, "completed");
+                if (getChat(chat.id)?.goalId === verifiedGoalId) setChatGoalBinding(chat.id, null);
               } else {
-                const current = getLongRunByGoalId(record.automaticGoalId);
+                const current = getLongRunByGoalId(verifiedGoalId);
                 if (current && ["running", "verifying"].includes(current.status)) transitionLongRun({ runId: current.id, to: "blocked", actorKind: "host", reason: "verification_inconclusive" });
               }
             })
             .catch((error: unknown) => {
               console.warn("[long-run] terminal verification failed:", error);
-              if (record.automaticGoalId && !controller.signal.aborted) {
-                const current = getLongRunByGoalId(record.automaticGoalId);
-                if (current && ["running", "verifying"].includes(current.status)) {
-                  transitionLongRun({ runId: current.id, to: "blocked", actorKind: "host", reason: "verification_unavailable" });
-                }
+              if (controller.signal.aborted) return;
+              // A verifier that never answered must still leave the goal somewhere a person can act
+              // on. Silence here was the difference between "blocked, here is why" and a run stuck
+              // in `verifying` with no way forward.
+              const current = getLongRunByGoalId(completionClaim.goalId!);
+              if (current && ["running", "verifying"].includes(current.status)) {
+                transitionLongRun({ runId: current.id, to: "blocked", actorKind: "host", reason: "verification_unavailable" });
               }
             })
             .finally(() => {

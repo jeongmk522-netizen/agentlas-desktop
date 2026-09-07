@@ -2942,13 +2942,19 @@ button[data-dashboard-import="true"]:disabled {
 /* One's composer dock is intentionally pointer-transparent so the message
    stream remains scrollable behind it. A live approval card is an exception:
    it must receive the click that unblocks the waiting runtime. */
+/* An approval sits directly above the composer, at the composer's own width.
+   Without a width it filled the whole conversation column and read as a full-screen
+   interruption; --agentlas-composer-width lets each surface hand over the exact
+   width its composer uses, and the 1cm gap keeps the ask attached to the place the
+   person answers from. Height is free: a long tool argument grows the card, never a
+   scrollbar inside it. */
 .tool-approval-inline {
   position: relative;
   z-index: 1;
   pointer-events: auto;
-  width: min(760px, calc(100% - 24px));
-  max-width: 760px;
-  margin: 0 auto 6px;
+  width: min(var(--agentlas-composer-width, 920px), calc(100% - 24px));
+  max-width: var(--agentlas-composer-width, 920px);
+  margin: 0 auto 38px;
 }
 
 .tool-approval-inline > * + * {

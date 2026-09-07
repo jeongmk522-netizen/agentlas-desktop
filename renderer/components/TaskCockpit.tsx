@@ -6115,7 +6115,7 @@ function ChatPage() {
           focusMessageId={requestedFocusMessageId}
         />
         {/* 도구 승인은 이 대화 안에서, 묻는 순간에(오너 결정 2026-08-15) */}
-        <ToolApprovalInline chatId={chat?.id ?? null} compact chip />
+        <ToolApprovalInline chatId={chat?.id ?? null} compact chip composerWidth={740} />
       </div>
       {/* 실행 전 API 키 요청 바텀 시트 — 값은 vault(env.set)로만, IPC는 완료 신호만 */}
       {keyRequestSheet && (

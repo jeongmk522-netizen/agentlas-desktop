@@ -7,7 +7,22 @@
 // or blocked instead of being presented as autonomous completion.
 
 export const STORMBREAKER_MAX_REPAIR_PASSES = 2;
-export const STORMBREAKER_MAX_EXECUTION_PASSES = 3;
+/*
+ * How many continuation passes a plain request may take.
+ *
+ * Three was a stopwatch, not a budget. A request without an explicit Goal only continues while the
+ * model itself asks to -- the marker is emitted only when more safe work remains and nothing is
+ * blocking -- so the signal already stops on its own when the work is done. Capping it at three
+ * meant an ordinary long request stopped in the middle and looked like the product had quit, on
+ * every machine, whether or not a goal could be admitted.
+ *
+ * It is still a cap, because a model that emits the marker forever must not own the person's
+ * computer. The runaway guard beside it is the real defence: identical output three passes running
+ * ends the loop regardless of the marker.
+ */
+export const STORMBREAKER_MAX_EXECUTION_PASSES = 24;
+/** Identical output this many passes running is a runaway, not progress. */
+export const STORMBREAKER_MAX_IDENTICAL_PASSES = 3;
 export const STORMBREAKER_CONTINUE_MARKER = "<<stormbreaker-continue>>";
 export const STORMBREAKER_LONG_RUN_MARKER = "<<stormbreaker-long-run>>";
 /*

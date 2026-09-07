@@ -7003,7 +7003,7 @@ export function OneShell() {
                 onDismiss={() => setDismissedDecisionId(visibleSelectedConfirmation.sourceMessageId)}
               />
             )}
-            <ToolApprovalInline chatId={activeThreadChatId} compact />
+            <ToolApprovalInline chatId={activeThreadChatId} compact chip composerWidth={920} />
             {armedOneMemoryUseOnce && (
               <div className={styles.oneMemoryUseOnceChip} role="status">
                 <span>{tFor(appLocale, "one.shell.composer.memory_once")}</span>

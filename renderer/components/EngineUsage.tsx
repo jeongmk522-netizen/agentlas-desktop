@@ -678,6 +678,12 @@ export function EngineUsage() {
     { key: "local", label: ko ? "로컬" : "Local", engines: ENGINES.filter((e) => e.auth === "local") },
   ].filter((g) => g.engines.length > 0);
 
+  if (snap?.collection?.status === "suppressed") {
+    return <div className="dashboard-engine-usage" role="status">
+      {ko ? "이 개발 실행에서는 엔진 연결과 사용량을 조회하지 않습니다." : "Engine connections and usage are not collected in this development session."}
+    </div>;
+  }
+
   return (
     <div className="dashboard-engine-usage">
       <div className="dashboard-module-head" data-collapsed="false">

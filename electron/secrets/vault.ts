@@ -7,7 +7,8 @@
 //   2) 글로벌 env (외부 API)  — account "env:<KEY_NAME>" (NOTION_API_KEY, SLACK_TOKEN 등)
 //
 // 두 namespace 모두 같은 SERVICE 안에 있지만 prefix로 구분.
-import keytar from "keytar";
+import { developmentEffectsSuppressed, assertDevelopmentEffectAllowed } from "../development-effect-policy";
+
 import { createHash, randomUUID } from "node:crypto";
 import type { RuntimeBackend } from "../../shared/types";
 import type { CredentialRecoveryFailure, CredentialRecoveryResult } from "../../shared/credential-recovery";
@@ -23,6 +24,13 @@ import {
   retryKeychainReadFromUser,
   retryKeychainListFromUser,
 } from "./keychain-host";
+
+let keytarBackend: typeof import("keytar") | null = null;
+function keytarApi(): typeof import("keytar") {
+  assertDevelopmentEffectAllowed("credentials.native-backend");
+  if (!keytarBackend) keytarBackend = require("keytar") as typeof import("keytar");
+  return keytarBackend;
+}
 
 const BYOK_PREFIX = "byok:";
 const BYOK_META_PREFIX = "byok-meta:";
@@ -72,7 +80,7 @@ function queuePasswordOperation<T>(key: string, run: () => Promise<T>): Promise<
  *   헤드리스 호스트에서 제품 전체를 멈춘다(2026-08-19 실측).
  */
 async function getPassword(account: string): Promise<string | null> {
-  if (USE_MEMORY_VAULT) return memoryVault.get(account) ?? null;
+  if (developmentEffectsSuppressed() || USE_MEMORY_VAULT) return memoryVault.get(account) ?? null;
   const service = keychainService();
   const key = passwordKey(service, account);
   const pending = passwordReads.get(key);
@@ -80,7 +88,7 @@ async function getPassword(account: string): Promise<string | null> {
   if (!passwordOperations.has(key) && keychainCache.has(key)) return keychainCache.get(key) ?? null;
   const started = queuePasswordOperation(key, async () => {
     if (keychainCache.has(key)) return keychainCache.get(key) ?? null;
-    const value = await keychainGet(service, account, () => keytar.getPassword(service, account));
+    const value = await keychainGet(service, account, () => keytarApi().getPassword(service, account));
     keychainCache.set(key, value);
     return value;
   });
@@ -94,7 +102,7 @@ async function getPassword(account: string): Promise<string | null> {
 }
 
 async function setPassword(account: string, value: string): Promise<void> {
-  if (USE_MEMORY_VAULT) {
+  if (developmentEffectsSuppressed() || USE_MEMORY_VAULT) {
     memoryVault.set(account, value);
     return;
   } else {
@@ -102,14 +110,14 @@ async function setPassword(account: string, value: string): Promise<void> {
     const key = passwordKey(service, account);
     passwordReads.delete(key);
     await queuePasswordOperation(key, async () => {
-      await keychainSet(service, account, value, () => keytar.setPassword(service, account, value));
+      await keychainSet(service, account, value, () => keytarApi().setPassword(service, account, value));
       keychainCache.set(key, value);
     });
   }
 }
 
 async function deletePassword(account: string): Promise<void> {
-  if (USE_MEMORY_VAULT) {
+  if (developmentEffectsSuppressed() || USE_MEMORY_VAULT) {
     memoryVault.delete(account);
     return;
   } else {
@@ -117,7 +125,7 @@ async function deletePassword(account: string): Promise<void> {
     const key = passwordKey(service, account);
     passwordReads.delete(key);
     await queuePasswordOperation(key, async () => {
-      await keychainDelete(service, account, async () => { await keytar.deletePassword(service, account); });
+      await keychainDelete(service, account, async () => { await keytarApi().deletePassword(service, account); });
       keychainCache.set(key, null);
     });
   }
@@ -131,7 +139,7 @@ export function retryCredentialReadFromUser(kind: "api" | "env" | "secret", name
   if (!["api", "env", "secret"].includes(kind) || !name || name !== name.trim() || name.length > 256) {
     return Promise.reject(new Error("credential_retry_resource_invalid"));
   }
-  if (USE_MEMORY_VAULT) return Promise.resolve();
+  if (developmentEffectsSuppressed() || USE_MEMORY_VAULT) return Promise.resolve();
   const account = `${kind === "api" ? BYOK_PREFIX : kind === "env" ? ENV_PREFIX : SECRET_PREFIX}${name}`;
   const service = keychainService();
   return retryAccountFromUser(service, account).then(() => {});
@@ -143,7 +151,7 @@ function retryAccountFromUser(service: string, account: string): Promise<string 
   if (current) return current;
   passwordReads.delete(key);
   const started = queuePasswordOperation(key, async () => {
-    const value = await retryKeychainReadFromUser(service, account, () => keytar.getPassword(service, account));
+    const value = await retryKeychainReadFromUser(service, account, () => keytarApi().getPassword(service, account));
     keychainCache.set(key, value);
     return value;
   });
@@ -169,7 +177,7 @@ function recoveryDisplay(resource: CredentialRecoveryResource): Pick<CredentialR
 
 /** Lists only previously failed/incomplete resources, without native discovery. */
 export async function listCredentialRecoveryFailures(): Promise<CredentialRecoveryFailure[]> {
-  if (USE_MEMORY_VAULT) return [];
+  if (developmentEffectsSuppressed() || USE_MEMORY_VAULT) return [];
   const records = await readCredentialRecoveryRecords();
   const out: CredentialRecoveryFailure[] = [];
   for (const record of records) {
@@ -193,7 +201,7 @@ export async function listCredentialRecoveryFailures(): Promise<CredentialRecove
 function retryEnvListFromUser(service: string): Promise<string[]> {
   const current = userListRetries.get(service);
   if (current) return current;
-  const started = retryKeychainListFromUser(service, async () => (await keytar.findCredentials(service)).map((item) => item.account))
+  const started = retryKeychainListFromUser(service, async () => (await keytarApi().findCredentials(service)).map((item) => item.account))
     .then((accounts) => {
       const keys = accounts.filter((account) => account.startsWith(ENV_PREFIX)).map((account) => account.slice(ENV_PREFIX.length));
       if (keychainService() === service) { envKeyCacheService = service; envKeyCache = keys; }
@@ -207,6 +215,7 @@ function retryEnvListFromUser(service: string): Promise<string[]> {
 
 /** The renderer supplies a Main-issued handle, never a namespace or account. */
 export function retryCredentialRecoveryFromUser(retryToken: string): Promise<CredentialRecoveryResult> {
+  assertDevelopmentEffectAllowed("credentials.recovery-retry");
   const entry = typeof retryToken === "string" ? recoveryTokens.get(retryToken) : undefined;
   if (!entry || entry.consumed && !entry.pending) return Promise.resolve({ status: "invalid-token" });
   if (entry.pending) return entry.pending;
@@ -389,7 +398,7 @@ export async function previewEnvVar(key: string): Promise<string | null> {
 
 /** keychain에 저장된 env 키 전체 — keytar.findCredentials로 prefix filter */
 export async function listEnvKeys(): Promise<string[]> {
-  const service = USE_MEMORY_VAULT ? "memory" : keychainService();
+  const service = (developmentEffectsSuppressed() || USE_MEMORY_VAULT) ? "memory" : keychainService();
   if (envKeyCacheService !== service) {
     envKeyCacheService = service;
     envKeyCache = null;
@@ -398,10 +407,10 @@ export async function listEnvKeys(): Promise<string[]> {
   if (envKeyCache) return envKeyCache;
   if (envKeyRead) return envKeyRead;
   const started = Promise.resolve().then(async () => {
-    const accounts = USE_MEMORY_VAULT
+    const accounts = developmentEffectsSuppressed() || USE_MEMORY_VAULT
       ? [...memoryVault.keys()]
       : await keychainListAccounts(service, async () =>
-          (await keytar.findCredentials(service)).map((c) => c.account));
+          (await keytarApi().findCredentials(service)).map((c) => c.account));
     const keys = accounts.filter((a) => a.startsWith(ENV_PREFIX)).map((a) => a.slice(ENV_PREFIX.length));
     if (envKeyCacheService === service) envKeyCache = keys;
     return keys;

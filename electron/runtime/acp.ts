@@ -49,6 +49,7 @@ import { AcpSessionPool, type AcpSessionLease } from "./acp-session-pool";
 import { resolveAgentResidencySource, isResidencyExemptAgent } from "./agent-residency";
 import { classifyDiscovery, type DiscoveryOutcome } from "../../shared/model-discovery";
 import { schemaFallbackInstruction } from "../../shared/runtime-capabilities";
+import { observeCliExecutableIdentity } from "./cli-executable-identity";
 
 /** How to spawn an ACP agent. Adding a runtime = one row (mirrors contracts/runtime-registry.json). */
 export interface AcpAgentSpec {
@@ -313,11 +314,21 @@ interface AcpSessionState {
   closed: boolean;
 }
 
+interface AcpExecutableOwner {
+  specId: string;
+  chatId: string;
+  sessionOwnerId: string | null;
+  isolateOwner: boolean;
+  generation: string;
+}
+
 interface Session {
   child: ChildProcess;
   conn: AcpConnection;
   init: any;
   state: AcpSessionState;
+  /** The executable generation that created this resident child. */
+  executableOwner?: AcpExecutableOwner;
   /** 이 세션이 들고 있는 ACP sessionId — 다음 턴이 그대로 이어 쓴다. */
   acpSessionId?: string;
   /** 생존 신호 정지 — 세션을 놓을 때 부른다. */
@@ -332,6 +343,8 @@ async function openAcp(
     env: NodeJS.ProcessEnv;
     timeoutMs: number;
     label?: string;
+    /** Present only for a resident session; preserves its exact executable generation. */
+    executableOwner?: AcpExecutableOwner;
     /**
      * grok 전용 도구 관문 — `grok agent --plugin-dir <DIR>`.
      *
@@ -407,7 +420,7 @@ async function openAcp(
       }
     }
   }
-  return { child, conn, init, state, stopHeartbeat: stopAcpHeartbeat };
+  return { child, conn, init, state, ...(opts.executableOwner ? { executableOwner: opts.executableOwner } : {}), stopHeartbeat: stopAcpHeartbeat };
 }
 
 /**
@@ -439,6 +452,39 @@ function closeAcpSession(session: Session): void {
  * 그대로 이어 쓴다. 수명·예산·리퍼는 acp-session-pool.ts + agent-residency.ts 가 맡는다.
  */
 let sessionPool: AcpSessionPool<Session> | null = null;
+
+const executableOwners = new Map<string, { generation: string; current: boolean }>();
+
+/**
+ * Capture the selected executable before asynchronous setup. A later observation
+ * for this exact ACP conversation owner invalidates the older turn on release.
+ */
+function captureAcpExecutableOwner(owner: AcpExecutableOwner): () => boolean {
+  const key = JSON.stringify([owner.specId, owner.chatId, owner.sessionOwnerId, owner.isolateOwner]);
+  let token = executableOwners.get(key);
+  if (!token || token.generation !== owner.generation) {
+    if (token) token.current = false;
+    token = { generation: owner.generation, current: true };
+  }
+  executableOwners.delete(key);
+  executableOwners.set(key, token);
+  if (executableOwners.size > 128) {
+    const oldest = executableOwners.keys().next().value!;
+    executableOwners.get(oldest)!.current = false;
+    executableOwners.delete(oldest);
+  }
+  return () => token.current;
+}
+
+/** Retire only the replaced executable for the same ACP runtime and logical chat owner. */
+function retireSupersededAcpSessions(pool: AcpSessionPool<Session>, owner: AcpExecutableOwner): void {
+  pool.retireMatching((session) => session.executableOwner?.specId === owner.specId
+    && session.executableOwner.chatId === owner.chatId
+    && session.executableOwner.sessionOwnerId === owner.sessionOwnerId
+    && session.executableOwner.isolateOwner === owner.isolateOwner
+    && session.executableOwner.generation !== owner.generation);
+}
+
 export function acpSessionPool(): AcpSessionPool<Session> {
   if (!sessionPool) {
     sessionPool = new AcpSessionPool<Session>({
@@ -492,6 +538,11 @@ export function acpPoolKey(input: {
   specId: string;
   chatId: string;
   fingerprint: string;
+  /** The logical chat owner is part of resident-session identity. */
+  sessionOwnerId?: string | null;
+  isolateOwner?: boolean;
+  /** Filesystem-observed executable generation; unavailable callers remain compatible. */
+  executableGeneration?: string;
   cwd: string;
   mcpConfigPath?: string;
   runtimeSource?: string;
@@ -513,6 +564,8 @@ export function acpPoolKey(input: {
     .update(input.specId).update("\0")
     .update(input.chatId).update("\0")
     .update(input.fingerprint).update("\0")
+    .update(JSON.stringify([input.sessionOwnerId ?? null, input.isolateOwner ?? false])).update("\0")
+    .update(input.executableGeneration ?? "").update("\0")
     .update(input.cwd).update("\0")
     .update(input.mcpConfigPath ?? "").update("\0")
     .update(input.runtimeSource ?? "").update("\0")
@@ -730,6 +783,10 @@ export function createAcpRunner(spec: AcpAgentSpec): Runner {
     const locale = pickLocale(req);
     events.onStatus(tStatus(locale, "callingBackend", { backend: req.backendLabel || spec.label }));
     const cwd = req.cwd ?? agentRunCwd();
+    const runEnv = req.env ?? process.env;
+    const configuredCommand = req.runtimeSource ?? spec.command;
+    const executableIdentity = observeCliExecutableIdentity({ bin: configuredCommand, cwd, env: runEnv });
+    if (!executableIdentity) throw new Error(`ACP executable unavailable: ${configuredCommand}`);
     const client = new AcpSessionClient(events, req.permission, locale, {
       runtime: spec.id,
       sessionKey: `${spec.id}:${req.sessionFingerprintSeed ?? req.cwd ?? "default"}`,
@@ -741,10 +798,18 @@ export function createAcpRunner(spec: AcpAgentSpec): Runner {
     const sessionKind = acpSessionKind(spec.id);
     const runtimeSessionOwnerId = req.runtimeSessionOwnerId ?? req.agentId;
     const isolateRuntimeSessionOwner = req.runtimeSessionOwnerId != null;
+    const executableOwner: AcpExecutableOwner | null = req.chatId ? {
+      specId: spec.id,
+      chatId: req.chatId,
+      sessionOwnerId: runtimeSessionOwnerId ?? null,
+      isolateOwner: isolateRuntimeSessionOwner,
+      generation: executableIdentity.generation,
+    } : null;
+    const retainExecutableOwner = executableOwner ? captureAcpExecutableOwner(executableOwner) : () => true;
     // 세션 정체성 — 모델/시스템 프롬프트가 바뀌면 이어갈 세션도 달라진다(형제 러너와 동일 규칙).
     const fingerprint = req.chatId
       ? createHash("sha256")
-        .update("acp-session-v1\0")
+        .update("acp-session-v2\0")
         .update(spec.id)
         .update("\0")
         .update(req.sessionFingerprintSeed ?? req.systemPrompt ?? "")
@@ -754,6 +819,8 @@ export function createAcpRunner(spec: AcpAgentSpec): Runner {
         // 권한은 세션 모드로 굳는다(session/set_mode 는 새 세션에서만 고를 수 있다).
         // 권한이 바뀌면 지문이 달라져 그 권한에 맞는 새 세션이 열린다.
         .update(req.permission ?? "")
+        .update("\0executable\0")
+        .update(executableIdentity.fingerprint)
         .digest("hex")
       : null;
     const savedSession = req.chatId
@@ -775,6 +842,9 @@ export function createAcpRunner(spec: AcpAgentSpec): Runner {
         specId: spec.id,
         chatId: req.chatId,
         fingerprint,
+        sessionOwnerId: runtimeSessionOwnerId ?? null,
+        isolateOwner: isolateRuntimeSessionOwner,
+        executableGeneration: executableIdentity.generation,
         cwd,
         ...(req.mcpConfigPath ? { mcpConfigPath: req.mcpConfigPath } : {}),
         ...(req.runtimeSource ? { runtimeSource: req.runtimeSource } : {}),
@@ -791,11 +861,12 @@ export function createAcpRunner(spec: AcpAgentSpec): Runner {
       onStatus: (s) => events.onStatus(s),
     };
     const openSession = () => openAcp(spec, {
-      command: req.runtimeSource,
+      command: executableIdentity.executable,
       cwd,
-      env: req.env ?? process.env,
+      env: runEnv,
       timeoutMs: 60_000,
       label: req.backendLabel || spec.label,
+      ...(executableOwner ? { executableOwner } : {}),
       // 도구 관문 — grok 의 `agent` 하위 명령만 이 플래그를 받는다(openAcp 주석 참조).
       ...(req.toolBrokerPluginDir ? { toolBrokerPluginDir: req.toolBrokerPluginDir } : {}),
     });
@@ -807,7 +878,12 @@ export function createAcpRunner(spec: AcpAgentSpec): Runner {
     const onAbort = () => { broken = true; if (session) killCliTree(session.child); };
     req.signal?.addEventListener("abort", onAbort, { once: true });
     try {
-      if (poolKey) {
+      if (poolKey && executableOwner) {
+        const current = observeCliExecutableIdentity({ bin: configuredCommand, cwd, env: runEnv });
+        if (!retainExecutableOwner() || current?.generation !== executableIdentity.generation) {
+          throw new Error("cli_executable_identity_changed_during_preparation");
+        }
+        retireSupersededAcpSessions(pool, executableOwner);
         lease = await pool.acquire(poolKey, {
           agentId: req.agentId ?? null,
           nodeId: req.orchestrationAgentId ?? req.agentId ?? null,
@@ -815,7 +891,7 @@ export function createAcpRunner(spec: AcpAgentSpec): Runner {
           runtimeKind: spec.id,
           source: resolveAgentResidencySource(req.agentId),
           reaperExempt: isResidencyExemptAgent(req.agentId),
-        }, openSession);
+        }, openSession, retainExecutableOwner);
         session = lease.session;
       } else {
         session = await openSession();

@@ -1,3 +1,4 @@
+import { developmentEffectsSuppressed, assertDevelopmentEffectAllowed } from "../development-effect-policy";
 // 브라우저 자격증명을 **사용자가 한 번 승인하면 그 뒤로는 스스로** 최신으로 유지한다.
 //
 // 왜: 가져오기 버튼만 있으면 결국 사람이 눌러야 하고, 쿠키는 만료된다. 그러면 며칠 뒤 실행이
@@ -49,6 +50,7 @@ function writeConsent(next: BrowserCredentialConsent): void {
 
 /** 사용자가 가져오기를 실행했을 때 그 선택을 승인으로 남긴다. 이후 갱신은 이 집합만 본다. */
 export function recordBrowserCredentialConsent(profileId: string, domains: string[]): BrowserCredentialConsent {
+  assertDevelopmentEffectAllowed("browser.credentials-consent-write");
   const prev = getBrowserCredentialConsent();
   const now = new Date().toISOString();
   // 두 번째 가져오기는 범위를 **넓힌다**(사용자가 또 골랐으므로). 줄이지는 않는다 —
@@ -81,6 +83,7 @@ export function revokeBrowserCredentialConsent(): BrowserCredentialConsent {
  * 이 질문이 참일 때만 사용자에게 한 번 묻는다. 거짓이면 화면에 아무것도 띄우지 않는다.
  */
 export function browserCredentialConsentIsPending(): { pending: boolean; profileId: string | null; count: number } {
+  assertDevelopmentEffectAllowed("browser.credentials-consent-discovery");
   const consent = getBrowserCredentialConsent();
   if (consent.granted) return { pending: false, profileId: consent.profileId, count: 0 };
   const profile = listDiscoverableProfiles().find((p) => p.readable);
@@ -93,7 +96,8 @@ export function browserCredentialConsentIsPending(): { pending: boolean; profile
 }
 
 export interface BrowserCredentialRefreshReport {
-  state: "not-consented" | "not-due" | "refreshed" | "failed" | "discarded";
+  state: "not-consented" | "not-due" | "refreshed" | "failed" | "discarded" | "suppressed";
+  suppressionReason?: "development_effect_policy_disabled";
   /** Value-free counts only; cookie names and values never leave the importer. */
   cookiesAdded: number;
   linkedSites: string[];
@@ -114,6 +118,7 @@ let refreshInFlight: Promise<BrowserCredentialRefreshReport> | null = null;
  * 앱 시작과 브라우저 도구가 실린 실행 앞에서 부른다 — 실패해도 그 실행을 막지 않는다.
  */
 export function refreshBrowserCredentialsIfDue(opts?: { force?: boolean }): Promise<BrowserCredentialRefreshReport> {
+  if (developmentEffectsSuppressed()) return Promise.resolve({ ...NO_REFRESH_REPORT("suppressed"), suppressionReason: "development_effect_policy_disabled" });
   if (refreshInFlight) return refreshInFlight;
   const consent = getBrowserCredentialConsent();
   if (!consent.granted || !consent.profileId || consent.domains.length === 0) {

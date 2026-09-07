@@ -1,3 +1,4 @@
+import { developmentEffectsSuppressed } from "../development-effect-policy";
 // 엔진 사용량 매니저 — 구독형 프로바이더(Claude/Codex/Grok)의 usage를 모아
 // 정규화된 UsageSnapshot으로. main에서 60초 캐시(엔드포인트 과호출 방지).
 //
@@ -352,6 +353,7 @@ export function invalidateUsage(providerId?: string): void {
  * 돌려주고, 자료가 없거나 너무 오래됐으면 null(= 판단 보류, 스킵 금지).
  */
 export function peekProviderUsedPercent(providerId: string, now = Date.now()): number | null {
+  if (developmentEffectsSuppressed()) return null;
   loadLastGood();
   const entry = lastResult.get(providerId) ?? lastGood.get(providerId);
   if (!entry || now - entry.at > LAST_GOOD_MAX_MS) return null;
@@ -437,10 +439,15 @@ async function fetchProvider(
   }
 }
 
+function suppressedUsageSnapshot(): UsageSnapshot {
+  return { providers: [], fetchedAt: Date.now(), collection: { status: "suppressed", reason: "development_effect_policy_disabled" } };
+}
+
 async function buildUsageSnapshot(options?: {
   forceAll?: boolean;
   forceProviderId?: UsageRetryProviderId;
 }): Promise<UsageSnapshot> {
+  if (developmentEffectsSuppressed()) return suppressedUsageSnapshot();
   loadLastGood();
   const now = Date.now();
   const forced = options?.forceAll === true || options?.forceProviderId != null;
@@ -472,6 +479,7 @@ export async function getUsageSnapshot(opts?: { force?: boolean }): Promise<Usag
 
 /** Renderer가 호출할 수 있는 유일한 캐시 무효화 경로. Provider별 cooldown과 singleflight를 main이 소유한다. */
 export async function retryUsageProvider(providerId: UsageRetryProviderId): Promise<UsageRetryResult> {
+  if (developmentEffectsSuppressed()) return { snapshot: suppressedUsageSnapshot(), attempted: false, retryAfterMs: 0 };
   const active = explicitRetryInFlight.get(providerId);
   if (active) {
     const shared = await active;

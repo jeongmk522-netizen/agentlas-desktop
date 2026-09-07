@@ -4918,6 +4918,8 @@ export interface ModelRoleUsageSnapshot {
 export interface UsageSnapshot {
   providers: ProviderUsage[];
   fetchedAt: number;
+  /** No provider or local account observations were collected in this snapshot. */
+  collection?: { status: "suppressed"; reason: "development_effect_policy_disabled" };
   /** Seven-day role split derived from real model-call completion receipts. */
   modelRoleUsage?: ModelRoleUsageSnapshot;
   /** Main이 runtime.detect와 결합한 설치 버전 + 무중단 자동 업데이트 상태. */

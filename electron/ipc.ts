@@ -1,6 +1,7 @@
 // IPC 핸들러 일괄 등록. main.ts 앱 ready 직후 호출.
 // 각 도메인 모듈(runtime, secrets, team, marketplace, projects, chats, automations, invoke)을 thin wrapping.
-import { app, BrowserWindow, dialog, ipcMain, shell } from "electron";
+import { app, BrowserWindow, dialog, ipcMain as electronIpcMain, shell } from "electron";
+import { developmentEffectsSuppressed, developmentIpcBoundary } from "./development-effect-policy";
 import { copyImageSource, saveImageSource } from "./media/image-actions";
 import { checkComputerUsePermissions } from "./mac-permissions";
 import type { IpcMainInvokeEvent } from "electron";
@@ -1460,6 +1461,7 @@ async function desktopRuntimeRolePoolState(): Promise<RuntimeRolePoolState> {
 }
 
 export function registerIpcHandlers(): void {
+  const ipcMain = developmentIpcBoundary(electronIpcMain);
   let oneProjectionHostRef: string | null = null;
   subscribePluginBuilderProgress((event) => {
     for (const window of BrowserWindow.getAllWindows()) {
@@ -2592,6 +2594,7 @@ export function registerIpcHandlers(): void {
 
   // ── usage (LLM 엔진 사용량 — 프로바이더 OAuth usage) ─────
   ipcMain.handle("usage:snapshot", async (_e, opts?: unknown) => {
+    if (developmentEffectsSuppressed()) return getUsageSnapshot();
     const force = !!opts && typeof opts === "object" && !Array.isArray(opts)
       && (opts as { force?: unknown }).force === true;
     // Usage와 설치 버전을 같은 영수증으로 반환한다. 최신 확인/업데이트 자체는
@@ -2608,6 +2611,7 @@ export function registerIpcHandlers(): void {
   // Renderer는 임의 invalidate를 할 수 없다. allowlist+main cooldown 아래 대상 Provider만 원자적으로 재시도한다.
   ipcMain.handle("usage:retry", async (_e, providerId?: unknown) => {
     if (!isUsageRetryProviderId(providerId)) throw new Error("invalid usage retry provider");
+    if (developmentEffectsSuppressed()) return retryUsageProvider(providerId);
     const result = await retryUsageProvider(providerId);
     if (result.attempted) clearDetectCache();
     const runtimes = await detectRuntimes(result.attempted);

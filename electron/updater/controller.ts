@@ -179,6 +179,7 @@ export interface ContinuityVerification {
 
 export type RecoverySessionRefreshResult =
   | { status: "restored"; signedIn: true }
+  | { status: "suppressed"; signedIn: false; reason: "development_effect_policy_disabled" }
   | { status: "missing" | "expired" | "invalid" | "native-unavailable" | "temporarily-unavailable"; signedIn: false };
 
 export interface InstallJournal {

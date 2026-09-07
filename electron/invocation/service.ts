@@ -1883,7 +1883,9 @@ export class InvocationService {
               chatId: runReq.chatId,
               kind: "invoke_completed",
               payload: { resultFolder: record.resultFolder, decisionRequested: false, decisionSealSkipped: reason.slice(0, 240) },
-            }
+            });
+          }
+        }
 
         const rawSurfaceForArtifactBinding = event.kind === "surface" ? event.surface : undefined;
         // Desktop Work owns and consumes its native Work surface. Only One or
@@ -2223,6 +2225,17 @@ export class InvocationService {
       runWorkspaceBinding,
       executionContext,
       async (sourceMessageId) => {
+        // The user row is persisted inside runMcpInvocation immediately before
+        // this hook. Keep the exact row id in the append-only run ledger so a
+        // failed run without an assistant row can be placed after its own
+        // prompt during replay; renderers must never infer this from text or
+        // timestamps.
+        tryRecordRunEvent({
+          runId,
+          chatId: chat.id,
+          kind: "invoke_prompt_bound",
+          payload: { promptMessageId: sourceMessageId },
+        });
         // Only ordinary local, user-authored root-chat work enters automatic
         // Goal. Science and remote/automation authority keep their own adapters.
         if (projectionGoalId || runReq.agentAppMode || runWorkspaceBinding || executionContext ||

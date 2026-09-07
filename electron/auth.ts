@@ -25,6 +25,7 @@ import http from "node:http";
 import path from "node:path";
 import type { AuthSession } from "../shared/types";
 import { userDataPath } from "./runtime-paths";
+import { developmentEffectsSuppressed, assertDevelopmentEffectAllowed } from "./development-effect-policy";
 
 type ElectronApi = typeof import("electron");
 
@@ -126,6 +127,7 @@ interface StoredAuthCookie {
 
 export type AuthRestoreResult =
   | { status: "restored"; signedIn: true }
+  | { status: "suppressed"; signedIn: false; reason: "development_effect_policy_disabled" }
   | { status: "missing" | "expired" | "invalid" | "native-unavailable" | "temporarily-unavailable"; signedIn: false };
 
 type StoredSessionCookieReadResult =
@@ -288,7 +290,7 @@ function parseStoredAuthCookie(raw: string): { ciphertext: Buffer; durableIdenti
 }
 
 async function readStoredSessionCookie(restoreGeneration: number): Promise<StoredSessionCookieReadResult> {
-  if (USE_MEMORY_AUTH) {
+  if (developmentEffectsSuppressed() || USE_MEMORY_AUTH) {
     return memoryAuthCookie
       ? { status: "restored", value: memoryAuthCookie, durableIdentity: memoryAuthCookie }
       : { status: "missing" };
@@ -354,7 +356,7 @@ async function readStoredSessionCookie(restoreGeneration: number): Promise<Store
 }
 
 async function writeStoredSessionCookie(value: string): Promise<void> {
-  if (USE_MEMORY_AUTH) {
+  if (developmentEffectsSuppressed() || USE_MEMORY_AUTH) {
     memoryAuthCookie = value;
     return;
   }
@@ -391,7 +393,7 @@ async function writeStoredSessionCookie(value: string): Promise<void> {
 }
 
 async function deleteStoredSessionCookie(): Promise<void> {
-  if (USE_MEMORY_AUTH) {
+  if (developmentEffectsSuppressed() || USE_MEMORY_AUTH) {
     memoryAuthCookie = null;
     return;
   }
@@ -410,7 +412,7 @@ async function deleteStoredSessionCookieIfUnchanged(
     // A login/logout begun after this boot attempt owns both in-memory and
     // durable state. Never let an old expiry cleanup remove its cookie.
     if (restoreGeneration !== _sessionGeneration) return false;
-    if (USE_MEMORY_AUTH) {
+    if (developmentEffectsSuppressed() || USE_MEMORY_AUTH) {
       if (memoryAuthCookie !== durableIdentity) return false;
       memoryAuthCookie = null;
       return true;
@@ -562,6 +564,7 @@ export async function fetchWithHubSession(
   init: RequestInit = {},
   timeoutMs = 8000,
 ): Promise<Response> {
+  assertDevelopmentEffectAllowed("auth.fetch-hub-session");
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), timeoutMs);
   try {
@@ -596,6 +599,7 @@ function scheduleMetaRefresh(): void {
 /** 부팅 시 로컬 암호화 저장소에서 cookie를 복원하고 결과를 구조적으로 반환한다.
  *  함수명은 기존 호출부 호환을 위해 유지한다. */
 export async function bootAuthFromKeychain(): Promise<AuthRestoreResult> {
+  if (developmentEffectsSuppressed()) return { status: "suppressed", signedIn: false, reason: "development_effect_policy_disabled" };
   // This read/decrypt crosses asynchronous OS storage. A sign-in/sign-out can
   // legitimately happen while it is pending; that newer intent must win over
   // this boot snapshot in both memory and the durable cookie file.
@@ -640,10 +644,11 @@ const DEFERRED_AUTH_RESTORE_DELAYS_MS = [0, 1_000, 2_000, 5_000, 10_000, 20_000,
 
 /** Explicit user action only; never call from polling or startup retry loops. */
 export function retryAuthRestoreFromUser(): Promise<AuthRestoreResult> {
+  if (developmentEffectsSuppressed()) return Promise.resolve({ status: "suppressed", signedIn: false, reason: "development_effect_policy_disabled" });
   if (userAuthRestoreInFlight) return userAuthRestoreInFlight;
   const started = (async (): Promise<AuthRestoreResult> => {
     const generation = _sessionGeneration;
-    if (USE_MEMORY_AUTH) {
+    if (developmentEffectsSuppressed() || USE_MEMORY_AUTH) {
       const result = await bootAuthFromKeychain();
       if (result.status === "restored") emitAuthSessionRestored(generation);
       return result;
@@ -700,6 +705,7 @@ export async function retryTemporaryAuthRestore(options: {
   wait?: (delayMs: number) => Promise<void>;
   delaysMs?: readonly number[];
 } = {}): Promise<AuthRestoreResult> {
+  if (developmentEffectsSuppressed()) return { status: "suppressed", signedIn: false, reason: "development_effect_policy_disabled" };
   const restore = options.restore ?? bootAuthFromKeychain;
   const wait = options.wait ?? ((delayMs: number) => new Promise<void>((resolve) => {
     const timer = setTimeout(resolve, delayMs);
@@ -716,6 +722,7 @@ export async function retryTemporaryAuthRestore(options: {
 }
 
 export function getAuthSession(): AuthSession {
+  if (developmentEffectsSuppressed()) return { signedIn: false };
   if (USE_E2E_SESSION && !_cache) {
     return {
       signedIn: true,
@@ -743,6 +750,7 @@ export function getAuthSession(): AuthSession {
 
 /** cookie value를 로컬 암호화 저장소 + 메모리 캐시에 영구화하고 메타를 채운다. 두 로그인 경로(창/브라우저)가 공유. */
 async function persistSession(value: string): Promise<AuthSession> {
+  assertDevelopmentEffectAllowed("auth.persist-session");
   const decoded = decodeSessionCookie(value);
   if (decoded.status !== "valid") {
     // A browser callback never gets to overwrite a known-good local session
@@ -782,6 +790,7 @@ async function persistSession(value: string): Promise<AuthSession> {
 
 /** 마켓플레이스 fetch에 첨부할 cookie 헤더 값 — 미로그인이면 null. */
 export function getSessionCookieHeader(): string | null {
+  if (developmentEffectsSuppressed()) return null;
   if (!_cache) return null;
   if (_cache.expiresAt && _cache.expiresAt < Date.now()) {
     invalidateCachedSession("expired");
@@ -792,12 +801,14 @@ export function getSessionCookieHeader(): string | null {
 
 /** Main-only authority for signed Hub mutations. Never expose userId to renderer IPC. */
 export function getAuthenticatedActorIds(): { workspaceId: string; userId: string } | null {
+  if (developmentEffectsSuppressed()) return null;
   if (USE_E2E_SESSION && !_cache) return { workspaceId: "e2e", userId: "e2e-user" };
   if (!getSessionCookieHeader() || !_cache?.workspaceId || !_cache.userId) return null;
   return { workspaceId: _cache.workspaceId, userId: _cache.userId };
 }
 
 export async function signInWithGoogle(parent: BrowserWindow | null): Promise<AuthSession> {
+  assertDevelopmentEffectAllowed("auth.sign-in-google");
   const { BrowserWindow, session: electronSession } = electronApi();
   const ses = electronSession.fromPartition(AUTH_PARTITION);
   // 로그인 창은 시스템 BrowserWindow — 별도 partition으로 격리해 메인 앱의 쿠키와 섞이지 않음
@@ -904,6 +915,7 @@ export async function signInWithGoogle(parent: BrowserWindow | null): Promise<Au
  *       그렇지 않으면 타임아웃 후 폴백된다 — 안전(기존 동작 비파괴).
  */
 export async function signInWithBrowser(): Promise<AuthSession> {
+  assertDevelopmentEffectAllowed("auth.sign-in-browser");
   return new Promise<AuthSession>((resolve) => {
     let settled = false;
     let acceptingCallback = true;
@@ -968,6 +980,7 @@ function callbackHtml(ok: boolean): string {
 }
 
 export async function signOut(): Promise<void> {
+  const suppressed = developmentEffectsSuppressed();
   _sessionGeneration += 1;
   _cache = null;
   try {
@@ -975,6 +988,7 @@ export async function signOut(): Promise<void> {
   } catch (err) {
     console.warn("[auth] local session delete failed", err);
   }
+  if (suppressed) return;
   // 로그인 partition의 쿠키도 모두 비움 — 다음 signIn 시 깨끗한 상태에서 시작
   try {
     const ses = electronApi().session.fromPartition(AUTH_PARTITION);

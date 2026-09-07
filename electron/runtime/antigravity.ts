@@ -31,6 +31,7 @@ import {
   MCP_PROXY_TARGET_ENV,
 } from "../mcp-tools/proxy-channel";
 import { BROWSER_CDP_LAUNCHER_BASENAME } from "../mcp-tools/browser-cdp-launcher";
+import { observeCliExecutableIdentity } from "./cli-executable-identity";
 
 /**
  * 중지 사유를 그대로 전한다. 중지는 사람이 누른 것 외에도 무활동 워치독·단계 시간 초과·
@@ -874,10 +875,30 @@ async function reconcileAgyMcpServers(
   };
 }
 
+/**
+ * A persisted Antigravity conversation belongs to the exact filesystem-observed
+ * executable that produced it. This is not a semantic version claim.
+ */
+export function antigravitySessionFingerprint(
+  req: Pick<RunnerRequest, "chatId" | "sessionFingerprintSeed" | "systemPrompt" | "model">,
+  executableFingerprint: string,
+): string | null {
+  if (!req.chatId) return null;
+  return createHash("sha256")
+    .update("agy-session-v2\0")
+    .update(req.sessionFingerprintSeed ?? req.systemPrompt ?? "")
+    .update("\0")
+    .update(req.model ?? "")
+    .update("\0executable\0")
+    .update(executableFingerprint)
+    .digest("hex");
+}
+
 async function runPreparedAntigravity(
   req: RunnerRequest,
   events: RunnerEvents,
   bin: string,
+  executableFingerprint: string,
   agyAdditionalDirs: string[] = [],
 ): Promise<RunnerResult> {
   // 매 호출 full prompt를 Antigravity에 전달한다. 대화 연속성은 Agentlas가
@@ -894,14 +915,7 @@ async function runPreparedAntigravity(
    * (시스템 프롬프트·모델이 달라지면) 이어가지 않는다 — 다른 계약의 대화를 물려받는
    * 것은 히스토리를 다시 보내는 비용보다 나쁘다.
    */
-  const agyFingerprint = runReq.chatId
-    ? createHash("sha256")
-        .update("agy-session-v1\0")
-        .update(runReq.sessionFingerprintSeed ?? runReq.systemPrompt ?? "")
-        .update("\0")
-        .update(runReq.model ?? "")
-        .digest("hex")
-    : null;
+  const agyFingerprint = antigravitySessionFingerprint(runReq, executableFingerprint);
   const agySaved = runReq.chatId
     ? getRuntimeSession(runReq.chatId, ANTIGRAVITY_KIND, runtimeSessionOwnerId, { isolateOwner: isolateRuntimeSessionOwner })
     : null;
@@ -1315,6 +1329,12 @@ export const runAntigravity: Runner = async (
   }
   const bin = await getBin({ source: req.runtimeSource });
   if (!bin) throw new Error(tStatus(req.locale, "errCliMissingAntigravity"));
+  const executableIdentity = observeCliExecutableIdentity({
+    bin,
+    cwd: req.cwd ?? agentRunCwd(),
+    env: req.env ?? process.env,
+  });
+  if (!executableIdentity) throw new Error(tStatus(req.locale, "errCliMissingAntigravity"));
   const stagedImages = await stageCliImageAttachments(req);
   const runReq = stagedImages.images.length > 0 ? { ...req, userPrompt: stagedImages.userPrompt } : req;
   if (stagedImages.images.length > 0) {
@@ -1328,7 +1348,8 @@ export const runAntigravity: Runner = async (
   return runPreparedAntigravity(
     runReq,
     events,
-    bin,
+    executableIdentity.executable,
+    executableIdentity.fingerprint,
     stagedImages.directory ? [stagedImages.directory] : [],
   );
 };

@@ -1561,6 +1561,8 @@ interface UnboundHydratedWorkActivity {
   startedAt: number;
   finishedAt?: number;
   busy: boolean;
+  /** Main-owned exact chat prompt row that started this run, when available. */
+  promptMessageId?: string;
 }
 
 interface HydratedWorkActivities {
@@ -1596,15 +1598,28 @@ function workActivitiesByMessageFromTimeline(
     if (!target) {
       // There is no safe answer anchor in this ledger schema. Preserve the
       // canonical run as its own explicitly unbound Work row instead of
-      // attributing it to an answer selected by time or matching text.
+      // attributing it to an answer selected by time or matching text. Main
+      // may still provide the exact prompt row that started this run.
       const startedAt = Date.parse(run.receipt.startedAt);
       const finishedAt = run.receipt.finishedAt ? Date.parse(run.receipt.finishedAt) : NaN;
+      const promptMessageIdValue = [...run.events]
+        .reverse()
+        .find((event) => event.kind === "invoke_prompt_bound" && typeof event.payload?.promptMessageId === "string")
+        ?.payload?.promptMessageId
+        ?? [...run.events]
+          .reverse()
+          .find((event) => event.kind === "invoke_started" && typeof event.payload?.promptMessageId === "string")
+          ?.payload?.promptMessageId;
+      const promptMessageId = typeof promptMessageIdValue === "string" && promptMessageIdValue.trim()
+        ? promptMessageIdValue.trim()
+        : undefined;
       unbound.push({
         run: activityRun,
         steps,
         startedAt: Number.isFinite(startedAt) ? startedAt : Date.now(),
         ...(Number.isFinite(finishedAt) ? { finishedAt } : {}),
         busy: run.receipt.status === "running" || run.receipt.status === "cancelling",
+        ...(promptMessageId ? { promptMessageId } : {}),
       });
       continue;
     }
@@ -1640,9 +1655,9 @@ function attachHydratedWorkActivities(
   // An unbound run is deliberately a separate, empty-answer Work row. The
   // label is rendered by ChatStream so users can tell that its activity is
   // durable while the assistant message identity was unavailable.
-  return dedupeStreamMessages([
-    ...attached,
-    ...hydrated.unbound.map(({ run, steps, startedAt, finishedAt, busy }) => ({
+  const unboundEntries = hydrated.unbound.map(({ run, steps, startedAt, finishedAt, busy, promptMessageId }) => ({
+    promptMessageId,
+    message: {
       id: `work-run:${run.runId}`,
       role: "agent" as const,
       text: "",
@@ -1654,8 +1669,27 @@ function attachHydratedWorkActivities(
       ...(busy ? { busy: true } : {}),
       unboundRun: true,
       ...(steps.length > 0 ? { steps } : {}),
-    })),
+    } satisfies StreamMessage,
+  }));
+  const anchoredUnbound = new Map<string, StreamMessage[]>();
+  const unanchoredUnbound: StreamMessage[] = [];
+  const knownMessageIds = new Set(attached.map((message) => message.id));
+  for (const entry of unboundEntries) {
+    if (entry.promptMessageId && knownMessageIds.has(entry.promptMessageId)) {
+      const rows = anchoredUnbound.get(entry.promptMessageId) ?? [];
+      rows.push(entry.message);
+      anchoredUnbound.set(entry.promptMessageId, rows);
+    } else {
+      // Legacy rows without a Main-owned prompt anchor remain visible, but
+      // cannot be placed into a specific transcript turn safely.
+      unanchoredUnbound.push(entry.message);
+    }
+  }
+  const ordered = attached.flatMap((message) => [
+    message,
+    ...(anchoredUnbound.get(message.id) ?? []),
   ]);
+  return dedupeStreamMessages([...ordered, ...unanchoredUnbound]);
 }
 
 function hasHydratedWorkActivities(messages: StreamMessage[]): boolean {

@@ -76,6 +76,7 @@ export interface DiscoveredCredentialDomain {
 
 export interface BrowserCredentialScanResult {
   ok: boolean;
+  suppressionReason?: "development_effect_policy_disabled";
   profiles: DiscoveredBrowserProfile[];
   /** 요청한 프로필의 도메인 목록. 프로필 미지정 스캔이면 비어 있다. */
   domains: DiscoveredCredentialDomain[];
@@ -98,6 +99,7 @@ export interface BrowserCredentialImportRequest {
 
 export interface BrowserCredentialImportResult {
   ok: boolean;
+  suppressionReason?: "development_effect_policy_disabled";
   /** 전용 프로필에 추가되거나 더 최신/읽을 수 있는 암호문으로 교체된 쿠키 행 수. */
   cookiesAdded: number;
   /** Connect 목록에 등록된 사이트. */

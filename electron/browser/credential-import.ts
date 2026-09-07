@@ -1,3 +1,4 @@
+import { developmentEffectsSuppressed, assertDevelopmentEffectAllowed } from "../development-effect-policy";
 // 평소 쓰는 Chrome 계열 브라우저의 로그인 세션을 Agentlas 전용 CDP 프로필로 가져온다.
 //
 // 왜: 전용 프로필은 빈 상태로 태어나므로 사용자가 Connect에서 사이트를 하나씩 손으로 적고
@@ -121,6 +122,7 @@ function profileIdOf(browser: string, profileKey: string): string {
 
 /** 사용자의 평소 브라우저 프로필 전수. 쿠키 저장소가 없는 프로필은 readable=false 로 남긴다. */
 export function listDiscoverableProfiles(): DiscoveredBrowserProfile[] {
+  assertDevelopmentEffectAllowed("browser.credentials-profile-discovery");
   const out: DiscoveredBrowserProfile[] = [];
   for (const root of browserFamilyRoots()) {
     if (!fs.existsSync(root.userDataDir)) continue;
@@ -275,6 +277,7 @@ function readDomainHistory(profileDir: string, workDir: string, wanted: Set<stri
 const LOGIN_FILTER_MIN_RESULTS = 5;
 
 export function scanBrowserCredentials(profileId?: string | null): BrowserCredentialScanResult {
+  if (developmentEffectsSuppressed()) return { ok: false, profiles: [], domains: [], profileId: null, error: "development_effect_policy_disabled", suppressionReason: "development_effect_policy_disabled" };
   const profiles = listDiscoverableProfiles();
   if (!profileId) return { ok: true, profiles, domains: [], profileId: null };
 
@@ -506,6 +509,7 @@ function agentlasMacSafeStorageService(): string | null {
 }
 
 function readMacSafeStorageKey(service: string): Buffer | null {
+  assertDevelopmentEffectAllowed("browser.credentials-native-key");
   let password: Buffer | null = null;
   try {
     password = execFileSync(
@@ -895,6 +899,7 @@ export async function importBrowserCredentials(
   profileId: string,
   domains: string[],
 ): Promise<BrowserCredentialImportResult> {
+  if (developmentEffectsSuppressed()) return { ok: false, cookiesAdded: 0, linkedSites: [], skipped: [], error: "development_effect_policy_disabled", suppressionReason: "development_effect_policy_disabled" };
   const skipped: Array<{ domain: string; reason: string }> = [];
   // 목록의 한 줄과 같은 단위(등록 가능 도메인)로 접는다. 예전 승인 기록이 서브도메인을
   // 담고 있어도 여기서 사이트 단위로 넓어진다 — 좁게 복사해 반쯤 깨진 로그인을 만드느니

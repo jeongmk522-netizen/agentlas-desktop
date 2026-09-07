@@ -22,6 +22,7 @@ import { CONTEXT_MANAGED_BY, runtimeUsesEngineModelSetting } from "@shared/model
 import type { OrchestrationTarget, Recommendation, RecExecChoice, RecRouterAgent } from "@shared/types";
 import { buildAppRoutePrompt, parseAppSlashRoute, type AgentlasAppDefinition } from "@/lib/apps";
 import { callableHubBookmarks } from "@/lib/hub-bookmark-events";
+import { installedAgentMentionTarget } from "@/lib/mention-orchestration-target";
 import { pickLocalized, useT, type Locale } from "@/lib/i18n";
 import { ipc, grantForDroppedFile } from "@/lib/ipc";
 import type { ChatFileDraft } from "@/lib/chat-files";
@@ -2548,7 +2549,9 @@ function buildAutocompleteOptions(
       title: loc.name,
       subtitle: loc.tagline,
       replacement: `@${loc.name}`,
-      target: { source: "local", entityKind: "agent", agentId: a.id },
+      // An installed team package must staff its team, not itself as a single
+      // agent — Main rejects that shape and the whole run dies before any worker.
+      target: installedAgentMentionTarget(a, context.firms) ?? undefined,
     });
   }
   for (const bookmark of hubBookmarks) {

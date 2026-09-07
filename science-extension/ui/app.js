@@ -6836,6 +6836,61 @@ function createComposerEventSync({
     }
   }
 
+  function formatArtifactSemanticValue(value) {
+    if (typeof value !== "number" || !Number.isFinite(value)) return String(value ?? "");
+    if (Object.is(value, -0)) return "0";
+    const absolute = Math.abs(value);
+    if (absolute >= 1e-4 && absolute < 1e6) {
+      const rounded = Number(value.toPrecision(6));
+      return rounded.toLocaleString(state.locale === "ko" ? "ko-KR" : "en-US", { maximumSignificantDigits: 6 });
+    }
+    return value.toExponential(5).replace(/e([+-])0+(\d+)/, "e$1$2");
+  }
+
+  function artifactSemanticReviewMarkup(semantic, payload) {
+    if (!semantic || typeof semantic !== "object") return "";
+    const rawObservations = Array.isArray(semantic.observations) ? semantic.observations : [];
+    const observations = rawObservations.map((item) => {
+      if (!item || typeof item !== "object" || Array.isArray(item)) return null;
+      const label = typeof item.label === "string" ? item.label.trim() : "";
+      const value = typeof item.value === "string" || typeof item.value === "number" ? item.value : null;
+      const unit = typeof item.unit === "string" ? item.unit.trim() : "";
+      return label && value !== null ? { label, value, unit, key: label.replace(/[\s_.\-−–—]/g, "").toLowerCase() } : null;
+    }).filter(Boolean).slice(0, 200);
+    const warnings = [...new Set((Array.isArray(semantic.warnings) ? semantic.warnings : [])
+      .filter((warning) => typeof warning === "string")
+      .map((warning) => warning.trim())
+      .filter(Boolean))].slice(0, 200);
+    const isPhysicsFit = payload?.schema === "agentlas.science.physics-analysis-artifact/v1"
+      || payload?.toolId === "agentlas.physics-spectrum-fit-analysis";
+    const findObservation = (...keys) => observations.find((item) => keys.includes(item.key));
+    const fitCore = isPhysicsFit ? [
+      ["χ²", findObservation("chisquare", "chi2")],
+      ["dof", findObservation("degreesoffreedom", "dof")],
+      ["reduced χ²", findObservation("reducedchisquare", "reducedchi2")],
+      ["p", findObservation("pvalue", "p")],
+    ].filter(([, item]) => item) : [];
+    const summary = typeof semantic.summary === "string" ? semantic.summary.trim() : "";
+    if (!observations.length && !warnings.length && !summary) return "";
+    const warningMarkup = warnings.length
+      ? `<section class="artifactSemanticWarnings" data-artifact-semantic-warnings data-warning-count="${warnings.length}" aria-label="${escapeHtml(uiCopy("아티팩트 확인 필요 항목", "Artifact items requiring review"))}"><div class="artifactSemanticWarningsHeader"><strong>${escapeHtml(uiCopy("확인 필요", "Review required"))}</strong><span>${escapeHtml(uiCopy(`${warnings.length}건의 경고가 기록되어 있습니다.`, `${warnings.length} warning${warnings.length === 1 ? "" : "s"} recorded.`))}</span></div><ul>${warnings.map((warning) => `<li>${escapeHtml(warning)}</li>`).join("")}</ul>${isPhysicsFit ? `<p class="artifactSemanticBoundary">${escapeHtml(uiCopy("적합 결과에서는 수렴만으로 적합도나 매개변수 불확실성이 타당하다고 볼 수 없습니다. 기록된 경고를 검토하세요.", "For fitted results, convergence alone does not establish fit quality or valid parameter uncertainty. Review the recorded warnings."))}</p>` : ""}</section>`
+      : "";
+    const fitCoreMarkup = fitCore.length
+      ? `<div class="artifactSemanticFitCore" data-artifact-semantic-fit-core aria-label="${escapeHtml(uiCopy("적합 핵심 수치", "Fit core metrics"))}">${fitCore.map(([label, item]) => `<span class="artifactSemanticFitMetric"><span class="artifactSemanticFitMetricLabel">${escapeHtml(label)}</span><strong class="artifactSemanticFitMetricValue">${escapeHtml(formatArtifactSemanticValue(item.value))}${item.unit ? ` <small>${escapeHtml(item.unit)}</small>` : ""}</strong></span>`).join("")}</div>`
+      : "";
+    const detailObservations = observations.length
+      ? `<dl class="artifactSemanticDetailList" data-artifact-semantic-details>${observations.map((item) => `<div><dt>${escapeHtml(item.label)}</dt><dd><strong class="artifactSemanticFormattedValue">${escapeHtml(formatArtifactSemanticValue(item.value))}${item.unit ? ` <span>${escapeHtml(item.unit)}</span>` : ""}</strong><code class="artifactSemanticRawValue" title="${escapeHtml(String(item.value))}">${escapeHtml(String(item.value))}</code></dd></div>`).join("")}</dl>`
+      : "";
+    const detailSummary = summary
+      ? `<p class="artifactSemanticDetailSummary">${escapeHtml(summary)}</p>`
+      : "";
+    const detailsMarkup = detailObservations || detailSummary
+      ? `<details class="artifactSemanticDetails"><summary>${escapeHtml(uiCopy(isPhysicsFit ? "적합 세부 정보와 방법 경계" : "기술 세부 정보", isPhysicsFit ? "Fit details and method boundary" : "Technical details"))}</summary>${detailSummary}${detailObservations}</details>`
+      : "";
+    if (!warningMarkup && !fitCoreMarkup && !detailsMarkup) return "";
+    return `<section class="artifactSemanticReview${warnings.length ? " hasWarnings" : ""}" data-artifact-semantic-review aria-label="${escapeHtml(uiCopy("아티팩트 확인 항목", "Artifact review items"))}">${warningMarkup}${fitCoreMarkup}${detailsMarkup}</section>`;
+  }
+
   function artifactWorkbench() {
     if (state.loadingProject) return `<div class="loadingState">시각 자료를 불러오는 중…</div>`;
     if (state.projectError) return errorState();
@@ -6882,6 +6937,7 @@ function createComposerEventSync({
       : "";
     const semanticObservations = Array.isArray(activeVersion?.semantic?.observations) ? activeVersion.semantic.observations : [];
     const observations = semanticObservations.map((item) => `<div><dt>${escapeHtml(item.label)}</dt><dd>${escapeHtml(item.value)}${item.unit ? ` <span>${escapeHtml(item.unit)}</span>` : ""}</dd></div>`).join("");
+    const semanticReview = artifactSemanticReviewMarkup(activeVersion?.semantic, activeVersion?.payload);
     const capability = inspectingHistory
       ? uiCopy(`기록 v${escapeHtml(state.inspectedArtifactVersion)} · 읽기 전용`, `History v${escapeHtml(state.inspectedArtifactVersion)} · read only`)
       : artifact.version.rendererId === "agentlas.ketcher"
@@ -6983,8 +7039,8 @@ function createComposerEventSync({
       : "";
     const toolbarBeforeCanvas = economicChartSettings ? artifactViewToolbar : `${artifactViewToolbar}${activeToolbar}`;
     const canvas = inspectingHistory
-      ? `<div class="artifactCanvasFrame historicalFrame"><div class="historicalStatus"><span>기록 보기 · v${escapeHtml(state.inspectedArtifactVersion)} · 읽기 전용</span><button data-artifact-history-version="${escapeHtml(artifact.currentVersion)}">현재 v${escapeHtml(artifact.currentVersion)}으로 돌아가기</button></div><div class="artifactCanvas historicalArtifactCanvas"><div class="historicalCaptureNotice"><strong>검증된 캡처</strong><span>이 화면은 기록 보존용이며 조작할 수 없습니다.</span></div><div class="historicalPreviewSurface" data-historical-artifact-host="${escapeHtml(artifact.id)}" data-historical-artifact-version="${escapeHtml(state.inspectedArtifactVersion)}" aria-label="${escapeHtml(artifact.title)} v${escapeHtml(state.inspectedArtifactVersion)} 기록">${historyError ? `<span class="historicalError">${escapeHtml(historyError)}</span>` : inspectedContext ? "" : `<span class="historicalLoading">검증된 과거 버전을 불러오는 중…</span>`}</div></div></div>`
-      : `<div class="artifactCanvasFrame ${visualFrameClass}"><div class="rendererStatus"><span>${escapeHtml(artifact.kind)}</span><span>${escapeHtml(artifact.version.rendererId)} · ${escapeHtml(artifact.version.rendererVersion)}${earthquakeView === "earthquake-depth" || skyView === "astronomy-distance" ? " + Three.js 0.173.0" : ""} <em data-runtime-status></em></span></div>${toolbarBeforeCanvas}<div class="${canvasClass}${visualViewerKind ? " artifactVisualViewport" : ""}" data-artifact-host="${escapeHtml(artifact.id)}" data-artifact-version="${escapeHtml(artifact.version.version)}" data-content-sha256="${escapeHtml(artifact.version.contentSha256)}" tabindex="${visualViewerKind ? "0" : "-1"}" aria-label="${escapeHtml(artifact.title)}"></div><div class="renderError" data-render-error role="alert"></div>${economicChartSettings}</div>`;
+      ? `<div class="artifactCanvasFrame historicalFrame"><div class="historicalStatus"><span>기록 보기 · v${escapeHtml(state.inspectedArtifactVersion)} · 읽기 전용</span><button data-artifact-history-version="${escapeHtml(artifact.currentVersion)}">현재 v${escapeHtml(artifact.currentVersion)}으로 돌아가기</button></div><div class="artifactCanvas historicalArtifactCanvas"><div class="historicalCaptureNotice"><strong>검증된 캡처</strong><span>이 화면은 기록 보존용이며 조작할 수 없습니다.</span></div><div class="historicalPreviewSurface" data-historical-artifact-host="${escapeHtml(artifact.id)}" data-historical-artifact-version="${escapeHtml(state.inspectedArtifactVersion)}" aria-label="${escapeHtml(artifact.title)} v${escapeHtml(state.inspectedArtifactVersion)} 기록">${historyError ? `<span class="historicalError">${escapeHtml(historyError)}</span>` : inspectedContext ? "" : `<span class="historicalLoading">검증된 과거 버전을 불러오는 중…</span>`}</div></div>${semanticReview}</div>`
+      : `<div class="artifactCanvasFrame ${visualFrameClass}"><div class="rendererStatus"><span>${escapeHtml(artifact.kind)}</span><span>${escapeHtml(artifact.version.rendererId)} · ${escapeHtml(artifact.version.rendererVersion)}${earthquakeView === "earthquake-depth" || skyView === "astronomy-distance" ? " + Three.js 0.173.0" : ""} <em data-runtime-status></em></span></div>${toolbarBeforeCanvas}<div class="${canvasClass}${visualViewerKind ? " artifactVisualViewport" : ""}" data-artifact-host="${escapeHtml(artifact.id)}" data-artifact-version="${escapeHtml(artifact.version.version)}" data-content-sha256="${escapeHtml(artifact.version.contentSha256)}" tabindex="${visualViewerKind ? "0" : "-1"}" aria-label="${escapeHtml(artifact.title)}"></div><div class="renderError" data-render-error role="alert"></div>${semanticReview}${economicChartSettings}</div>`;
     const loopObservation = semanticObservations[0] || null;
     const loopEvidence = loopObservation ? `${loopObservation.label}: ${loopObservation.value}${loopObservation.unit ? ` ${loopObservation.unit}` : ""}` : (activeVersion?.semantic?.summary || "현재 아티팩트의 다음 검증 단계를 연구 채팅에서 함께 결정합니다.");
     const spatialArtifact = (artifact.version.rendererId === "agentlas.table" && artifact.version.payload?.schema === "agentlas.science.materials-catalog-artifact/v1")

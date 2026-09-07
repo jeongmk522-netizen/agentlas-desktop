@@ -2004,7 +2004,7 @@ function createComposerEventSync({
     const preserveRuntimeSelection = Boolean(preservedWorkspace && !switchingProject);
     state.selectedId = projectId;
     state.projectFolderOpen = Boolean(options.openFolder);
-    if (window.matchMedia("(max-width: 680px)").matches) state.railCollapsed = true;
+    if (window.matchMedia("(max-width: 760px)").matches) state.railCollapsed = true;
     if (switchingProject && state.manuscriptDraftJob?.projectId !== projectId) state.manuscriptDraftJob = null;
     state.lifecycle = null;
     state.mode = "session";
@@ -8278,7 +8278,7 @@ function createComposerEventSync({
 
   function render() {
     rememberChatScroll();
-    if (state.drawer && window.matchMedia("(max-width: 680px)").matches) state.railCollapsed = true;
+    if (state.drawer && window.matchMedia("(max-width: 760px)").matches) state.railCollapsed = true;
     const selectedRendererIdentity = (() => {
       if (state.mode !== "lab" || state.inspectedArtifactVersion) return null;
       const artifacts = (state.labContextsById.get(state.selectedLabId) || []).map((context) => context.artifact);
@@ -8329,7 +8329,7 @@ function createComposerEventSync({
       sidebarToggle.setAttribute("title", label);
       sidebarToggle.setAttribute("aria-expanded", String(!state.railCollapsed));
     }
-    const overlayOpen = !state.railCollapsed && window.matchMedia("(max-width: 680px)").matches;
+    const overlayOpen = !state.railCollapsed && window.matchMedia("(max-width: 760px)").matches;
     if (overlayOpen || state.resultReviewSheet) main.setAttribute("inert", "");
     else main.removeAttribute("inert");
   }
@@ -8608,14 +8608,6 @@ function createComposerEventSync({
     if (!node || !node.length) return;
     const workspaceRect = workspace.getBoundingClientRect();
     const canvasRect = canvas.getBoundingClientRect();
-    const narrow = window.matchMedia("(max-width: 759px)").matches;
-    if (narrow) {
-      inspector.dataset.placement = "stacked";
-      inspector.style.removeProperty("left");
-      inspector.style.removeProperty("top");
-      inspector.style.removeProperty("right");
-      return;
-    }
     const margin = 12;
     const width = Math.max(1, inspector.offsetWidth);
     const height = Math.max(1, inspector.offsetHeight);
@@ -11843,7 +11835,7 @@ function createComposerEventSync({
       closeEvidenceGraphInspector();
       return;
     }
-    if (event.key === "Escape" && !state.railCollapsed && window.matchMedia("(max-width: 680px)").matches && !document.querySelector("[role=dialog]")) {
+    if (event.key === "Escape" && !state.railCollapsed && window.matchMedia("(max-width: 760px)").matches && !document.querySelector("[role=dialog]")) {
       event.preventDefault();
       setRailCollapsed(true);
       return;
@@ -11903,7 +11895,7 @@ function createComposerEventSync({
     if (event.target?.matches?.(".evidenceGraphTechnicalDetails")) queueEvidenceGraphInspectorPlacement();
   }, true);
   window.addEventListener("resize", () => {
-    if (state.drawer && window.matchMedia("(max-width: 680px)").matches) state.railCollapsed = true;
+    if (state.drawer && window.matchMedia("(max-width: 760px)").matches) state.railCollapsed = true;
     syncRailPresentation();
     queueEvidenceGraphInspectorPlacement();
     requestAnimationFrame(() => {

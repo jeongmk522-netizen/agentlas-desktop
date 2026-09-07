@@ -3055,6 +3055,22 @@ function exactText(value: unknown, maximum: number, code: string): string {
   return value.trim();
 }
 
+// A natural-language search query is prose, not an identifier: a line break or tab the model
+// wrote inside it is not malformed input, it is ordinary formatting. exactText's blanket
+// control-character rejection has no such exception, so a query the Research Director wrote
+// with a line break in it failed closed with a bare code and no usable explanation -- reported
+// live as "science-evidence-graph-query-invalid" shown verbatim, three times, with nothing
+// human around it (2026-09-07). The graph and academic-search services this feeds already
+// tolerate exactly this by collapsing whitespace before validating (see evidence-graph.ts
+// safeText); this brings the outer tool-dispatch gate in line with that, instead of rejecting
+// first and never letting the inner, more tolerant check run at all.
+function exactQueryText(value: unknown, maximum: number, code: string): string {
+  if (typeof value !== "string") throw new Error(code);
+  const normalized = value.replace(/\s+/gu, " ").trim();
+  if (!normalized || normalized.length > maximum || /[\u0000-\u001f]/u.test(normalized)) throw new Error(code);
+  return normalized;
+}
+
 function exactToolBody(value: unknown, allowedKeys: readonly string[], code: string): asserts value is Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value)
     || Object.keys(value).some((key) => !allowedKeys.includes(key))) throw new Error(code);
@@ -4046,7 +4062,7 @@ async function platformResult(route: string, body: Record<string, unknown>, gran
     });
     const context = service.boundedContext(
       grant.context.projectId,
-      exactText(body.query, 2_000, "science-evidence-graph-query-invalid"),
+      exactQueryText(body.query, 2_000, "science-evidence-graph-query-invalid"),
       body.limit === undefined ? 40 : boundedInteger(body.limit, 1, 100, "science-evidence-graph-limit-invalid"),
       {
         ...(body.direction === undefined ? {} : { direction: body.direction as "outgoing" | "incoming" | "both" }),
@@ -5897,7 +5913,7 @@ async function handle(request: http.IncomingMessage, response: http.ServerRespon
           projectId: grant.context.projectId,
           conversationId: grant.context.conversationId,
           originMessageId: grant.context.originUserMessageId,
-          query: exactText(body.query, 1_000, "science-academic-search-query-invalid"),
+          query: exactQueryText(body.query, 1_000, "science-academic-search-query-invalid"),
           ...(body.domain === undefined ? {} : { domain: exactText(body.domain, 160, "science-academic-search-domain-invalid") }),
           ...(body.from_year === undefined ? {} : { fromYear: positiveInteger(body.from_year, "science-academic-search-from-year-invalid") }),
           ...(body.to_year === undefined ? {} : { toYear: positiveInteger(body.to_year, "science-academic-search-to-year-invalid") }),
@@ -5914,7 +5930,7 @@ async function handle(request: http.IncomingMessage, response: http.ServerRespon
             projectId: grant.context.projectId,
             conversationId: grant.context.conversationId,
             originMessageId: grant.context.originUserMessageId,
-            query: exactText(body.query, 500, "science-physics-inspire-query-invalid"),
+            query: exactQueryText(body.query, 500, "science-physics-inspire-query-invalid"),
             ...(body.limit === undefined ? {} : { limit: positiveInteger(body.limit, "science-physics-inspire-limit-invalid") }),
             ...(body.page === undefined ? {} : { page: positiveInteger(body.page, "science-physics-inspire-page-invalid") }),
             ...(body.sort === undefined ? {} : { sort: exactText(body.sort, 24, "science-physics-inspire-sort-invalid") as "relevance" | "mostrecent" | "mostcited" }),

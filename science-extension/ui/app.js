@@ -3746,6 +3746,13 @@ function createComposerEventSync({
   if (/science-research-director-package-(identity-invalid|integrity-failed)|science-research-director-prompt-integrity-failed/.test(raw)) {
       return `<div class="failClosed" role="status"><strong>${heroIcon("book")}연구를 시작하지 못했습니다</strong><p>설치된 연구 총괄 패키지가 이 앱이 확인한 내용과 달라 실행을 시작하지 않았습니다. 확인되지 않은 패키지로 돌리면 결과의 출처를 보장할 수 없습니다.</p></div>`;
     }
+    // A malformed evidence-graph tool call from the agent, not anything the researcher did.
+    // The underlying cause (a query the agent wrote with a line break in it, rejected too
+    // strictly) is fixed at the source, but this stays as a real explanation rather than a
+    // bare code if it -- or a sibling evidence-graph validation code -- ever recurs.
+    if (/^science-evidence-graph-(query|limit|traversal|edge-kind)-invalid$/.test(raw)) {
+      return `<div class="failClosed" role="status"><strong>${heroIcon("book")}${uiCopy("연구를 시작하지 못했습니다", "The research did not start")}</strong><p>${uiCopy("연구 에이전트가 근거 그래프를 잘못된 형식으로 요청해 실행이 시작되지 않았습니다. 이는 당신의 입력이 아니라 에이전트 쪽 결함입니다. 다시 시도하면 보통 해결됩니다.", "The research agent asked the Evidence Graph for something in a malformed shape, so the run never started. This is a defect on the agent's side, not anything about your input -- retrying usually resolves it.")}</p></div>`;
+    }
     // Anything else: say that it did not start and show what came back, rather than swallowing it.
     return `<div class="failClosed" role="status"><strong>${heroIcon("book")}연구를 시작하지 못했습니다</strong><p>${escapeHtml(raw.slice(0, 400))}</p></div>`;
   }
@@ -7997,6 +8004,18 @@ function createComposerEventSync({
     }).join("");
   }
 
+  // A bare internal code ("science-evidence-graph-query-invalid") is not an explanation on its
+  // own, but the codes this recognizes are rare enough to name specifically rather than hide
+  // behind a generic "something went wrong". Anything not recognized still falls through to the
+  // raw string -- showing what came back beats swallowing it, per runFailureNotice() above.
+  function scienceJobErrorSummary(raw) {
+    const t = String(raw || "").trim();
+    if (/^science-evidence-graph-(query|limit|traversal|edge-kind)-invalid$/.test(t)) {
+      return uiCopy("연구 에이전트가 근거 그래프를 잘못된 형식으로 요청해 이 실행이 시작되지 않았습니다. 당신의 입력 문제가 아닙니다. 다시 요청하면 보통 해결됩니다.", "The research agent asked the Evidence Graph for something in a malformed shape, so this run never started. This isn't about your input -- retrying usually resolves it.");
+    }
+    return t;
+  }
+
   function manuscriptDraftJobMarkup() {
     const job = state.manuscriptDraftJob;
     if (!job || job.projectId !== state.selectedId) return "";
@@ -8004,7 +8023,7 @@ function createComposerEventSync({
     const detail = job.status === "created"
       ? `Blueprint v${job.receipt?.blueprintVersion || "-"} · ${job.receipt?.eligibilityReceiptIds?.length || 0} eligible comparables`
       : job.status === "cancelled" ? uiCopy("중단 전에 완료·검증된 원고는 확인되지 않았습니다. 준비되면 원고 작성을 다시 요청할 수 있습니다.", "No completed, validated manuscript was found before this run stopped. You can request manuscript drafting again when ready.")
-        : job.error || "Research Director is collecting full text, qualifying 5+ comparable papers, calibrating the Blueprint, and drafting substantive sections.";
+        : scienceJobErrorSummary(job.error) || "Research Director is collecting full text, qualifying 5+ comparable papers, calibrating the Blueprint, and drafting substantive sections.";
     return `<section class="manuscriptDraftJobCard" data-manuscript-draft-status="${escapeHtml(job.status)}"><span>${heroIcon("book")}</span><div><strong>${escapeHtml(label)}</strong><p>${escapeHtml(detail)}</p></div></section>`;
   }
 
@@ -8050,26 +8069,43 @@ function createComposerEventSync({
     if (!job || job.projectId !== projectId || ["created", "cancelled"].includes(job.status)) return false;
     if (state.activeTurn?.conversationId && state.activeTurn.conversationId !== job.conversationId) return false;
     const candidates = state.manuscripts.filter((item) => !job.existingManuscriptIds.includes(item.id));
+    // Progress toward closure, in the same order this loop checks it: how many of the four
+    // gates (a Blueprint at all, that Blueprint bound and current, and >=5 eligible comparables)
+    // are actually satisfied right now. Kept across the loop so the "not closed yet" message
+    // below can name today's real gap instead of repeating a fixed sentence that lists every
+    // gate regardless of which ones already passed -- reported live as a stale-looking card
+    // that kept citing the eligibility count turns after eligibility had actually finished
+    // (2026-09-07).
+    let bestGap = null;
     for (const manuscript of candidates) {
       try {
         const model = await science.manuscripts.editorModel(projectId, manuscript.id);
         const blueprint = model?.blueprint;
         const binding = manuscript.version?.blueprintBinding;
         const comparables = blueprint?.version?.document?.comparables || [];
-        const closed = Boolean(manuscript.version?.document && binding && blueprint?.status === "current"
+        const boundComparables = comparables.filter((item) => item.eligibilityReceiptId).length;
+        const blueprintBound = Boolean(binding && blueprint?.status === "current"
           && blueprint.currentVersion === binding.blueprintVersion
-          && blueprint.version?.contentSha256 === binding.blueprintContentSha256
-          && comparables.length >= 5 && comparables.every((item) => item.eligibilityReceiptId));
-        if (!closed) continue;
-        state.manuscriptDraftJob = { ...job, status: "created", receipt: { manuscriptId: manuscript.id, manuscriptVersion: manuscript.currentVersion, manuscriptContentSha256: manuscript.version.contentSha256, blueprintId: blueprint.id, blueprintVersion: blueprint.currentVersion, blueprintContentSha256: blueprint.version.contentSha256, eligibilityReceiptIds: comparables.map((item) => item.eligibilityReceiptId) }, error: "" };
-        await openManuscript(manuscript.id);
-        return true;
+          && blueprint.version?.contentSha256 === binding.blueprintContentSha256);
+        const closed = Boolean(manuscript.version?.document && blueprintBound
+          && comparables.length >= 5 && boundComparables === comparables.length);
+        if (closed) {
+          state.manuscriptDraftJob = { ...job, status: "created", receipt: { manuscriptId: manuscript.id, manuscriptVersion: manuscript.currentVersion, manuscriptContentSha256: manuscript.version.contentSha256, blueprintId: blueprint.id, blueprintVersion: blueprint.currentVersion, blueprintContentSha256: blueprint.version.contentSha256, eligibilityReceiptIds: comparables.map((item) => item.eligibilityReceiptId) }, error: "" };
+          await openManuscript(manuscript.id);
+          return true;
+        }
+        const gap = !blueprint ? "no Blueprint drafted yet"
+          : !blueprintBound ? "Blueprint drafted, but not yet bound as the manuscript's current version"
+          : comparables.length < 5 ? `Blueprint bound; ${boundComparables} of 5 required eligible comparables recorded so far`
+          : `Blueprint bound with ${comparables.length} comparables; ${comparables.length - boundComparables} still missing an eligibility receipt`;
+        if (!bestGap) bestGap = gap;
       } catch { /* fail closed until the exact closure can be read */ }
     }
     if (terminalStatus === "cancelled") {
       state.manuscriptDraftJob = { ...job, status: "cancelled", error: "" };
     } else if (["completed", "failed", "interrupted"].includes(terminalStatus)) {
-      state.manuscriptDraftJob = { ...job, status: "blocked", error: "The Research Director turn ended without a closed manuscript + Blueprint + 5 eligible-comparable receipt. No manuscript tab was opened." };
+      const gap = bestGap || "no manuscript record has been created yet";
+      state.manuscriptDraftJob = { ...job, status: "blocked", error: `The Research Director turn ended without a closed manuscript. Current gap: ${gap}.` };
       state.composerError = state.manuscriptDraftJob.error;
     }
     return false;
@@ -8155,7 +8191,8 @@ function createComposerEventSync({
     if (t === "no-runtime") return uiCopy("AI 런타임 연결이 필요합니다", "AI runtime connection required");
     const explained = /^Error invoking remote method/i.test(t)
       || /science-research-director-package-version-mismatch/.test(t)
-      || /package-integrity|package-signature/.test(t);
+      || /package-integrity|package-signature/.test(t)
+      || /^science-evidence-graph-(query|limit|traversal|edge-kind)-invalid$/.test(t);
     // 본문 안내를 가리키려면 그 안내가 실제로 그려져 있어야 한다. 실물로 확인했다 —
     // .failClosed 가 본문 위쪽(303px)에 폭 760 으로 그려진다. 그래서 가리켜도 된다.
     return explained ? "실행을 시작하지 못했습니다 · 위 안내를 확인하세요" : t;

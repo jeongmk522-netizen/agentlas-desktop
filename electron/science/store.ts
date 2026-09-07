@@ -633,6 +633,21 @@ const SCIENCE_BLUEPRINT_CALIBRATION_ROLES: Record<ScienceManuscriptArticleFamily
   "data-resource": ["introduction", "methods", "results", "discussion"],
 };
 const SCIENCE_RESEARCH_DIRECTOR_AGENT_ID = builtinAgentId(SCIENCE_RESEARCH_DIRECTOR_SLUG);
+
+function scienceWorkbookSourceLabel(mimeType: string | null): string {
+  const normalized = String(mimeType ?? "").toLowerCase();
+  if (normalized.includes("spreadsheetml.sheet")) return "XLSX workbook";
+  if (normalized.includes("ms-excel") || normalized.includes("application/xls")) return "XLS workbook";
+  return "workbook file";
+}
+
+type ScienceWorkbookNormalizationSemantic = {
+  sourceLabel: string;
+  droppedRowCount: number;
+  droppedRuleIds: string[];
+  droppedReasons: string[];
+  headerlessInference: boolean;
+};
 const SCIENCE_MANUSCRIPT_SCHOLARLY_MINIMUM_CONFIDENCE = 0.8;
 const LAB_ID_RE = /^[a-z0-9](?:[a-z0-9._-]{0,78}[a-z0-9])?$/;
 const PNG_SIGNATURE = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
@@ -4560,10 +4575,10 @@ export class ScienceStore {
       );
       CREATE INDEX IF NOT EXISTS idx_science_project_data_entry_imports_project
         ON science_project_data_entry_imports(project_id, entry_id, created_at DESC, id DESC);
-    `);
-  }
       CREATE INDEX IF NOT EXISTS idx_science_project_data_entry_imports_entry_hash
         ON science_project_data_entry_imports(entry_id, content_sha256, created_at DESC, id DESC);
+    `);
+  }
 
   /**
    * Add the completion scope as an additive contract field.  NULL preserves
@@ -11908,6 +11923,7 @@ export class ScienceStore {
     run: ScienceResearchRun;
     source: ScienceSource;
     table: ScienceDatasetTablePayload;
+    normalization?: ScienceWorkbookNormalizationSemantic;
   } {
     const run = this.getResearchRunForProject(projectId, runId);
     if (run?.toolId === "agentlas.workbook-normalize") {
@@ -11968,6 +11984,34 @@ export class ScienceStore {
         rows: normalized.rows as ScienceDatasetTablePayload["rows"],
         profile: normalized.profile as ScienceDatasetTablePayload["profile"],
       });
+      const normalizedProfile = normalized.profile && typeof normalized.profile === "object" && !Array.isArray(normalized.profile)
+        ? normalized.profile as Record<string, unknown> : null;
+      const normalizedProvenance = normalized.provenance && typeof normalized.provenance === "object" && !Array.isArray(normalized.provenance)
+        ? normalized.provenance as Record<string, unknown> : null;
+      const droppedRows = normalizedProvenance?.droppedRows;
+      const inference = normalized.inference;
+      if (!normalizedProfile || !Number.isSafeInteger(normalizedProfile.droppedRowCount)
+        || Number(normalizedProfile.droppedRowCount) < 0
+        || !normalizedProvenance || !Array.isArray(droppedRows)
+        || Number(normalizedProfile.rowCount) !== table.profile.rowCount
+        || Number(normalizedProfile.columnCount) !== table.profile.columnCount
+        || Number(normalizedProfile.nullCount) !== table.profile.nullCount
+        || Number(normalizedProfile.formulaLikeCellCount) !== table.profile.formulaLikeCellCount
+        || droppedRows.length !== Number(normalizedProfile.droppedRowCount)
+        || !(inference === null || (inference && typeof inference === "object" && !Array.isArray(inference)))) {
+        throw new Error("science-workbook-normalization-semantic-invalid");
+      }
+      const droppedRuleIds = [...new Set(droppedRows.map((entry) => {
+        if (!entry || typeof entry !== "object" || Array.isArray(entry)) throw new Error("science-workbook-normalization-semantic-invalid");
+        const ruleId = (entry as Record<string, unknown>).ruleId;
+        if (typeof ruleId !== "string" || !ruleId.trim()) throw new Error("science-workbook-normalization-semantic-invalid");
+        return ruleId;
+      }))];
+      const droppedReasons = [...new Set(droppedRows.map((entry) => {
+        const reason = (entry as Record<string, unknown>).reason;
+        if (reason !== "all-selected-empty" && reason !== "cell-equals") throw new Error("science-workbook-normalization-semantic-invalid");
+        return reason;
+      }))];
       if (table.receipts.parserId !== SCIENCE_WORKBOOK_NORMALIZATION_PARSER_ID
         || !this.readRunBlob(tableOutput).equals(Buffer.from(JSON.stringify(canonicalValue(table)), "utf8"))
         || (candidate !== undefined && sha256Json(validateScienceTablePayload(candidate)) !== sha256Json(table))) {
@@ -11977,7 +12021,18 @@ export class ScienceStore {
       const source = binding ? this.getSourceVersionForProject(projectId, binding.sourceId, binding.sourceVersionId) : null;
       if (!source || source.version.contentSha256 !== table.receipts.rawSha256) throw new Error("science-workbook-normalization-source-invalid");
       this.verifiedSourceBytes(source);
-      return { run, source, table };
+      return {
+        run,
+        source,
+        table,
+        normalization: {
+          sourceLabel: scienceWorkbookSourceLabel(source.version.mimeType),
+          droppedRowCount: Number(normalizedProfile.droppedRowCount),
+          droppedRuleIds,
+          droppedReasons,
+          headerlessInference: inference !== null,
+        },
+      };
     }
     if (run?.toolId === "agentlas.workbook-sheet-projection") {
       if (run.status !== "succeeded" || run.toolVersion !== "1.0.0" || !run.parentRunId || run.outputs.length !== 1 || run.inputs.length !== 1) throw new Error("science-workbook-projection-run-invalid");
@@ -12408,6 +12463,26 @@ export class ScienceStore {
       }
       const sourceSha256 = verified.source.version.contentSha256;
       if (!sourceSha256) throw new Error("science-table-source-invalid");
+      const sourceDescription = verified.normalization?.sourceLabel
+        ?? (verified.run.toolId === "agentlas.workbook-sheet-projection" ? "workbook sheet" : "CSV source");
+      const semanticSummary = verified.normalization
+        ? `${verified.table.profile.rowCount} rows and ${verified.table.profile.columnCount} typed columns normalized from the exact selected ${sourceDescription} using a recorded normalization plan; ${verified.normalization.droppedRowCount} source row(s) were excluded with provenance.`
+        : `${verified.table.profile.rowCount} rows and ${verified.table.profile.columnCount} typed columns imported from the exact selected ${sourceDescription}.`;
+      const semanticWarnings = [
+        ...(verified.normalization && verified.normalization.droppedRowCount > 0
+          ? [`${verified.normalization.droppedRowCount} source row(s) were excluded by recorded normalization rules; inspect normalization provenance for exact source rows, rule IDs, ranges, and reasons.`]
+          : []),
+        ...(verified.normalization
+          ? ["Typed values and column names were produced by the recorded normalization plan; the original workbook remains immutable."]
+          : []),
+        ...(verified.normalization?.headerlessInference
+          ? ["Headerless columns were inferred from recorded cell evidence; review the normalization plan before scientific interpretation."]
+          : []),
+        ...(verified.table.profile.formulaLikeCellCount > 0
+          ? [`${verified.table.profile.formulaLikeCellCount} formula-looking cell(s) are preserved and rendered as inert text.`] : []),
+        ...(verified.run.toolId === "agentlas.workbook-sheet-projection"
+          ? ["Workbook formulas were not recalculated. Missing formula caches remain null; cached values and date serials require interpretation using the preserved original workbook."] : []),
+      ];
       const artifact = this.createArtifact({
         projectId: input.projectId,
         sourceRunId: verified.run.id,
@@ -12419,19 +12494,14 @@ export class ScienceStore {
         payload: verified.table as unknown as Record<string, unknown>,
         semantic: {
           title,
-          summary: `${verified.table.profile.rowCount} rows and ${verified.table.profile.columnCount} typed columns imported from the exact selected ${verified.run.toolId === "agentlas.workbook-sheet-projection" ? "workbook sheet" : "CSV source"}.`,
+          summary: semanticSummary,
           entities: [],
           observations: [
             { label: "Rows", value: verified.table.profile.rowCount, unit: null },
             { label: "Columns", value: verified.table.profile.columnCount, unit: null },
             { label: "Missing cells", value: verified.table.profile.nullCount, unit: null },
           ],
-          warnings: [
-            ...(verified.table.profile.formulaLikeCellCount > 0
-              ? [`${verified.table.profile.formulaLikeCellCount} formula-looking cell(s) are preserved and rendered as inert text.`] : []),
-            ...(verified.run.toolId === "agentlas.workbook-sheet-projection"
-              ? ["Workbook formulas were not recalculated. Missing formula caches remain null; cached values and date serials require interpretation using the preserved original workbook."] : []),
-          ],
+          warnings: semanticWarnings,
         },
         provenance: {
           sourceRunId: verified.run.id,

@@ -302,6 +302,7 @@ export function ToolApprovalInline({
   compact = false,
   chip = false,
   composerWidth,
+  composerInset = 0,
 }: {
   chatId: string | null | undefined;
   compact?: boolean;
@@ -315,6 +316,12 @@ export function ToolApprovalInline({
    * place the answer is typed instead of with whatever the column happens to be.
    */
   composerWidth?: number;
+  /**
+   * 작성창이 양옆에서 빼는 여백(px). 두 화면의 식이 다르다 —
+   * One 은 `min(720px, 100%)` 이라 0, Work 는 `min(calc(100% - 32px), 740px)` 이라 32.
+   * 상한만 맞추면 좁은 창에서 다시 어긋난다.
+   */
+  composerInset?: number;
 }) {
   const { queue } = useToolApprovals();
   useEffect(() => markChatVisible(chatId), [chatId]);
@@ -325,7 +332,10 @@ export function ToolApprovalInline({
     <div
       className={chip ? "tool-approval-inline" : undefined}
       data-testid="tool-approval-inline"
-      style={composerWidth ? ({ "--agentlas-composer-width": `${composerWidth}px` } as React.CSSProperties) : undefined}
+      style={composerWidth ? ({
+        "--agentlas-composer-width": `${composerWidth}px`,
+        "--agentlas-composer-inset": `${composerInset}px`,
+      } as React.CSSProperties) : undefined}
     >
       {mine.map((request) => <ToolApprovalCard key={request.id} request={request} compact={compact} chip={chip} />)}
     </div>

@@ -2972,8 +2972,19 @@ button[data-dashboard-import="true"]:disabled {
   position: relative;
   z-index: 1;
   pointer-events: auto;
-  width: min(var(--agentlas-composer-width, 920px), calc(100% - 24px));
-  max-width: var(--agentlas-composer-width, 920px);
+  /* ★"작성창과 같은 폭"은 상수로 두면 반드시 어긋난다 (실측 QA 2026-09-08, 창 1450px:
+     작성창 495px / 칩 432px = 63px 어긋남). 어긋난 자리가 셋이었다:
+       ① 여기 기본값 920px — One 의 .composer 는 나중 규칙에서 min(720px,100%) 로
+          바뀌었는데 이 숫자만 옛 값(920)에 멈춰 있었다.
+       ② calc(100% - 24px) — 작성창은 24px 를 빼지 않는다. "같은 폭"이 아니었다.
+       ③ .tool-approval-chip 자신의 width: fit-content — 칩이 내용만큼 줄어
+          래퍼(471px)보다도 좁은 432px 가 됐다. QA 가 잰 건 이 값이다.
+     셋 다 작성창과 같은 규칙으로 맞춘다. 두 화면의 작성창이 **식이 다르므로**
+     (One min(720px,100%) / Work min(calc(100% - 32px),740px)) 상한만이 아니라
+     여백(inset)도 각 화면이 건넨다 — 한쪽에 맞춘 상수는 다른 쪽을 어긋나게 한다. */
+  width: min(var(--agentlas-composer-width, 720px),
+             calc(100% - var(--agentlas-composer-inset, 0px)));
+  max-width: var(--agentlas-composer-width, 720px);
   margin: 0 auto 38px;
 }
 
@@ -2984,7 +2995,10 @@ button[data-dashboard-import="true"]:disabled {
 /* Live tool permission is an inline approval chip, never a full-width ask sheet.
    The title stays readable while the four decisions remain explicit and easy to hit. */
 .tool-approval-chip {
-  width: fit-content;
+  /* 불투명한 흰 바탕은 상수가 아니라 테마 토큰으로 낸다 — 상수 흰색 위에 테마
+     글자색(--ink)이 오면 다크에서 흰 상자 + 흰 글자가 된다(오너 실사용 2026-09-07). */
+  /* 래퍼가 이미 작성창 폭이다. 여기서 다시 내용만큼 줄이면 그 폭이 무의미해진다. */
+  width: 100%;
   max-width: 100%;
   min-width: 0;
   display: flex;
@@ -2993,7 +3007,7 @@ button[data-dashboard-import="true"]:disabled {
   padding: 8px 10px 8px 12px;
   border: 1px solid var(--paper-edge);
   border-radius: 13px;
-  background: rgba(255, 255, 255, .98);
+  background: color-mix(in srgb, var(--paper) 98%, transparent);
   color: var(--ink);
   box-shadow: 0 7px 20px rgba(25, 31, 36, .07);
 }

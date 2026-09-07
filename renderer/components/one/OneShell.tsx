@@ -177,6 +177,19 @@ import {
 import { planOneThreadWork, projectThreadRuns, type OneThreadRunBlock } from "@/lib/one-thread-work";
 import { memberUnavailable, speakableCountIncludingOne } from "@/lib/one-team-availability";
 import { ToolApprovalInline } from "@/components/ToolApprovalInline";
+
+/*
+ * One 작성창의 폭. **OneShell.module.css 의 `.composer { width: min(720px, 100%) }` 와
+ * 같은 값이어야 한다** — 승인 칩이 이 값을 받아 작성창과 나란히 선다.
+ *
+ * ★왜 상수로 두고 게이트를 거는가: 예전에는 이 자리에 920 이 손으로 박혀 있었는데,
+ * CSS 의 작성창 폭은 나중 규칙에서 720 으로 바뀌었고 숫자만 옛 값에 멈췄다. 화면에는
+ * 칩이 작성창보다 넓게(그리고 다른 자리에서는 좁게) 떴다. 상수는 반드시 드리프트한다 —
+ * 게이트 test:approval-chip-matches-composer 가 이 값과 CSS 를 대조한다.
+ */
+const ONE_COMPOSER_WIDTH_PX = 720;
+/** One 의 작성창은 양옆 여백을 빼지 않는다(Work 는 32px 를 뺀다). */
+const ONE_COMPOSER_INSET_PX = 0;
 import { ChatFileCards } from "@/components/ChatFileExperience";
 import {
   appendChatFileMarker,
@@ -7062,7 +7075,7 @@ export function OneShell() {
                 onDismiss={() => setDismissedDecisionId(visibleSelectedConfirmation.sourceMessageId)}
               />
             )}
-            <ToolApprovalInline chatId={activeThreadChatId} compact chip composerWidth={920} />
+            <ToolApprovalInline chatId={activeThreadChatId} compact chip composerWidth={ONE_COMPOSER_WIDTH_PX} composerInset={ONE_COMPOSER_INSET_PX} />
             {armedOneMemoryUseOnce && (
               <div className={styles.oneMemoryUseOnceChip} role="status">
                 <span>{tFor(appLocale, "one.shell.composer.memory_once")}</span>

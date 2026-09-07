@@ -46,6 +46,18 @@ import {
   type PipelineStage,
 } from "@/components/ChatStream";
 import { ToolApprovalInline } from "@/components/ToolApprovalInline";
+
+/*
+ * Work 작성창의 폭과 여백. 실제 작성창은 ChatInput.tsx 의 `width: min(100%, 740px)` 이다.
+ *
+ * ★여백은 0 이다. 같은 화면의 폴더 선택 줄이 `min(calc(100% - 32px), 740px)` 을 쓰고 있어
+ * 처음에 그 32 를 작성창 값으로 잘못 읽었는데, 게이트가 대조해서 잡았다. 눈에 가까운 값이
+ * 정답인 것은 아니다 — 작성창 자신의 선언을 봐야 한다.
+ *
+ * 게이트 test:approval-chip-matches-composer 가 이 두 값을 실제 선언과 대조한다.
+ */
+const WORK_COMPOSER_WIDTH_PX = 740;
+const WORK_COMPOSER_INSET_PX = 0;
 import { normalizeToolCall, shadowsToolRecordedPath } from "@shared/tool-call-detail";
 import { shellWrittenPaths } from "@shared/shell-written-paths";
 import { runtimeSelectionReceiptMatches } from "@shared/runtime-selection-receipt";
@@ -6183,7 +6195,7 @@ function ChatPage() {
           focusMessageId={requestedFocusMessageId}
         />
         {/* 도구 승인은 이 대화 안에서, 묻는 순간에(오너 결정 2026-08-15) */}
-        <ToolApprovalInline chatId={chat?.id ?? null} compact chip composerWidth={740} />
+        <ToolApprovalInline chatId={chat?.id ?? null} compact chip composerWidth={WORK_COMPOSER_WIDTH_PX} composerInset={WORK_COMPOSER_INSET_PX} />
       </div>
       {/* 실행 전 API 키 요청 바텀 시트 — 값은 vault(env.set)로만, IPC는 완료 신호만 */}
       {keyRequestSheet && (

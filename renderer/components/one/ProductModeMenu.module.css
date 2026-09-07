@@ -75,6 +75,8 @@
 }
 
 .menu {
+  /* 불투명한 흰 바탕은 상수가 아니라 테마 토큰으로 낸다 — 상수 흰색 위에 테마
+     글자색(--ink)이 오면 다크에서 흰 상자 + 흰 글자가 된다(오너 실사용 2026-09-07). */
   position: absolute;
   z-index: 220;
   top: calc(100% + 7px);
@@ -85,7 +87,7 @@
   padding: 6px;
   border: 1px solid rgba(15, 23, 42, 0.1);
   border-radius: 14px;
-  background: rgba(255, 255, 255, 0.98);
+  background: color-mix(in srgb, var(--paper) 98%, transparent);
   box-shadow: 0 18px 50px rgba(15, 23, 42, 0.13), 0 2px 10px rgba(15, 23, 42, 0.06);
   color: var(--ink);
 }

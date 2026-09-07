@@ -1,4 +1,4 @@
-import type { IpcMain, IpcMainInvokeEvent } from "electron";
+import { webContents, type IpcMain, type IpcMainInvokeEvent } from "electron";
 import { createHash, randomUUID } from "node:crypto";
 import type { ProductExtensionPermission } from "../../shared/product-extension";
 import type { ScienceStore } from "./store";
@@ -109,7 +109,14 @@ export function registerScienceProjectDataHandlers(options: {
   datasetIngestionService?: DatasetServiceFactory;
 }): void {
   const datasetService = options.datasetIngestionService ?? ((store: ScienceStore) => createScienceDatasetIngestionService(store));
-  const autoRefresh = new ScienceProjectDataAutoRefreshCoordinator({ store: options.scienceStore });
+  const autoRefresh = new ScienceProjectDataAutoRefreshCoordinator({
+    store: options.scienceStore,
+    notify: (senderId, change) => {
+      const sender = webContents.fromId(senderId);
+      if (!sender || sender.isDestroyed()) return;
+      sender.send("science:projectDataChanged", change);
+    },
+  });
 
   options.ipcMain.handle("science:projects:discoverData", (event, envelope: unknown) => {
     options.assertScienceSender(event, envelope, "science:artifacts");

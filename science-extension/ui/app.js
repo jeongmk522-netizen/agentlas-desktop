@@ -396,7 +396,7 @@ function createComposerEventSync({
     resultArtifacts: [], resultFigureIds: new Set(), resultValidations: new Map(), resultsError: "", resultsProjectId: null,
     literatureSources: [], literatureUnresolvedIds: [], literatureLoading: false, literatureError: "",
     acquisitionRuns: [], acquisitionUnresolvedIds: [], acquisitionLoading: false, acquisitionError: "",
-    activeTurn: null, composerSending: false, composerDraft: "", composerError: "", composerEventDispose: null, lifecycleChangeDispose: null, runtimeQuestions: [], runtimeQuestionDispose: null, runtimeQuestionBusy: false, runtimeQuestionError: "", runtimeQuestionDraft: "", runtimeQuestionDraftRequestId: null,
+    activeTurn: null, composerSending: false, composerDraft: "", composerError: "", composerEventDispose: null, lifecycleChangeDispose: null, projectDataSnapshot: null, projectDataSnapshotState: "idle", projectDataSnapshotError: "", projectDataSnapshotDispose: null, runtimeQuestions: [], runtimeQuestionDispose: null, runtimeQuestionBusy: false, runtimeQuestionError: "", runtimeQuestionDraft: "", runtimeQuestionDraftRequestId: null,
     runtimeSelection: null, runtimeOptions: [], runtimeUnavailable: false, runtimeSelectionLoading: false, runtimeSelectionBusy: false, runtimeSelectionError: "", runtimeSelectionScope: null, runtimePickerOpen: false, runtimePickerQuery: "",
     vegaDraft: null, vegaSaving: false, vegaSaveError: "", pendingDraftNavigation: null,
     selectedManuscriptId: null, selectedAnalysisPlanId: null, manuscriptDraft: null, manuscriptSaving: false, manuscriptSaveError: "", manuscriptView: "paper", manuscriptInspectorOpen: false, selectedJournalProfileId: null, journalValidation: null, journalSheet: false, submissionSheet: false, submissionDraft: null, journalActionBusy: false, journalActionError: "",
@@ -441,6 +441,7 @@ function createComposerEventSync({
   let conversationRefreshInFlight = null;
   let conversationRefreshPending = false;
   let conversationRefreshPendingRuntime = false;
+  let projectDataSnapshotRequestEpoch = 0;
   const uiCopy = (ko, en) => state.locale === "ko" ? ko : en;
   const pendingHypothesisCopy = (pending) => uiCopy(
     `${pending}건이 당신의 결정을 기다립니다.`,
@@ -2015,6 +2016,26 @@ function createComposerEventSync({
     }
   }
 
+  async function loadProjectDataSnapshot(projectId, { renderOnReady = true } = {}) {
+    if (!projectId || !science.projects?.dataSnapshot) return;
+    const epoch = ++projectDataSnapshotRequestEpoch;
+    state.projectDataSnapshotState = "loading";
+    state.projectDataSnapshotError = "";
+    try {
+      const snapshot = await science.projects.dataSnapshot(projectId);
+      if (epoch !== projectDataSnapshotRequestEpoch || projectId !== state.selectedId) return;
+      state.projectDataSnapshot = snapshot && snapshot.projectId === projectId ? snapshot : null;
+      state.projectDataSnapshotState = "ready";
+      if (renderOnReady) render();
+    } catch (error) {
+      if (epoch !== projectDataSnapshotRequestEpoch || projectId !== state.selectedId) return;
+      state.projectDataSnapshot = null;
+      state.projectDataSnapshotState = "error";
+      state.projectDataSnapshotError = error instanceof Error ? error.message : String(error);
+      if (renderOnReady) render();
+    }
+  }
+
   async function selectProject(projectId, options = {}) {
     state.librarySelectedProjectId = projectId;
     // Invalidate any whole-library snapshot that was started for the project we are leaving.
@@ -2054,6 +2075,12 @@ function createComposerEventSync({
       selectedJournalProfileId: state.selectedJournalProfileId,
     } : null;
     const preserveRuntimeSelection = Boolean(preservedWorkspace && !switchingProject);
+    if (switchingProject) {
+      projectDataSnapshotRequestEpoch += 1;
+      state.projectDataSnapshot = null;
+      state.projectDataSnapshotState = "loading";
+      state.projectDataSnapshotError = "";
+    }
     state.selectedId = projectId;
     // Main owns the linked-folder snapshot and watcher. Activation only queues
     // bounded discovery; it never imports a file or starts an analysis run.
@@ -2062,6 +2089,7 @@ function createComposerEventSync({
         console.warn("[science-project-data] automatic activation unavailable", error);
       });
     }
+    void loadProjectDataSnapshot(projectId, { renderOnReady: false });
     state.projectFolderOpen = Boolean(options.openFolder);
     if (switchingProject) {
       state.workbookImportBusy = false;
@@ -7198,15 +7226,54 @@ function createComposerEventSync({
     return `<section class="artifactSemanticReview${warnings.length ? " hasWarnings" : ""}" data-artifact-semantic-review aria-label="${escapeHtml(uiCopy("아티팩트 확인 항목", "Artifact review items"))}">${warningMarkup}${fitCoreMarkup}${detailsMarkup}</section>`;
   }
 
+  function projectDataSnapshotMarkup() {
+    const snapshot = state.projectDataSnapshot;
+    if (!snapshot) {
+      const unavailable = state.projectDataSnapshotState === "error"
+        ? uiCopy("연결 폴더 상태를 불러오지 못했습니다.", "The linked-folder state could not be loaded.")
+        : state.projectDataSnapshotState === "loading"
+          ? uiCopy("연결 폴더를 확인하는 중…", "Checking the linked folder…")
+          : uiCopy("연결 폴더가 아직 확인되지 않았습니다.", "The linked folder has not been checked yet.");
+      return `<section class="originStrip projectDataSnapshotStrip" data-project-data-snapshot="unavailable" role="status"><div class="originStripMain"><strong>${escapeHtml(uiCopy("폴더 데이터", "Folder data"))}</strong><span>${escapeHtml(unavailable)}</span></div><div class="originStripActions"><span>${escapeHtml(state.projectDataSnapshotError ? uiCopy("프로젝트를 다시 열어 확인하세요.", "Open the project again to retry.") : uiCopy("자동 확인 대기", "Automatic check pending"))}</span></div></section>`;
+    }
+    const entries = Array.isArray(snapshot.entries) ? snapshot.entries : [];
+    const observedEntries = entries.filter((entry) => entry?.observed === true);
+    const changes = snapshot.changes && typeof snapshot.changes === "object" ? snapshot.changes : {};
+    const importedCount = entries.filter((entry) => entry?.import).length;
+    const changedCount = Number(changes.changed) || 0;
+    const newCount = Number(changes.new) || 0;
+    const missingCount = Number(changes.missing) || 0;
+    const unreadableCount = Number(changes.unreadable) || 0;
+    const attentionCount = missingCount + unreadableCount;
+    const statusText = snapshot.status !== "complete" || attentionCount > 0
+      ? uiCopy("확인 필요", "Review needed")
+      : changedCount > 0 || newCount > 0
+        ? uiCopy("변경 감지됨", "Changes detected")
+        : uiCopy("폴더 확인 완료", "Folder checked");
+    const statusDetail = snapshot.status === "complete"
+      ? uiCopy(`리비전 ${snapshot.revision} · ${observedEntries.length}개 파일 확인`, `Revision ${snapshot.revision} · ${observedEntries.length} files checked`)
+      : uiCopy(`리비전 ${snapshot.revision} · 일부 항목만 확인됨`, `Revision ${snapshot.revision} · partial scan`);
+    const metricParts = [
+      `${observedEntries.length} ${uiCopy("확인됨", "checked")}`,
+      newCount > 0 ? `${newCount} ${uiCopy("새 파일", "new")}` : "",
+      changedCount > 0 ? `${changedCount} ${uiCopy("변경", "changed")}` : "",
+      missingCount > 0 ? `${missingCount} ${uiCopy("없음", "missing")}` : "",
+      unreadableCount > 0 ? `${unreadableCount} ${uiCopy("읽기 실패", "unreadable")}` : "",
+      importedCount > 0 ? `${importedCount} ${uiCopy("가져옴", "imported")}` : "",
+    ].filter(Boolean);
+    return `<section class="originStrip projectDataSnapshotStrip" data-project-data-snapshot="ready" data-project-data-revision="${escapeHtml(snapshot.revision)}" data-project-data-status="${escapeHtml(statusText)}" role="status"><div class="originStripMain"><strong>${escapeHtml(uiCopy("폴더 데이터", "Folder data"))} · ${escapeHtml(statusText)}</strong><span>${escapeHtml(statusDetail)}</span></div><div class="originStripActions"><span>${escapeHtml(metricParts.join(" · "))}</span></div></section>`;
+  }
+
   function artifactWorkbench() {
     if (state.loadingProject) return `<div class="loadingState">시각 자료를 불러오는 중…</div>`;
     if (state.projectError) return errorState();
     const labContexts = state.labContextsById.get(state.selectedLabId) || [];
     const labArtifacts = labContexts.map((context) => context.artifact);
+    const projectDataStatus = state.selectedLabId === "data-table" ? projectDataSnapshotMarkup() : "";
     if (!labArtifacts.length) {
       if (state.selectedLabId === "data-table") {
-        if (state.workbookReadback) return labDecisionEmptyMarkup(`<section class="emptyView labStartView" data-empty-source="science.sqlite"><div class="labStartCard">${workbookIntakeMarkup()}</div></section>`);
-        return labDecisionEmptyMarkup(`<section class="emptyView labStartView" data-empty-source="science.sqlite"><div class="labStartCard"><span class="researchKicker">Data & Statistics · ${escapeHtml(lifecycleLabel())}</span><strong>${uiCopy("CSV 또는 Excel 파일을 표로 가져오세요.", "Import a CSV or Excel workbook as a table.")}</strong><p>${uiCopy("원본은 보존됩니다. CSV는 바로 표가 되고, XLSX/XLS는 시트·행 범위·열 이름을 직접 선택해 표를 만듭니다.", "The original is preserved. CSV opens as a table; for XLSX/XLS, choose a sheet, row range, and column names to create a table.")}</p><p class="workbookPickerBoundary">${uiCopy("입력 CSV · XLSX · XLS · 원본 보존 · 시트·행 범위·열 이름을 직접 선택", "Input CSV · XLSX · XLS · original preserved · choose the sheet, row range, and column names explicitly")}</p><div class="workbookIntakeActions"><button class="primaryButton importDatasetButton" data-action="import-csv-dataset" ${state.datasetImportBusy || state.workbookImportBusy ? "disabled" : ""}>${state.datasetImportBusy ? uiCopy("검증하며 가져오는 중…", "Validating…") : uiCopy("CSV 가져오기", "Import CSV")}</button><button class="secondaryButton importDatasetButton" data-action="import-workbook-dataset" ${state.datasetImportBusy || state.workbookImportBusy ? "disabled" : ""}>${state.workbookImportBusy ? uiCopy("Excel을 읽는 중…", "Reading workbook…") : uiCopy("Excel 선택 (.xlsx/.xls)", "Choose Excel (.xlsx/.xls)")}</button></div>${state.datasetImportError ? `<p class="labStartError" role="alert">${escapeHtml(state.datasetImportError)}</p>` : ""}${state.workbookImportError ? `<p class="labStartError" role="alert">${escapeHtml(state.workbookImportError)}</p>` : ""}</div></section>`);
+        if (state.workbookReadback) return labDecisionEmptyMarkup(`${projectDataStatus}<section class="emptyView labStartView" data-empty-source="science.sqlite"><div class="labStartCard">${workbookIntakeMarkup()}</div></section>`);
+        return labDecisionEmptyMarkup(`${projectDataStatus}<section class="emptyView labStartView" data-empty-source="science.sqlite"><div class="labStartCard"><span class="researchKicker">Data & Statistics · ${escapeHtml(lifecycleLabel())}</span><strong>${uiCopy("CSV 또는 Excel 파일을 표로 가져오세요.", "Import a CSV or Excel workbook as a table.")}</strong><p>${uiCopy("원본은 보존됩니다. CSV는 바로 표가 되고, XLSX/XLS는 시트·행 범위·열 이름을 직접 선택해 표를 만듭니다.", "The original is preserved. CSV opens as a table; for XLSX/XLS, choose a sheet, row range, and column names to create a table.")}</p><p class="workbookPickerBoundary">${uiCopy("입력 CSV · XLSX · XLS · 원본 보존 · 시트·행 범위·열 이름을 직접 선택", "Input CSV · XLSX · XLS · original preserved · choose the sheet, row range, and column names explicitly")}</p><div class="workbookIntakeActions"><button class="primaryButton importDatasetButton" data-action="import-csv-dataset" ${state.datasetImportBusy || state.workbookImportBusy ? "disabled" : ""}>${state.datasetImportBusy ? uiCopy("검증하며 가져오는 중…", "Validating…") : uiCopy("CSV 가져오기", "Import CSV")}</button><button class="secondaryButton importDatasetButton" data-action="import-workbook-dataset" ${state.datasetImportBusy || state.workbookImportBusy ? "disabled" : ""}>${state.workbookImportBusy ? uiCopy("Excel을 읽는 중…", "Reading workbook…") : uiCopy("Excel 선택 (.xlsx/.xls)", "Choose Excel (.xlsx/.xls)")}</button></div>${state.datasetImportError ? `<p class="labStartError" role="alert">${escapeHtml(state.datasetImportError)}</p>` : ""}${state.workbookImportError ? `<p class="labStartError" role="alert">${escapeHtml(state.workbookImportError)}</p>` : ""}</div></section>`);
       }
       if (state.selectedLabId === "statistics-analysis") return labDecisionEmptyMarkup(statisticsLaunchCard());
       if (state.selectedLabId === "data-visualization") return labDecisionEmptyMarkup(publicationFigureStartMarkup());
@@ -7367,7 +7434,7 @@ function createComposerEventSync({
     const dataTableIntakeAction = state.selectedLabId === "data-table"
       ? `<section class="workbookReimportBar" aria-label="${escapeHtml(uiCopy("표 데이터 추가", "Add table data"))}"><div><strong>${escapeHtml(uiCopy("표 데이터를 더 추가하시겠어요?", "Add another table source"))}</strong><span>${escapeHtml(uiCopy("원본을 보존한 채 CSV 또는 Excel 파일을 선택할 수 있습니다.", "Choose another CSV or Excel file while preserving the original."))}</span></div><div class="workbookIntakeActions"><button class="secondaryButton" type="button" data-action="import-csv-dataset" ${state.datasetImportBusy || state.workbookImportBusy ? "disabled" : ""}>${state.datasetImportBusy ? uiCopy("가져오는 중…", "Importing…") : uiCopy("CSV 추가", "Add CSV")}</button><button class="secondaryButton" type="button" data-action="import-workbook-dataset" ${state.datasetImportBusy || state.workbookImportBusy ? "disabled" : ""}>${state.workbookImportBusy ? uiCopy("Excel을 읽는 중…", "Reading workbook…") : uiCopy("Excel 선택", "Choose Excel")}</button></div>${state.datasetImportError ? `<p class="labStartError" role="alert">${escapeHtml(state.datasetImportError)}</p>` : ""}${state.workbookImportError ? `<p class="labStartError" role="alert">${escapeHtml(state.workbookImportError)}</p>` : ""}</section>`
       : "";
-    return `<section class="artifactWorkspace ${state.historyOpen ? "historyOpen" : ""} ${state.artifactComparison ? "compareOpen" : ""} ${spatialArtifact ? "spatialArtifact" : ""} ${spatial3dOpen ? "spatial3dOpen" : ""}" data-chart-priority="${chartPriority}"><header class="labWorkspaceHeader visuallyHidden"><span>${escapeHtml(labCapabilityLabel(state.selectedLabId))}</span><strong>아티팩트 보관소 · 작업공간</strong><span class="originVersion">${capability}</span><button data-action="back-session">${state.returnMessageId ? "대화의 아티팩트로" : "세션으로 돌아가기"}</button></header>${dataTableIntakeAction}${tabs ? `<nav class="artifactTabs" data-count="${escapeHtml(labArtifacts.length)}" aria-label="Lab 아티팩트">${tabs}</nav>` : ""}${originStrip}${statisticsLineage}${paleontologyLineage}<div class="labWorkGrid"><div class="figureColumn">
+    return `<section class="artifactWorkspace ${state.historyOpen ? "historyOpen" : ""} ${state.artifactComparison ? "compareOpen" : ""} ${spatialArtifact ? "spatialArtifact" : ""} ${spatial3dOpen ? "spatial3dOpen" : ""}" data-chart-priority="${chartPriority}"><header class="labWorkspaceHeader visuallyHidden"><span>${escapeHtml(labCapabilityLabel(state.selectedLabId))}</span><strong>아티팩트 보관소 · 작업공간</strong><span class="originVersion">${capability}</span><button data-action="back-session">${state.returnMessageId ? "대화의 아티팩트로" : "세션으로 돌아가기"}</button></header>${dataTableIntakeAction}${projectDataStatus}${tabs ? `<nav class="artifactTabs" data-count="${escapeHtml(labArtifacts.length)}" aria-label="Lab 아티팩트">${tabs}</nav>` : ""}${originStrip}${statisticsLineage}${paleontologyLineage}<div class="labWorkGrid"><div class="figureColumn">
       ${canvas}
       <section class="artifactInterpretation"><div><div class="researchKicker">${inspectingHistory ? "과거 버전 의미 기록" : "Semantic layer"}</div><h2>${escapeHtml(activeVersion?.semantic?.title || (inspectingHistory ? `v${state.inspectedArtifactVersion} 기록을 불러오는 중…` : artifact.title))}</h2><p>${escapeHtml(activeVersion?.semantic?.summary || (inspectingHistory ? "현재 버전 정보로 대체하지 않고, 선택한 과거 버전의 검증이 끝날 때까지 기다립니다." : ""))}</p></div>${observations ? `<dl class="observationGrid">${observations}</dl>` : ""}</section>
       <div data-artifact-compare-host>${artifactCompareMarkup(artifact, history)}</div>
@@ -12810,6 +12877,17 @@ function createComposerEventSync({
     state.locale = i18n.setLocale(bootstrap?.locale);
     i18n.observe(root);
     if (science.renderers?.onStatus && !state.rendererStatusDispose) state.rendererStatusDispose = science.renderers.onStatus(applyRendererStatus);
+    if (science.projects?.onDataChanged && !state.projectDataSnapshotDispose) state.projectDataSnapshotDispose = science.projects.onDataChanged((change) => {
+      if (!change || change.schema !== "agentlas.science-data-refresh-notification/v1" || change.projectId !== state.selectedId) return;
+      const snapshot = change.snapshot;
+      if (!snapshot || snapshot.projectId !== state.selectedId) return;
+      const priorRevision = Number(state.projectDataSnapshot?.revision || 0);
+      if (Number(snapshot.revision) < priorRevision) return;
+      state.projectDataSnapshot = snapshot;
+      state.projectDataSnapshotState = "ready";
+      state.projectDataSnapshotError = "";
+      render();
+    });
     if (science.questions?.onRequest && !state.runtimeQuestionDispose) state.runtimeQuestionDispose = science.questions.onRequest(receiveRuntimeQuestion);
     if (science.questions?.list) {
       const pendingQuestions = await science.questions.list();

@@ -13,6 +13,7 @@ import type {
   ScienceProjectDataRefreshMode,
   ScienceProjectDataRefreshObservation,
   ScienceProjectDataRefreshPersistInput,
+  ScienceProjectDataRefreshPersistResult,
 } from "../../shared/science-project-data-refresh";
 
 const SUPPORTED_FILE_EXTENSIONS = new Set([".csv", ".xlsx", ".xls"]);
@@ -87,6 +88,11 @@ interface AutoRefreshOptions {
   store: () => ScienceStore;
   debounceMs?: number;
   logger?: Pick<Console, "info" | "warn">;
+  notify?: (senderId: number, change: {
+    schema: "agentlas.science-data-refresh-notification/v1";
+    projectId: string;
+    snapshot: ScienceProjectDataRefreshPersistResult["snapshot"];
+  }) => void;
 }
 
 /**
@@ -225,6 +231,18 @@ export class ScienceProjectDataAutoRefreshCoordinator {
         entries: result.snapshot.entries.length,
         replayed: result.replayed,
       });
+      const change = {
+        schema: "agentlas.science-data-refresh-notification/v1" as const,
+        projectId: state.projectId,
+        snapshot: result.snapshot,
+      };
+      for (const senderId of this.owners.get(state.projectId) ?? []) {
+        try {
+          this.options.notify?.(senderId, change);
+        } catch (error) {
+          this.logger.warn(`[science-project-data] notification unavailable for ${state.projectId}`, error);
+        }
+      }
     } catch (error) {
       this.logger.warn(`[science-project-data] automatic refresh unavailable for ${state.projectId}`, error);
     } finally {

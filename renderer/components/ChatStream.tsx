@@ -561,7 +561,7 @@ export function ChatStream({
           border: 1px solid var(--paper-edge);
           border-radius: 18px;
           background: var(--paper-raised, var(--paper));
-          box-shadow: var(--shadow-sm);
+          box-shadow: var(--shadow-1);
           overflow: hidden;
         }
         .agentlas-chat-empty-directory-intro {
@@ -645,7 +645,7 @@ export function ChatStream({
           border: 1px solid var(--paper-edge);
           border-radius: 999px;
           background: var(--paper-raised, var(--paper));
-          box-shadow: var(--shadow-md);
+          box-shadow: var(--shadow-2);
           color: var(--ink);
           font: 650 11.5px/1 var(--font-body);
           cursor: pointer;

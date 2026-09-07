@@ -1124,7 +1124,7 @@ export function RunHistoryPanel({ automation, locale, compact = false }: RunHist
                 onClick={() => void forgetFailedRun()}
                 style={{
                   borderRadius: 999, border: "1px solid var(--line)", padding: "6px 12px",
-                  fontSize: 12.5, background: "var(--surface)", color: "var(--ink)",
+                  fontSize: 12.5, background: "var(--paper)", color: "var(--ink)",
                   cursor: forgetting ? "default" : "pointer",
                 }}
               >

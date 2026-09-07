@@ -1408,7 +1408,7 @@ function LibraryAgentsView() {
           }}
         >
           {sidebarCollapsed ? (
-            <button onClick={() => setSelectedNode(null)} style={{ border: "none", background: "none", cursor: "pointer", color: "var(--accent)" }}>
+            <button onClick={() => setSelectedNode(null)} aria-label={locale === "ko" ? "조직 보기로 돌아가기" : "Back to the organization view"} title={locale === "ko" ? "조직 보기로 돌아가기" : "Back to the organization view"} style={{ border: "none", background: "none", cursor: "pointer", color: "var(--accent)" }}>
               <IconBuilding size={20} />
             </button>
           ) : (
@@ -4091,7 +4091,7 @@ function ExperiencePanel({
             <span style={{ color: "var(--muted-deep)", fontSize: 11, fontWeight: 750 }}>{ko ? "이 에이전트가 배운 것" : "WHAT THIS AGENT LEARNED"}</span>
             <h3 style={{ margin: "5px 0 0", fontSize: 20 }}>{ko ? "경험 관리" : "Experience"}</h3>
           </div>
-          <span style={{ padding: "5px 9px", borderRadius: 999, background: latestCloud?.state === "public-active" ? "var(--green-soft)" : "var(--paper-2)", color: latestCloud?.state === "public-active" ? "var(--green-deep)" : "var(--ink-soft)", fontSize: 11, fontWeight: 750 }}>
+          <span style={{ padding: "5px 9px", borderRadius: 999, background: latestCloud?.state === "public-active" ? "var(--ok-soft)" : "var(--paper-2)", color: latestCloud?.state === "public-active" ? "var(--green-deep)" : "var(--ink-soft)", fontSize: 11, fontWeight: 750 }}>
             {latestCloud ? cloudStateLabel(latestCloud.state) : (ko ? "내 컴퓨터에만 저장" : "Saved on this Mac")}
           </span>
         </div>
@@ -4134,7 +4134,7 @@ function ExperiencePanel({
               <article key={draft.id} style={{ minWidth: 0, border: "1px solid var(--paper-edge)", borderRadius: 12, padding: 11, background: "color-mix(in srgb, var(--paper-2) 86%, transparent)", boxShadow: "inset 0 1px 0 color-mix(in srgb, white 55%, transparent)" }}>
                 <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "center" }}>
                   <span style={{ fontSize: 10, color: "var(--amber-deep)", fontWeight: 800 }}>{ko ? "근거 대기" : "EVIDENCE NEEDED"}</span>
-                  <span aria-label={ko ? "로컬 전용, 공개 불가" : "Local only, not publishable"} title={ko ? "로컬 전용 · 공개 불가" : "Local only · not publishable"} style={{ width: 8, height: 8, borderRadius: 999, background: "var(--amber-deep)", boxShadow: "0 0 0 4px var(--amber-soft)" }} />
+                  <span aria-label={ko ? "로컬 전용, 공개 불가" : "Local only, not publishable"} title={ko ? "로컬 전용 · 공개 불가" : "Local only · not publishable"} style={{ width: 8, height: 8, borderRadius: 999, background: "var(--amber-deep)", boxShadow: "0 0 0 4px var(--warn-soft)" }} />
                 </div>
                 <p style={{ margin: "9px 0", fontSize: 12, lineHeight: 1.45, color: "var(--ink)", display: "-webkit-box", WebkitLineClamp: 3, WebkitBoxOrient: "vertical", overflow: "hidden" }}>{draft.statement}</p>
                 <div style={{ display: "flex", flexWrap: "wrap", gap: 5 }}>
@@ -4232,7 +4232,7 @@ function ExperiencePanel({
             : "Save reviewed ways this agent solved work as experience chips. Original memory stays on this computer and is reviewed before publishing."}
         </p>
         {!agent.packageHash && (
-          <div style={{ padding: 10, borderRadius: 8, background: "var(--amber-soft)", color: "var(--amber-deep)", fontSize: 12 }}>
+          <div style={{ padding: 10, borderRadius: 8, background: "var(--warn-soft)", color: "var(--amber-deep)", fontSize: 12 }}>
             {ko ? "먼저 이 에이전트를 Hub와 연결해야 경험칩을 만들 수 있습니다." : "Connect this agent to Hub before creating Experience Chips."}
           </div>
         )}
@@ -4303,7 +4303,7 @@ function ExperiencePanel({
                           alignItems: "center",
                           gap: 6,
                           color: operationalSourceIds.includes(candidate.id) ? "var(--green-deep)" : "var(--muted-deep)",
-                          background: operationalSourceIds.includes(candidate.id) ? "var(--green-soft)" : "var(--paper)",
+                          background: operationalSourceIds.includes(candidate.id) ? "var(--ok-soft)" : "var(--paper)",
                         }}
                       >
                         {operationalSourceIds.includes(candidate.id) ? <IconCheck size={13} /> : <IconPlus size={13} />}
@@ -4360,7 +4360,7 @@ function ExperiencePanel({
                   </div>
                 </div>
                 {operationalProjection?.privacyIssueCodes.length ? (
-                  <div role="alert" style={{ marginTop: 8, padding: "8px 10px", borderRadius: 9, background: "var(--amber-soft)", color: "var(--amber-deep)", fontSize: 11.5, lineHeight: 1.5 }}>
+                  <div role="alert" style={{ marginTop: 8, padding: "8px 10px", borderRadius: 9, background: "var(--warn-soft)", color: "var(--amber-deep)", fontSize: 11.5, lineHeight: 1.5 }}>
                     {ko
                       ? "개인정보로 보이는 내용이 있습니다. 이름, 계정, 로컬 경로가 없는 표현으로 고쳐주세요."
                       : "Some text may contain personal information. Rewrite it without names, accounts, or local paths."}
@@ -4370,7 +4370,7 @@ function ExperiencePanel({
                   <button type="button" disabled={busy || operationalSourceIds.length === 0} onClick={fillBuyerCopyDraft} style={runtimeButtonStyle}><IconWand size={13} /> {ko ? "자동 소개 만들기" : "Create draft automatically"}</button>
                   <button type="button" disabled={busy || operationalSourceIds.length === 0 || !operationalTitle.trim() || !operationalInstructions.trim() || !operationalTask || !selectedPack.baseAgentReleaseId} onClick={() => void saveOperationalPublicProjection()} style={runtimeButtonStyle}><IconEdit size={13} /> {ko ? "내 소개 저장" : "Save my copy"}</button>
                   <button type="button" disabled={busy || !operationalProjection || operationalProjectionDirty || operationalProjection.privacyIssueCodes.length > 0 || operationalPublicReady} onClick={() => void confirmOperationalPublicProjection()} style={runtimeButtonStyle}><IconShield size={13} /> {ko ? "공개할 문장 확인" : "Approve public copy"}</button>
-                  <span title={ko ? "원본 Memory와 후보는 계속 비공개입니다." : "Original Memory and candidates remain private."} style={{ marginLeft: "auto", width: 9, height: 9, borderRadius: 999, background: operationalPublicReady ? "var(--green-deep)" : "var(--amber-deep)", boxShadow: `0 0 0 4px ${operationalPublicReady ? "var(--green-soft)" : "var(--amber-soft)"}` }} />
+                  <span title={ko ? "원본 Memory와 후보는 계속 비공개입니다." : "Original Memory and candidates remain private."} style={{ marginLeft: "auto", width: 9, height: 9, borderRadius: 999, background: operationalPublicReady ? "var(--green-deep)" : "var(--amber-deep)", boxShadow: `0 0 0 4px ${operationalPublicReady ? "var(--ok-soft)" : "var(--warn-soft)"}` }} />
                 </div>
                 {!selectedPack.baseAgentReleaseId && <small style={{ display: "block", marginTop: 8, color: "var(--muted-deep)" }}>{ko ? "먼저 에이전트를 비공개로 연결하세요." : "Connect the agent privately first."}</small>}
               </div>
@@ -4417,7 +4417,7 @@ function ExperiencePanel({
                 </div>
 
                 {latestCloud ? (
-                  <div data-testid="experience-cloud-status" data-cloud-state={latestCloud.state} style={{ marginTop: 10, borderRadius: 8, padding: "9px 10px", background: latestCloud.state === "public-active" ? "var(--green-soft)" : latestCloud.state === "conflict" || latestCloud.state === "error" ? "var(--amber-soft)" : "var(--paper-2)", fontSize: 11.5 }}>
+                  <div data-testid="experience-cloud-status" data-cloud-state={latestCloud.state} style={{ marginTop: 10, borderRadius: 8, padding: "9px 10px", background: latestCloud.state === "public-active" ? "var(--ok-soft)" : latestCloud.state === "conflict" || latestCloud.state === "error" ? "var(--warn-soft)" : "var(--paper-2)", fontSize: 11.5 }}>
                     <strong>{cloudStateLabel(latestCloud.state)}</strong>
                     <span style={{ display: "block", marginTop: 3, color: "var(--muted-deep)" }}>
                       {latestCloud.state === "public-active"
@@ -5558,6 +5558,15 @@ function AgentDetailView({
                               <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
                                 <button
                                   onClick={() => handleToggleSync("gotchas", item.id)}
+                                  /* ★아이콘만 있는 단추는 읽을 이름이 있어야 한다 — 그리고 토글은
+                                     **지금 상태**를 말해야 누르기 전에 무슨 일이 생길지 안다. */
+                                  aria-pressed={item.synced}
+                                  aria-label={item.synced
+                                    ? (locale === "ko" ? "이 항목 동기화 끄기" : "Stop syncing this item")
+                                    : (locale === "ko" ? "이 항목 동기화 켜기" : "Sync this item")}
+                                  title={item.synced
+                                    ? (locale === "ko" ? "이 항목 동기화 끄기" : "Stop syncing this item")
+                                    : (locale === "ko" ? "이 항목 동기화 켜기" : "Sync this item")}
                                   style={{ border: "none", background: "none", cursor: "pointer", color: item.synced ? "var(--accent)" : "var(--muted)" }}
                                 >
                                   <IconPaperclip size={12} />
@@ -5712,8 +5721,8 @@ function AgentDetailView({
                       <strong style={{ display: "block", fontSize: 13 }}>{locale === "ko" ? "내 경험칩 만들기·판매" : "Create and sell my Experience Chips"}</strong>
                       <span style={{ display: "block", marginTop: 2, color: "var(--muted-deep)", fontSize: 10.5 }}>{locale === "ko" ? "필요할 때만 열어 판매할 경험과 공개 상태를 관리합니다." : "Open only when you want to manage saleable experience and publishing."}</span>
                     </div>
-                    <span title={locale === "ko" ? "저장된 경험칩" : "Saved Experience Chips"} style={{ padding: "3px 7px", border: "1px solid var(--paper-edge)", borderRadius: 999, color: "var(--green-deep)", background: "var(--green-soft)", fontSize: 10, fontWeight: 750 }}>{locale === "ko" ? "경험" : "Experience"} {ontologySummary?.packCount ?? 0}</span>
-                    <span title={locale === "ko" ? "아직 검토할 취향" : "Taste drafts to review"} style={{ padding: "3px 7px", border: "1px solid var(--paper-edge)", borderRadius: 999, color: "var(--amber-deep)", background: "var(--amber-soft)", fontSize: 10, fontWeight: 750 }}>{locale === "ko" ? "취향" : "Taste"} {ontologySummary?.tasteDraftCount ?? 0}</span>
+                    <span title={locale === "ko" ? "저장된 경험칩" : "Saved Experience Chips"} style={{ padding: "3px 7px", border: "1px solid var(--paper-edge)", borderRadius: 999, color: "var(--green-deep)", background: "var(--ok-soft)", fontSize: 10, fontWeight: 750 }}>{locale === "ko" ? "경험" : "Experience"} {ontologySummary?.packCount ?? 0}</span>
+                    <span title={locale === "ko" ? "아직 검토할 취향" : "Taste drafts to review"} style={{ padding: "3px 7px", border: "1px solid var(--paper-edge)", borderRadius: 999, color: "var(--amber-deep)", background: "var(--warn-soft)", fontSize: 10, fontWeight: 750 }}>{locale === "ko" ? "취향" : "Taste"} {ontologySummary?.tasteDraftCount ?? 0}</span>
                     <span aria-hidden="true" style={{ marginLeft: "auto", width: 7, height: 7, borderRight: "1.5px solid currentColor", borderBottom: "1.5px solid currentColor", transform: "rotate(45deg) translateY(-2px)", color: "var(--muted-deep)" }} />
                   </summary>
                   <div style={{ padding: "4px 12px 12px", borderTop: "1px solid var(--paper-edge)" }}>
@@ -5767,7 +5776,7 @@ function AgentDetailView({
                   {loadoutRows.map((row, index) => (
                     <div key={row.key} style={{ minHeight: 48, padding: "8px 11px", borderBottom: index === loadoutRows.length - 1 ? 0 : "1px solid var(--paper-edge)", background: "var(--paper)", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 14 }}>
                       <strong style={{ minWidth: 0, fontSize: 12.5 }}>{locale === "ko" ? row.labelKo : row.labelEn}</strong>
-                      <span style={{ flexShrink: 0, padding: "3px 8px", borderRadius: 999, fontSize: 10.5, fontWeight: 720, color: row.present ? "var(--green-deep)" : "var(--muted-deep)", background: row.present ? "var(--green-soft)" : "var(--paper-2)" }}>
+                      <span style={{ flexShrink: 0, padding: "3px 8px", borderRadius: 999, fontSize: 10.5, fontWeight: 720, color: row.present ? "var(--green-deep)" : "var(--muted-deep)", background: row.present ? "var(--ok-soft)" : "var(--paper-2)" }}>
                         {row.detail ?? (row.present ? (locale === "ko" ? "발견됨" : "Observed") : (locale === "ko" ? "선언 없음" : "Not declared"))}
                       </span>
                     </div>

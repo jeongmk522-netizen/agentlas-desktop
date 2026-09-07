@@ -178,7 +178,7 @@ export function ExperienceProfileCard({
                         fontSize: 9,
                         fontWeight: 750,
                         color: status.tone === "green" ? "var(--green-deep)" : status.tone === "amber" ? "var(--amber-deep)" : "var(--muted-deep)",
-                        background: status.tone === "green" ? "var(--green-soft)" : status.tone === "amber" ? "var(--amber-soft)" : "var(--fill-1)",
+                        background: status.tone === "green" ? "var(--ok-soft)" : status.tone === "amber" ? "var(--warn-soft)" : "var(--fill-1)",
                       }}
                     >
                       {status.text}
@@ -207,7 +207,7 @@ export function ExperienceProfileCard({
           {equippedChips.length > 0 ? (
             <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 7 }}>
               {equippedChips.map((chip) => (
-                <span key={chip.id} style={{ padding: "3px 8px", borderRadius: 999, border: "1px solid var(--paper-edge)", background: chip.kind === "taste" ? "var(--amber-soft)" : "var(--green-soft)", color: chip.kind === "taste" ? "var(--amber-deep)" : "var(--green-deep)", fontSize: 10.5, fontWeight: 700 }}>
+                <span key={chip.id} style={{ padding: "3px 8px", borderRadius: 999, border: "1px solid var(--paper-edge)", background: chip.kind === "taste" ? "var(--warn-soft)" : "var(--ok-soft)", color: chip.kind === "taste" ? "var(--amber-deep)" : "var(--green-deep)", fontSize: 10.5, fontWeight: 700 }}>
                   {chip.name}
                 </span>
               ))}

@@ -2099,7 +2099,7 @@ function CoreAccountLine({ attached }: { attached: boolean }) {
             disabled={busy}
             style={{
               fontSize: 11, padding: "2px 8px", borderRadius: 6,
-              border: "1px solid var(--border)", background: "transparent",
+              border: "1px solid var(--paper-edge)", background: "transparent",
               color: "var(--muted-deep)", cursor: busy ? "default" : "pointer", opacity: busy ? 0.6 : 1,
             }}
           >
@@ -2239,7 +2239,7 @@ function CoreEngineLine({
               fontSize: 11,
               padding: "2px 8px",
               borderRadius: 6,
-              border: "1px solid var(--border)",
+              border: "1px solid var(--paper-edge)",
               background: "transparent",
               color: "var(--muted-deep)",
               cursor: running ? "default" : "pointer",

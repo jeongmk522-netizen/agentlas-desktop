@@ -562,7 +562,7 @@ function FirmDetailPage() {
           }}
         >
           {sidebarCollapsed ? (
-            <button onClick={() => setSelectedNode(null)} style={{ border: "none", background: "none", cursor: "pointer", color: "var(--accent)" }}>
+            <button onClick={() => setSelectedNode(null)} aria-label={locale === "ko" ? "조직 보기로 돌아가기" : "Back to the organization view"} title={locale === "ko" ? "조직 보기로 돌아가기" : "Back to the organization view"} style={{ border: "none", background: "none", cursor: "pointer", color: "var(--accent)" }}>
               <IconBuilding size={20} />
             </button>
           ) : (
@@ -640,6 +640,13 @@ function FirmDetailPage() {
         <footer style={{ borderTop: "1px solid var(--glass-border)", padding: 8, display: "flex", justifyContent: sidebarCollapsed ? "center" : "flex-end" }}>
           <button
             onClick={toggleSidebar}
+            aria-expanded={!sidebarCollapsed}
+            aria-label={sidebarCollapsed
+              ? (locale === "ko" ? "사이드바 펼치기" : "Expand the sidebar")
+              : (locale === "ko" ? "사이드바 접기" : "Collapse the sidebar")}
+            title={sidebarCollapsed
+              ? (locale === "ko" ? "사이드바 펼치기" : "Expand the sidebar")
+              : (locale === "ko" ? "사이드바 접기" : "Collapse the sidebar")}
             style={{
               background: "none",
               border: "none",
@@ -729,7 +736,7 @@ function FirmDetailPage() {
                 <IconChat size={14} />
                 {t("firm.ceo.command")}
               </button>
-              <button onClick={() => void uninstall()} className="titlebar-nodrag" style={{ color: "var(--muted-deep)", padding: 6, background: "none", border: "none", cursor: "pointer" }}>
+              <button onClick={() => void uninstall()} aria-label={locale === "ko" ? "이 조직 제거" : "Remove this organization"} title={locale === "ko" ? "이 조직 제거" : "Remove this organization"} className="titlebar-nodrag" style={{ color: "var(--muted-deep)", padding: 6, background: "none", border: "none", cursor: "pointer" }}>
                 <IconTrash size={16} />
               </button>
             </header>
@@ -1966,6 +1973,15 @@ function AgentDetailView({
                               <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
                                 <button
                                   onClick={() => handleToggleSync("gotchas", item.id)}
+                                  /* ★아이콘만 있는 단추는 읽을 이름이 있어야 한다 — 그리고 토글은
+                                     **지금 상태**를 말해야 누르기 전에 무슨 일이 생길지 안다. */
+                                  aria-pressed={item.synced}
+                                  aria-label={item.synced
+                                    ? (locale === "ko" ? "이 항목 동기화 끄기" : "Stop syncing this item")
+                                    : (locale === "ko" ? "이 항목 동기화 켜기" : "Sync this item")}
+                                  title={item.synced
+                                    ? (locale === "ko" ? "이 항목 동기화 끄기" : "Stop syncing this item")
+                                    : (locale === "ko" ? "이 항목 동기화 켜기" : "Sync this item")}
                                   style={{ border: "none", background: "none", cursor: "pointer", color: item.synced ? "var(--accent)" : "var(--muted)" }}
                                 >
                                   <IconPaperclip size={12} />

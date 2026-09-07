@@ -858,7 +858,7 @@ function ProjectPage() {
             </div>
 
             <div style={{ overflowY: "auto", minHeight: 220, padding: "8px 12px 16px" }}>
-              {externalSessionsError && <div role="alert" style={{ margin: "8px", padding: 12, borderRadius: 10, background: "var(--red-soft)", color: "var(--red-deep)", fontSize: 12 }}>{externalSessionsError}</div>}
+              {externalSessionsError && <div role="alert" style={{ margin: "8px", padding: 12, borderRadius: 10, background: "var(--danger-soft)", color: "var(--red-deep)", fontSize: 12 }}>{externalSessionsError}</div>}
               {externalSessionsLoading ? (
                 <div role="status" style={{ padding: 32, textAlign: "center", color: "var(--muted-deep)", fontSize: 12 }}>{locale === "ko" ? "Claude Code와 Codex 기록을 확인하는 중…" : "Checking Claude Code and Codex history…"}</div>
               ) : visibleExternalSessions.length === 0 ? (
@@ -1221,7 +1221,7 @@ function ProjectPage() {
           background: var(--paper);
           color: var(--muted-deep);
           cursor: pointer;
-          box-shadow: var(--shadow-xs);
+          box-shadow: var(--shadow-1);
         }
         .project-inspector-toggle:hover,
         .project-inspector-toggle:focus-visible {

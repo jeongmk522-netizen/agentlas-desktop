@@ -1088,7 +1088,7 @@
 .briefingConfirm {
   margin-top: 20px;
   padding: 14px 16px;
-  border: 1px solid var(--border);
+  border: 1px solid var(--paper-edge);
   border-radius: 12px;
   background: var(--surface-muted, transparent);
 }

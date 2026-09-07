@@ -482,7 +482,7 @@ export function AgentHubOntologyProjectionView({
         </summary>
         <div style={{ display: "flex", flexDirection: "column", gap: 12, marginTop: 10 }}>
           {result.binding ? (
-            <div data-testid="ontology-exact-binding" role="status" style={{ padding: 12, border: "1px solid var(--paper-edge)", borderRadius: 9, color: "var(--green-deep)", background: "var(--green-soft)", fontSize: 11.5, lineHeight: 1.55 }}>
+            <div data-testid="ontology-exact-binding" role="status" style={{ padding: 12, border: "1px solid var(--paper-edge)", borderRadius: 9, color: "var(--green-deep)", background: "var(--ok-soft)", fontSize: 11.5, lineHeight: 1.55 }}>
               {ko ? "이 에이전트에서 사용할 수 있는 경험칩입니다." : "These Experience Chips can be used with this agent."}
             </div>
           ) : (
@@ -540,7 +540,7 @@ export function AgentHubOntologyProjectionView({
                 <div
                   data-testid="ontology-attach-notice"
                   role={attachmentNotice.tone === "error" ? "alert" : "status"}
-                  style={{ marginBottom: 8, padding: "8px 9px", borderRadius: 8, color: attachmentNotice.tone === "error" ? "var(--red-deep)" : "var(--green-deep)", background: attachmentNotice.tone === "error" ? "rgba(194,74,40,0.08)" : "var(--green-soft)", fontSize: 10.5, lineHeight: 1.5 }}
+                  style={{ marginBottom: 8, padding: "8px 9px", borderRadius: 8, color: attachmentNotice.tone === "error" ? "var(--red-deep)" : "var(--green-deep)", background: attachmentNotice.tone === "error" ? "rgba(194,74,40,0.08)" : "var(--ok-soft)", fontSize: 10.5, lineHeight: 1.5 }}
                 >
                   {attachmentNotice.text}
                 </div>

@@ -573,7 +573,7 @@ export function AgentLeaseDialog({
             </div>
 
             {failure && (
-              <div role="alert" style={{ padding: "10px 12px", borderRadius: 10, background: "var(--red-soft)", color: "var(--red-deep)", fontSize: 12.5, lineHeight: 1.5, display: "flex", flexDirection: "column", gap: 6 }}>
+              <div role="alert" style={{ padding: "10px 12px", borderRadius: 10, background: "var(--danger-soft)", color: "var(--red-deep)", fontSize: 12.5, lineHeight: 1.5, display: "flex", flexDirection: "column", gap: 6 }}>
                 {failure.kind === "insufficient" ? (
                   <>
                     <span>

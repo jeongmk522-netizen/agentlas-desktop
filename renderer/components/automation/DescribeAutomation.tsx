@@ -639,7 +639,7 @@ export function DescribeAutomation({
                   border: "1px solid var(--line)",
                   padding: "7px 13px",
                   fontSize: 12.5,
-                  background: "var(--surface)",
+                  background: "var(--paper)",
                   color: "var(--ink)",
                   cursor: applying ? "default" : "pointer",
                   opacity: applying && applying !== option.actionId ? 0.5 : 1,

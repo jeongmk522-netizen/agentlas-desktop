@@ -4,18 +4,26 @@ import path from "node:path";
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import type { workbookToCells } from "./workers/workbook-to-cells";
-import { verifyScienceWorkbook } from "../../shared/science-workbook";
+import { SCIENCE_WORKBOOK_MAX_OUTPUT_BYTES, verifyScienceWorkbook } from "../../shared/science-workbook";
 
 type Workbook = ReturnType<typeof workbookToCells>;
 const MAX_RAW = 8 * 1024 * 1024;
-const MAX_OUTPUT = 4 * 1024 * 1024;
+const MAX_OUTPUT = SCIENCE_WORKBOOK_MAX_OUTPUT_BYTES;
 function hash(bytes: Buffer): string { return createHash("sha256").update(bytes).digest("hex"); }
+
+function canonicalJson(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
+  if (value && typeof value === "object") {
+    return `{${Object.entries(value).sort(([left], [right]) => left.localeCompare(right)).map(([key, child]) => `${JSON.stringify(key)}:${canonicalJson(child)}`).join(",")}}`;
+  }
+  return JSON.stringify(value);
+}
 
 /** Main-owned file capability only. The renderer must never supply an unchecked path. */
 export async function prepareScienceWorkbook(
   filePath: string,
   workerPath = path.join(__dirname, "workers", "workbook-to-cells.js"),
-): Promise<{ rawBytes: Buffer; outputBytes: Buffer; workbook: Workbook; workerSha256: string; outputSha256: string }> {
+): Promise<{ rawBytes: Buffer; outputBytes: Buffer; workbook: Workbook; workerSha256: string; outputSha256: string; environmentSha256: string }> {
   const fd = fs.openSync(filePath, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0));
   let rawBytes: Buffer;
   try {
@@ -62,6 +70,20 @@ export async function prepareScienceWorkbook(
     try { workbook = JSON.parse(outputBytes.toString("utf8")) as Workbook; }
     catch { throw new Error("science-workbook-output-invalid"); }
     verifyScienceWorkbook(workbook, hash(rawBytes));
-    return { rawBytes, outputBytes, workbook, workerSha256, outputSha256: hash(outputBytes) };
+    const environmentSha256 = hash(Buffer.from(canonicalJson({
+      schema: "agentlas.science-workbook-environment/v1",
+      workerSha256,
+      runtime: "native-sidecar",
+      node: process.versions.node,
+      electron: process.versions.electron ?? null,
+      platform: process.platform,
+      arch: process.arch,
+      network: "not-enforced",
+      rawLimitBytes: MAX_RAW,
+      normalizedLimitBytes: MAX_OUTPUT,
+      sheetLimit: 100,
+      cellLimit: 250_000,
+    })));
+    return { rawBytes, outputBytes, workbook, workerSha256, outputSha256: hash(outputBytes), environmentSha256 };
   } finally { fs.rmSync(job, { recursive: true, force: true }); }
 }

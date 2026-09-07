@@ -121,6 +121,12 @@ contextBridge.exposeInMainWorld("agentlasScience", Object.freeze({
   }),
   datasets: Object.freeze({
     importCsv: (input: unknown) => ipcRenderer.invoke("science:datasets:importCsv", { extensionId, input }),
+    importWorkbook: (input: unknown) => {
+      if (!navigator.userActivation?.isActive) return Promise.reject(new Error("science-workbook-user-gesture-required"));
+      return ipcRenderer.invoke("science:datasets:importWorkbook", { extensionId, input });
+    },
+    workbook: (input: unknown) => ipcRenderer.invoke("science:datasets:workbook", { extensionId, input }),
+    projectWorkbook: (input: unknown) => ipcRenderer.invoke("science:datasets:projectWorkbook", { extensionId, input }),
   }),
   sourceFigures: Object.freeze({
     list: (projectId: string) => ipcRenderer.invoke("science:sourceFigures:list", { extensionId, projectId }),

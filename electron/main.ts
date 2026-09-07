@@ -189,6 +189,7 @@ import type {
   ReviewScienceEvidenceGraphInferenceInput,
 } from "../shared/science-evidence-graph";
 import { scienceLabDecisionProjectionsForProject } from "./science/lazy-services";
+import { registerScienceWorkbookIntakeHandlers } from "./science/workbook-intake-ipc";
 import { inspectScienceEpisodeResultReview, recordScienceEpisodeResultReview } from "./science/lazy-services";
 import { commitScienceVegaEdit, parseScienceVegaEditInput } from "./science/lazy-services";
 import {
@@ -1694,6 +1695,7 @@ app.whenReady().then(async () => {
     trackScienceFolderDocument(event.sender);
     return `${event.senderFrame.processId}:${event.senderFrame.routingId}:${scienceFolderDocuments.get(event.sender.id)}:${actualUrl.href}`;
   };
+  registerScienceWorkbookIntakeHandlers({ ipcMain, assertScienceSender, assertScienceProjectDocument, scienceStore });
   ipcMain.handle("science:projects:pickFolder", async (event, envelope: unknown) => {
     const documentId = assertScienceProjectDocument(event, envelope);
     const senderId = event.sender.id;

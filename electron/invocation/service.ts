@@ -1722,11 +1722,22 @@ export class InvocationService {
      * 헤드리스(사전 부여) 경로는 기존 결정 그대로 둔다.
      */
     let permissionEscalationRequested = false;
+    /*
+     * ★승격을 물을 수 있는 실행 — 읽기 전용만이 아니다.
+     *
+     * 조건이 `permissions === "read"` 였다. 그런데 사람이 실제로 막히는 자리는 그것만이
+     * 아니다: 쓰기 권한 실행에서도 작업 폴더 밖 경로는 거부되고, 그때 화면에는 "승인할 사람이
+     * 붙어 있지 않습니다"라는 문장과 기계 코드 한 줄만 남았다 — **채팅 앞에 사람이 앉아
+     * 있는데도**, 권한을 올릴 버튼 하나 없이(QA 실측 2026-09-07).
+     *
+     * 이미 full 인 실행은 더 올릴 것이 없으므로 제외한다. 승격 자체는 여전히 사람이 칩에
+     * 답해야 일어나고, 무응답은 기존 계약대로 거부로 닫힌다.
+     */
     const permissionEscalationEligible =
       !runReq.agentAppMode
       && !runWorkspaceBinding
       && Boolean(runReq.chatId)
-      && (runReq.permissions ?? "read") === "read";
+      && (runReq.permissions ?? "read") !== "full";
     void runMcpInvocation(
       runReq,
       (rawEvent) => {
@@ -2248,7 +2259,12 @@ export class InvocationService {
           }
           if (
             permissionEscalationRequested
-            && terminalKind === "invoke_completed"
+            /*
+             * 완주한 턴만 물었다. 그런데 승인이 없어 막힌 도구는 그 턴을 **실패로 끝내기도**
+             * 한다 — 그때가 사람이 가장 도움이 필요한 순간인데 아무것도 안 물었다.
+             * 사용자가 직접 멈춘 것만 제외한다(그건 이미 답이다).
+             */
+            && (terminalKind === "invoke_completed" || terminalKind === "invoke_failed")
             && !controller.signal.aborted
           ) {
             /*

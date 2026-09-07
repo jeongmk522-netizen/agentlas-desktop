@@ -182,7 +182,7 @@ function systemFingerprint(req: RunnerRequest): string {
   // another model is a false resume. Continuity is preserved by the fresh-session
   // path reseeding compacted history, not by keeping a stale session id.
   if (req.sessionFingerprintSeed) {
-    return createHash("sha256").update("seed.v3\0").update(req.sessionFingerprintSeed).update("\0model\0").update(req.model ?? "").digest("hex");
+    return createHash("sha256").update("seed.v3\0").update(req.sessionFingerprintSeed).digest("hex");
   }
   return createHash("sha256")
     .update(req.systemPrompt)
@@ -193,7 +193,6 @@ function systemFingerprint(req: RunnerRequest): string {
     .update("\0")
     .update(req.forceSurface ? "force-surface" : "normal")
     .update("\0")
-    .update(req.model ?? "")
     .digest("hex");
 }
 

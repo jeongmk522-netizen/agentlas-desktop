@@ -517,6 +517,20 @@ function flattenHistory(req: RunnerRequest): string {
  * 시드가 없는 레거시 호출만 시스템 프롬프트 전체 해시로 폴백한다.
  * Build처럼 runtimeSessionId를 직접 넘기는 표면은 호출자가 세션 수명을 관리한다.
  */
+/*
+ * ★Owner decision 2026-09-07 — a conversation survives a model change.
+ *
+ * The model used to be part of session identity, on the reasoning that a session belongs to the
+ * model that created it. The reasoning is sound and the result was not: a usage limit that moved
+ * the run to another model, or the person simply picking a different one, threw the CLI session
+ * away. A fresh session receives only the conversation text, so everything the CLI actually held
+ * -- files it had read, what its tools returned, the plan it was working from -- was gone, while
+ * the transcript on screen stayed continuous and hid it.
+ *
+ * These CLIs take the model as a per-call argument; the thread is not bound to it. So the model
+ * leaves the identity. A different executable still starts a new session, because that genuinely
+ * is a different conversation.
+ */
 function systemFingerprint(req: RunnerRequest, executableFingerprint: string): string {
   // The model is part of the session identity. A runtime session belongs to the
   // model that created it, so resuming it under a different model is a false
@@ -537,8 +551,6 @@ function systemFingerprint(req: RunnerRequest, executableFingerprint: string): s
       .update("seed.v3\0")
       .update(executableFingerprint).update("\0")
       .update(req.sessionFingerprintSeed)
-      .update("\0model\0")
-      .update(req.model ?? "")
       .digest("hex");
   }
   return crypto
@@ -551,8 +563,6 @@ function systemFingerprint(req: RunnerRequest, executableFingerprint: string): s
     .update(req.permission ?? "")
     .update("\0")
     .update(req.forceSurface ? "force-surface" : "normal")
-    .update("\0")
-    .update(req.model ?? "")
     .update("\0")
     .update(req.effort ?? "")
     .digest("hex");

@@ -265,6 +265,20 @@ function resumePermissionArgs(permission?: RunnerRequest["permission"]): string[
  * 가를 이유가 없고, 지문에 섞으면 설정 하나 바꿀 때마다 대화 연속성이 끊긴다
  * (2026-07-16 세션유지 사고). 시드가 없는 레거시 호출만 전체 해시로 폴백한다.
  */
+/*
+ * ★Owner decision 2026-09-07 — a conversation survives a model change.
+ *
+ * The model used to be part of session identity, on the reasoning that a session belongs to the
+ * model that created it. The reasoning is sound and the result was not: a usage limit that moved
+ * the run to another model, or the person simply picking a different one, threw the CLI session
+ * away. A fresh session receives only the conversation text, so everything the CLI actually held
+ * -- files it had read, what its tools returned, the plan it was working from -- was gone, while
+ * the transcript on screen stayed continuous and hid it.
+ *
+ * These CLIs take the model as a per-call argument; the thread is not bound to it. So the model
+ * leaves the identity. A different executable still starts a new session, because that genuinely
+ * is a different conversation.
+ */
 function systemFingerprint(req: RunnerRequest): string {
   // The model is part of the session identity. A runtime session belongs to the
   // model that created it, so resuming it under a different model is a false
@@ -284,8 +298,6 @@ function systemFingerprint(req: RunnerRequest): string {
       .createHash("sha256")
       .update("seed.v4\0")
       .update(req.sessionFingerprintSeed)
-      .update("\0model\0")
-      .update(req.model ?? "")
       .update("\0image-tool\0")
       .update(codexImageToolCapability(req))
       .digest("hex");
@@ -299,8 +311,6 @@ function systemFingerprint(req: RunnerRequest): string {
     .update(req.permission ?? "")
     .update("\0")
     .update(req.forceSurface ? "force-surface" : "normal")
-    .update("\0")
-    .update(req.model ?? "")
     .update("\0")
     .update(req.effort ?? "")
     .update("\0")

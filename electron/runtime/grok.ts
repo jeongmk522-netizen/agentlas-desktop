@@ -427,7 +427,6 @@ export const runGrok: Runner = async (req: RunnerRequest, events: RunnerEvents):
         .update("grok-session-v1\0")
         .update(req.sessionFingerprintSeed ?? req.systemPrompt ?? "")
         .update("\0")
-        .update(req.model ?? "")
         .digest("hex")
     : null;
   const runtimeSessionOwnerId = req.runtimeSessionOwnerId ?? req.agentId;

@@ -955,7 +955,6 @@ export function antigravitySessionFingerprint(
     .update("agy-session-v2\0")
     .update(req.sessionFingerprintSeed ?? req.systemPrompt ?? "")
     .update("\0")
-    .update(req.model ?? "")
     .update("\0executable\0")
     .update(executableFingerprint)
     .digest("hex");

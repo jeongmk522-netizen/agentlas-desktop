@@ -1,4 +1,5 @@
 import { BrowserWindow, dialog } from "electron";
+import { createHash } from "node:crypto";
 import type { IpcMain, IpcMainInvokeEvent } from "electron";
 import path from "node:path";
 import type { ProductExtensionPermission } from "../../shared/product-extension";
@@ -10,7 +11,10 @@ import { prepareScienceWorkbook } from "./workbook-ingestion";
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const SHA256_RE = /^[a-f0-9]{64}$/;
 const MAX_PREVIEW_CELLS = 64;
+const MAX_WINDOW_PREVIEW_CELLS = 512;
 const MAX_PREVIEW_MERGES = 100;
+const MAX_PREVIEW_TEXT_BYTES = 2 * 1024;
+const MAX_READBACK_BYTES = 256 * 1024;
 
 type IpcBoundary = Pick<IpcMain, "handle">;
 type ScienceSenderAssertion = (event: IpcMainInvokeEvent, input: unknown, permission?: ProductExtensionPermission) => unknown;
@@ -43,11 +47,20 @@ type WorkbookEnvelope = {
   workbookSha256: string;
 };
 
+/** The Main-owned workbook grid persisted by agentlas.workbook-ingest. */
+export type ScienceWorkbookEnvelope = WorkbookEnvelope;
+
 export interface ScienceWorkbookPreviewCell {
   address: string;
   type: string;
   value: WorkbookCellValue;
+  valueByteLength: number | null;
+  valueSha256: string | null;
+  valueTruncated: boolean;
   formula: string | null;
+  formulaByteLength: number | null;
+  formulaSha256: string | null;
+  formulaTruncated: boolean;
   numberFormat: string | null;
   warning: WorkbookCell["warning"];
 }
@@ -64,6 +77,14 @@ export interface ScienceWorkbookSheetPreview {
   previewCells: ScienceWorkbookPreviewCell[];
 }
 
+export interface ScienceWorkbookReadbackWindow {
+  sheetOrdinal: number;
+  startRow: number;
+  rowCount: number;
+  startColumn: string;
+  columnCount: number;
+}
+
 export interface ScienceWorkbookReadback {
   schema: "agentlas.science-workbook-readback/v1";
   runId: string;
@@ -77,6 +98,9 @@ export interface ScienceWorkbookReadback {
   parser: WorkbookEnvelope["parser"];
   date1904: boolean;
   workbookSha256: string;
+  window: ScienceWorkbookReadbackWindow | null;
+  previewTruncated: boolean;
+  nextWindow: ScienceWorkbookReadbackWindow | null;
   sheets: ScienceWorkbookSheetPreview[];
 }
 
@@ -141,27 +165,107 @@ function parsePersistedWorkbook(store: ScienceStore, projectId: string, runId: s
   return { run, source, workbook: workbook as WorkbookEnvelope };
 }
 
+/** Load an immutable, already-ingested workbook for another Main-owned step. */
+export function readPersistedScienceWorkbook(store: ScienceStore, projectId: string, runId: string): {
+  run: ScienceResearchRun;
+  source: ScienceSource;
+  workbook: ScienceWorkbookEnvelope;
+} {
+  return parsePersistedWorkbook(store, projectId, runId);
+}
+
+function columnNumber(column: string): number {
+  let result = 0;
+  for (const character of column) result = result * 26 + character.charCodeAt(0) - 64;
+  return result;
+}
+
+function boundedPreviewText(value: string): {
+  value: string;
+  byteLength: number;
+  sha256: string;
+  truncated: boolean;
+} {
+  const byteLength = Buffer.byteLength(value, "utf8");
+  const sha256 = createHash("sha256").update(value, "utf8").digest("hex");
+  if (byteLength <= MAX_PREVIEW_TEXT_BYTES) return { value, byteLength, sha256, truncated: false };
+  let end = value.length;
+  while (end > 0 && Buffer.byteLength(value.slice(0, end), "utf8") > MAX_PREVIEW_TEXT_BYTES) end -= 1;
+  return { value: value.slice(0, end), byteLength, sha256, truncated: true };
+}
+
+function previewCell(cell: WorkbookCell): ScienceWorkbookPreviewCell {
+  const value = typeof cell.value === "string" ? boundedPreviewText(cell.value) : null;
+  const formula = typeof cell.formula === "string" ? boundedPreviewText(cell.formula) : null;
+  return {
+    address: cell.address,
+    type: cell.type,
+    value: value ? value.value : cell.value,
+    valueByteLength: value?.byteLength ?? null,
+    valueSha256: value?.sha256 ?? null,
+    valueTruncated: value?.truncated ?? false,
+    formula: formula ? formula.value : cell.formula,
+    formulaByteLength: formula?.byteLength ?? null,
+    formulaSha256: formula?.sha256 ?? null,
+    formulaTruncated: formula?.truncated ?? false,
+    numberFormat: cell.numberFormat,
+    warning: cell.warning,
+  };
+}
+
+function nextReadbackWindow(
+  sheets: readonly WorkbookSheet[],
+  window: ScienceWorkbookReadbackWindow | undefined,
+): ScienceWorkbookReadbackWindow | null {
+  const sheetOrdinal = window?.sheetOrdinal ?? sheets[0]?.ordinal;
+  if (sheetOrdinal === undefined) return null;
+  return {
+    sheetOrdinal,
+    startRow: window?.startRow ?? 1,
+    rowCount: Math.max(1, Math.min(window?.rowCount ?? 16, 16)),
+    startColumn: window?.startColumn ?? "A",
+    columnCount: Math.max(1, Math.min(window?.columnCount ?? 16, 16)),
+  };
+}
+
 export function summarizeScienceWorkbook(
   workbook: unknown,
   runId: string,
   source: { id: string; versionId: string; rawSha256: string; mimeType: string | null },
   sheetOrdinal?: number,
+  window?: ScienceWorkbookReadbackWindow,
 ): ScienceWorkbookReadback {
   verifyScienceWorkbook(workbook, source.rawSha256);
   const book = workbook as WorkbookEnvelope;
+  if (window) {
+    if (sheetOrdinal === undefined || sheetOrdinal !== window.sheetOrdinal
+      || !Number.isSafeInteger(window.startRow) || window.startRow < 1
+      || !Number.isSafeInteger(window.rowCount) || window.rowCount < 1 || window.rowCount > 128
+      || window.startRow + window.rowCount - 1 > 1_048_576
+      || !/^[A-Z]{1,3}$/u.test(window.startColumn)
+      || !Number.isSafeInteger(window.columnCount) || window.columnCount < 1 || window.columnCount > 64) {
+      throw new Error("science-workbook-readback-window-invalid");
+    }
+    const startColumn = columnNumber(window.startColumn);
+    if (startColumn < 1 || startColumn + window.columnCount - 1 > 16_384) throw new Error("science-workbook-readback-window-invalid");
+  }
   const selectedSheets = sheetOrdinal === undefined ? book.sheets : book.sheets.filter((sheet) => sheet.ordinal === sheetOrdinal);
   if (sheetOrdinal !== undefined && selectedSheets.length !== 1) throw new Error("science-workbook-sheet-invalid");
-  let remaining = MAX_PREVIEW_CELLS;
+  let remaining = window ? MAX_WINDOW_PREVIEW_CELLS : MAX_PREVIEW_CELLS;
   const sheets = selectedSheets.map((sheet): ScienceWorkbookSheetPreview => {
+    const candidateCells = window
+      ? sheet.cells.filter((cell) => {
+        const match = /^([A-Z]{1,3})([1-9][0-9]*)$/u.exec(cell.address);
+        if (!match) return false;
+        const row = Number(match[2]);
+        const column = columnNumber(match[1]!);
+        return row >= window.startRow && row < window.startRow + window.rowCount
+          && column >= columnNumber(window.startColumn)
+          && column < columnNumber(window.startColumn) + window.columnCount;
+      })
+      : sheet.cells;
     const previewCells = remaining > 0
-      ? sheet.cells.slice(0, Math.min(remaining, MAX_PREVIEW_CELLS)).map((cell) => ({
-        address: cell.address,
-        type: cell.type,
-        value: cell.value,
-        formula: cell.formula,
-        numberFormat: cell.numberFormat,
-        warning: cell.warning,
-      }))
+      ? candidateCells.slice(0, Math.min(remaining, window ? MAX_WINDOW_PREVIEW_CELLS : MAX_PREVIEW_CELLS)).map(previewCell)
       : [];
     remaining -= previewCells.length;
     return {
@@ -176,26 +280,58 @@ export function summarizeScienceWorkbook(
       previewCells,
     };
   });
-  return {
-    schema: "agentlas.science-workbook-readback/v1",
+  const base = {
+    schema: "agentlas.science-workbook-readback/v1" as const,
     runId,
     source,
     format: book.format,
     parser: book.parser,
     date1904: book.date1904,
     workbookSha256: book.workbookSha256,
-    sheets,
+    window: window ?? null,
+  };
+  let boundedSheets = sheets;
+  let previewTruncated = sheets.some((sheet) => sheet.previewCells.some((cell) => cell.valueTruncated || cell.formulaTruncated));
+  const serializedBytes = (candidateSheets: readonly ScienceWorkbookSheetPreview[]): number => Buffer.byteLength(JSON.stringify({
+    ...base,
+    previewTruncated,
+    nextWindow: previewTruncated ? nextReadbackWindow(book.sheets, window) : null,
+    sheets: candidateSheets,
+  }), "utf8");
+  while (serializedBytes(boundedSheets) > MAX_READBACK_BYTES) {
+    const index = boundedSheets.reduce((selected, sheet, current) => (
+      !boundedSheets[selected] || sheet.previewCells.length > boundedSheets[selected]!.previewCells.length ? current : selected
+    ), 0);
+    const selected = boundedSheets[index];
+    if (!selected || selected.previewCells.length === 0) throw new Error("science-workbook-readback-size-limit");
+    const keep = Math.max(0, Math.floor(selected.previewCells.length / 2));
+    boundedSheets = boundedSheets.map((sheet, current) => current === index
+      ? { ...sheet, previewCells: sheet.previewCells.slice(0, keep) }
+      : sheet);
+    previewTruncated = true;
+  }
+  return {
+    ...base,
+    previewTruncated,
+    nextWindow: previewTruncated ? nextReadbackWindow(book.sheets, window) : null,
+    sheets: boundedSheets,
   };
 }
 
-function persistedWorkbookReadback(store: ScienceStore, projectId: string, runId: string, sheetOrdinal?: number): ScienceWorkbookReadback {
+export function persistedWorkbookReadback(
+  store: ScienceStore,
+  projectId: string,
+  runId: string,
+  sheetOrdinal?: number,
+  window?: ScienceWorkbookReadbackWindow,
+): ScienceWorkbookReadback {
   const { run, source, workbook } = parsePersistedWorkbook(store, projectId, runId);
   return summarizeScienceWorkbook(workbook, run.id, {
     id: source.id,
     versionId: source.version.id,
     rawSha256: workbook.rawSha256,
     mimeType: source.version.mimeType,
-  }, sheetOrdinal);
+  }, sheetOrdinal, window);
 }
 
 export function persistPreparedScienceWorkbook(

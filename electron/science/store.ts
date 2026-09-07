@@ -319,7 +319,9 @@ import {
   SCIENCE_TABLE_RENDERER_ID,
   SCIENCE_TABLE_RENDERER_VERSION,
   alignSciencePairedSeries,
+  SCIENCE_WORKBOOK_NORMALIZATION_PARSER_ID,
   scienceTableSha256,
+  scienceWorkbookNormalizationTable,
   validateScienceTablePayload,
   type PrepareSciencePairedStatisticsTableInput,
   type PrepareSciencePairedStatisticsTableResult,
@@ -11908,6 +11910,75 @@ export class ScienceStore {
     table: ScienceDatasetTablePayload;
   } {
     const run = this.getResearchRunForProject(projectId, runId);
+    if (run?.toolId === "agentlas.workbook-normalize") {
+      if (run.status !== "succeeded" || run.toolVersion !== "1.0.0" || !run.parentRunId
+        || run.inputs.length !== 1 || run.outputs.length !== 2) {
+        throw new Error("science-workbook-normalization-run-invalid");
+      }
+      const parent = this.getResearchRunForProject(projectId, run.parentRunId);
+      if (!parent || parent.status !== "succeeded" || parent.toolId !== "agentlas.workbook-ingest"
+        || parent.toolVersion !== "1.0.0" || parent.outputs.length !== 2) {
+        throw new Error("science-workbook-normalization-parent-invalid");
+      }
+      const planInput = run.inputs[0]!;
+      const normalizedOutput = run.outputs.find((output) => output.role === "normalized-workbook");
+      const tableOutput = run.outputs.find((output) => output.role === "normalized-table");
+      if (planInput.role !== "workbook-normalization-plan"
+        || planInput.mimeType !== "application/vnd.agentlas.science.workbook-normalization-plan+json"
+        || planInput.artifactId !== null || planInput.artifactVersion !== null
+        || !normalizedOutput || normalizedOutput.mimeType !== "application/vnd.agentlas.science.workbook-normalization+json"
+        || normalizedOutput.artifactId !== null || normalizedOutput.artifactVersion !== null
+        || !tableOutput || tableOutput.mimeType !== "application/vnd.agentlas.science.table+json"
+        || tableOutput.artifactId !== null || tableOutput.artifactVersion !== null) {
+        throw new Error("science-workbook-normalization-output-invalid");
+      }
+      const manifestResource = (resource: ScienceResearchRunResource): Record<string, unknown> => ({
+        role: resource.role,
+        mimeType: resource.mimeType,
+        byteSize: resource.byteSize,
+        sha256: resource.sha256,
+        blobRef: resource.blobRef,
+        artifactId: resource.artifactId,
+        artifactVersion: resource.artifactVersion,
+      });
+      if (sha256Json(run.inputs.map(manifestResource)) !== run.inputManifestSha256
+        || sha256Json(run.outputs.map(manifestResource)) !== run.outputManifestSha256) {
+        throw new Error("science-workbook-normalization-manifest-invalid");
+      }
+      const workbookOutput = parent.outputs.find((output) => output.role === "workbook-grid");
+      if (!workbookOutput || workbookOutput.mimeType !== "application/vnd.agentlas.science.workbook+json"
+        || workbookOutput.artifactId !== null || workbookOutput.artifactVersion !== null) {
+        throw new Error("science-workbook-normalization-parent-output-invalid");
+      }
+      const workbook = JSON.parse(this.readRunBlob(workbookOutput).toString("utf8")) as Record<string, unknown>;
+      verifyScienceWorkbook(workbook, String(workbook.rawSha256));
+      const plan = JSON.parse(this.readRunBlob(planInput).toString("utf8")) as Record<string, unknown>;
+      const normalized = JSON.parse(this.readRunBlob(normalizedOutput).toString("utf8")) as Record<string, unknown>;
+      if (plan.schema !== "agentlas.science-workbook-normalization/v1"
+        || normalized.schema !== "agentlas.science-workbook-normalization/v1"
+        || !normalized.source || typeof normalized.source !== "object" || Array.isArray(normalized.source)
+        || (normalized.source as Record<string, unknown>).rawSha256 !== workbook.rawSha256
+        || (normalized.source as Record<string, unknown>).workbookSha256 !== workbook.workbookSha256
+        || normalized.planSha256 !== scienceTableSha256(plan)) {
+        throw new Error("science-workbook-normalization-lineage-invalid");
+      }
+      const table = scienceWorkbookNormalizationTable({
+        source: { rawSha256: String(workbook.rawSha256) },
+        columns: normalized.columns as ScienceDatasetTablePayload["columns"],
+        rows: normalized.rows as ScienceDatasetTablePayload["rows"],
+        profile: normalized.profile as ScienceDatasetTablePayload["profile"],
+      });
+      if (table.receipts.parserId !== SCIENCE_WORKBOOK_NORMALIZATION_PARSER_ID
+        || !this.readRunBlob(tableOutput).equals(Buffer.from(JSON.stringify(canonicalValue(table)), "utf8"))
+        || (candidate !== undefined && sha256Json(validateScienceTablePayload(candidate)) !== sha256Json(table))) {
+        throw new Error("science-workbook-normalization-table-mismatch");
+      }
+      const binding = this.getResearchRunSourceBindings(projectId, parent.id)[0];
+      const source = binding ? this.getSourceVersionForProject(projectId, binding.sourceId, binding.sourceVersionId) : null;
+      if (!source || source.version.contentSha256 !== table.receipts.rawSha256) throw new Error("science-workbook-normalization-source-invalid");
+      this.verifiedSourceBytes(source);
+      return { run, source, table };
+    }
     if (run?.toolId === "agentlas.workbook-sheet-projection") {
       if (run.status !== "succeeded" || run.toolVersion !== "1.0.0" || !run.parentRunId || run.outputs.length !== 1 || run.inputs.length !== 1) throw new Error("science-workbook-projection-run-invalid");
       const parent = this.getResearchRunForProject(projectId, run.parentRunId);

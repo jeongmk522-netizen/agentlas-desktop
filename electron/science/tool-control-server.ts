@@ -82,6 +82,14 @@ import { inspectScienceManuscriptDepth } from "./manuscript/depth-preflight";
 import { assertScienceAgentManuscriptDraft } from "./manuscript/agent-draft-gate";
 import { ScienceExtantReferenceAssemblyHttpError } from "./extant-reference-assemblies";
 import { ScienceComparativeGenomicsProviderValidationError } from "./comparative-genomics";
+import { persistedWorkbookReadback, type ScienceWorkbookReadbackWindow } from "./workbook-intake-ipc";
+import {
+  normalizePersistedScienceWorkbook,
+  readPersistedScienceWorkbookNormalizationPage,
+  scienceArtifactSummary,
+  SCIENCE_WORKBOOK_NORMALIZATION_TOOL_ID,
+  SCIENCE_WORKBOOK_NORMALIZATION_TOOL_VERSION,
+} from "./workbook-normalization-tool";
 import {
   SCIENCE_MCP_SERVER_KEY,
   installedCodexSupportsExactMcpToolApproval,
@@ -823,6 +831,126 @@ const ANALYSIS_DECISION_DRAFT_SCHEMA = {
     unaffectedNodeIds: { type: "array", maxItems: 500, uniqueItems: true, items: { type: "string", minLength: 1, maxLength: 500 } },
   },
   required: ["decisionKey", "mergeKey", "prompt", "evidenceRefs", "options", "recommendationRationale", "recommendationConfidence", "recommendationAssumptions", "unaffectedNodeIds"],
+  additionalProperties: false,
+} as const;
+
+const SCIENCE_WORKBOOK_NORMALIZATION_PLAN_SCHEMA = {
+  type: "object",
+  properties: {
+    schema: { const: "agentlas.science-workbook-normalization/v1" },
+    source: {
+      type: "object",
+      properties: {
+        rawSha256: { type: "string", pattern: "^[a-f0-9]{64}$" },
+        workbookSha256: { type: "string", pattern: "^[a-f0-9]{64}$" },
+      },
+      required: ["rawSha256", "workbookSha256"],
+      additionalProperties: false,
+    },
+    sheetOrdinal: { type: "integer", minimum: 0, maximum: 99 },
+    headerRow: { oneOf: [{ type: "integer", minimum: 1, maximum: 1048576 }, { type: "null" }] },
+    inference: {
+      oneOf: [
+        { type: "null" },
+        {
+          type: "object",
+          properties: {
+            mode: { const: "headerless" },
+            rationale: { type: "string", minLength: 1, maxLength: 4000 },
+            evidence: {
+              type: "array", minItems: 1, maxItems: 128, uniqueItems: true,
+              items: {
+                type: "object",
+                properties: {
+                  id: { type: "string", pattern: "^[a-z][a-z0-9._-]{0,63}$" },
+                  sheetOrdinal: { type: "integer", minimum: 0, maximum: 99 },
+                  sourceColumn: { type: "string", pattern: "^[A-Z]{1,3}$" },
+                  address: { type: "string", pattern: "^[A-Z]{1,3}[1-9][0-9]*$" },
+                  observedValue: { type: ["string", "number", "boolean", "null"] },
+                  note: { type: "string", minLength: 1, maxLength: 512 },
+                },
+                required: ["id", "sheetOrdinal", "sourceColumn", "address", "observedValue", "note"],
+                additionalProperties: false,
+              },
+            },
+          },
+          required: ["mode", "rationale", "evidence"],
+          additionalProperties: false,
+        },
+      ],
+    },
+    ranges: {
+      type: "array", minItems: 1, maxItems: 128,
+      items: {
+        type: "object",
+        properties: {
+          id: { type: "string", pattern: "^[a-z][a-z0-9._-]{0,63}$" },
+          firstRow: { type: "integer", minimum: 1, maximum: 1048576 },
+          lastRow: { type: "integer", minimum: 1, maximum: 1048576 },
+        },
+        required: ["id", "firstRow", "lastRow"], additionalProperties: false,
+      },
+    },
+    dictionary: {
+      type: "array", maxItems: 1000,
+      items: {
+        type: "object",
+        properties: {
+          id: { type: "string", pattern: "^[a-z][a-z0-9._-]{0,63}$" },
+          sourceColumn: { type: "string", pattern: "^[A-Z]{1,3}$" },
+          canonicalName: { type: "string", minLength: 1, maxLength: 240 },
+          aliases: { type: "array", minItems: 1, maxItems: 32, uniqueItems: true, items: { type: "string", minLength: 1, maxLength: 240 } },
+          evidence: {
+            type: "object",
+            properties: {
+              sheetOrdinal: { type: "integer", minimum: 0, maximum: 99 },
+              sourceColumnAddress: { type: "string", pattern: "^[A-Z]{1,3}[1-9][0-9]*$" },
+              canonicalNameAddress: { type: "string", pattern: "^[A-Z]{1,3}[1-9][0-9]*$" },
+            },
+            required: ["sheetOrdinal", "sourceColumnAddress", "canonicalNameAddress"], additionalProperties: false,
+          },
+        },
+        required: ["id", "sourceColumn", "canonicalName", "aliases", "evidence"], additionalProperties: false,
+      },
+    },
+    columns: {
+      type: "array", minItems: 1, maxItems: 1000,
+      items: {
+        type: "object",
+        properties: {
+          sourceColumn: { type: "string", pattern: "^[A-Z]{1,3}$" },
+          outputName: { type: "string", minLength: 1, maxLength: 240 },
+          expectedHeader: { type: ["string", "null"], maxLength: 240 },
+          logicalType: { type: "string", enum: ["integer", "number", "boolean", "string"] },
+          nullable: { type: "boolean" },
+          dictionaryId: { type: ["string", "null"], maxLength: 120 },
+          inferenceEvidenceIds: { type: "array", maxItems: 128, uniqueItems: true, items: { type: "string", pattern: "^[a-z][a-z0-9._-]{0,63}$" } },
+          operations: {
+            type: "array", maxItems: 64,
+            items: {
+              oneOf: [
+                { type: "object", properties: { id: { type: "string", pattern: "^[a-z][a-z0-9._-]{0,63}$" }, kind: { const: "trim-text" } }, required: ["id", "kind"], additionalProperties: false },
+                { type: "object", properties: { id: { type: "string", pattern: "^[a-z][a-z0-9._-]{0,63}$" }, kind: { const: "coerce-string" } }, required: ["id", "kind"], additionalProperties: false },
+                { type: "object", properties: { id: { type: "string", pattern: "^[a-z][a-z0-9._-]{0,63}$" }, kind: { const: "coerce-number" }, integer: { type: "boolean" } }, required: ["id", "kind", "integer"], additionalProperties: false },
+              ],
+            },
+          },
+        },
+        required: ["sourceColumn", "outputName", "expectedHeader", "logicalType", "nullable", "dictionaryId", "inferenceEvidenceIds", "operations"],
+        additionalProperties: false,
+      },
+    },
+    rowRules: {
+      type: "array", maxItems: 64,
+      items: {
+        oneOf: [
+          { type: "object", properties: { id: { type: "string", pattern: "^[a-z][a-z0-9._-]{0,63}$" }, kind: { const: "drop-if-all-selected-empty" }, columns: { type: "array", minItems: 1, maxItems: 1000, uniqueItems: true, items: { type: "string", pattern: "^[A-Z]{1,3}$" } } }, required: ["id", "kind", "columns"], additionalProperties: false },
+          { type: "object", properties: { id: { type: "string", pattern: "^[a-z][a-z0-9._-]{0,63}$" }, kind: { const: "drop-if-cell-equals" }, column: { type: "string", pattern: "^[A-Z]{1,3}$" }, value: { type: ["string", "number", "boolean"] } }, required: ["id", "kind", "column", "value"], additionalProperties: false },
+        ],
+      },
+    },
+  },
+  required: ["schema", "source", "sheetOrdinal", "headerRow", "inference", "ranges", "dictionary", "columns", "rowRules"],
   additionalProperties: false,
 } as const;
 
@@ -2571,6 +2699,57 @@ const PLATFORM_TOOLS: McpTool[] = [
       required: ["tool_call_id", "manuscript_id", "expected_manuscript_version", "expected_manuscript_content_sha256", "journal_profile_id", "expected_journal_profile_version", "expected_journal_profile_content_sha256", "human_attestation_receipt_ids", "metadata"], additionalProperties: false,
     },
   },
+  {
+    name: "read_science_workbook",
+    route: "/v1/platform/workbooks/readback",
+    description: "Read bounded sheet metadata and cell previews from one exact successful workbook-ingestion run. The parent run, source version, raw hash, and workbook hash are revalidated in Main; local filesystem paths and raw workbook bytes are never accepted.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        tool_call_id: { type: "string", minLength: 1, maxLength: 160 },
+        parent_run_id: { type: "string", format: "uuid" },
+        sheet_ordinal: { type: "integer", minimum: 0, maximum: 99 },
+        start_row: { type: "integer", minimum: 1, maximum: 1048576 },
+        row_count: { type: "integer", minimum: 1, maximum: 128 },
+        start_column: { type: "string", pattern: "^[A-Z]{1,3}$" },
+        column_count: { type: "integer", minimum: 1, maximum: 64 },
+      },
+      required: ["tool_call_id", "parent_run_id"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "normalize_science_workbook",
+    route: "/v1/platform/workbooks/normalize",
+    description: "Execute one model-proposed, hash-bound workbook normalization plan using only typed operations, explicit row ranges, source-cell evidence, and immutable cell provenance. The original workbook remains unchanged. The derived result is persisted as a child ResearchRun and returned for the next analysis step; no arbitrary code, imputation, path, or provider call is allowed.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        tool_call_id: { type: "string", minLength: 1, maxLength: 160 },
+        parent_run_id: { type: "string", format: "uuid" },
+        title: { type: "string", minLength: 1, maxLength: 240 },
+        plan: SCIENCE_WORKBOOK_NORMALIZATION_PLAN_SCHEMA,
+      },
+      required: ["tool_call_id", "parent_run_id", "plan"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "read_science_workbook_normalized_page",
+    route: "/v1/platform/workbooks/normalized-page",
+    description: "Read one bounded page of rows and immutable source-cell provenance from a completed workbook normalization run. The full normalized blob stays in Main-owned CAS; page hashes and run lineage identify the exact result.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        tool_call_id: { type: "string", minLength: 1, maxLength: 160 },
+        normalization_run_id: { type: "string", format: "uuid" },
+        start_row: { type: "integer", minimum: 0, maximum: 99999 },
+        row_count: { type: "integer", minimum: 1, maximum: 256 },
+      },
+      required: ["tool_call_id", "normalization_run_id", "start_row", "row_count"],
+      additionalProperties: false,
+    },
+  },
 ];
 
 const SCIENCE_EXTENSION_REQUIRED_PLATFORM_TOOL_NAMES = [
@@ -3726,6 +3905,95 @@ async function dispatchDescriptorTool(
 
 async function platformResult(route: string, body: Record<string, unknown>, grant: Grant, toolCallId: string): Promise<Record<string, unknown>> {
   const store = scienceStore();
+  if (route === "/v1/platform/workbooks/readback") {
+    const parentRunId = exactText(body.parent_run_id, 80, "science-workbook-run-invalid");
+    const sheetOrdinal = body.sheet_ordinal === undefined
+      ? undefined
+      : boundedInteger(body.sheet_ordinal, 0, 99, "science-workbook-sheet-invalid");
+    const windowRequested = ["start_row", "row_count", "start_column", "column_count"]
+      .some((key) => body[key] !== undefined);
+    let window: ScienceWorkbookReadbackWindow | undefined;
+    if (windowRequested) {
+      if (sheetOrdinal === undefined || body.start_row === undefined || body.row_count === undefined
+        || body.start_column === undefined || body.column_count === undefined) {
+        throw new Error("science-workbook-readback-window-invalid");
+      }
+      window = {
+        sheetOrdinal,
+        startRow: boundedInteger(body.start_row, 1, 1_048_576, "science-workbook-readback-window-invalid"),
+        rowCount: boundedInteger(body.row_count, 1, 128, "science-workbook-readback-window-invalid"),
+        startColumn: exactPatternText(body.start_column, 3, /^[A-Z]{1,3}$/u, "science-workbook-readback-window-invalid"),
+        columnCount: boundedInteger(body.column_count, 1, 64, "science-workbook-readback-window-invalid"),
+      };
+      if (window.startRow + window.rowCount - 1 > 1_048_576) throw new Error("science-workbook-readback-window-invalid");
+    }
+    return {
+      ok: true,
+      schema: "agentlas.science-workbook-readback/v1",
+      readback: persistedWorkbookReadback(store, grant.context.projectId, parentRunId, sheetOrdinal, window),
+    };
+  }
+  if (route === "/v1/platform/workbooks/normalized-page") {
+    const normalizationRunId = exactText(body.normalization_run_id, 80, "science-workbook-normalization-run-invalid");
+    const page = readPersistedScienceWorkbookNormalizationPage(
+      store,
+      grant.context.projectId,
+      normalizationRunId,
+      nonNegativeInteger(body.start_row, "science-workbook-normalization-page-invalid"),
+      boundedInteger(body.row_count, 1, 256, "science-workbook-normalization-page-invalid"),
+    );
+    return { ok: true, schema: "agentlas.science-workbook-normalization-page/v1", ...page };
+  }
+  if (route === "/v1/platform/workbooks/normalize") {
+    const parentRunId = exactText(body.parent_run_id, 80, "science-workbook-normalization-parent-invalid");
+    if (!body.plan || typeof body.plan !== "object" || Array.isArray(body.plan)) {
+      throw new Error("science-workbook-normalization-plan-invalid");
+    }
+    const title = body.title === undefined
+      ? "Workbook normalization"
+      : exactText(body.title, 240, "science-workbook-normalization-title-invalid");
+    const environmentSha256 = createHash("sha256").update(JSON.stringify({
+      schema: "agentlas.science-workbook-normalization-environment/v1",
+      toolId: SCIENCE_WORKBOOK_NORMALIZATION_TOOL_ID,
+      toolVersion: SCIENCE_WORKBOOK_NORMALIZATION_TOOL_VERSION,
+      runtime: "native-sidecar",
+      node: process.versions.node,
+      electron: process.versions.electron ?? null,
+    }), "utf8").digest("hex");
+    const result = normalizePersistedScienceWorkbook(store, {
+      createRequestId: stableUuid(`science-workbook-normalize:create:v1:${grant.context.invocationRunId}:${toolCallId}`),
+      completeRequestId: stableUuid(`science-workbook-normalize:complete:v1:${grant.context.invocationRunId}:${toolCallId}`),
+      materializeRequestId: stableUuid(`science-workbook-normalize:materialize:v1:${grant.context.invocationRunId}:${toolCallId}`),
+      projectId: grant.context.projectId,
+      conversationId: grant.context.conversationId,
+      originMessageId: grant.context.originUserMessageId,
+      parentRunId,
+      plan: body.plan,
+      title,
+      environmentSha256,
+    });
+    const normalized = result.result;
+    return {
+      ok: true,
+      schema: "agentlas.science-workbook-normalization-result/v1",
+      toolId: SCIENCE_WORKBOOK_NORMALIZATION_TOOL_ID,
+      toolVersion: SCIENCE_WORKBOOK_NORMALIZATION_TOOL_VERSION,
+      run: result.run,
+      parentRunId: result.parentRunId,
+      source: result.source,
+      planSha256: result.planSha256,
+      artifact: scienceArtifactSummary(result.artifact),
+      replayed: result.replayed,
+      result: {
+        schema: normalized.schema,
+        source: normalized.source,
+        planSha256: normalized.planSha256,
+        normalizedSha256: normalized.normalizedSha256,
+        columns: normalized.columns,
+        profile: normalized.profile,
+      },
+    };
+  }
   if (route === "/v1/platform/research-lifecycle/read") {
     const lifecycle = store.getResearchLifecycleForProject(grant.context.projectId);
     if (!lifecycle) throw new Error("science-research-lifecycle-canonical-missing");

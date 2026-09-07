@@ -12,6 +12,7 @@ export const SCIENCE_TABLE_RENDERER_ID = "agentlas.table" as const;
 export const SCIENCE_TABLE_RENDERER_VERSION = "1.0.0" as const;
 export const SCIENCE_TABLE_ARTIFACT_KIND = "table" as const;
 export const SCIENCE_TABLE_LAB_ID = "data-table" as const;
+export const SCIENCE_WORKBOOK_NORMALIZATION_PARSER_ID = "agentlas.workbook-normalization" as const;
 export const SCIENCE_PAIRED_TABLE_ALIGNER_ID = "agentlas.paired-artifact-table-aligner" as const;
 export const SCIENCE_PAIRED_TABLE_ALIGNER_VERSION = "1.0.0" as const;
 export const SCIENCE_PAIRED_TABLE_ALIGNER_INPUT_SCHEMA = "agentlas.science.paired-table-alignment-input/v1" as const;
@@ -135,6 +136,45 @@ function canonicalValue(value: unknown): unknown {
 export function scienceTableSha256(value: unknown): string {
   return createHash("sha256").update(JSON.stringify(canonicalValue(value)), "utf8").digest("hex");
 }
+
+/** Convert the typed normalization result into the canonical table payload consumed by statistics. */
+export function scienceWorkbookNormalizationTable(input: {
+  source: { rawSha256: string };
+  columns: ScienceDatasetTablePayload["columns"];
+  rows: ScienceDatasetTablePayload["rows"];
+  profile: Pick<ScienceDatasetTablePayload["profile"], "rowCount" | "columnCount" | "nullCount" | "formulaLikeCellCount">;
+}): ScienceDatasetTablePayload {
+  if (!input || !/^[a-f0-9]{64}$/u.test(input.source.rawSha256)) throw new Error("science-workbook-normalization-source-invalid");
+  const columns = input.columns.map((column) => ({
+    name: column.name,
+    logicalType: column.logicalType,
+    nullable: column.nullable,
+  }));
+  const profile = {
+    rowCount: input.profile.rowCount,
+    columnCount: input.profile.columnCount,
+    nullCount: input.profile.nullCount,
+    formulaLikeCellCount: input.profile.formulaLikeCellCount,
+  };
+  const core = {
+    schema: SCIENCE_TABLE_SCHEMA,
+    columns,
+    rows: input.rows,
+    profile,
+  } as const;
+  const table: ScienceDatasetTablePayload = {
+    ...core,
+    receipts: {
+      parserId: SCIENCE_WORKBOOK_NORMALIZATION_PARSER_ID,
+      parserVersion: "1.0.0",
+      rawSha256: input.source.rawSha256,
+      headerSha256: scienceTableSha256(columns.map((column) => column.name)),
+      rowsSha256: scienceTableSha256(input.rows),
+      tableSha256: scienceTableSha256(core),
+    },
+  };
+  return validateScienceTablePayload(table);
+}
 function formulaLooking(value: string): boolean {
   const trimmed = value.trimStart();
   return /^[=+@]/.test(trimmed) || /^-(?!\d+(?:\.\d+)?(?:[eE][+-]?\d+)?$)/.test(trimmed);
@@ -183,7 +223,7 @@ export function validateScienceTablePayload(value: unknown): ScienceDatasetTable
     || profile.formulaLikeCellCount !== formulaLikeCellCount) throw new Error("science-table-counts-invalid");
   const receipts = record(payload.receipts);
   if (!receipts || !exactKeys(receipts, ["parserId", "parserVersion", "rawSha256", "headerSha256", "rowsSha256", "tableSha256"])
-    || !["agentlas.csv-to-table", "agentlas.comparative-genomics-publication-table", SCIENCE_PAIRED_TABLE_ALIGNER_ID, "agentlas.workbook-sheet-projection"].includes(String(receipts.parserId))
+    || !["agentlas.csv-to-table", "agentlas.comparative-genomics-publication-table", SCIENCE_PAIRED_TABLE_ALIGNER_ID, "agentlas.workbook-sheet-projection", SCIENCE_WORKBOOK_NORMALIZATION_PARSER_ID].includes(String(receipts.parserId))
     || receipts.parserVersion !== "1.0.0"
     || ![receipts.rawSha256, receipts.headerSha256, receipts.rowsSha256, receipts.tableSha256].every((entry) => typeof entry === "string" && SHA256_RE.test(entry))) throw new Error("science-table-hashes-invalid");
   if (receipts.headerSha256 !== scienceTableSha256(names) || receipts.rowsSha256 !== scienceTableSha256(rows)

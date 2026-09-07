@@ -26,7 +26,7 @@ import { AgentFileEditor, runtimeEditorSource } from "@/components/AgentFileEdit
 import { MigrationPanel } from "@/components/MigrationPanel";
 import { MediaDisplaySettings } from "@/components/MediaDisplaySettings";
 import QRCode from "qrcode";
-import type { HephaestusUpdateJournal, MobileBridgeDeviceSummary, MobileBridgeRuntimeStatus } from "@shared/types";
+import type { HephaestusUpdateJournal, MobileBridgeDeviceSummary, MobileBridgeRuntimeStatus, RunAlertSettings } from "@shared/types";
 import type { MobileBridgePairingPayload } from "@shared/mobile-bridge";
 import { classifyHephaestusUpdateJournal, hephaestusPendingHostLabels } from "@shared/hephaestus-update-contract";
 import { ScienceExtensionPanel } from "@/components/settings/ScienceExtensionPanel";
@@ -850,6 +850,8 @@ export default function SettingsPage() {
           onSaveEnv={(key) => void saveMultimodalEnv(key)}
           onRetry={() => void refreshMultimodal()}
         />
+
+        <RunAlertsPanel locale={locale} />
 
         <TerminalProfilesPanel />
 
@@ -3319,3 +3321,110 @@ const multimodalSecretButtonStyle: CSSProperties = {
   border: "1px solid var(--paper-edge)",
   boxShadow: "var(--neu-raised)",
 };
+
+/**
+ * 실행 완료 알람 — 소리·앱 흔들기 (오너 2026-09-07).
+ *
+ * 긴 실행은 몇 분에서 몇 시간이다. 그동안 다른 창을 보고 있으면 끝난 줄 모른다.
+ * "지금 들어보기"를 둔 이유: 켜 놓고도 OS 알림 권한이 꺼져 있으면 아무 일도 안 일어나는데,
+ * 그 사실을 다음 실행이 끝날 때까지 알 수 없다. 그 자리에서 확인하게 한다.
+ */
+function RunAlertsPanel({ locale }: { locale: string }) {
+  const ko = locale === "ko";
+  const [settings, setSettings] = useState<RunAlertSettings | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [notice, setNotice] = useState<string | null>(null);
+  useEffect(() => {
+    const api = ipc();
+    if (!api?.runAlerts) return;
+    void api.runAlerts.get().then(setSettings).catch(() => setSettings(null));
+  }, []);
+  const patch = async (next: Partial<RunAlertSettings>) => {
+    const api = ipc();
+    if (!api?.runAlerts || !settings) return;
+    setBusy(true);
+    // 화면을 먼저 바꾸지 않는다 — main 이 정규화한 값을 받아 그것만 그린다.
+    // 그래야 화면의 스위치와 실제로 판단에 쓰이는 값이 갈리지 않는다.
+    try {
+      setSettings(await api.runAlerts.set(next));
+      setNotice(null);
+    } catch {
+      setNotice(ko ? "설정을 저장하지 못했습니다. 화면은 이전 값을 유지합니다." : "The setting was not saved; this screen keeps the prior value.");
+    } finally {
+      setBusy(false);
+    }
+  };
+  const row = (key: keyof RunAlertSettings, title: string, description: string) => (
+    <label style={{ display: "flex", alignItems: "flex-start", gap: 10, padding: "8px 0", cursor: "pointer" }}>
+      <input
+        type="checkbox"
+        checked={Boolean(settings?.[key])}
+        disabled={!settings || busy}
+        onChange={(event) => void patch({ [key]: event.target.checked } as Partial<RunAlertSettings>)}
+        style={{ marginTop: 2 }}
+      />
+      <span style={{ display: "flex", flexDirection: "column", gap: 2, minWidth: 0 }}>
+        <strong style={{ fontSize: 12.5, color: "var(--ink)" }}>{title}</strong>
+        <small style={{ fontSize: 11, color: "var(--muted-deep)", lineHeight: 1.4 }}>{description}</small>
+      </span>
+    </label>
+  );
+  return (
+    <>
+      <h2 id="run-alerts" style={{ fontFamily: "var(--font-head)", fontSize: 15, margin: "32px 0 12px", scrollMarginTop: 24 }}>
+        {ko ? "완료 알림" : "Completion alerts"}
+      </h2>
+      <p style={{ fontSize: 12, color: "var(--muted-deep)", margin: "0 0 12px" }}>
+        {ko
+          ? "작업이 끝나거나 실패하면 알려줍니다. 앱 흔들기는 맥에서는 Dock 아이콘이 튀고, 윈도우·리눅스에서는 작업표시줄 단추가 깜빡입니다."
+          : "Tells you when a run finishes or fails. Shaking bounces the Dock icon on macOS and flashes the taskbar button on Windows and Linux."}
+      </p>
+      {!settings && (
+        <p style={{ fontSize: 12, color: "var(--muted-deep)" }}>
+          {ko ? "설정을 불러오는 중입니다." : "Loading settings."}
+        </p>
+      )}
+      {settings && (
+        <div style={{ display: "flex", flexDirection: "column", border: "1px solid var(--paper-edge)", borderRadius: 10, padding: "6px 12px" }}>
+          {row("enabled", ko ? "완료 알림 사용" : "Enable completion alerts", ko ? "끄면 아래 항목과 무관하게 아무 알림도 나오지 않습니다." : "When off, nothing below applies.")}
+          {row("notification", ko ? "알림 표시" : "Show a notification", ko ? "무엇이 끝났는지 제목과 함께 뜹니다. 누르면 앱이 열립니다." : "Shows what finished. Clicking opens the app.")}
+          {row("sound", ko ? "소리" : "Sound", ko ? "알림에 OS 알림음을 넣습니다." : "Plays the OS notification sound with the alert.")}
+          {row("bounce", ko ? "앱 흔들기" : "Shake the app", ko ? "맥: Dock 아이콘 튀기기 · 윈도우·리눅스: 작업표시줄 깜빡임." : "macOS: bounce the Dock icon · Windows and Linux: flash the taskbar button.")}
+          {row("onlyWhenUnfocused", ko ? "다른 창을 보고 있을 때만" : "Only when the app is not focused", ko ? "이미 앱을 보고 있으면 알리지 않습니다." : "Stays quiet while you are already looking at the app.")}
+          {row("alsoOnFailure", ko ? "실패했을 때도 알림" : "Alert on failure too", ko ? "실패·중단은 길이와 무관하게 알립니다." : "Failures and interruptions alert regardless of length.")}
+          <label style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 0", borderTop: "1px solid var(--paper-edge)" }}>
+            <span style={{ fontSize: 12.5, color: "var(--ink)", fontWeight: 700 }}>
+              {ko ? "이보다 짧으면 알리지 않음" : "Stay quiet below"}
+            </span>
+            <input
+              type="number"
+              min={0}
+              max={600}
+              value={settings.minSeconds}
+              disabled={busy}
+              onChange={(event) => void patch({ minSeconds: Number(event.target.value) })}
+              style={{ width: 72, padding: "4px 8px", border: "1px solid var(--paper-edge)", borderRadius: 6, background: "var(--paper-2)", color: "var(--ink)", fontSize: 12 }}
+            />
+            <small style={{ fontSize: 11, color: "var(--muted-deep)" }}>
+              {ko ? "초 · 0이면 언제나 알립니다" : "seconds · 0 alerts every time"}
+            </small>
+          </label>
+          <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 0", borderTop: "1px solid var(--paper-edge)" }}>
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => { void ipc()?.runAlerts?.preview().catch(() => null); }}
+              style={{ border: "1px solid var(--paper-edge)", borderRadius: 8, background: "var(--paper-2)", color: "var(--ink)", padding: "6px 12px", fontSize: 12, fontWeight: 700, cursor: "pointer" }}
+            >
+              {ko ? "지금 들어보기" : "Preview now"}
+            </button>
+            <small style={{ fontSize: 11, color: "var(--muted-deep)" }}>
+              {ko ? "아무 일도 없으면 OS 알림 권한이 꺼져 있는 것입니다." : "If nothing happens, the OS notification permission is off."}
+            </small>
+          </div>
+        </div>
+      )}
+      {notice && <p role="status" style={{ fontSize: 11.5, color: "var(--warn)", margin: "8px 0 0" }}>{notice}</p>}
+    </>
+  );
+}

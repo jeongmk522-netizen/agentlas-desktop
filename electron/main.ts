@@ -104,6 +104,7 @@ import { servePluginIconRequest } from "./mcp-tools/plugin-brand";
 import { reconcileOneHubDerivativeDraftStorage } from "./one/hub-derivative";
 import { recoverDesktopStartup, type StartupRecoveryPresentation } from "./one/startup-recovery";
 import { initFileLogging, installStdioErrorGuard, mainLogFilePath } from "./logging";
+import { decideRunAlert, fireRunAlert, getRunAlerts } from "./run-alerts";
 import { currentUiLocale, setCurrentUiLocale } from "./ui-locale";
 import { prepareMacRuntimeResourcesForExecution } from "./runtime/mac-resource-seal";
 import {
@@ -605,6 +606,49 @@ function checkOneBriefingDesktopNotification(): void {
  * durable settlement is the event boundary, so no polling or duplicate timer
  * can emit the same notification twice in this process.
  */
+/*
+ * 실행이 끝나면 알린다 — 소리·앱 흔들기 (오너 2026-09-07).
+ *
+ * 이 자리를 고른 이유: onSettled 는 One 과 Work 가 **같이 지나는 단 하나의 종료 지점**이다
+ * (invocation/service.ts publishSettled). 표면마다 따로 달면 한쪽만 울리고 그 차이는
+ * 화면에 안 보인다.
+ *
+ * 위 One 팀 브리지와는 다른 기능이다: 저쪽은 로그인한 사용자의 팀 알림이고 5분 이상
+ * 걸린 실행만 본다. 이쪽은 설정으로 켜고 끄는 개인 알람이라 문턱도 사용자가 정한다.
+ * 둘 다 켜져 있으면 알림이 두 번 뜰 수 있어, 저쪽이 이미 보낸 실행은 건너뛴다.
+ */
+let disposeRunAlertBridge: (() => void) | null = null;
+function startRunAlertBridge(): void {
+  if (disposeRunAlertBridge) return;
+  disposeRunAlertBridge = invocationService.onSettled((envelope) => {
+    try {
+      const settings = getRunAlerts();
+      const focused = Boolean(mainWindow && !mainWindow.isDestroyed() && mainWindow.isFocused());
+      const decision = decideRunAlert(settings, {
+        status: envelope.receipt.status,
+        startedAt: envelope.receipt.startedAt,
+        finishedAt: envelope.receipt.finishedAt ?? envelope.receipt.updatedAt,
+        focused,
+        pendingQuestion: envelope.pendingQuestion === true,
+      });
+      if (!decision.alert) return;
+      // 같은 실행을 One 팀 브리지가 이미 알렸으면 두 번 울리지 않는다.
+      if ([...oneTeamNotificationKeys].some((key) => key.startsWith(`${envelope.receipt.runId}:`))) return;
+      fireRunAlert({
+        decision,
+        settings,
+        // 언어 설정은 렌더러(localStorage)에 있고 main 은 못 읽는다. OS 언어가
+        // main 이 아는 유일한 사실이라 그것을 쓴다 — 짐작 대신 관측값.
+        locale: app.getLocale().toLowerCase().startsWith("ko") ? "ko" : "en",
+        goal: envelope.goal,
+        onClick: () => { void openOneFromNotification(); },
+      });
+    } catch {
+      // 알람은 부가 기능이다 — 무슨 일이 있어도 실행 정산을 건드리지 않는다.
+    }
+  });
+}
+
 function startOneTeamNotificationBridge(): void {
   if (disposeOneTeamNotificationBridge) return;
   disposeOneTeamNotificationBridge = invocationService.onSettled((envelope) => {
@@ -3441,6 +3485,7 @@ app.whenReady().then(async () => {
   setTimeout(runDeferredLegacyLearningReconciliation, 3_000);
   startOneBriefingScheduler();
   startOneTeamNotificationBridge();
+  startRunAlertBridge();
   /*
    * Establish the daemon before choosing the physical Mobile Bridge owner.
    * Previously Desktop opened its listener first and `ensureDaemonRunning`

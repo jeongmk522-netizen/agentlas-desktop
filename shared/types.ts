@@ -6446,6 +6446,19 @@ export interface AgentLeaseRow {
   leasedUntil: string;
 }
 
+/** 실행이 끝났을 때의 알람 설정. 정본 구현은 electron/run-alerts.ts. */
+export interface RunAlertSettings {
+  enabled: boolean;
+  notification: boolean;
+  sound: boolean;
+  /** macOS Dock 바운스 / Windows·Linux 작업표시줄 깜빡임. */
+  bounce: boolean;
+  onlyWhenUnfocused: boolean;
+  /** 이보다 짧게 끝난 턴은 알리지 않는다(초). 0이면 언제나. */
+  minSeconds: number;
+  alsoOnFailure: boolean;
+}
+
 export interface AgentlasIpc {
   /**
    * 도구 승인 결정 — Main의 exact resolution 원장이 같은 request/decision/action 을
@@ -6962,6 +6975,16 @@ export interface AgentlasIpc {
     remove: (key: string) => Promise<void>;
   };
   /** 멀티모달 전역 fallback — 에이전트/프로젝트 env가 없을 때 이미지·영상·음성 provider를 고른다. */
+  /**
+   * 실행 완료 알람 — 소리·앱 흔들기(맥 Dock 바운스 / 윈도우·리눅스 작업표시줄 깜빡임).
+   * 값은 main 이 소유한다. 렌더러는 부분 패치만 보내고 정규화된 전체 값을 돌려받는다.
+   */
+  runAlerts: {
+    get: () => Promise<RunAlertSettings>;
+    set: (patch: Partial<RunAlertSettings>) => Promise<RunAlertSettings>;
+    /** 저장값 그대로 한 번 울린다 — 켜 놨는데 안 들리는 상태를 그 자리에서 알 수 있게. */
+    preview: () => Promise<RunAlertSettings>;
+  };
   multimodal: {
     listProviders: () => Promise<MultimodalProvider[]>;
     getSettings: () => Promise<MultimodalSettings>;

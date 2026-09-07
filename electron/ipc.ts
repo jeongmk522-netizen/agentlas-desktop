@@ -43,6 +43,7 @@ import { setAcpProfileReader } from "./runtime/acp-agents";
 import { sanitizeTerminalProfiles } from "../shared/terminal-profiles";
 import { tryAcquireRuntimeMaintenance } from "./runtime/run-slots";
 import { clearModelCache, listRuntimeModels } from "./runtime/providers";
+import { fireRunAlert, getRunAlerts, setRunAlerts } from "./run-alerts";
 import { installCli, openCliLogin, updateCli, type InstallableCli, type ManageableCli } from "./runtime/install-cli";
 import { listRuntimeCommands } from "./runtime/commands";
 import { resolveInvocationRunId } from "./runtime/run-id";
@@ -2896,6 +2897,24 @@ export function registerIpcHandlers(): void {
     (_e, sel: { kind: RuntimeKind; backend?: RuntimeBackend | null; availableModels?: string[] | null }) =>
       listRuntimeModels(sel.kind, sel.backend ?? null, sel.availableModels ?? null, Date.now()),
   );
+  /*
+   * 실행 완료 알람(오너 2026-09-07). 값은 main 이 소유하고 렌더러는 패치만 보낸다 —
+   * 저장된 값이 곧 알림 판단의 입력이라, 렌더러가 임의 모양을 쓰게 두면 안 된다.
+   */
+  ipcMain.handle("runAlerts:get", () => getRunAlerts());
+  ipcMain.handle("runAlerts:set", (_e, patch: unknown) => setRunAlerts(patch));
+  ipcMain.handle("runAlerts:preview", () => {
+    // 설정 화면에서 "지금 들어보기". 저장값 그대로 한 번 울려, 켜 놓고도 안 들리는
+    // (OS 알림 권한이 꺼져 있는) 상태를 사용자가 그 자리에서 알 수 있게 한다.
+    const settings = getRunAlerts();
+    fireRunAlert({
+      decision: { alert: true, kind: "done" },
+      settings: { ...settings, enabled: true, notification: true },
+      locale: app.getLocale().toLowerCase().startsWith("ko") ? "ko" : "en",
+      goal: app.getLocale().toLowerCase().startsWith("ko") ? "알림 미리듣기" : "Alert preview",
+    });
+    return settings;
+  });
   ipcMain.handle("agentRuntime:list", () => listAgentRuntimeOverrides());
   ipcMain.handle(
     "agentRuntime:get",

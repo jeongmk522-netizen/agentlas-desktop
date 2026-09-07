@@ -345,6 +345,11 @@ const api: AgentlasIpc = {
     list: () => ipcRenderer.invoke("credentialRecovery:list"),
     retry: (retryToken: string) => ipcRenderer.invoke("credentialRecovery:retry", retryToken),
   },
+  runAlerts: {
+    get: () => ipcRenderer.invoke("runAlerts:get"),
+    set: (patch: unknown) => ipcRenderer.invoke("runAlerts:set", patch),
+    preview: () => ipcRenderer.invoke("runAlerts:preview"),
+  },
   multimodal: {
     listProviders: () => ipcRenderer.invoke("multimodal:listProviders"),
     getSettings: () => ipcRenderer.invoke("multimodal:getSettings"),

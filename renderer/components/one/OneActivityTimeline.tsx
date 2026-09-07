@@ -3,6 +3,7 @@
 import { filePreviewEmptyMessage } from "@/lib/file-preview-reason";
 
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { receiptAutoExpanded } from "@/lib/run-receipt-state";
 import {
   IconArrowLeft,
   IconCheck,
@@ -419,9 +420,22 @@ export function OneActivityTimeline({
       ...state.items.filter((item) => item.kind === "run"),
     ];
   }, [busy, state.items]);
+  /*
+   * ★ 끝난 작업은 접힌다 — One 설계는 실행 중엔 펼쳐 보여 주고, 끝나면 "27초 동안 작업 ›"
+   * 한 줄로 접히는 것이다. 그런데 여기엔 펼치는 쪽만 있고 접는 쪽이 없어서, 한 번 펼쳐진
+   * 활동 블록이 대화 내내 그대로 남았다. 턴이 쌓일수록 화면이 활동 로그로 덮인다.
+   *
+   * 접을지 말지의 판정은 이미 renderer/lib/run-receipt-state.ts 에 있었는데 **부르는 곳이
+   * 하나도 없었다.** Work 전용 영수증 카드를 이 타임라인으로 합칠 때(97df0295) 판정만
+   * 남고 호출이 사라진 것이다. 그 함수를 다시 부른다 — 실패·취소는 펼친 채 남고
+   * (복구할 것이 있다), 완료만 접힌다.
+   *
+   * deps 가 active 와 terminalStatus 뿐이라, 사람이 손으로 다시 펼친 것은 그대로 남는다.
+   */
   useEffect(() => {
-    if (active) setExpanded(true);
-  }, [active]);
+    const next = receiptAutoExpanded(active, active ? "running" : state.terminalStatus);
+    if (next !== null) setExpanded(next);
+  }, [active, state.terminalStatus]);
   if (!active && visible.length === 0) return null;
   const liveStatus = preparing
     ? (locale === "ko" ? "실행 준비 중" : "Preparing execution")

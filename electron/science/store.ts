@@ -607,7 +607,7 @@ import {
   builtinAgentId,
 } from "../architecture/manifest";
 
-export const SCIENCE_SCHEMA_VERSION = 60;
+export const SCIENCE_SCHEMA_VERSION = 61;
 const UUID_RE = /^[a-f0-9]{8}-[a-f0-9]{4}-[1-8][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/i;
 const SHA256_RE = /^[a-f0-9]{64}$/;
 const SCIENCE_SOURCE_TEXT_CHUNK_MAX_BYTES = 2_400;
@@ -4615,6 +4615,38 @@ export class ScienceStore {
       promoted += 1;
     }
     console.log(`[science-store] schema migration v60: promoted ${promoted} of ${candidates.length} already-parsed source(s) to content-checked`);
+  }
+
+  /**
+   * A completed run's canonical content hash (scienceEvidenceGraphResearchRunContentSha256)
+   * hashes the whole run row, including `updated_at` and `loop_session_id` -- both of which
+   * retroactive loop-episode attribution (settleResearchEpisode) used to stamp onto an
+   * already-terminal run, purely to record which episode later used its result. That is
+   * bookkeeping, not a change to the run's content, but the hash could not tell the difference:
+   * every research_run_parent_binding created while this run was still loop_session_id IS NULL
+   * had the run's *original* hash baked into an immutable audit row, and the retroactive stamp
+   * made every later recomputation disagree with it forever -- fail-closed, deterministic, and
+   * permanent, because the binding itself can never be corrected to match (both UPDATE and
+   * DELETE on it are trigger-blocked by design). That code path no longer stamps either field
+   * (see settleResearchEpisode; the immutable research_episode_run_bindings join table already
+   * records the same attribution safely), but this repairs the runs it already hit: restore
+   * `updated_at` to `finished_at` (the two are set to the same value exactly once, when a run
+   * completes, and never again by any other correct path) and `loop_session_id` back to NULL
+   * wherever that restoration marker fires, recovering the exact row every existing binding was
+   * created against. Measured live: 16 runs in one project, all breaking evidence-graph refresh
+   * -- and therefore every turn dispatch in that project -- with
+   * science-run-parent-binding-integrity-failed (2026-09-08).
+   */
+  private repairRunUpdatedAtDriftFromRetroactiveLoopBinding(): void {
+    const columns = new Set((this.db.pragma("table_info('research_runs')") as Array<{ name: string }>).map((column) => column.name));
+    if (!columns.has("updated_at") || !columns.has("finished_at") || !columns.has("loop_session_id")) return;
+    const drifted = this.db.prepare(`
+      SELECT id, project_id AS projectId FROM research_runs
+      WHERE finished_at IS NOT NULL AND updated_at != finished_at
+    `).all() as Array<{ id: string; projectId: string }>;
+    const repair = this.db.prepare("UPDATE research_runs SET updated_at = finished_at, loop_session_id = NULL WHERE id = ? AND project_id = ?");
+    for (const run of drifted) repair.run(run.id, run.projectId);
+    console.log(`[science-store] schema migration v61: restored updated_at and loop_session_id for ${drifted.length} research run(s) whose canonical content hash had drifted from a retroactive loop-session attribution`);
   }
 
   /**
@@ -9566,6 +9598,7 @@ export class ScienceStore {
           `);
         }
         if (found < 60) this.promoteAlreadyParsedSourcesToContentChecked();
+        if (found < 61) this.repairRunUpdatedAtDriftFromRetroactiveLoopBinding();
         this.ensureProjectFolderColumn();
         this.ensureProjectDataRefreshTables();
         this.ensureResearchContractCompletionScopeColumn();
@@ -17054,13 +17087,23 @@ export class ScienceStore {
         throw new Error("science-research-episode-evidence-scope-mismatch");
       }
       const now = new Date().toISOString();
-      for (const run of runs) {
-        if (run.loopSessionId === null) {
-          const changed = this.db.prepare("UPDATE research_runs SET loop_session_id = ?, updated_at = ? WHERE id = ? AND project_id = ? AND loop_session_id IS NULL")
-            .run(session.id, now, run.id, input.projectId);
-          if (changed.changes !== 1) throw new Error("science-research-episode-run-bind-conflict");
-        }
-      }
+      // This used to retroactively stamp research_runs.loop_session_id (and updated_at) onto an
+      // already-terminal run purely to attribute it to the episode that used its result. That is
+      // bookkeeping, not a change to what the run *is* -- but
+      // scienceEvidenceGraphResearchRunContentSha256 hashes the whole row, so any mutation here,
+      // even to loop_session_id alone, changes a completed run's canonical content hash. Every
+      // research_run_parent_binding created while this run was still loop_session_id IS NULL
+      // already has the *original* hash baked into an immutable audit row (that table cannot be
+      // corrected -- both UPDATE and DELETE are trigger-blocked by design), so the retroactive
+      // touch made every later recomputation disagree with it forever: deterministic,
+      // permanent, fail-closed as science-run-parent-binding-integrity-failed. The
+      // research_episode_run_bindings insert just below already records exactly this
+      // episode-used-this-run relationship, immutably and without touching the run itself, so
+      // stamping the run's own loop_session_id was redundant as well as unsafe. Measured live:
+      // 16 runs drifted in one project, breaking every evidence-graph refresh and therefore
+      // every turn dispatch in it (2026-09-08). A run's loop_session_id now reflects only how it
+      // was actually created; the episode-run join table is the source of truth for this
+      // attribution.
       const resultSha256 = scienceResearchEpisodeResultSha256({ episodeId: episode.id, outcome: input.outcome,
         observationSummary, conclusion, nextAction, runIds, artifacts, evidenceSpanIds });
       const bindRun = this.db.prepare(`INSERT INTO research_episode_run_bindings

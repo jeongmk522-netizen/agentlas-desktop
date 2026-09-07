@@ -7,6 +7,8 @@ import { randomUUID } from "node:crypto";
 import type { Runner } from "../runtime/runner";
 import type { RawMemoryEvent } from "./events";
 import { parseMemoryEvents } from "./events";
+import { callConnectedModel } from "../system-agents/judgment";
+import { isJudgmentRefusal } from "../runtime/judgment-refusal";
 
 export type SemanticDisposition = "accept" | "session" | "discard" | "defer";
 
@@ -186,6 +188,33 @@ export async function runSemanticMemoryReview(input: {
     }
     return { semanticDecisions: decisions, semanticAttempted: true, semanticFailed: false };
   } catch (error) {
+    /*
+     * ★이 실행의 런타임이 격리를 못 한다고 해서 판정 자체가 죽어서는 안 된다.
+     *
+     * 큐레이터는 이 실행이 쓰는 러너에 묶여 있었다. Antigravity 처럼 무도구 격리를 증명하지
+     * 못하는 CLI 로 돌면 **매 턴** 여기로 떨어졌다 — 오너 기계 로그에서 하루에 8번,
+     * 전부 같은 사유였다. 판정 서비스는 이미 이 문제를 알고 있고(같은 사고가 2026-08-06 에
+     * 있었다) 활성 런타임이 거절하면 격리를 증명할 수 있는 다른 연결된 런타임으로 넘어간다.
+     * 큐레이터만 그 사다리를 안 쓰고 있었다.
+     *
+     * 여기서 실패해도 결정론 정책 폴백은 그대로 남는다 — 이 한 번의 재시도는 기회를 하나 더
+     * 주는 것이지 경계를 낮추는 것이 아니다(callConnectedModel 도 무도구 격리를 요구한다).
+     */
+    const refused = isJudgmentRefusal(error);
+    if (refused && !input.signal?.aborted) {
+      try {
+        const text = await callConnectedModel({
+          systemPrompt: SEMANTIC_MEMORY_CURATOR_PROMPT,
+          input: request.prompt,
+          locale: input.locale,
+          signal: input.signal,
+        });
+        const decisions = text ? parseSemanticCurationResponse(text, request.reviewableIndices) : [];
+        if (decisions.length === request.reviewableIndices.length) {
+          return { semanticDecisions: decisions, semanticAttempted: true, semanticFailed: false };
+        }
+      } catch { /* 폴백의 폴백은 없다 — 아래 정책 경로가 받는다. */ }
+    }
     console.warn(`[memory] semantic curator fell back to policy: ${error instanceof Error ? error.message : "unknown"}`);
     return { semanticAttempted: true, semanticFailed: true };
   }

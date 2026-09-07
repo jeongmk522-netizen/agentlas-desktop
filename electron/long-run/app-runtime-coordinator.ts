@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { onHostShutdown } from "../host-lifecycle";
+import { reconcileHostPausedLongRuns } from "./startup-reconciler";
 import {
   pauseActiveDesktopLongRunsForAppShutdown,
   recoverInterruptedDesktopLongRunsAtStartup,
@@ -49,6 +50,27 @@ export function initializeAppRuntimeCoordinator(): { appInstanceId: string; reco
   initialized = true;
   admissionOpen = true;
   const recoveredRunIds = recoverInterruptedDesktopLongRunsAtStartup(appInstanceId);
+  /*
+   * Say, out loud and per run, which of those may carry on.
+   *
+   * Startup used to pause every interrupted run and stop there, so a goal meant to run for days
+   * ended permanently the first time the person closed the window: the state read "paused" and no
+   * path in the product could leave that state on its own. Deciding here — and recording the refusal
+   * for the ones that may not — turns a silent dead end into something the host can act on and the
+   * person can see.
+   */
+  try {
+    for (const entry of reconcileHostPausedLongRuns(recoveredRunIds)) {
+      if (entry.decision.resume) {
+        console.info(`[long-run-reconcile] run=${entry.runId} resumable=yes`);
+      } else {
+        console.info(`[long-run-reconcile] run=${entry.runId} resumable=no reason=${entry.decision.reason}`);
+      }
+    }
+  } catch (error) {
+    // Reconciliation is a report, never a reason the app fails to start.
+    console.error("[long-run-reconcile] failed", error);
+  }
   removeHostShutdownHook = onHostShutdown(() => {
     // Synchronous last-chance boundary. Normal quit calls the awaited path
     // first, but SIGTERM/crash-adjacent exits still persist a manual-resume

@@ -183,7 +183,8 @@
     "gate:colour-tokens": "node scripts/gate-colour-tokens.cjs",
     "test:science-folder-boundary": "node scripts/science-project-folder-boundary-contract.cjs",
     "test:chat-notice-honesty": "node scripts/chat-notice-and-preview-honesty-contract.cjs",
-    "test:goal-pass-failure": "node scripts/goal-pass-failure-contract.cjs"
+    "test:goal-pass-failure": "node scripts/goal-pass-failure-contract.cjs",
+    "test:long-run-startup-resume": "node scripts/long-run-startup-resume-contract.cjs"
   },
   "dependencies": {
     "@file-viewer/preset-lite": "^2.3.0",

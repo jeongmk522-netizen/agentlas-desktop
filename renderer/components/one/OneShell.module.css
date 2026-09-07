@@ -658,8 +658,12 @@
   height: 64px;
   border-bottom: 1px solid var(--paper-3);
   /* Messages scroll underneath this fixed bar. It must be fully opaque or
-     reply text appears ghosted through the Taskforce header. */
-  background: var(--white);
+     reply text appears ghosted through the Taskforce header.
+     ★불투명은 --paper 로 낸다. --white 는 **테마와 무관한 상수**라(다크에서도 #ffffff)
+     그 위 글자(--ink, 다크에서 #f3f4f8)와 겹쳐 흰 바탕에 흰 글자가 됐다 —
+     오너 실사용 2026-09-07: "검은 대화창 안에 또 흰색 밝은 회색 박스 안에 밝은글자".
+     --paper 는 두 테마 모두 불투명하다(라이트 #ffffff / 다크 #131419). */
+  background: var(--paper);
 }
 
 .taskToolbar {

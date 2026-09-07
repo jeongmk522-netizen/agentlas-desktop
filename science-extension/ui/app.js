@@ -2622,7 +2622,7 @@ function createComposerEventSync({
     const graph = state.evidenceGraph;
     if (state.evidenceGraphLoading && !graph) return `<section class="evidenceGraphView"><div class="evidenceGraphState" aria-live="polite"><strong>Building the project Evidence Graph…</strong><span>Canonical sources, evidence spans, hypotheses, runs, artifacts, and conclusions are being projected.</span></div></section>`;
     if (!graph) {
-      return `<section class="evidenceGraphView" data-evidence-graph-state="${state.evidenceGraphError ? "error" : "empty"}"><header class="evidenceGraphHeader"><div><span>Interpretation · Evidence Graph</span><h1>${escapeHtml(project.title)}</h1><p>Citations, support, contradictions, experiments, artifacts, and conclusions remain separately typed and version-bound.</p></div></header><div class="evidenceGraphState" role="${state.evidenceGraphError ? "alert" : "status"}"><span class="evidenceGraphStateIcon">${heroIcon(state.evidenceGraphError ? "grid" : "sparkles")}</span><strong>${state.evidenceGraphError ? "The current graph cannot be trusted" : "No Evidence Graph revision yet"}</strong><span>${escapeHtml(state.evidenceGraphError || "Build the first immutable projection from this project's current canonical research records.")}</span><button class="primaryButton" data-action="refresh-evidence-graph">${state.evidenceGraphError ? "Rebuild from canonical records" : "Build Evidence Graph"}</button></div></section>`;
+      return `<section class="evidenceGraphView" data-evidence-graph-state="${state.evidenceGraphError ? "error" : "empty"}"><header class="evidenceGraphHeader"><div><span>${escapeHtml(domainLabel(project.domain))} · ${uiCopy("해석·결정", "Interpretation & Decisions")}</span><h1>${escapeHtml(project.title)}</h1><p>Citations, support, contradictions, experiments, artifacts, and conclusions remain separately typed and version-bound.</p></div></header><div class="evidenceGraphState" role="${state.evidenceGraphError ? "alert" : "status"}"><span class="evidenceGraphStateIcon">${heroIcon(state.evidenceGraphError ? "grid" : "sparkles")}</span><strong>${state.evidenceGraphError ? "The current graph cannot be trusted" : "No Evidence Graph revision yet"}</strong><span>${escapeHtml(state.evidenceGraphError || "Build the first immutable projection from this project's current canonical research records.")}</span><button class="primaryButton" data-action="refresh-evidence-graph">${state.evidenceGraphError ? "Rebuild from canonical records" : "Build Evidence Graph"}</button></div></section>`;
     }
     const selectedCandidate = evidenceGraphCandidateById(state.selectedEvidenceGraphCandidateId);
     const selectedNode = evidenceGraphNodeById(state.selectedEvidenceGraphNodeId)
@@ -2637,7 +2637,7 @@ function createComposerEventSync({
       : `<div class="evidenceGraphNoCandidates"><strong>No inference candidates</strong><span>The graph contains no machine-proposed gap, qualification, or reconciliation requiring review.</span></div>`;
     const nodeOptions = `<option value="" ${selectedNode ? "" : "selected"}>Select a node…</option>${graph.nodes.map((node) => `<option value="${escapeHtml(node.id)}" ${node.id === selectedNode?.id ? "selected" : ""}>${escapeHtml(`${evidenceGraphKindLabel(node.kind)} · ${node.label}`)}</option>`).join("")}`;
     return `<section class="evidenceGraphView" data-evidence-graph-state="ready" data-evidence-graph-revision="${escapeHtml(graph.revision)}" data-evidence-graph-sha256="${escapeHtml(graph.contentSha256)}">
-      <header class="evidenceGraphHeader"><div><span>Interpretation · Evidence Graph</span><h1>${escapeHtml(project.title)}</h1><p>Citation is not support. Accepted inference remains a reviewed candidate until an exact non-invalidated research chain supports a conclusion.</p></div><div class="evidenceGraphHeaderActions"><span>Revision ${escapeHtml(graph.revision)} · <code title="${escapeHtml(graph.contentSha256)}">${escapeHtml(evidenceGraphShortHash(graph.contentSha256))}</code></span><button class="secondaryButton" data-action="refresh-evidence-graph" ${state.evidenceGraphLoading ? "disabled" : ""}>${state.evidenceGraphLoading ? "Refreshing…" : "Refresh graph"}</button></div></header>
+      <header class="evidenceGraphHeader"><div><span>${escapeHtml(domainLabel(project.domain))} · ${uiCopy("해석·결정", "Interpretation & Decisions")}</span><h1>${escapeHtml(project.title)}</h1><p>Citation is not support. Accepted inference remains a reviewed candidate until an exact non-invalidated research chain supports a conclusion.</p></div><div class="evidenceGraphHeaderActions"><span>Revision ${escapeHtml(graph.revision)} · <code title="${escapeHtml(graph.contentSha256)}">${escapeHtml(evidenceGraphShortHash(graph.contentSha256))}</code></span><button class="secondaryButton" data-action="refresh-evidence-graph" ${state.evidenceGraphLoading ? "disabled" : ""}>${state.evidenceGraphLoading ? "Refreshing…" : "Refresh graph"}</button></div></header>
       ${state.evidenceGraphError ? `<div class="evidenceGraphWarning" role="alert"><strong>Graph refresh failed closed.</strong><span>${escapeHtml(state.evidenceGraphError)}</span></div>` : ""}
       <div class="evidenceGraphMetrics" aria-label="Evidence Graph summary"><div><span>Nodes</span><strong>${escapeHtml(graph.nodes.length)}</strong></div><div><span>Edges</span><strong>${escapeHtml(graph.edges.length)}</strong></div><div><span>Pending review</span><strong>${escapeHtml(pendingCount)}</strong></div><div><span>Accepted / rejected</span><strong>${escapeHtml(acceptedCount)} / ${escapeHtml(rejectedCount)}</strong></div><div data-alert="${graph.summary.invalidatedNodeCount > 0}"><span>Invalidated</span><strong>${escapeHtml(graph.summary.invalidatedNodeCount)}</strong></div><div data-alert="${graph.summary.unsupportedConclusionCount > 0}"><span>Unsupported conclusions</span><strong>${escapeHtml(graph.summary.unsupportedConclusionCount)}</strong></div></div>
       <div class="evidenceGraphWorkspace" data-inspector-open="${Boolean(selectedNode || selectedCandidate)}"><section class="evidenceGraphCanvasPane"><header><div><strong>Project evidence map</strong><span>${escapeHtml(graph.nodes.length)} canonical nodes · ${escapeHtml(graph.edges.length)} directed edges</span></div><div class="evidenceGraphCanvasControls"><label class="evidenceGraphNodePicker"><span>Inspect node</span><select data-evidence-graph-node-select aria-label="Inspect exact Evidence Graph node">${nodeOptions}</select></label><div class="evidenceGraphLegend"><span data-status="supported">Supported</span><span data-status="candidate">Candidate</span><span data-status="contradicted">Contradicted</span><span data-status="invalidated">Invalidated</span></div></div></header><div class="evidenceGraphCanvas" data-evidence-graph-canvas role="application" aria-label="Interactive project Evidence Graph"></div><footer><span>Click a node to inspect the exact record. Drag, zoom, and pan the real graph.</span><span>Directed edges preserve derivation and evidence paths.</span></footer></section>${evidenceGraphInspector(graph, selectedNode, selectedCandidate)}</div>
@@ -2650,7 +2650,7 @@ function createComposerEventSync({
     // The header wraps its three parts in one div, exactly as the filled screen does. Left bare,
     // the row's flex rule laid the label, the title and the sentence out as three columns: the
     // label was squeezed into two stacked words and the title broke across three lines.
-    if (!plan) return `<section class="analysisPlanView analysisPlanEmpty"><header><div><span>Plan & Protocols</span><h1>${escapeHtml(project.title)}</h1><p>아직 project-bound 분석계획이 없습니다. 연구 질문, estimand, 의존구조와 입력 데이터가 확정되기 전에는 분석을 실행하지 않습니다.</p></div></header><div><strong>다음에 필요한 것</strong><span>오른쪽 연구 채팅에서 분석 목적과 데이터 구조를 함께 정의하세요.</span></div></section>`;
+    if (!plan) return `<section class="analysisPlanView analysisPlanEmpty"><header><div><span>${escapeHtml(domainLabel(project.domain))} · ${uiCopy("계획·프로토콜", "Plan & Protocols")}</span><h1>${escapeHtml(project.title)}</h1><p>아직 project-bound 분석계획이 없습니다. 연구 질문, estimand, 의존구조와 입력 데이터가 확정되기 전에는 분석을 실행하지 않습니다.</p></div></header><div><strong>다음에 필요한 것</strong><span>오른쪽 연구 채팅에서 분석 목적과 데이터 구조를 함께 정의하세요.</span></div></section>`;
     const document = plan.version?.document || {};
     const estimand = document.estimand;
     const model = document.model;
@@ -3444,7 +3444,7 @@ function createComposerEventSync({
           ? `<div class="emptyCopy pageEmpty"><strong>${uiCopy("아직 실행된 분석이 없습니다.", "No analyses have run yet.")}</strong><p>${uiCopy("분석계획 화면에서 계획을 고정한 뒤 연구 채팅에서 실행을 요청하면, 어떤 계획 아래 무엇이 돌았고 무엇을 만들었는지가 여기에 기록됩니다.", "Pin a plan in Analysis Plans, then request a run in Research Chat. This page will record which plan ran, what it used, and what it produced.")}</p></div>`
           : runs.map((run) => analysisRunRow(run, artifactsById)).join("");
     return `<section class="researchView analysisRunsView" data-research-destination="analysis-runs"><div class="answerColumn">
-      <div class="researchKicker"><span>${escapeHtml(domainLabel(project.domain))}</span> · <span>${uiCopy("분석 실행", "Analysis runs")}</span></div>
+      <div class="researchKicker"><span>${escapeHtml(domainLabel(project.domain))}</span> · <span>${uiCopy("분석 실행", "Analysis & Runs")}</span></div>
       <h1>${escapeHtml(project.title)}</h1>
       ${state.analysisRunsError ? `<div class="errorCopy" role="alert">${escapeHtml(uiCopy(`실행 기록을 불러오지 못했습니다. ${state.analysisRunsError}`, `Could not load run records. ${state.analysisRunsError}`))}</div>` : ""}
       ${loaded && runs.length ? `<div class="analysisRunsSummary"><span>${uiCopy("전체", "Total")} <strong>${escapeHtml(runs.length)}</strong></span><span>${uiCopy("실행 성공", "Execution succeeded")} <strong>${escapeHtml(runs.filter((run) => run.status === "succeeded").length)}</strong></span><span>${uiCopy("실패·취소", "Failed or cancelled")} <strong>${escapeHtml(runs.filter((run) => run.status === "failed" || run.status === "cancelled").length)}</strong></span><span data-alert="${outputlessCount > 0}">${uiCopy("출력 없는 성공", "Succeeded without output")} <strong>${escapeHtml(outputlessCount)}</strong></span></div>` : ""}
@@ -6924,6 +6924,21 @@ function createComposerEventSync({
     if (next) next.hidden = !hasOverflow || viewport.scrollLeft >= maxScroll - 1;
   }
 
+  // 목적지 12개는 레일보다 길다. 1024x704 에서는 6개만 보였고, 그 중에 지금 열려 있는
+  // 화면이 없을 수 있다 -- Submission & Archive 를 보고 있는데 레일에는 그 항목이 아예
+  // 없어서, 어디에 서 있는지 화면이 알려주지 못했다. 그릴 때마다 활성 항목을 스크롤
+  // 안으로 들여놓는다. 세로 방향인 것만 빼면 탭 줄의 revealActiveWorkspaceTab 과 같다.
+  function revealActiveDestination() {
+    const viewport = document.querySelector(".railScrollable");
+    const active = viewport?.querySelector('button[data-project-destination][aria-current="true"]');
+    if (!viewport || !active) return;
+    const inset = 24;
+    const top = active.offsetTop;
+    const bottom = top + active.offsetHeight;
+    if (top < viewport.scrollTop + inset) viewport.scrollTop = Math.max(0, top - inset);
+    else if (bottom > viewport.scrollTop + viewport.clientHeight - inset) viewport.scrollTop = Math.min(viewport.scrollHeight - viewport.clientHeight, bottom - viewport.clientHeight + inset);
+  }
+
   function revealActiveWorkspaceTab() {
     const viewport = document.querySelector("[data-workspace-tabs]");
     const active = viewport?.querySelector('[data-workspace-tab-id][aria-selected="true"]')?.closest(".workspaceTabFrame");
@@ -8941,6 +8956,7 @@ function createComposerEventSync({
     restoreChatScroll();
     const contentPane = document.querySelector(".contentPane");
     if (contentPane) contentPane.scrollTop = state.scrollByMode[state.mode] || 0;
+    revealActiveDestination();
     if (state.modal) document.querySelector('input[name="title"]')?.focus();
     if (state.researchContractSheet) requestAnimationFrame(() => document.querySelector(".researchContractSheet")?.focus({ preventScroll: true }));
     if (state.analysisPlanReviewSheet) requestAnimationFrame(() => document.querySelector(".analysisPlanReviewSheet textarea")?.focus({ preventScroll: true }));

@@ -24,9 +24,6 @@
   --science-button-m-height: 40px;
   --science-button-s-height: 36px;
   --science-icon-button-size: 40px;
-  --science-space-from-44: 32px;
-  --science-space-from-56: 24px;
-  --science-space-from-72: 12px;
   --science-shadow-standard: 0 20px 26px rgba(54, 53, 53, .16);
   /* The shell and rail share the same neutral page grey so their join never becomes a second
      visual divider. Cards stay on surface-0 and are separated from the page by their edge. */
@@ -120,7 +117,7 @@ button { cursor: pointer; color: inherit; }
 .workspace[data-rail-collapsed="true"] .rail { opacity: 1; transform: none; pointer-events: auto; }
 /* 좌우 여백 14px. 16px 이면 기본 사이드바 폭에서도 이름이 3px 모자라 끝의 별표가 잘렸다 --
    가장 넓은 창에서조차 그랬다. 글자 크기는 정해진 값이므로 여백에서 자리를 낸다. */
-.railBrand { min-height: 64px; display: flex; align-items: center; gap: 8px; padding: 10px 14px; }
+.railBrand { min-height: 58px; display: flex; align-items: center; gap: 8px; padding: 8px 14px; }
 .railBrandLockup { min-width: 0; flex: 1; display: flex; align-items: center; gap: 7px; overflow: hidden; }
 .railBrandMark { width: 32px; height: 35px; display: block; flex: 0 0 32px; object-fit: contain; }
 .railBrandWordmark { min-width: 0; flex: 0 1 auto; display: flex; align-items: center; overflow: hidden; }
@@ -139,19 +136,26 @@ button { cursor: pointer; color: inherit; }
 .workspaceSidebarReveal { display: grid; align-self: center; border: 1px solid var(--line-strong); background: var(--surface); box-shadow: 0 1px 2px rgba(35,35,33,.04); }
 .workspace[data-rail-collapsed="true"] .workspaceSidebarReveal { display: grid !important; visibility: visible !important; }
 .railScrim { display: none; }
-.railBackButton { min-height: 38px; margin: 0 12px 8px; display: flex; align-items: center; gap: 9px; border: 0; border-radius: 10px; background: transparent; color: var(--muted-deep); padding: 8px 10px; text-align: left; }
+.railBackButton { min-height: 30px; margin: 0 12px 2px; display: flex; align-items: center; gap: 9px; border: 0; border-radius: 10px; background: transparent; color: var(--muted-deep); padding: 0 10px; text-align: left; }
 .railBackButton:hover, .railBackButton:focus-visible { background: var(--soft); color: var(--ink); }
 .railBackButton:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
 .railBackButton:disabled { cursor: progress; opacity: .52; }
 .railBackButton > .uiIcon { width: 15px; height: 15px; flex: 0 0 15px; }
 .railBackButton strong { font-size: 12px; font-weight: 700; }
-.newButton { min-height: 40px; margin: 0 16px 18px; display: flex; align-items: center; justify-content: center; gap: 8px; border: 1px solid var(--line-strong); border-radius: 8px; background: var(--surface); color: var(--ink); font-size: 13px; font-weight: 620; text-align: left; padding: 0 16px; box-shadow: none; }
+.newButton { min-height: 38px; margin: 0 14px 10px; display: flex; align-items: center; justify-content: center; gap: 8px; border: 1px solid var(--line-strong); border-radius: 8px; background: var(--surface); color: var(--ink); font-size: 13px; font-weight: 620; text-align: left; padding: 0 16px; box-shadow: none; }
 .newButton > .uiIcon { width: 16px; height: 16px; flex: 0 0 16px; }
 .newButton strong { font-size: 12px; font-weight: 650; }
 .newButton:hover { background: var(--grey-50); border-color: var(--grey-400); }
 .rail[data-rail-mode="session"] .newButton { border-color: var(--line-strong); background: var(--surface); color: var(--ink); }
 .rail[data-rail-mode="session"] .newButton:hover { background: var(--grey-50); border-color: var(--grey-400); }
-.railScrollable { min-height: 0; flex: 1 1 auto; overflow-y: auto; overflow-x: hidden; overscroll-behavior: contain; scrollbar-width: thin; }
+/* 목적지 12개가 레일보다 길어지면 아무 표시 없이 잘려서, Outputs 3개 화면이 통째로
+   존재하지 않는 것처럼 보였다. 잘리는 쪽에만 그림자를 세워 더 있다는 것을 알린다. */
+.railScrollable { min-height: 0; flex: 1 1 auto; overflow-y: auto; overflow-x: hidden; overscroll-behavior: contain; scrollbar-width: thin;
+  background:
+    linear-gradient(var(--sidebar-bg) 30%, transparent) top / 100% 14px local no-repeat,
+    linear-gradient(transparent, var(--sidebar-bg) 70%) bottom / 100% 14px local no-repeat,
+    radial-gradient(farthest-side at 50% 0, color-mix(in srgb, var(--science-ink) 10%, transparent), transparent) top / 100% 8px scroll no-repeat,
+    radial-gradient(farthest-side at 50% 100%, color-mix(in srgb, var(--science-ink) 10%, transparent), transparent) bottom / 100% 8px scroll no-repeat; }
 .railScrollable .projectWorkflowNav { max-height: none; overflow: visible; }
 .railScrollable .labSection { min-height: auto; flex: 0 0 auto; }
 .railScrollable .labList { overflow: visible; }
@@ -171,7 +175,7 @@ button { cursor: pointer; color: inherit; }
 .projectContextCard .currentProject:hover { background: var(--soft); }
 .projectContextCard .currentProject span { font-size: 13px; font-weight: 680; }
 .projectDestinations { display: grid; gap: 2px; padding: 3px 0 7px; border-top: 0; }
-.projectDestinations button { width: 100%; min-height: 34px; display: flex; align-items: center; gap: 9px; border: 0; border-radius: 9px; background: transparent; padding: 0 10px; color: var(--muted-deep); text-align: left; font-size: 11px; }
+.projectDestinations button { width: 100%; min-height: 32px; display: flex; align-items: center; gap: 9px; border: 0; border-radius: 9px; background: transparent; padding: 0 10px; color: var(--muted-deep); text-align: left; font-size: 11px; }
 .projectDestinations button:hover { background: var(--soft); color: var(--ink); }
 /* Current destination is marked by a coral edge plus weight, not by a filled block.
    A colour block reads as "selected" and as "state" at once; the edge only says where
@@ -180,10 +184,10 @@ button { cursor: pointer; color: inherit; }
 .projectDestinations button[aria-current="true"]::before { content: ""; position: absolute; left: 0; top: 50%; width: 2px; height: 16px; transform: translateY(-50%); border-radius: 0 2px 2px 0; background: var(--brand-coral); }
 .projectDestinations .uiIcon { width: 15px; height: 15px; flex: 0 0 15px; }
 .projectWorkflowNav { max-height: min(316px, 34vh); gap: 0; overflow-y: auto; overscroll-behavior: contain; padding: 5px 7px 8px; scrollbar-width: thin; }
-.projectNavGroup { display: grid; gap: 1px; padding: 2px 0 5px; }
-.projectNavGroup + .projectNavGroup { border-top: 1px solid var(--line); padding-top: 6px; }
-.projectNavLabel { padding: 18px 10px 8px; color: var(--grey-600); font-size: 12px; font-weight: 650; letter-spacing: 0; text-transform: none; }
-.projectWorkflowNav button { min-height: 40px; gap: 10px; padding: 0 10px; font-size: 13px; line-height: 1.25; }
+.projectNavGroup { display: grid; gap: 1px; padding: 2px 0 3px; }
+.projectNavGroup + .projectNavGroup { border-top: 1px solid var(--line); padding-top: 4px; }
+.projectNavLabel { padding: 8px 10px 2px; color: var(--grey-600); font-size: 11px; font-weight: 700; letter-spacing: .02em; text-transform: none; }
+.projectWorkflowNav button { min-height: 36px; gap: 10px; padding: 0 10px; font-size: 12px; line-height: 1.25; }
 .projectWorkflowNav button span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .projectWorkflowNav .uiIcon { width: 16px; height: 16px; flex-basis: 16px; }
 .currentProject { width: calc(100% - 28px); height: 40px; margin: 0 14px; display: flex; align-items: center; justify-content: space-between; gap: 10px; border: 0; border-radius: 9px; background: transparent; padding: 0 9px; text-align: left; }
@@ -378,7 +382,7 @@ button { cursor: pointer; color: inherit; }
    character, and this dock is a research log. A left rule matches the quotation
    grammar used for evidence elsewhere. */
 .chatMessage.isUser { max-width: 100%; margin-left: 0; border: 0; border-left: 2px solid var(--grey-300); border-radius: 0; background: transparent; box-shadow: none; padding: 10px 0 10px 12px; }
-.chatMessageRole { margin-bottom: 6px; color: var(--grey-500); font-size: 11px; font-weight: 620; }
+.chatMessageRole { margin-bottom: 6px; color: var(--muted); font-size: 11px; font-weight: 620; }
 .chatMessageContent { font-size: 13px; line-height: 1.55; white-space: pre-wrap; overflow-wrap: anywhere; }
 .chatMessageContent.scienceChatMarkdown { white-space: normal; min-width: 0; }
 .scienceChatMarkdown > :first-child { margin-top: 0; }
@@ -477,7 +481,7 @@ button { cursor: pointer; color: inherit; }
 .evidenceGraphView { min-width: 0; min-height: 100%; padding: 24px 24px 48px; background: var(--surface); }
 .evidenceGraphHeader { min-width: 0; display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; }
 .evidenceGraphHeader > div:first-child { min-width: 0; }
-.evidenceGraphHeader > div:first-child > span { display: block; color: var(--muted); font-size: 11px; font-weight: 760; letter-spacing: .055em; text-transform: uppercase; }
+.evidenceGraphHeader > div:first-child > span { display: block; color: var(--muted); font-size: 12px; font-weight: 700; letter-spacing: .04em; margin-bottom: 10px; }
 .evidenceGraphHeader h1 { margin: 8px 0 0; overflow-wrap: anywhere; font-size: clamp(18px, 1.8vw, 25px); font-weight: 690; line-height: 1.24; letter-spacing: -.025em; }
 .evidenceGraphHeader p { max-width: 720px; margin: 8px 0 0; color: var(--muted-deep); font-size: 11px; line-height: 1.55; }
 .evidenceGraphHeaderActions { flex: 0 0 auto; display: flex; align-items: center; gap: 9px; }
@@ -512,6 +516,7 @@ button { cursor: pointer; color: inherit; }
 .evidenceGraphLegend span[data-status="contradicted"]::before { background: #a54b43; }
 .evidenceGraphLegend span[data-status="invalidated"]::before { border: 2px solid #b42318; background: var(--surface); }
 .evidenceGraphCanvas { min-width: 0; min-height: 430px; flex: 1; position: relative; background: #fcfcfc; outline: none; }
+.evidenceGraphCanvas:focus-visible { outline: 2px solid var(--ink); outline-offset: -2px; }
 .evidenceGraphCanvas[data-render-failed="true"] { display: grid; place-items: center; padding: 30px; color: var(--danger); font-size: 12px; text-align: center; }
 .evidenceGraphCanvasPane > footer { min-height: 43px; display: flex; align-items: center; justify-content: space-between; gap: 10px; border-top: 1px solid var(--line); padding: 8px 12px; color: var(--muted); font-size: 10px; }
 .evidenceGraphInspector { min-height: 540px; display: flex; flex-direction: column; }
@@ -702,6 +707,7 @@ button { cursor: pointer; color: inherit; }
 .scienceModelClose:hover, .scienceModelClose:focus-visible { background: var(--soft); color: var(--ink); }
 .scienceModelSearch { min-width: 0; height: 34px; display: flex; align-items: center; gap: 7px; border: 1px solid var(--line); border-radius: 9px; background: var(--surface); padding: 0 9px; color: var(--muted); }
 .scienceModelSearch .uiIcon { width: 14px; height: 14px; flex: 0 0 14px; }
+.scienceModelSearch:focus-within { border-color: var(--ink); box-shadow: 0 0 0 3px var(--soft); }
 .scienceModelSearch input { width: 100%; min-width: 0; height: 30px; border: 0; outline: none; background: transparent; color: var(--ink); font-size: 11px; }
 .scienceModelOptions { min-height: 0; display: grid; gap: 2px; overflow-y: auto; overscroll-behavior: contain; }
 .scienceModelOption { min-width: 0; min-height: 48px; display: flex; align-items: center; gap: 8px; border: 1px solid transparent; border-radius: 9px; background: transparent; padding: 7px 8px; color: var(--ink); text-align: left; }
@@ -924,7 +930,7 @@ button.manuscriptBinding:hover { border-color: var(--line-strong); background: v
 .submissionSteps button span { width: 30px; height: 30px; display: grid; place-items: center; border: 1px solid var(--line-strong); border-radius: 50%; background: var(--surface); color: var(--muted); font-size: 11px; font-weight: 700; }
 .submissionSteps button strong { font-size: 12px; font-weight: 650; white-space: nowrap; }
 .submissionSteps button[aria-current="step"] { color: var(--ink); opacity: 1; }
-.submissionSteps button[aria-current="step"] span { border-color: var(--brand-coral); background: var(--brand-coral); color: var(--surface); }
+.submissionSteps button[aria-current="step"] span { border-color: var(--ink); background: var(--ink); color: var(--surface); }
 .submissionSteps button:disabled { cursor: default; }
 .submissionSheetBody { min-width: 0; min-height: 0; flex: 1 1 auto; display: grid; grid-template-columns: minmax(0, 1fr) 300px; gap: 16px; overflow-y: auto; padding: 20px 24px 22px; scrollbar-gutter: stable; }
 .submissionFormPane { min-width: 0; }
@@ -1721,6 +1727,7 @@ button.manuscriptBinding:hover { border-color: var(--line-strong); background: v
 .skyCatalogToolbar label { min-height: 31px; display: inline-flex; align-items: center; gap: 7px; border: 1px solid var(--line-strong); border-radius: 7px; background: var(--surface); padding: 0 8px; }
 .skyCatalogToolbar label span, .skyCoordinateConvention { color: var(--muted); font-size: 11px; }
 .skyCatalogToolbar select { max-width: 174px; border: 0; background: transparent; color: var(--ink); font: inherit; font-size: 11px; outline: 0; }
+.skyCatalogToolbar select:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; border-radius: 5px; }
 .skyObjectDetail { min-width: 0; min-height: 62px; display: flex; flex-direction: column; justify-content: center; border-left: 1px solid var(--line); padding-left: 13px; }
 .skyObjectDetail strong { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-family: "Pretendard", Inter, ui-sans-serif, -apple-system, sans-serif; font-size: 12px; }
 .skyObjectDetail span { margin-top: 3px; color: var(--muted); font-size: 11px; line-height: 1.25; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -1845,10 +1852,10 @@ button.manuscriptBinding:hover { border-color: var(--line-strong); background: v
 .labDecisionActionHint { color: var(--muted-deep) !important; font-weight: 650; }
 .labDecisionError { margin: 0; border-top: 1px solid #eed6d2; background: #fff7f6; color: var(--danger); padding: 7px 13px; font-size: 11px; line-height: 1.4; }
 
-.analysisPlanView { width: min(960px, calc(100% - 40px)); margin: 28px auto 48px; }
+.analysisPlanView { width: min(960px, calc(100% - 56px)); margin: 40px auto 48px; }
 .analysisPlanView > header { display: flex; align-items: flex-start; justify-content: space-between; gap: 24px; padding-bottom: 20px; border-bottom: 1px solid var(--line-strong); }
 .analysisPlanView > header > div:first-child { min-width: 0; }
-.analysisPlanView > header span { color: var(--muted); font-size: 11px; font-weight: 760; letter-spacing: .07em; }
+.analysisPlanView > header span { color: var(--muted); font-size: 12px; font-weight: 700; letter-spacing: .04em; }
 .analysisPlanView h1 { margin: 8px 0 0; font-family: "Pretendard", Inter, ui-sans-serif, -apple-system, sans-serif; font-size: 26px; font-weight: 560; }
 .analysisPlanView > header p { max-width: 680px; margin: 10px 0 0; color: var(--muted-deep); font-size: 12px; line-height: 1.6; }
 .analysisPlanIdentity { flex: 0 0 auto; display: grid; justify-items: end; gap: 5px; }
@@ -1980,10 +1987,10 @@ button.manuscriptBinding:hover { border-color: var(--line-strong); background: v
 .projectLibraryBrand img { width: 28px; height: 31px; object-fit: contain; }
 .projectLibraryBrand strong { font-size: 18px; letter-spacing: -.025em; }
 .projectLibraryBrand em { color: var(--brand-coral); font-style: normal; }
-.projectLibraryCount { justify-self: end; color: var(--grey-500); font-size: 11px; }
+.projectLibraryCount { justify-self: end; color: var(--muted); font-size: 11px; }
 .projectLibraryMain { width: min(1180px, 100%); min-height: 0; flex: 1 1 auto; align-self: center; overflow-y: auto; padding: 44px 36px 64px; scrollbar-width: thin; }
 .projectLibraryHeading { display: flex; align-items: end; justify-content: space-between; gap: 24px; }
-.projectLibraryHeading > div > span { color: var(--grey-500); font-size: 11px; font-weight: 720; letter-spacing: .08em; text-transform: uppercase; }
+.projectLibraryHeading > div > span { color: var(--muted); font-size: 11px; font-weight: 720; letter-spacing: .08em; text-transform: uppercase; }
 .projectLibraryHeading h1 { margin: 6px 0 4px; font-size: clamp(30px, 4vw, 44px); line-height: 1.08; letter-spacing: -.045em; }
 .projectLibraryHeading p { margin: 0; color: var(--grey-600); font-size: 13px; line-height: 1.6; }
 .projectLibraryHeading > .primaryButton { min-height: 40px; display: inline-flex; align-items: center; gap: 7px; white-space: nowrap; }
@@ -1991,7 +1998,7 @@ button.manuscriptBinding:hover { border-color: var(--line-strong); background: v
 .libraryProjects { margin-top: 38px; }
 .libraryProjects > header { display: flex; align-items: center; justify-content: space-between; min-height: 34px; margin-bottom: 10px; }
 .libraryProjects h2 { margin: 0; font-size: 15px; font-weight: 680; }
-.libraryProjects > header > span { color: var(--grey-500); font-size: 11px; }
+.libraryProjects > header > span { color: var(--muted); font-size: 11px; }
 .libraryProjectGrid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
 .libraryProjectGrid > .libraryProjectCard:only-child { grid-column: 1 / -1; }
 .libraryProjectCard { min-width: 0; min-height: 196px; display: grid; grid-template-columns: 108px minmax(0, 1fr) 16px; align-items: center; gap: 12px; margin: 0; border: 1px solid var(--grey-200); border-radius: var(--science-radius-card); background: var(--surface); padding: 14px; text-align: left; }
@@ -2000,14 +2007,14 @@ button.manuscriptBinding:hover { border-color: var(--line-strong); background: v
 .libraryProjectFolder { width: 108px; height: 92px; display: grid; place-items: center; overflow: hidden; border-radius: var(--science-radius-card); background: var(--grey-50); }
 .libraryProjectFolder img { width: 100%; height: 100%; display: block; object-fit: cover; }
 .libraryProjectCopy { min-width: 0; }
-.libraryProjectMeta { display: block; overflow: hidden; color: var(--grey-500); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.libraryProjectMeta { display: block; overflow: hidden; color: var(--muted); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
 .libraryProjectCopy > strong { display: -webkit-box; overflow: hidden; margin-top: 7px; font-size: 14px; line-height: 1.35; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow-wrap: break-word; }
 .libraryProjectCopy > em { display: -webkit-box; overflow: hidden; margin-top: 7px; color: var(--grey-600); font-size: 11px; font-style: normal; line-height: 1.5; -webkit-box-orient: vertical; -webkit-line-clamp: 3; overflow-wrap: break-word; }
 .libraryProjectMetrics { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 3px; margin-top: 11px; }
 .libraryProjectMetrics > span { min-width: 0; display: grid; gap: 2px; }
 .libraryProjectMetrics strong { color: var(--ink); font-size: 11px; line-height: 1; }
-.libraryProjectMetrics em { overflow: hidden; color: var(--grey-500); font-size: 10px; font-style: normal; text-overflow: ellipsis; white-space: nowrap; }
-.libraryMetricUnavailable { grid-column: 1 / -1; color: var(--grey-500); font-size: 10px; }
+.libraryProjectMetrics em { overflow: hidden; color: var(--muted); font-size: 10px; font-style: normal; text-overflow: ellipsis; white-space: nowrap; }
+.libraryMetricUnavailable { grid-column: 1 / -1; color: var(--muted); font-size: 10px; }
 .libraryProjectArrow { align-self: center; color: var(--grey-400); }
 .libraryProjectArrow .uiIcon { width: 15px; height: 15px; }
 .libraryEmpty { grid-column: 1 / -1; min-height: 180px; display: grid; place-items: center; align-content: center; gap: 7px; border: 1px dashed var(--grey-300); border-radius: 12px; color: var(--grey-600); text-align: center; }
@@ -2020,7 +2027,7 @@ button.manuscriptBinding:hover { border-color: var(--line-strong); background: v
 .projectFolderHeroAsset { width: 156px; height: 122px; display: block; overflow: hidden; border-radius: var(--science-radius-card); background: var(--grey-50); }
 .projectFolderHeroAsset img { width: 100%; height: 100%; display: block; object-fit: cover; }
 .projectFolderHeroCopy { min-width: 0; }
-.projectFolderHeroCopy > span, .projectFolderContents > header span { color: var(--grey-500); font-size: 10px; font-weight: 720; letter-spacing: .08em; text-transform: uppercase; }
+.projectFolderHeroCopy > span, .projectFolderContents > header span { color: var(--muted); font-size: 10px; font-weight: 720; letter-spacing: .08em; text-transform: uppercase; }
 .projectFolderHeroCopy h1 { overflow-wrap: break-word; margin: 6px 0 6px; font-size: clamp(24px, 3.2vw, 38px); line-height: 1.12; letter-spacing: 0; word-spacing: .06em; }
 .projectFolderHeroCopy p { max-width: 720px; margin: 0; color: var(--grey-600); font-size: 12px; line-height: 1.55; overflow-wrap: break-word; }
 .projectFolderHero > .primaryButton { min-height: 40px; display: inline-flex; align-items: center; gap: 7px; white-space: nowrap; }
@@ -2029,10 +2036,10 @@ button.manuscriptBinding:hover { border-color: var(--line-strong); background: v
 .projectFolderContents { margin-top: 30px; }
 .projectFolderContents > header { min-height: 42px; display: flex; align-items: end; justify-content: space-between; gap: 16px; margin-bottom: 10px; }
 .projectFolderContents > header h2 { margin: 4px 0 0; font-size: 15px; }
-.projectFolderContents > header > strong { color: var(--grey-500); font-size: 11px; font-weight: 620; }
+.projectFolderContents > header > strong { color: var(--muted); font-size: 11px; font-weight: 620; }
 .projectFolderTable { overflow: hidden; border: 1px solid var(--grey-200); border-radius: var(--science-radius-card); background: var(--surface); }
 .projectFolderTableHead, .projectFolderRow { min-width: 0; display: grid; grid-template-columns: 38px minmax(0, 1fr) 94px 76px 104px 20px; align-items: center; gap: 10px; }
-.projectFolderTableHead { min-height: 34px; border-bottom: 1px solid var(--grey-200); background: var(--grey-50); padding: 0 14px; color: var(--grey-500); font-size: 9px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; }
+.projectFolderTableHead { min-height: 34px; border-bottom: 1px solid var(--grey-200); background: var(--grey-50); padding: 0 14px; color: var(--muted); font-size: 9px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; }
 .projectFolderRow { width: 100%; min-height: 64px; border: 0; border-bottom: 1px solid var(--grey-100); border-radius: 0; background: var(--surface); padding: 8px 14px; text-align: left; }
 .projectFolderRow:last-child { border-bottom: 0; }
 .projectFolderRow:hover { background: var(--grey-50); }
@@ -2042,12 +2049,12 @@ button.manuscriptBinding:hover { border-color: var(--line-strong); background: v
 .projectFolderRowCopy { min-width: 0; display: grid; gap: 4px; }
 .projectFolderRowCopy strong, .projectFolderRowCopy em { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .projectFolderRowCopy strong { font-size: 12px; }
-.projectFolderRowCopy em { color: var(--grey-500); font-size: 10px; font-style: normal; }
+.projectFolderRowCopy em { color: var(--muted); font-size: 10px; font-style: normal; }
 .projectFolderRowKind { width: max-content; max-width: 100%; overflow: hidden; border: 1px solid var(--grey-200); border-radius: 999px; padding: 3px 7px; color: var(--grey-600); font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
-.projectFolderRowSize, .projectFolderRow time { overflow: hidden; color: var(--grey-500); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.projectFolderRowSize, .projectFolderRow time { overflow: hidden; color: var(--muted); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
 .projectFolderRowArrow { color: var(--grey-400); }
 .projectFolderRowArrow .uiIcon { width: 14px; height: 14px; }
-.projectFolderEmpty { min-height: 168px; display: grid; place-items: center; align-content: center; gap: 7px; padding: 24px; color: var(--grey-500); text-align: center; }
+.projectFolderEmpty { min-height: 168px; display: grid; place-items: center; align-content: center; gap: 7px; padding: 24px; color: var(--muted); text-align: center; }
 .projectFolderEmpty strong { color: var(--ink); font-size: 12px; }
 .projectFolderEmpty span { max-width: 480px; font-size: 10px; line-height: 1.55; }
 
@@ -2064,8 +2071,9 @@ button.manuscriptBinding:hover { border-color: var(--line-strong); background: v
 .projectHubBrand img { width: 28px; height: 31px; object-fit: contain; }
 .projectHubBrand strong { font-size: 14px; letter-spacing: -.025em; white-space: nowrap; }
 .projectHubBrand em { color: var(--brand-coral); font-style: normal; }
-.projectHubSideSearch, .projectHubMainSearch { display: flex; align-items: center; border: 1px solid var(--grey-200); border-radius: var(--science-radius-control); background: var(--surface); color: var(--grey-500); }
+.projectHubSideSearch, .projectHubMainSearch { display: flex; align-items: center; border: 1px solid var(--grey-200); border-radius: var(--science-radius-control); background: var(--surface); color: var(--muted); }
 .projectHubSideSearch { min-height: 34px; gap: 7px; margin-top: 16px; padding: 0 9px; }
+.projectHubSideSearch:focus-within { border-color: var(--ink); box-shadow: 0 0 0 3px var(--soft); }
 .projectHubSideSearch .uiIcon, .projectHubMainSearch .uiIcon { width: 14px; height: 14px; flex: 0 0 auto; }
 .projectHubSideSearch input, .projectHubMainSearch input { min-width: 0; flex: 1 1 auto; border: 0; outline: 0; background: transparent; color: var(--ink); font: inherit; }
 .projectHubSideSearch input { font-size: 11px; }
@@ -2076,19 +2084,19 @@ button.manuscriptBinding:hover { border-color: var(--line-strong); background: v
 .projectHubPrimaryNav span { overflow: hidden; font-size: 11px; font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }
 .projectHubProjectList { min-height: 0; flex: 1 1 auto; display: flex; flex-direction: column; margin-top: 15px; }
 .projectHubProjectList > header { display: flex; align-items: center; justify-content: space-between; padding: 0 8px 7px; }
-.projectHubProjectList > header strong, .projectHubProjectList > header span { color: var(--grey-500); font-size: 10px; font-weight: 690; }
+.projectHubProjectList > header strong, .projectHubProjectList > header span { color: var(--muted); font-size: 10px; font-weight: 690; }
 .projectHubProjectList > div { min-height: 0; overflow-y: auto; scrollbar-width: thin; }
 .projectHubProjectList button { width: 100%; min-width: 0; min-height: 42px; display: grid; grid-template-columns: 30px minmax(0, 1fr); align-items: center; gap: 8px; border: 0; border-radius: var(--science-radius-control); background: transparent; padding: 5px 7px; color: var(--grey-600); text-align: left; }
 .projectHubProjectList button:hover, .projectHubProjectList button[aria-current="page"] { background: var(--surface); color: var(--ink); }
 .projectHubProjectList .projectFolderGlyph { width: 30px; height: 30px; display: grid; place-items: center; border: 1px solid var(--grey-200); border-radius: 8px; background: var(--surface); color: var(--grey-600); }
 .projectHubProjectList .projectFolderGlyph .uiIcon { width: 16px; height: 16px; }
 .projectHubProjectList button > span:not(.projectFolderGlyph) { min-width: 0; overflow: hidden; font-size: 10px; font-weight: 620; text-overflow: ellipsis; white-space: nowrap; }
-.projectHubProjectList p { margin: 7px 8px; color: var(--grey-500); font-size: 10px; line-height: 1.45; }
+.projectHubProjectList p { margin: 7px 8px; color: var(--muted); font-size: 10px; line-height: 1.45; }
 
 .projectHubMain { min-width: 0; overflow-y: auto; padding: 24px 20px 36px; background: var(--surface); scrollbar-width: thin; }
 .projectHubHeading { display: flex; align-items: end; justify-content: space-between; gap: 20px; }
 .projectHubHeading > div { min-width: 0; }
-.projectHubHeading > div > span { color: var(--grey-500); font-size: 10px; font-weight: 720; letter-spacing: .08em; text-transform: uppercase; }
+.projectHubHeading > div > span { color: var(--muted); font-size: 10px; font-weight: 720; letter-spacing: .08em; text-transform: uppercase; }
 .projectHubHeading h1 { overflow-wrap: break-word; margin: 6px 0 4px; font-size: clamp(27px, 3vw, 36px); line-height: 1.08; letter-spacing: -.04em; }
 .projectHubHeading p { max-width: 620px; margin: 0; color: var(--grey-600); font-size: 11px; line-height: 1.5; }
 .projectHubHeading > .primaryButton { min-height: 36px; flex: 0 0 auto; display: inline-flex; align-items: center; gap: 7px; white-space: nowrap; }
@@ -2096,7 +2104,7 @@ button.manuscriptBinding:hover { border-color: var(--line-strong); background: v
 .projectHubMainSearch { min-height: 38px; gap: 8px; margin-top: 21px; padding: 0 11px; }
 .projectHubMainSearch:focus-within { border-color: var(--ink); box-shadow: 0 0 0 3px var(--soft); }
 .projectHubMainSearch input { font-size: 11px; }
-.projectHubMainSearch > span { flex: 0 0 auto; color: var(--grey-500); font-size: 10px; }
+.projectHubMainSearch > span { flex: 0 0 auto; color: var(--muted); font-size: 10px; }
 .projectHubGrid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; margin-top: 16px; }
 .projectHubCardWrap { min-width: 0; margin: 0; }
 .projectHubCard { width: 100%; min-width: 0; min-height: 216px; display: flex; flex-direction: column; overflow: hidden; border: 1px solid var(--grey-200); border-radius: var(--science-radius-card); background: var(--surface); padding: 0; color: var(--ink); text-align: left; }
@@ -2106,23 +2114,23 @@ button.manuscriptBinding:hover { border-color: var(--line-strong); background: v
 .projectHubCard > .projectFolderGlyph { width: 100%; height: 110px; display: grid; place-items: center; border-bottom: 1px solid var(--grey-100); background: var(--grey-50); color: var(--grey-600); }
 .projectHubCard > .projectFolderGlyph .uiIcon { width: 46px; height: 46px; }
 .projectHubCardBody { min-width: 0; flex: 1 1 auto; display: flex; flex-direction: column; padding: 10px; }
-.projectHubCardBody > small { overflow: hidden; color: var(--grey-500); font-size: 9px; font-weight: 690; text-overflow: ellipsis; white-space: nowrap; }
+.projectHubCardBody > small { overflow: hidden; color: var(--muted); font-size: 9px; font-weight: 690; text-overflow: ellipsis; white-space: nowrap; }
 .projectHubCardBody > strong { display: -webkit-box; overflow: hidden; margin-top: 5px; font-size: 13px; line-height: 1.3; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow-wrap: break-word; }
 .projectHubCardBody > em { display: -webkit-box; overflow: hidden; min-height: 28px; margin-top: 4px; color: var(--grey-600); font-size: 10px; font-style: normal; line-height: 1.4; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow-wrap: break-word; }
 .projectHubCardMetrics { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 5px; margin-top: auto; padding-top: 9px; }
 .projectHubCardMetrics span, .projectHubDetailMetrics span, .projectHubFolderMetrics span { min-width: 0; display: grid; gap: 2px; }
 .projectHubCardMetrics strong, .projectHubDetailMetrics strong, .projectHubFolderMetrics strong { font-size: 11px; font-weight: 700; line-height: 1; }
-.projectHubCardMetrics em, .projectHubDetailMetrics em, .projectHubFolderMetrics em { overflow: hidden; color: var(--grey-500); font-size: 8px; font-style: normal; font-weight: 550; text-overflow: ellipsis; white-space: nowrap; }
-.projectHubCardMetrics .projectHubMetricUnavailable, .projectHubDetailMetrics .projectHubMetricUnavailable, .projectHubFolderMetrics .projectHubMetricUnavailable { grid-column: 1 / -1; color: var(--grey-500); font-size: 9px; font-weight: 620; }
+.projectHubCardMetrics em, .projectHubDetailMetrics em, .projectHubFolderMetrics em { overflow: hidden; color: var(--muted); font-size: 8px; font-style: normal; font-weight: 550; text-overflow: ellipsis; white-space: nowrap; }
+.projectHubCardMetrics .projectHubMetricUnavailable, .projectHubDetailMetrics .projectHubMetricUnavailable, .projectHubFolderMetrics .projectHubMetricUnavailable { grid-column: 1 / -1; color: var(--muted); font-size: 9px; font-weight: 620; }
 .projectHubCardMobileOpen { display: none; }
-.projectHubEmpty { grid-column: 1 / -1; min-height: 188px; display: grid; place-items: center; align-content: center; gap: 6px; border: 1px dashed var(--grey-300); border-radius: var(--science-radius-card); padding: 20px; color: var(--grey-500); text-align: center; }
+.projectHubEmpty { grid-column: 1 / -1; min-height: 188px; display: grid; place-items: center; align-content: center; gap: 6px; border: 1px dashed var(--grey-300); border-radius: var(--science-radius-card); padding: 20px; color: var(--muted); text-align: center; }
 .projectHubEmpty strong { color: var(--ink); font-size: 12px; }
 .projectHubEmpty span { max-width: 420px; font-size: 10px; line-height: 1.45; }
 .projectHubEmpty button { margin-top: 6px; }
 .projectHubShortcuts { margin-top: 26px; }
 .projectHubShortcuts > header, .projectHubFiles > header { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 9px; }
 .projectHubShortcuts h2, .projectHubFiles h2 { margin: 0; font-size: 13px; }
-.projectHubShortcuts > header span, .projectHubFiles > header span { color: var(--grey-500); font-size: 10px; }
+.projectHubShortcuts > header span, .projectHubFiles > header span { color: var(--muted); font-size: 10px; }
 .projectHubShortcuts > div { display: flex; gap: 11px; overflow-x: auto; padding: 1px 1px 9px; scrollbar-width: thin; scroll-snap-type: x proximity; }
 .projectHubShortcuts button { width: 98px; min-width: 98px; display: grid; gap: 6px; border: 0; background: transparent; padding: 0; color: var(--grey-600); text-align: left; scroll-snap-align: start; }
 .projectHubShortcuts button:hover { color: var(--ink); }
@@ -2132,7 +2140,7 @@ button.manuscriptBinding:hover { border-color: var(--line-strong); background: v
 
 .projectHubDetail { min-width: 0; overflow-y: auto; border-left: 1px solid var(--grey-200); background: #fbfbfa; padding: 18px 14px 24px; scrollbar-width: thin; }
 .projectHubDetail > header { padding-bottom: 10px; border-bottom: 1px solid var(--grey-200); }
-.projectHubDetail > header span { color: var(--grey-500); font-size: 10px; font-weight: 720; letter-spacing: .07em; text-transform: uppercase; }
+.projectHubDetail > header span { color: var(--muted); font-size: 10px; font-weight: 720; letter-spacing: .07em; text-transform: uppercase; }
 .projectHubDetailHero { position: relative; overflow: hidden; margin-top: 14px; border: 1px solid var(--grey-200); border-radius: var(--science-radius-card); background: var(--surface); }
 .projectFolderDetailGlyph { width: 100%; aspect-ratio: 4 / 3; display: grid; place-items: center; background: var(--grey-50); color: var(--grey-600); }
 .projectFolderDetailGlyph .uiIcon { width: 52px; height: 52px; }
@@ -2141,7 +2149,7 @@ button.manuscriptBinding:hover { border-color: var(--line-strong); background: v
 .projectHubDetail > p { margin: 0; color: var(--grey-600); font-size: 10px; line-height: 1.55; overflow-wrap: break-word; }
 .projectHubFacts { display: grid; gap: 0; margin: 15px 0 0; }
 .projectHubFacts > div { display: grid; grid-template-columns: 58px minmax(0, 1fr); gap: 8px; border-top: 1px solid var(--grey-200); padding: 8px 0; font-size: 9px; }
-.projectHubFacts dt { color: var(--grey-500); }
+.projectHubFacts dt { color: var(--muted); }
 .projectHubFacts dd { margin: 0; color: var(--ink); overflow-wrap: anywhere; }
 .projectHubDetailMetrics { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px 6px; margin-top: 14px; }
 .projectHubDetailActions { display: grid; gap: 8px; margin-top: 20px; }
@@ -2150,7 +2158,7 @@ button.manuscriptBinding:hover { border-color: var(--line-strong); background: v
 .projectHubActionError { margin: 10px 0 0; color: var(--alarm); font-size: 10px; line-height: 1.45; overflow-wrap: anywhere; }
 .projectHubPathValue { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .projectHubDetailActions .uiIcon { width: 14px; height: 14px; }
-.projectHubDetailEmpty { min-height: 240px; display: grid; place-items: center; align-content: center; gap: 7px; color: var(--grey-500); text-align: center; }
+.projectHubDetailEmpty { min-height: 240px; display: grid; place-items: center; align-content: center; gap: 7px; color: var(--muted); text-align: center; }
 .projectHubDetailEmpty .uiIcon { width: 24px; height: 24px; }
 .projectHubDetailEmpty strong { color: var(--ink); font-size: 12px; font-weight: 680; }
 .projectHubDetailEmpty span { max-width: 180px; font-size: 9px; font-weight: 450; line-height: 1.5; overflow-wrap: break-word; }
@@ -2172,10 +2180,10 @@ button.manuscriptBinding:hover { border-color: var(--line-strong); background: v
 .projectHubFileIcon .uiIcon { width: 16px; height: 16px; }
 .projectHubFileCard > span:nth-child(2) { min-width: 0; display: block; }
 .projectHubFileCard small, .projectHubFileCard strong, .projectHubFileCard em { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.projectHubFileCard small { color: var(--grey-500); font-size: 8px; font-weight: 700; }
+.projectHubFileCard small { color: var(--muted); font-size: 8px; font-weight: 700; }
 .projectHubFileCard strong { display: -webkit-box; margin-top: 4px; font-size: 11px; line-height: 1.35; white-space: normal; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow-wrap: break-word; }
-.projectHubFileCard em { margin-top: 4px; color: var(--grey-500); font-size: 9px; font-style: normal; }
-.projectHubFileCard time { grid-column: 2; color: var(--grey-500); font-size: 8px; }
+.projectHubFileCard em { margin-top: 4px; color: var(--muted); font-size: 9px; font-style: normal; }
+.projectHubFileCard time { grid-column: 2; color: var(--muted); font-size: 8px; }
 .projectHubDetailKind { display: inline-flex; margin-top: 16px; border: 1px solid var(--grey-200); border-radius: 999px; padding: 4px 7px; color: var(--grey-600); font-size: 8px; font-weight: 700; }
 
 @media (max-width: 1120px) {
@@ -2225,13 +2233,13 @@ button.manuscriptBinding:hover { border-color: var(--line-strong); background: v
   .projectHubFolderMetrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 
-.projectLibraryBack { min-height: 34px; flex: 0 0 auto; display: flex; align-items: center; gap: 8px; margin: 0 12px 4px; border: 0; border-radius: 8px; background: transparent; padding: 0 10px; color: var(--grey-600); font-size: 11px; text-align: left; }
+.projectLibraryBack { min-height: 30px; flex: 0 0 auto; display: flex; align-items: center; gap: 8px; margin: 0 12px 2px; border: 0; border-radius: 8px; background: transparent; padding: 0 10px; color: var(--grey-600); font-size: 11px; text-align: left; }
 .projectLibraryBack:hover { background: var(--soft); color: var(--ink); }
 .projectLibraryBack .uiIcon { width: 14px; height: 14px; }
 .railProjectIdentity { flex: 0 0 auto; margin: 0 14px 10px; border-left: 2px solid var(--brand-coral); padding: 5px 10px; }
 .railProjectIdentity strong, .railProjectIdentity span { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .railProjectIdentity strong { font-size: 13px; line-height: 1.35; }
-.railProjectIdentity span { margin-top: 3px; color: var(--grey-500); font-size: 10px; }
+.railProjectIdentity span { margin-top: 3px; color: var(--muted); font-size: 10px; }
 
 .modalBackdrop { position: fixed; inset: 0; z-index: 20; display: grid; place-items: center; padding: 20px; background: rgba(36,33,29,.26); backdrop-filter: blur(4px); }
 .modal { width: min(560px, 100%); max-height: calc(100vh - 40px); overflow-y: auto; border: 1px solid var(--line-strong); border-radius: 14px; background: var(--surface); box-shadow: 0 24px 70px rgba(25, 32, 28, .16); padding: 23px; }
@@ -2253,7 +2261,7 @@ button.manuscriptBinding:hover { border-color: var(--line-strong); background: v
 .modal.newProjectModal { width: min(760px, 100%); border-radius: var(--science-radius-card); padding: 0; overflow-y: auto; border: 1px solid #e5e7e5; background: #fff; box-shadow: 0 20px 26px rgba(54,53,53,.16); }
 .projectCreationBackdrop { background: rgba(34,38,35,.18); backdrop-filter: blur(2px); }
 .newProjectModal > header { display: flex; align-items: start; justify-content: space-between; gap: 16px; padding: 22px 24px 0; }
-.newProjectModal > header > div > span { color: var(--grey-500); font-size: 10px; font-weight: 720; letter-spacing: .08em; text-transform: uppercase; }
+.newProjectModal > header > div > span { color: var(--muted); font-size: 10px; font-weight: 720; letter-spacing: .08em; text-transform: uppercase; }
 .newProjectModal > header h2 { margin-top: 5px; }
 .newProjectClose { width: var(--science-icon-button-size); height: var(--science-icon-button-size); border: 0; border-radius: var(--science-radius-control); background: transparent; color: var(--grey-600); font-size: 20px; }
 .newProjectClose:hover { background: var(--grey-100); color: var(--ink); }
@@ -2263,7 +2271,7 @@ button.manuscriptBinding:hover { border-color: var(--line-strong); background: v
 .projectDomainPicker > strong { display: block; margin-bottom: 8px; font-size: 11px; }
 .projectDomainGroup { margin: 0; border: 0; padding: 0; }
 .projectDomainGroup + .projectDomainGroup { margin-top: 13px; }
-.projectDomainGroup legend { margin-bottom: 6px; color: var(--grey-500); font-size: 10px; font-weight: 650; }
+.projectDomainGroup legend { margin-bottom: 6px; color: var(--muted); font-size: 10px; font-weight: 650; }
 .projectDomainGrid { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 6px; }
 .projectDomainCard { min-width: 0; cursor: pointer; }
 .projectDomainCard input { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
@@ -2278,8 +2286,8 @@ button.manuscriptBinding:hover { border-color: var(--line-strong); background: v
 .projectFolderPickerCopy strong, .projectFolderPickerPath { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .projectFolderPickerCopy strong { font-size: 12px; font-weight: 650; }
 .projectFolderPickerPath { display: block; color: var(--grey-600); font-size: 11px; line-height: 1.35; }
-.projectFolderPickerPath.isPlaceholder { color: var(--grey-500); }
-.projectFolderPickerArrow { display: grid; place-items: center; color: var(--grey-500); }
+.projectFolderPickerPath.isPlaceholder { color: var(--muted); }
+.projectFolderPickerArrow { display: grid; place-items: center; color: var(--muted); }
 .projectFolderPickerArrow .uiIcon { width: 14px; height: 14px; }
 .projectFolderError { display: block; margin-top: 6px; }
 .projectDomainCard > span { min-height: 50px; display: flex; align-items: center; gap: 7px; border: 1px solid var(--grey-200); border-radius: 12px; background: var(--surface); padding: 0 9px; }
@@ -2290,7 +2298,7 @@ button.manuscriptBinding:hover { border-color: var(--line-strong); background: v
 .projectDomainCard > span > span { min-width: 0; }
 .projectDomainCard strong, .projectDomainCard small { display: block; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .projectDomainCard strong { font-size: 11px; }
-.projectDomainCard small { margin-top: 2px; color: var(--grey-500); font-size: 8px; font-weight: 500; }
+.projectDomainCard small { margin-top: 2px; color: var(--muted); font-size: 8px; font-weight: 500; }
 .newProjectModal > .modalActions { position: sticky; bottom: 0; margin-top: 4px; border-top: 1px solid var(--line); background: var(--surface); padding: 14px 24px 16px; }
 .researchTemplateModal { width: min(1080px, 100%) !important; }
 .researchTemplateModal > .modalLead { margin-bottom: 16px; }
@@ -2460,7 +2468,6 @@ button.manuscriptBinding:hover { border-color: var(--line-strong); background: v
 }
 
 @container science-center (max-width: 799px) {
-  .workspaceCenter .analysisPlanView { width: calc(100% - 32px); margin: 22px auto 40px; }
   .workspaceCenter .analysisPlanView > header { flex-direction: column; gap: 14px; }
   .workspaceCenter .analysisPlanIdentity { justify-items: start; }
   .workspaceCenter .analysisPlanGrid { grid-template-columns: minmax(0, 1fr); }
@@ -2471,7 +2478,7 @@ button.manuscriptBinding:hover { border-color: var(--line-strong); background: v
   .workspaceCenter .analysisPlanView > footer { grid-template-columns: minmax(0, 1fr); gap: 14px; }
   .labDecisionPanel > header { align-items: flex-start; flex-direction: column; }
   .labDecisionHeaderActions { width: 100%; justify-content: space-between; flex-wrap: wrap; }
-  .evidenceGraphView { padding: 18px 16px 36px; }
+  .evidenceGraphView { padding: 40px 28px 36px; }
   .evidenceGraphHeader { flex-direction: column; }
   .evidenceGraphHeaderActions { width: 100%; justify-content: space-between; }
   .evidenceGraphMetrics { grid-template-columns: repeat(3, minmax(0, 1fr)); }
@@ -2637,7 +2644,7 @@ button.manuscriptBinding:hover { border-color: var(--line-strong); background: v
 
   /* Evidence graph: a clear header, compact controls, then two equal-weight
      white surfaces. This mirrors the network and analytics pins. */
-  .evidenceGraphView { padding: var(--science-space-5) var(--science-space-5) 56px; }
+  .evidenceGraphView { padding: var(--science-space-6) var(--science-space-5) 56px; }
   .evidenceGraphHeader { gap: var(--science-space-5); }
   .evidenceGraphHeader h1 { font-size: 26px; }
   .evidenceGraphHeader p { font-size: 12px; }
@@ -2769,7 +2776,7 @@ button.manuscriptBinding:hover { border-color: var(--line-strong); background: v
   .labDecisionBody p, .labDecisionBody ol { margin-top: 8px; font-size: 11px; line-height: 1.55; }
   .labDecisionPanel > footer { min-height: 52px; padding: 8px 14px 8px 18px; }
   .labDecisionPanel > footer button { min-height: 36px; padding: 0 13px; font-size: 12px; }
-  .analysisPlanView { width: min(1024px, calc(100% - 64px)); margin: 32px auto 56px; }
+  .analysisPlanView { width: min(1024px, calc(100% - 48px)); margin: 32px auto 56px; }
   .analysisPlanView > header { padding-bottom: 24px; }
   .analysisPlanView h1 { font-size: 28px; }
   .analysisPlanGrid > section { padding: 24px 22px 26px 0; }
@@ -3563,7 +3570,7 @@ button.manuscriptBinding:hover { border-color: var(--line-strong); background: v
 /* Label pairing: a glyph never travels alone. */
 .stateLine { display: inline-flex; align-items: center; gap: 6px; font-size: 11px; line-height: 1.4; }
 .stateLine[data-state="invalid"] { color: var(--alarm); }
-.stateLine[data-state="absent"] { color: var(--grey-500); }
+.stateLine[data-state="absent"] { color: var(--muted); }
 .stateLine[data-state="awaiting-human"] { color: var(--notice-ink); }
 
 /* Missing data is written, never left blank — a blank cell reads as zero. */
@@ -3578,7 +3585,7 @@ button.manuscriptBinding:hover { border-color: var(--line-strong); background: v
 .emptyView > div, .scopedError { width: min(460px, 100%); text-align: center; }
 .emptyView strong, .scopedError strong { display: block; font-size: 15px; font-weight: 680; letter-spacing: -.01em; }
 .emptyView p { max-width: 460px; margin: 10px auto 0; color: var(--grey-600); font-size: 12px; line-height: 1.65; }
-.emptyView span { display: block; margin-top: 12px; color: var(--grey-500); font-size: 11px; }
+.emptyView span { display: block; margin-top: 12px; color: var(--muted); font-size: 11px; }
 .emptyView .primaryButton, .emptyView button { margin-top: 20px; }
 
 /* The old empty icon was a single serif letter in a rounded box; it read as a
@@ -3658,7 +3665,7 @@ button.manuscriptBinding:hover { border-color: var(--line-strong); background: v
 
 /* STATE-11: a stale proposal changes the card itself, not just a line of text. */
 .proposalCard[data-stale="true"] { border-style: dashed; border-color: var(--grey-400); }
-.proposalCard[data-stale="true"] .decisionPair > button[data-kind="apply"] { border-color: var(--grey-300); background: var(--surface); color: var(--grey-500); }
+.proposalCard[data-stale="true"] .decisionPair > button[data-kind="apply"] { border-color: var(--grey-300); background: var(--surface); color: var(--muted); }
 
 /* ERR-12 and friends: a notice strip that is neither success nor failure. */
 .noticeStrip { display: flex; align-items: center; gap: 8px; border-radius: 8px; background: var(--notice-bg); padding: 8px 10px; color: var(--notice-ink); font-size: 12px; line-height: 1.5; }
@@ -3680,7 +3687,7 @@ button.manuscriptBinding:hover { border-color: var(--line-strong); background: v
 
 /* The approve control is deliberately not the easiest thing on the sheet. */
 .researchContractSheet > footer button[data-action="approve-research-contract"] { min-width: 148px; }
-.researchContractSheet > footer button[data-action="approve-research-contract"]:disabled { border-color: var(--grey-300); background: var(--grey-100); color: var(--grey-500); }
+.researchContractSheet > footer button[data-action="approve-research-contract"]:disabled { border-color: var(--grey-300); background: var(--grey-100); color: var(--muted); }
 
 /* ============================================================================
    Step 6-7: renderers, tables, manuscript studio.
@@ -3724,7 +3731,7 @@ button.manuscriptBinding:hover { border-color: var(--line-strong); background: v
 /* Manuscript save state: three different things, three different shapes. */
 .saveState { display: inline-flex; align-items: center; gap: 6px; color: var(--grey-600); font-size: 11px; }
 .saveState .stateGlyph { width: 11px; height: 11px; flex-basis: 11px; }
-.saveState code { color: var(--grey-500); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; }
+.saveState code { color: var(--muted); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; }
 .saveState[data-state="error"] { color: var(--notice-ink); }
 
 /* A warning belongs beside the line it is about, not stacked in a banner at the top. */
@@ -3757,11 +3764,11 @@ button.manuscriptBinding:hover { border-color: var(--line-strong); background: v
 }
 .scienceDialog .field input:disabled, .bottomSheet .field input:disabled,
 .scienceDialog .field textarea:disabled, .bottomSheet .field textarea:disabled {
-  background: var(--grey-100); color: var(--grey-500); border-color: transparent;
+  background: var(--grey-100); color: var(--muted); border-color: transparent;
 }
 .field .isRequired { color: var(--alarm); }
 /* A constraint belongs under the field, not inside it: placeholders vanish on typing. */
-.fieldHint { display: block; margin-top: 6px; color: var(--grey-500); font-size: 12px; line-height: 1.5; }
+.fieldHint { display: block; margin-top: 6px; color: var(--muted); font-size: 12px; line-height: 1.5; }
 
 /* NAV-04 — bars, not dots: the number of remaining steps should be countable. */
 .stepBars { display: flex; gap: 8px; }
@@ -3809,7 +3816,7 @@ button.manuscriptBinding:hover { border-color: var(--line-strong); background: v
 .evidenceStatement { border-left: 2px solid var(--grey-300); padding: 2px 0 2px 14px; font-family: ui-serif, Georgia, serif; font-size: 15px; line-height: 1.6; }
 
 /* A decision receipt stays: what exactly was approved, in mono, at the footer. */
-.decisionReceipt { color: var(--grey-500); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; }
+.decisionReceipt { color: var(--muted); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; }
 
 /* ============================================================================
    Seven research destinations — scope / logbook / literature / hypotheses /
@@ -3840,7 +3847,7 @@ button.manuscriptBinding:hover { border-color: var(--line-strong); background: v
 .scopeConstraints { border-top: 1px solid var(--grey-200); padding-top: 16px; color: var(--grey-700); font-size: 13px; line-height: 1.7; }
 .scopeBudget { display: flex; flex-wrap: wrap; gap: 18px; font-variant-numeric: tabular-nums; font-size: 12px; color: var(--grey-600); }
 .scopeStatus { display: inline-flex; align-items: center; gap: 7px; font-size: 12px; color: var(--grey-700); }
-.scopeEmpty { color: var(--grey-500); font-size: 12px; }
+.scopeEmpty { color: var(--muted); font-size: 12px; }
 
 /* Standing approval: delegating a decision in advance is itself a decision. */
 .scopeApproval { margin-top: 20px; }
@@ -3871,15 +3878,15 @@ button.manuscriptBinding:hover { border-color: var(--line-strong); background: v
 .logbookIntro { margin: 0 0 18px; color: var(--grey-600); font-size: 13px; line-height: 1.65; }
 .logbookRevisions { display: grid; gap: 12px; }
 .logbookRevision { display: grid; gap: 10px; border: 1px solid var(--grey-200); border-left: 2px solid var(--grey-300); border-radius: 0 12px 12px 0; background: var(--surface); padding: 16px; }
-.logbookRevisionNumber { color: var(--grey-500); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; font-variant-numeric: tabular-nums; }
+.logbookRevisionNumber { color: var(--muted); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; font-variant-numeric: tabular-nums; }
 .logbookRevisionPhase { color: var(--ink); font-size: 15px; font-weight: 680; }
-.logbookRevisionTime { color: var(--grey-500); font-size: 11px; font-variant-numeric: tabular-nums; }
+.logbookRevisionTime { color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
 .logbookRevisionStatus { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--grey-700); }
 .logbookRevisionGate, .logbookRevisionBlockers, .logbookRevisionDecisions, .logbookRevisionEvidence { color: var(--grey-700); font-size: 12px; line-height: 1.6; }
 /* What is holding this revision is the thing a researcher came here to read. */
 .logbookRevisionBlockers { border-left: 2px solid var(--grey-300); padding-left: 12px; }
 .logbookRevisionBlockers strong { color: var(--ink); }
-.logbookRevisionEvidence { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; color: var(--grey-500); }
+.logbookRevisionEvidence { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; color: var(--muted); }
 
 /* ---- literature ----------------------------------------------------------- */
 .literatureSource { display: grid; gap: 8px; border-bottom: 1px solid var(--grey-200); padding: 16px 0; }
@@ -3918,7 +3925,7 @@ button.manuscriptBinding:hover { border-color: var(--line-strong); background: v
 .hypothesisDecision button[data-decision="reject"] { border: 1px solid var(--ink); background: var(--surface); color: var(--ink); }
 .hypothesisDecision button[data-decision="approve"]:hover { background: var(--grey-100); }
 .hypothesisDecision button[data-decision="reject"]:hover { background: var(--grey-100); }
-.hypothesisDecision button:disabled { border-color: var(--grey-200); background: var(--grey-100); color: var(--grey-500); }
+.hypothesisDecision button:disabled { border-color: var(--grey-200); background: var(--grey-100); color: var(--muted); }
 
 /* ---- acquisition ---------------------------------------------------------- */
 .acquisitionRun { display: grid; gap: 8px; border: 1px solid var(--grey-200); border-radius: 10px; background: var(--surface); padding: 14px 16px; margin-bottom: 10px; }
@@ -3965,7 +3972,7 @@ button.manuscriptBinding:hover { border-color: var(--line-strong); background: v
 /* ---- results -------------------------------------------------------------- */
 .resultArtifact { display: grid; gap: 8px; border: 1px solid var(--grey-200); border-radius: 10px; background: var(--surface); padding: 14px 16px; margin-bottom: 10px; }
 .resultArtifact > strong { color: var(--ink); font-size: 14px; font-weight: 650; }
-.resultArtifact code { color: var(--grey-500); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; }
+.resultArtifact code { color: var(--muted); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; }
 .resultArtifactActions { min-width: 0; max-width: 100%; display: flex; flex-wrap: wrap; align-items: center; gap: 10px 14px; margin-top: 4px; }
 .resultArtifactActions > button { display: inline-flex; flex: 0 1 auto; min-width: 0; max-width: 100%; align-items: center; gap: 6px; min-height: 36px; padding: 0 14px; white-space: normal; overflow-wrap: anywhere; }
 .resultArtifactActions > button .uiIcon { width: 13px; height: 13px; }
@@ -3987,7 +3994,7 @@ button.manuscriptBinding:hover { border-color: var(--line-strong); background: v
 .manuscriptInspector:focus-visible { outline: 2px solid var(--line-strong); outline-offset: -2px; }
 .manuscriptBinding span, .manuscriptBinding strong, .manuscriptBinding em { display: block; }
 .manuscriptCreateModal textarea { min-height: 280px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; }
-.labDecisionStatus span { font-weight: 500; color: var(--grey-500); }
+.labDecisionStatus span { font-weight: 500; color: var(--muted); }
 .manuscriptLatexWorkspace { min-width: 0; min-height: 100%; }
 .manuscriptTypesetMeta > div { min-width: 0; display: flex; align-items: center; gap: 8px; }
 .manuscriptTypesetMeta > div:last-child { justify-content: flex-end; color: #6f6f6f; font-size: 11px; }
@@ -4086,7 +4093,7 @@ button.manuscriptBinding:hover { border-color: var(--line-strong); background: v
 .acquisitionRun[data-run-status="failed"] .acquisitionRunStatus::before { border-style: dashed; border-color: var(--grey-600); background: linear-gradient(var(--grey-600), var(--grey-600)) center/5.2px 1.5px no-repeat; }
 .acquisitionRun[data-run-status="running"] .acquisitionRunStatus::before { border-color: var(--grey-600); background: linear-gradient(to right, var(--grey-600) 50%, transparent 50%); }
 .acquisitionOutputArtifact { display: grid; gap: 4px; border: 1px solid var(--grey-200); border-radius: 8px; background: var(--grey-50); padding: 9px 11px; font-size: 12px; }
-.acquisitionOutputArtifact code { color: var(--grey-500); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; }
+.acquisitionOutputArtifact code { color: var(--muted); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; }
 .literatureSourceRetracted { background: rgba(179,38,30,.08); color: var(--alarm); }
 .literatureSourceRetracted::before { content: ""; width: 6px; height: 6px; border-radius: 1px; background: currentColor; }
 .literatureSourceUnresolved { border: 1px dashed var(--grey-400); color: var(--grey-600); }
@@ -4110,7 +4117,7 @@ button.manuscriptBinding:hover { border-color: var(--line-strong); background: v
 .submissionExportBlocked { border-style: dashed; border-color: var(--grey-400); background: var(--grey-50); }
 .submissionExportBlocked .submissionExportStatus { color: var(--notice-ink); }
 .approvalPolicyNote { margin: 0; color: var(--grey-600); font-size: 12px; line-height: 1.6; }
-.approvalPolicyProvenance { margin: 4px 0 0; color: var(--grey-500); font-size: 11px; font-variant-numeric: tabular-nums; }
+.approvalPolicyProvenance { margin: 4px 0 0; color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
 .manualAttestations { display: grid; gap: 10px; margin: 16px 0 0; border: 0; padding: 0; }
 .manualAttestations > legend { padding: 0; color: var(--ink); font-size: 13px; font-weight: 650; }
 .composerTools { display: flex; align-items: center; gap: 8px; }
@@ -4121,7 +4128,7 @@ button.manuscriptBinding:hover { border-color: var(--line-strong); background: v
 .contractSheetScrim, .decisionSheetScrim, .evidenceGraphReviewScrim, .journalDialogScrim, .submissionDialogScrim { background: rgba(26,26,28,.32); backdrop-filter: none; }
 .workspaceConversationTab .workspaceTabIcon, .workspaceManuscriptTab .workspaceTabIcon { color: var(--grey-600); }
 .workspaceTabFrame[data-selected="true"] .workspaceManuscriptTab .workspaceTabIcon { color: var(--ink); }
-.manuscriptDocumentLoading { display: grid; place-items: center; min-height: 240px; color: var(--grey-500); font-size: 12px; }
+.manuscriptDocumentLoading { display: grid; place-items: center; min-height: 240px; color: var(--muted); font-size: 12px; }
 .manuscriptTableBlock { margin: 18px 0; overflow-x: auto; }
 .comparativeGenomicsLineage { color: var(--grey-600); font-size: 11px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
 .principledRefusal { max-width: 460px; margin: 16px auto 0; display: grid; gap: 8px; text-align: center; }
@@ -4151,7 +4158,7 @@ button.manuscriptBinding:hover { border-color: var(--line-strong); background: v
 .skyMagnitudeScale { display: flex; align-items: baseline; gap: 10px; color: var(--grey-600); font-size: 11px; font-variant-numeric: tabular-nums; }
 .trackFieldChain { display: flex; flex-wrap: wrap; gap: 4px 14px; color: var(--grey-700); font-size: 12px; }
 .trackFieldChain > span { display: inline-flex; gap: 6px; }
-.trackFieldChain > span > b { color: var(--grey-500); font-weight: 500; }
+.trackFieldChain > span > b { color: var(--muted); font-weight: 500; }
 .colourBarNote { margin-top: 8px; color: var(--grey-700); font-size: 13px; line-height: 1.55; }
 .gridCoverage { color: var(--grey-600); font-size: 11px; font-variant-numeric: tabular-nums; }
 .publicationRaster { border: 0; border-radius: 0; background: transparent; box-shadow: none; padding: 0; }
@@ -4161,7 +4168,7 @@ button.manuscriptBinding:hover { border-color: var(--line-strong); background: v
 .figureLegend .legendMark { width: 18px; height: 2px; border-radius: 1px; background: currentColor; }
 .figureLegend .legendMark[data-dash="true"] { background: repeating-linear-gradient(to right, currentColor 0 5px, transparent 5px 9px); }
 .figureLegend .legendMark[data-shape="point"] { width: 8px; height: 8px; border-radius: 50%; }
-.metricPrevious { margin-left: 6px; color: var(--grey-500); font-size: 11px; font-variant-numeric: tabular-nums; }
+.metricPrevious { margin-left: 6px; color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
 .statisticsMappingGrid { grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 16px 14px; align-items: start; text-align: left; }
 .statisticsMappingGrid .field, .statisticsMappingGrid label, .statisticsMappingGrid p { text-align: left; }
 .statisticsMethodField { grid-column: 1 / -1; }
@@ -4169,7 +4176,7 @@ button.manuscriptBinding:hover { border-color: var(--line-strong); background: v
 .statisticsMethodField input[type="search"]:focus { border-color: var(--ink); box-shadow: 0 0 0 3px rgba(26,26,28,.08); outline: none; }
 .statisticsMethodField select { font-size: 13px; }
 .statisticsMethodGuidance { grid-column: 1 / -1; margin: 12px 0 0; border-left: 2px solid var(--grey-300); padding: 2px 0 2px 12px; color: var(--grey-700); font-size: 13px; line-height: 1.65; }
-.statisticsMethodGuidance[data-empty="true"] { border-left-style: dashed; border-left-color: var(--grey-400); color: var(--grey-500); }
+.statisticsMethodGuidance[data-empty="true"] { border-left-style: dashed; border-left-color: var(--grey-400); color: var(--muted); }
 .statisticsMappingField { min-width: 0; display: grid; gap: 8px; }
 .statisticsMappingField > span { margin: 0 !important; color: var(--grey-600) !important; font-size: 12px !important; font-weight: 650 !important; }
 .statisticsMappingModes { display: inline-flex; align-items: center; gap: 2px; justify-self: start; border-radius: 999px; background: var(--grey-100); padding: 3px; }
@@ -4192,7 +4199,7 @@ button.manuscriptBinding:hover { border-color: var(--line-strong); background: v
 .statisticsMappingRowField { min-width: 0; display: grid; gap: 5px; }
 .statisticsMappingRowField > span { color: var(--grey-600); font-size: 11px; font-weight: 620; }
 .statisticsMappingRowField select { width: 100%; min-height: 34px; border: 1px solid var(--grey-300); border-radius: 8px; background: var(--surface); padding: 0 9px; font-size: 12px; }
-.railEmpty em { display: block; margin-top: 5px; color: var(--grey-500); font-size: 11px; font-style: normal; line-height: 1.55; }
+.railEmpty em { display: block; margin-top: 5px; color: var(--muted); font-size: 11px; font-style: normal; line-height: 1.55; }
 .workspace[data-rail-collapsed="true"] .projectContextCard { margin: 0; }
 .workspace[data-rail-collapsed="true"] .projectContextCard .currentProject { display: none; }
 .workspace[data-rail-collapsed="true"] .projectNavLabel { display: none; }
@@ -4201,7 +4208,7 @@ button.manuscriptBinding:hover { border-color: var(--line-strong); background: v
 .workspace[data-rail-collapsed="true"] .projectWorkflowNav button { width: 44px; min-height: 44px; margin: 1px auto; padding: 0; justify-content: center; gap: 0; }
 .workspace[data-rail-collapsed="true"] .projectWorkflowNav button > span { display: none; }
 .workspace[data-rail-collapsed="true"] .projectWorkflowNav button > .uiIcon { display: block; width: 18px; height: 18px; flex-basis: 18px; }
-.workspace[data-rail-collapsed="true"] .projectDestinations button { color: var(--grey-500); background: transparent; }
+.workspace[data-rail-collapsed="true"] .projectDestinations button { color: var(--muted); background: transparent; }
 .workspace[data-rail-collapsed="true"] .projectDestinations button[aria-current="true"] { color: var(--ink); background: transparent; }
 .workspace[data-rail-collapsed="true"] .projectDestinations button[aria-current="true"]::before { left: 0; height: 20px; }
 .emptyCopy.pageEmpty p { margin: 0; }
@@ -4348,7 +4355,7 @@ button.manuscriptBinding:hover { border-color: var(--line-strong); background: v
 }
 
 .acquisitionOutputEmpty, .literatureSpanEmpty, .drawerEmpty {
-  display: flex; align-items: center; gap: 8px; color: var(--grey-500); font-size: 12px; line-height: 1.6;
+  display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 12px; line-height: 1.6;
 }
 
 .acquisitionOutputEmpty::before, .literatureSpanEmpty::before, .drawerEmpty::before {
@@ -4415,7 +4422,7 @@ button.manuscriptBinding:hover { border-color: var(--line-strong); background: v
   flex: 1 0 100%;
   max-width: none;
   margin-top: 2px;
-  color: var(--grey-500);
+  color: var(--muted);
   font-size: 11px;
   font-weight: 500;
   line-height: 1.4;
@@ -4894,12 +4901,12 @@ button:has(> span:only-child > .uiIcon:only-child):not(.projectHubInlineBack) {
 .analysisRunsView,
 .resultsView,
 .submissionArchiveView {
-  padding-bottom: var(--science-space-from-72);
+  padding-bottom: var(--science-space-6);
 }
 
-.evidenceGraphState { margin-top: var(--science-space-from-56); }
-.evidenceGraphView { padding-bottom: var(--science-space-from-56); }
-.manuscriptPaperHost { padding-bottom: var(--science-space-from-56); }
+.evidenceGraphState { margin-top: var(--science-space-5); }
+.evidenceGraphView { padding-bottom: var(--science-space-6); }
+.manuscriptPaperHost { padding-bottom: var(--science-space-5); }
 .manuscriptPaperHost {
   padding: 24px clamp(16px, 4vw, 40px) 64px;
   background: var(--manuscript-stage-bg);
@@ -4922,16 +4929,16 @@ button:has(> span:only-child > .uiIcon:only-child):not(.projectHubInlineBack) {
   background: var(--manuscript-paper-bg);
   padding: clamp(42px, 6vw, 58px) clamp(34px, 7vw, 64px) 92px;
 }
-.analysisPlanView { margin-bottom: var(--science-space-from-56); }
+.analysisPlanView { margin-bottom: var(--science-space-5); }
 .answerColumn > h1 { overflow-wrap: anywhere; word-break: break-word; }
 .analysisPlanView h1 { max-width: 100%; overflow-wrap: anywhere; word-break: break-word; }
-.bottomSheet { max-height: calc(100vh - var(--science-space-from-44)); }
+.bottomSheet { max-height: calc(100vh - var(--science-space-6)); }
 .researchDecisionSheet {
   width: var(--science-question-width);
   max-height: min(640px, calc(100vh - 170px));
 }
 .manuscriptWorkGrid[data-inspector-open="true"] .manuscriptInspector {
-  width: min(286px, calc(100% - var(--science-space-from-44)));
+  width: min(286px, calc(100% - var(--science-space-6)));
 }
 
 .modal.manuscriptStartModal {

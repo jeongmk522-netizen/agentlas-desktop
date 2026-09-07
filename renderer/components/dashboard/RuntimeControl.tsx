@@ -339,6 +339,9 @@ export function RuntimeControl() {
           label: "",
           runtime,
           isDefault: true,
+          // "엔진 설정 사용"이 실제로 무엇으로 풀렸는지 — 실행이 알려준 값만 붙는다.
+          // 기본값으로 쓰는 사람이 대다수라, 이 행이 비어 있으면 아무도 실제 모델을 못 본다.
+          ...(runtime.observedDefaultModel ? { resolvedId: runtime.observedDefaultModel } : {}),
         });
       }
       for (const model of models) {
@@ -880,6 +883,18 @@ export function RuntimeControl() {
                         : "Duplicate"
                       : badge.label}
                   </span>
+                  {role === "orchestrator" && members.length === 1 && (
+                    /*
+                     * ★못 지우는 이유는 화면에 있어야 한다 (QA 실측 2026-09-08).
+                     * 마지막 오케스트레이터 후보는 지울 수 없는 것이 맞다 — 하나는 남아야
+                     * 한다. 그런데 그 이유가 비활성 단추의 title 에만 있었다. 비활성 단추는
+                     * 포커스를 못 받아 툴팁도 스크린리더도 거기 닿지 않는다. QA 는 다섯 번
+                     * 누르고도 아무 설명을 못 봤다 — 화면이 "고장"과 구별되지 않았다.
+                     */
+                    <span className="dashboard-runtime-pool-note">
+                      {ko ? "마지막 후보라 지울 수 없습니다" : "The last candidate cannot be removed"}
+                    </span>
+                  )}
                   <span className="dashboard-runtime-pool-actions">
                     <button
                       type="button"

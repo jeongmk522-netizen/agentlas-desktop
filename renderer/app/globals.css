@@ -2563,6 +2563,15 @@ button[data-dashboard-import="true"]:disabled {
   border-color: color-mix(in srgb, var(--dash-line) 70%, transparent);
 }
 
+/* 지울 수 없는 이유를 행에 적는 자리 — 비활성 단추의 title 은 아무에게도 닿지 않았다. */
+.dashboard-runtime-pool-note {
+  margin-left: auto;
+  padding-right: 8px;
+  color: var(--muted-deep);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
 .dashboard-runtime-pool-actions {
   display: inline-flex;
   justify-self: end;

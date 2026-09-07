@@ -120,8 +120,15 @@ export function AskCard({
             onKeyDown={(event) => {
               if (event.key === "Enter" && !event.nativeEvent.isComposing && event.nativeEvent.keyCode !== 229) {
                 event.preventDefault();
-                const answer = currentFreeText.trim();
-                if (answer) footer.onSkip(answer);
+                /*
+                 * ★Enter 는 **바로 아래 단추가 하는 일**을 한다 (실측 2026-09-08).
+                 *   예전에는 `if (answer)` 가 붙어 있어 입력이 비면 Enter 가 아무 일도
+                 *   안 했다. 그런데 같은 자리의 단추는 비어 있어도 건너뛴다 — 같은 화면의
+                 *   두 길이 서로 다른 답을 내면 사람은 둘 중 하나를 고장으로 읽는다.
+                 *   라벨(askCardFooterLabel)도 이미 입력 유무를 따라가므로, 사람은 누르기
+                 *   전에 무슨 일이 일어날지 읽을 수 있다.
+                 */
+                footer.onSkip(currentFreeText.trim());
               }
             }}
           />

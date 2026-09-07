@@ -217,6 +217,15 @@ const CODEX_WORKSPACE_WRITE_CONFIG_ARGS = [
   "-c", "sandbox_workspace_write.exclude_slash_tmp=true",
 ] as const;
 
+/**
+ * 권한 칩 → codex `exec` 샌드박스 플래그. **순수 함수이고 모듈 밖으로 나간다.**
+ * 설치된 CLI 로 이 벡터가 아직 통하는지 재는 프로브가 사본이 아니라 이 함수를 부른다
+ * (사본은 러너가 바뀌어도 안 바뀌어서, 프로브만 초록인 상태를 만든다).
+ */
+export function codexPermissionArgs(permission?: RunnerRequest["permission"]): string[] {
+  return permissionArgs(permission);
+}
+
 function permissionArgs(permission?: RunnerRequest["permission"]): string[] {
   if (permission === "full") {
     return ["--dangerously-bypass-approvals-and-sandbox"];

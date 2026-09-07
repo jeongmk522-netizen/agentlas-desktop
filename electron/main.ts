@@ -103,7 +103,7 @@ import { resolveOneTeamAvatarProtocolPath } from "./one/avatar";
 import { servePluginIconRequest } from "./mcp-tools/plugin-brand";
 import { reconcileOneHubDerivativeDraftStorage } from "./one/hub-derivative";
 import { recoverDesktopStartup, type StartupRecoveryPresentation } from "./one/startup-recovery";
-import { initFileLogging, mainLogFilePath } from "./logging";
+import { initFileLogging, installStdioErrorGuard, mainLogFilePath } from "./logging";
 import { currentUiLocale, setCurrentUiLocale } from "./ui-locale";
 import { prepareMacRuntimeResourcesForExecution } from "./runtime/mac-resource-seal";
 import {
@@ -261,6 +261,13 @@ import {
 } from "../shared/science-renderer-runtime";
 
 export { currentUiLocale } from "./ui-locale";
+
+/*
+ * ★가장 먼저 — 죽은 stdout/stderr 파이프가 앱을 죽이지 못하게 한다.
+ * 파일 로깅은 app ready 이후에야 시작되는데, 그 전에도 console 로 쓰는 줄이 있다.
+ * 실측(2026-09-07): 그 구간에서 EPIPE 가 uncaughtException 으로 올라와 앱이 죽었다.
+ */
+installStdioErrorGuard();
 
 const isDev = process.env.NODE_ENV === "development";
 const ipcMain = developmentIpcBoundary(electronIpcMain);

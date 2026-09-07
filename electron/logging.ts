@@ -27,9 +27,26 @@ type ConsoleMethod = "log" | "info" | "warn" | "error";
 
 /**
  * A packaged app can inherit stdout/stderr from a short-lived launcher. Once
- * that launcher closes its pipe, Node's original console method may throw
- * EPIPE synchronously. Console mirroring is diagnostic-only, so a dead parent
- * pipe must never escape into Electron's main-process control flow.
+ * that launcher closes its pipe, writing to it fails with EPIPE. Console
+ * mirroring is diagnostic-only, so a dead parent pipe must never escape into
+ * Electron's main-process control flow.
+ *
+ * ★try/catch 만으로는 못 막는다 (실측 2026-09-07, 오너 기기 크래시 보고).
+ *
+ *   Uncaught Exception: Error: write EPIPE
+ *     at afterWriteDispatched (node:internal/stream_base_commons:159:15)
+ *     ...
+ *     at console.error (node:internal/console/constructor:444:26)
+ *     at writeOriginalConsoleSafely (dist/electron/logging.js:39:9)
+ *
+ *   39번 줄은 **이 try 블록 안의 `original(...args)`** 다. 동기 throw 였다면 아래
+ *   catch 가 삼켰을 것이다. 삼키지 못했다는 것은 EPIPE 가 동기로 던져지지 않았다는
+ *   뜻이다 — 소켓 쓰기 실패는 `process.nextTick` 으로 미뤄져 스트림의 `error`
+ *   이벤트로 나오고, 듣는 사람이 없으면 그대로 uncaughtException 이 된다.
+ *   스택에 이 함수가 보이는 것은 **오류 객체가 만들어진 자리**일 뿐 던져진 자리가 아니다.
+ *   (원래 주석이 "throws EPIPE synchronously" 라고 적어 둔 것이 오진이었다.)
+ *
+ *   그래서 진짜 방어는 여기가 아니라 스트림에 있다 — installStdioErrorGuard().
  */
 export function writeOriginalConsoleSafely(
   original: (...args: unknown[]) => void,
@@ -39,6 +56,31 @@ export function writeOriginalConsoleSafely(
     original(...args);
   } catch {
     // The durable file sink below remains authoritative when stdio is gone.
+  }
+}
+
+/**
+ * 죽은 stdout/stderr 파이프가 앱을 죽이지 못하게 한다.
+ *
+ * 진단용 출력 하나가 프로세스를 내리는 것은 어떤 경우에도 옳지 않다. 특히 이 앱에서는
+ * 로그가 멈추면 업데이트까지 멈춘 전례가 있다 — 로그는 항상 종속 관계의 **끝**이어야지
+ * 앱의 생사를 쥐면 안 된다. EPIPE/ERR_STREAM_DESTROYED 는 조용히 버리고, 그 외 오류는
+ * 파일 싱크에만 남긴다(다시 console 로 쓰면 같은 죽은 파이프로 되돌아가 무한 재귀다).
+ */
+let stdioGuardInstalled = false;
+export function installStdioErrorGuard(): void {
+  if (stdioGuardInstalled) return;
+  stdioGuardInstalled = true;
+  for (const stream of [process.stdout, process.stderr]) {
+    try {
+      // 리스너가 하나라도 있으면 Node 는 'error' 를 uncaughtException 으로 올리지 않는다.
+      stream?.on?.("error", () => {
+        // 의도적으로 아무것도 하지 않는다. 여기서 console 을 부르면 같은 죽은
+        // 파이프로 되돌아가 재귀한다.
+      });
+    } catch {
+      // 스트림이 아예 없는 호스트(윈도 GUI 서브시스템 등)는 지킬 것도 없다.
+    }
   }
 }
 
@@ -183,6 +225,8 @@ function streamForWrite(byteLength: number): fs.WriteStream | null {
  * logging must never prevent the app from booting.
  */
 export function initFileLogging(): string | null {
+  // 파일 싱크를 못 열더라도 죽은 파이프 방어는 반드시 걸린다 — 아래 early return 보다 먼저.
+  installStdioErrorGuard();
   if (activeLogPath) return activeLogPath;
   try {
     const directory = app.getPath("logs");

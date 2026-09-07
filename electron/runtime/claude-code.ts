@@ -154,6 +154,43 @@ const CLAUDE_WORKSPACE_SANDBOX_SETTINGS = {
 } as const;
 
 /**
+ * ★read 는 "플래그 없음"이 아니다.
+ *
+ * 예전에는 read 에 아무 인자도 주지 않고 "헤드리스면 위험한 도구는 알아서 거부된다"고
+ * 가정했다. 실측으로 그 가정이 깨졌다: 읽기 권한으로 파일 생성을 시켰더니 claude 는
+ * 그냥 만들었다(같은 요청에서 codex·antigravity·grok 은 셋 다 거절했다). 사용자가
+ * 읽기를 골랐다는 것은 "내 파일을 바꾸지 마라"는 뜻인데, 그 약속이 지켜지지 않았다.
+ *
+ * 그래서 변경 수단을 이름으로 막는다. Bash 까지 막는 이유는 그것으로 파일을 쓸 수
+ * 있기 때문이다 — Bash 를 열어 둔 채 "읽기 전용"이라고 말하면 그 경계는 거짓말이고,
+ * 이 제품은 지킬 수 없는 경계를 조용히 통과시키지 않기로 했다.
+ */
+export const READ_ONLY_DENIED_TOOLS = ["Write", "Edit", "MultiEdit", "NotebookEdit", "Bash", "BashOutput", "KillShell"];
+// judgment-exempt: 관측된 이름을 **분류**하는 게 아니라, 이 런타임에 **줄 도구를
+//   열거**하는 목록이다. 분류기는 이름을 받아 답할 뿐 열거를 못 한다.
+//   그리고 이건 벤더 CLI 플래그라 이름도 그 벤더의 것이어야 한다.
+/** write 모드에서 acceptEdits 가 여전히 묻는 내장 도구 — 헤드리스는 답할 수 없으니 미리 허용. */
+export const WRITE_MODE_PRE_ALLOWED_TOOLS = ["Bash", "BashOutput", "KillShell", "WebFetch", "WebSearch"];
+
+/**
+ * 권한 칩 → claude 권한 플래그. **순수 함수다.**
+ *
+ * 모듈 밖으로 꺼내 둔 이유(2026-09-07): 이 판단이 러너 안쪽 지역 변수로만 살면,
+ * "설치된 CLI 로 실제로 이 벡터가 아직 통하는가"를 재는 프로브가 그 벡터를 **베껴
+ * 적을 수밖에 없다.** 베낀 사본은 러너가 바뀌어도 안 바뀌므로, 프로브가 초록인데
+ * 제품은 막히는 상태가 만들어진다. 프로브는 이 함수를 그대로 부른다.
+ */
+export function claudePermissionArgs(
+  permission: RunnerRequest["permission"],
+  opts: { browserOnly?: boolean; untrustedNoTools?: boolean } = {},
+): string[] {
+  if (opts.browserOnly || opts.untrustedNoTools) return [];
+  if (permission === "full") return ["--permission-mode", "bypassPermissions"];
+  if (permission === "write") return ["--permission-mode", "acceptEdits"];
+  return ["--disallowed-tools", ...READ_ONLY_DENIED_TOOLS];
+}
+
+/**
  * Claude merges sandbox paths from every settings source. A project or user
  * setting can therefore silently widen a task worker beyond its assigned cwd.
  * Write turns load no ambient settings and receive one Main-authored settings
@@ -730,21 +767,10 @@ const runClaudeTurn = async (
    * 이 제품은 지킬 수 없는 경계를 조용히 통과시키지 않기로 했다(kimi 는 플래그 자체가
    * 없어서 강제 불가를 사용자에게 말한다). 읽기·검색·분석은 그대로 가능하다.
    */
-  const READ_ONLY_DENIED_TOOLS = ["Write", "Edit", "MultiEdit", "NotebookEdit", "Bash", "BashOutput", "KillShell"];
-  // judgment-exempt: 관측된 이름을 **분류**하는 게 아니라, 이 런타임에 **줄 도구를
-  //   열거**하는 목록이다. 분류기는 이름을 받아 답할 뿐 열거를 못 한다.
-  //   그리고 이건 벤더 CLI 플래그라 이름도 그 벤더의 것이어야 한다.
-  /** write 모드에서 acceptEdits 가 여전히 묻는 내장 도구 — 헤드리스는 답할 수 없으니 미리 허용. */
-  const WRITE_MODE_PRE_ALLOWED_TOOLS = ["Bash", "BashOutput", "KillShell", "WebFetch", "WebSearch"];
-  const permArgs = runReq.browserOnly
-    ? []
-    : runReq.untrustedNoTools
-    ? []
-    : req.permission === "full"
-      ? ["--permission-mode", "bypassPermissions"]
-      : req.permission === "write"
-        ? ["--permission-mode", "acceptEdits"]
-        : ["--disallowed-tools", ...READ_ONLY_DENIED_TOOLS];
+  const permArgs = claudePermissionArgs(req.permission, {
+    browserOnly: Boolean(runReq.browserOnly),
+    untrustedNoTools: Boolean(runReq.untrustedNoTools),
+  });
   const hostObservation = hostAuthorityWorkforce && runReq.workforceRuntimeToolGrant
     ? createClaudeWorkforceObservation({
         grant: runReq.workforceRuntimeToolGrant,

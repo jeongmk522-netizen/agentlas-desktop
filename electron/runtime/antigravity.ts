@@ -235,6 +235,16 @@ const buildPrompt = buildAntigravityPrompt;
  * 그래서 write는 codex의 workspace-write와 같은 자리에 `--sandbox`를 함께 준다 —
  * 파일 작업은 되고 셸은 묶인다. full만 샌드박스를 푼다.
  * read는 플래그를 주지 않는다(도구 없이 텍스트만 = 기존 격리 계약 유지).
+ *
+ * ★read 를 "읽기 도구는 살리고 변경만 막는" 모양으로 바꾸려는 시도는 이미 재 봤다 —
+ *   되지 않는다 (실측 2026-09-07, agy 1.1.27, scripts/probe-runtime-permission-bypass.mjs
+ *   --live --candidates). agy 에는 도구를 이름으로 빼는 플래그가 아예 없고(`--help` 전수),
+ *   유일한 후보였던 `--dangerously-skip-permissions --sandbox --mode plan` 은:
+ *     1차 측정 → 파일 안 생김. "쓰기를 막는다"로 보였다.
+ *     2차 측정(셸까지 명시적으로 시킴) → `run_command` 가 **그대로 통과**해 파일이 생겼다.
+ *   즉 plan 모드는 경계가 아니다. 1차는 모델이 셸을 안 써 본 것뿐이었다.
+ *   그래서 agy 의 read 는 "전부 열거나 전부 막거나" 둘뿐이고, 우리는 막는 쪽을 고른다.
+ *   대신 그 사실을 사용자에게 **말한다**(아래 read 전용 고지) — 조용한 빈 실행 금지.
  */
 export function antigravityPermissionArgs(
   permission?: "read" | "write" | "full",
@@ -404,7 +414,13 @@ export function reduceAgyLine(
   let ev: {
     event?: string;
     conversation_id?: string;
-    result?: { status?: string; response?: string; conversation_id?: string };
+    result?: {
+      status?: string;
+      response?: string;
+      conversation_id?: string;
+      /** 실측 agy 1.1.27 — 이 실행에서 승인이 없어 거부된 행동. 문구가 아니라 **필드**다. */
+      denied_actions?: Array<{ action?: string; display_name?: string }>;
+    };
     step_update?: {
       conversation_id?: string;
       step_type?: string; text_delta?: string; state?: string;
@@ -436,6 +452,28 @@ export function reduceAgyLine(
    */
   if (ev.event === "result" && ev.result) {
     if (typeof ev.result.response === "string") state.finalResponse = ev.result.response;
+    /*
+     * ★거부는 문구가 아니라 **필드**로 잡는다 (실측 2026-09-07, agy 1.1.27).
+     *
+     * 아래 tool 스텝 판별은 `tool_info.error.message` 안의 "denied permission" 같은
+     * 문장 모양에 걸려 있다. 그 문장은 벤더가 판을 올릴 때마다 바뀌는 것이고, 바뀌는
+     * 순간 이 실행은 다시 "성공했는데 답이 없다"로 조용히 지나간다 — 정확히 우리가
+     * 반복해 온 손해다. agy 는 같은 사실을 result 이벤트에 구조로 실어 준다:
+     *   {"event":"result","status":"SUCCESS","response":"",
+     *    "denied_actions":[{"action":"command","display_name":"RunCommand"}]}
+     * 이 필드는 문구와 무관하므로 이쪽을 정본으로 삼고, 문장 판별은 보조로 남긴다.
+     * 같은 도구가 양쪽에 잡혀도 아래에서 이름으로 합치므로 중복 보고되지 않는다.
+     */
+    for (const denied of ev.result.denied_actions ?? []) {
+      const tool = String(denied?.display_name || denied?.action || "").trim();
+      if (!tool) continue;
+      const already = (state.deniedTools ??= []);
+      if (already.some((d) => d.tool === tool)) continue;
+      already.push({
+        tool,
+        detail: `Antigravity auto-denied "${tool}" because headless mode has nobody to approve it.`,
+      });
+    }
     return { activity: "result" };
   }
   // step_update가 아닌 이벤트(init·checkpoint 등)도 프로세스가 살아 진행 중이라는 신호다.
@@ -1266,10 +1304,24 @@ async function runPreparedAntigravity(
          * `failure` 칸으로 판정하므로(runtime-failure 계약) 조용히 지나갈 수 없다.
          */
         const denied = agyState.deniedTools ?? [];
+        /*
+         * ★read 권한의 빈 실행은 사고가 아니라 **구조**다 — 그렇게 말해야 한다.
+         *
+         * read 는 agy 에 권한 플래그를 주지 않고(위 antigravityPermissionArgs 주석의 실측),
+         * 헤드리스에는 승인할 사람이 없으므로 agy 가 *모든* 도구를 자동 거부한다.
+         * `pwd` 조차 막힌다. "승인이 없어 거부됐다"는 문장은 맞지만, 사용자에게는
+         * 우연한 사고처럼 들려서 같은 실행을 다시 시키게 만든다. 다시 시켜도 결과는 같다.
+         * 이 런타임에서 읽기 권한으로 도구 작업을 시킬 방법은 없으므로, 그 사실과
+         * 푸는 길(권한을 올리거나 다른 런타임을 고르기)을 한 문장으로 말한다.
+         */
+        // 판정 근거는 새로 만들지 않는다 — 도구를 열었는지는 이미 agyToolsAllowed 가 안다.
+        const structural = !agyToolsAllowed;
         const failure = !trimmed && denied.length > 0
           ? {
             kind: "refused" as const,
-            message: `Antigravity produced no answer because ${denied.length === 1 ? "a tool call was" : `${denied.length} tool calls were`} auto-denied for missing approval: ${denied.map((d) => d.tool).join(", ")}. ${denied[0]?.detail ?? ""}`.trim(),
+            message: structural
+              ? `Antigravity cannot use tools under read permission: this CLI has no way to allow read-only tools headlessly, so every call (${denied.map((d) => d.tool).join(", ")}) is auto-denied and the run returns nothing. Raise the permission to write, or pick another runtime for read-only work.`
+              : `Antigravity produced no answer because ${denied.length === 1 ? "a tool call was" : `${denied.length} tool calls were`} auto-denied for missing approval: ${denied.map((d) => d.tool).join(", ")}. ${denied[0]?.detail ?? ""}`.trim(),
             runtime: "antigravity",
             source: "marker" as const,
           }

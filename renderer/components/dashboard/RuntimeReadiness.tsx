@@ -92,6 +92,45 @@ function activeRuntimeLabel(runtimes: RuntimeStatus[], ko: boolean): string {
   return [active.label ?? labels[active.kind] ?? active.kind, detail].filter(Boolean).join(" · ");
 }
 
+/**
+ * "런타임이 목록에 있다"는 "쓸 수 있다"가 아니다.
+ *
+ * 이 항목은 runtimes.length > 0 이면 초록불이었다. 감지는 CLI 파일이 있고 버전이 나오는지만
+ * 보므로, 계정이 만료된 런타임도 화면에는 "연결됨"으로 떴다. 사용자는 초록불을 보면서 실행마다
+ * 인증 실패를 겪었고, 푸는 길은 터미널을 직접 열어 로그인하는 것뿐이었다.
+ *
+ * 실행이 실제로 낸 인증 실패는 이제 런타임 상태에 실려 온다. 그 사실이 있으면 초록불이 아니라
+ * 할 일을 말한다.
+ */
+function runtimeItem(runtimes: RuntimeStatus[], ko: boolean): ReadinessItem {
+  const signedOut = runtimes.filter((runtime) => runtime.signInRequired);
+  if (runtimes.length === 0) {
+    return {
+      id: "runtime",
+      label: ko ? "로컬 LLM 런타임" : "Local LLM runtime",
+      detail: activeRuntimeLabel(runtimes, ko),
+      status: "blocked",
+    };
+  }
+  if (signedOut.length > 0) {
+    const names = signedOut.map((runtime) => runtime.label ?? runtime.kind).join(" · ");
+    return {
+      id: "runtime",
+      label: ko ? "로컬 LLM 런타임" : "Local LLM runtime",
+      detail: ko
+        ? `${names} 로그인이 만료됐습니다. 설정 › 런타임에서 로그인하세요.`
+        : `${names} needs signing in again. Sign in from Settings › Runtimes.`,
+      status: "attention",
+    };
+  }
+  return {
+    id: "runtime",
+    label: ko ? "로컬 LLM 런타임" : "Local LLM runtime",
+    detail: activeRuntimeLabel(runtimes, ko),
+    status: "ready",
+  };
+}
+
 function updaterItem(state: UpdaterState | null, ko: boolean): ReadinessItem {
   if (!state) {
     return {
@@ -232,12 +271,7 @@ export function RuntimeReadiness() {
       .join(" · ");
 
     const items: ReadinessItem[] = [
-      {
-        id: "runtime",
-        label: ko ? "로컬 LLM 런타임" : "Local LLM runtime",
-        detail: activeRuntimeLabel(runtimes, ko),
-        status: runtimes.length > 0 ? "ready" : "blocked",
-      },
+      runtimeItem(runtimes, ko),
       {
         id: "account",
         label: ko ? "Agentlas 계정" : "Agentlas account",

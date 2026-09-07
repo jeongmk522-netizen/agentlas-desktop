@@ -299,7 +299,7 @@ export async function detectRuntimes(force = false): Promise<RuntimeStatus[]> {
   detectInFlight = flight;
   detectInFlightGeneration = requestGeneration;
   try {
-    const list = await flight;
+    const list = markSignedOutRuntimes(await flight);
     // A runtime update/store change may have invalidated this probe while it
     // was running. Let its caller finish, but never make that old generation
     // the source for a later dashboard read.
@@ -322,6 +322,31 @@ export async function detectRuntimes(force = false): Promise<RuntimeStatus[]> {
  * 그리고 이 판정이 실패해도 감지 전체를 죽이지 않는다 — 한 줄의 실패가 다른 런타임을
  * 가리는 일은 이 파일의 원칙에 어긋난다.
  */
+/**
+ * 실행이 실제로 낸 인증 실패를 목록에 실어 준다.
+ *
+ * 감지는 "CLI 가 있는가"만 답할 수 있다. "로그인돼 있는가"는 실행해 봐야 아는 것이고, 우리는
+ * 이미 그 답을 갖고 있다 — 인증 실패는 표식으로 기록해 두었고 성공 한 번으로만 지워진다.
+ * 그 사실을 여기서 합치지 않으면 화면은 계속 "연결됨"이라고 쓴다.
+ */
+function markSignedOutRuntimes(list: RuntimeStatus[]): RuntimeStatus[] {
+  return list.map((runtime) => {
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const { runtimeSignedOut } = require("./runtime-cooldown") as {
+        runtimeSignedOut: (r: RuntimeStatus) => { since: number; message: string } | null;
+      };
+      const out = runtimeSignedOut(runtime);
+      return out
+        ? { ...runtime, signInRequired: { since: new Date(out.since).toISOString(), message: out.message } }
+        : runtime;
+    } catch {
+      // 이 표시가 실패해도 감지 전체를 죽이지 않는다.
+      return runtime;
+    }
+  });
+}
+
 function hasAgentlasServingAccess(): boolean {
   try {
     // eslint-disable-next-line @typescript-eslint/no-require-imports

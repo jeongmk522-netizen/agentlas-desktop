@@ -79,7 +79,44 @@ export function noteRuntimeFailure(
     message: String(failure.message ?? "").slice(0, 400),
   };
   cooldowns.set(runtimeCooldownKey(runtime), entry);
+  /*
+   * ★로그인 만료는 기다린다고 낫지 않는다.
+   *
+   * 한도는 시간이 지나면 스스로 풀리지만 인증은 사람이 로그인해야 풀린다. 시한부로만 다루면
+   * 한 시간 뒤 이 런타임은 다시 "연결됨"이 되고, 사용자는 초록불을 보면서 같은 실패를 다시
+   * 겪는다 — 그리고 푸는 길은 터미널을 직접 여는 것뿐이었다.
+   *
+   * 그래서 인증 실패는 따로, 시간이 아니라 **사실**로 기록한다. 지워지는 때는 그 런타임이
+   * 실제로 한 번 성공했을 때뿐이다.
+   */
+  if (failure.kind === "auth") {
+    signedOut.set(runtimeCooldownKey(runtime), {
+      since: now,
+      message: String(failure.message ?? "").slice(0, 400),
+    });
+  }
   return entry;
+}
+
+export interface RuntimeSignedOut {
+  since: number;
+  message: string;
+}
+
+const signedOut = new Map<string, RuntimeSignedOut>();
+
+/** 이 런타임이 로그인 실패를 낸 적이 있고 아직 성공한 적이 없는가. */
+export function runtimeSignedOut(
+  runtime: Pick<RuntimeStatus, "kind" | "backend" | "source" | "model">,
+): RuntimeSignedOut | null {
+  return signedOut.get(runtimeCooldownKey(runtime)) ?? null;
+}
+
+/** 실제 성공 한 번이 유일한 해제 조건 — 짐작으로 초록불을 되돌리지 않는다. */
+export function noteRuntimeSucceeded(
+  runtime: Pick<RuntimeStatus, "kind" | "backend" | "source" | "model">,
+): void {
+  signedOut.delete(runtimeCooldownKey(runtime));
 }
 
 /** 지금 이 런타임이 시한부로 막혀 있나. 만료된 기록은 그 자리에서 지운다(스스로 돌아온다). */
@@ -106,5 +143,6 @@ export function clearRuntimeCooldown(
 
 /** 테스트 전용 — 프로세스 안 상태를 비운다. */
 export function resetRuntimeCooldownsForTest(): void {
+  signedOut.clear();
   cooldowns.clear();
 }

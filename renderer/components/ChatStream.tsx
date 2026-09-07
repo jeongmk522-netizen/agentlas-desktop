@@ -7,6 +7,7 @@ import { hubBookmarksWithoutLocalDuplicates } from "@/lib/hub-bookmark-events";
 import { AgentAvatar } from "./AgentAvatar";
 import { Markdown, MarkdownSegment, StreamingMarkdown, type CodeArtifact, type LinkedFileArtifact, type MediaArtifact } from "./Markdown";
 import { useT } from "@/lib/i18n";
+import { ipc } from "@/lib/ipc";
 import {
   buildToolCallDisplay,
   formatToolRunSummary,
@@ -2393,6 +2394,18 @@ function toolView(
 function ChatNoticeRow({ notice }: { notice: ChatNotice }) {
   const { locale } = useT();
   const [open, setOpen] = useState(false);
+  const [signInBusy, setSignInBusy] = useState(false);
+  /** Which runtime needs a sign-in, taken from the typed notice rather than its wording. */
+  const signedOutRuntime = (() => {
+    if (notice.code !== "runtime-signed-out" || !notice.details) return null;
+    try {
+      const parsed = JSON.parse(notice.details) as { runtime?: unknown };
+      const runtime = typeof parsed.runtime === "string" ? parsed.runtime : "";
+      return ["claude-code", "codex", "antigravity", "kimi", "grok"].includes(runtime) ? runtime : null;
+    } catch {
+      return null;
+    }
+  })();
   if (notice.display === "divider") {
     // 대화의 경계. 예전에는 상태줄로 지나가서 사용자는 자기 대화가 잘렸다는 걸
     // 알 수 없었다 — "왜 아까 말한 걸 잊었냐"의 절반이 여기서 나온다.
@@ -2421,6 +2434,32 @@ function ChatNoticeRow({ notice }: { notice: ChatNotice }) {
       </span>
       <div className="agentlas-chat-notice-body">
         <span style={{ color: tone.fg }}>{notice.message}</span>
+        {signedOutRuntime && (
+          /*
+           * The one thing this notice exists to offer.
+           *
+           * The app never checks whether a runtime is signed in -- a present CLI with a version is
+           * shown as connected -- so an expired login produced a failure whose only remedy was
+           * opening a terminal and running the login command by hand. The mechanism to do it from
+           * here already existed and nothing called it.
+           */
+          <button
+            type="button"
+            className="agentlas-chat-notice-toggle"
+            data-testid="runtime-sign-in"
+            disabled={signInBusy}
+            onClick={() => {
+              setSignInBusy(true);
+              void ipc()?.runtime?.openCliLogin?.(signedOutRuntime as never)
+                .catch(() => {})
+                .finally(() => setSignInBusy(false));
+            }}
+          >
+            {locale === "ko"
+              ? (signInBusy ? "로그인 창 여는 중…" : "로그인")
+              : (signInBusy ? "Opening sign-in…" : "Sign in")}
+          </button>
+        )}
         {expandable && (
           <button
             type="button"

@@ -159,7 +159,7 @@ import { getAgentApp } from "../store/agent-apps";
 import { autoSelectMcpTools, buildMcpAutoSelectionPrompt } from "../mcp-tools/auto-select";
 import { runMcpKeyElicitationGate } from "./run-key-elicitation";
 import { bridgeHubPluginCandidates } from "../mcp-tools/hub-plugin-bridge";
-import { noteRuntimeFailure, runtimeCooldown, clearRuntimeCooldown } from "../runtime/runtime-cooldown";
+import { noteRuntimeFailure, noteRuntimeSucceeded, runtimeCooldown, clearRuntimeCooldown } from "../runtime/runtime-cooldown";
 import { buildMcpConfigFile } from "../mcp-tools/mcp-config";
 import {
   refreshBrowserCredentialsIfDue,
@@ -4798,6 +4798,42 @@ ${effectiveUserPrompt}`;
           originalFailure: originalFailure ?? failure,
           lastFailure: failure,
         });
+        /*
+         * ★로그인이 만료된 것을 "복구 후보를 다 써봤습니다"로 말하지 않는다.
+         *
+         * 이 앱은 런타임이 로그인돼 있는지 한 번도 보지 않는다 — CLI 파일이 있고 버전이 나오면
+         * 화면은 "연결됨"이라고 쓴다. 그래서 만료된 계정으로 실행하면 사용자는 초록불을 보면서
+         * 실패만 겪고, 푸는 길은 **터미널을 직접 열어 로그인**하는 것뿐이었다. 그건 만든 사람만
+         * 쓸 수 있는 제품이다.
+         *
+         * 인증 실패는 표식(`kind: "auth"`)으로 오므로 문구를 짐작할 필요가 없다. 그 표식이 오면
+         * 로그인을 여기서 권한다 — 화면은 이 코드를 보고 버튼 하나를 그리고, 그 버튼은 이미
+         * 있는 openCliLogin 을 부른다.
+         */
+        const signedOutRuntime = (originalFailure ?? failure).kind === "auth"
+          ? (originalFailure ?? failure).runtime
+          : null;
+        if (signedOutRuntime) {
+          const koAuth = `${signedOutRuntime} 로그인이 만료됐거나 되어 있지 않습니다. 아래 로그인 버튼을 누르면 로그인 창이 열리고, 끝나면 같은 요청을 다시 보내면 됩니다.`;
+          const enAuth = `${signedOutRuntime} is not signed in, or its session expired. Use the sign-in button below, then send the same request again.`;
+          sink({
+            kind: "notice",
+            model: failure.runtime,
+            modelRole: invocationModelRole,
+            notice: {
+              level: "error",
+              code: "runtime-signed-out",
+              message: locale === "ko" ? koAuth : enAuth,
+              i18n: { ko: koAuth, en: enAuth },
+              details: JSON.stringify({
+                schema: "agentlas.runtime-signed-out/v1",
+                runtime: signedOutRuntime,
+                originalFailure: originalFailure ?? failure,
+              }),
+            },
+          });
+          return result;
+        }
         const koMessage = "실행 환경 복구 후보를 모두 확인했지만 실행을 끝내지 못했습니다. 원래 실패 원인은 자세히에서 확인하세요.";
         const enMessage = "All bounded runtime recovery candidates were checked, but the run could not complete. See details for the original failure.";
         sink({
@@ -4842,6 +4878,8 @@ ${effectiveUserPrompt}`;
         } finally {
           attemptEvents.settle();
         }
+        // A run that actually worked is the only thing that clears "sign in required".
+        if (!result.failure) noteRuntimeSucceeded(selectedRuntime);
         if (!result.failure || !directRuntimeFallbackAllowed || signal?.aborted) return result;
         const failed = result.failure;
         // First failure: this is when recovery actually begins.

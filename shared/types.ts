@@ -804,6 +804,15 @@ export interface RuntimeStatus {
   source: string;
   /** CLI 감지된 버전 — BYOK은 null. ollama는 서버 버전 */
   version: string | null;
+  /**
+   * 이 런타임이 로그인 실패를 냈고 아직 성공한 적이 없다.
+   *
+   * 이 앱은 CLI 파일이 있고 버전이 나오면 화면에 "연결됨"이라고 썼다. 로그인 상태는 한 번도
+   * 보지 않았다. 그래서 계정이 만료된 런타임이 초록불로 보였고, 실행은 계속 실패했고, 푸는
+   * 길은 사용자가 터미널을 직접 열어 로그인하는 것뿐이었다. 화면은 이제 이 칸을 보고
+   * "로그인 필요"라고 말할 수 있고, 그 자리에서 로그인을 열 수 있다.
+   */
+  signInRequired?: { since: string; message: string };
   /** 사용자가 현재 이 LLM을 활성으로 선택했는지 */
   active: boolean;
   /** Persistent role defaults that currently resolve to this runtime. */

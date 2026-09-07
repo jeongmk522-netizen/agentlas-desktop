@@ -77,6 +77,63 @@ check("★어떤 표면도 배경에 상수 흰색(--white)을 쓰지 않는다"
   );
 });
 
+/*
+ * ★같은 병의 나머지 절반 (실측 2026-09-08).
+ *
+ * 어두운 물체 안에서 글자 토큰을 뒤집는 규칙은 **바닥 토큰도 함께** 뒤집어야 한다.
+ * One 사용자 말풍선이 정확히 그 상태였다: --ink/--design-ink 는 흰색으로 뒤집어 놓고
+ * --design-panel 계열은 최상위의 밝은 값(#ffffff)으로 남겨 둬서, 말풍선 안 산출물 표면이
+ * **흰 상자 + 흰 글자**가 됐다(잰 대비비 1.00).
+ *
+ * 글자만 뒤집으면 반쪽이다. 반쪽으로 착지한 수리는 고치기 전보다 나쁠 수 있다.
+ */
+const INK_TOKENS = /--(?:ink|ink-soft|design-ink|design-ink-2|design-muted|output-surface-ink)\s*:/;
+const SURFACE_TOKENS = /--(?:paper|paper-2|paper-3|design-bg|design-panel|design-panel-muted|output-surface-bg|output-surface-panel|output-surface-muted)\s*:/;
+
+/** 주석을 벗기고 규칙 단위로 자른다 — 주석 속 옛 코드를 세면 있지도 않은 결함이 나온다. */
+function rules(source) {
+  const bare = source.replace(/\/\*[\s\S]*?\*\//g, "");
+  const out = [];
+  const re = /([^{}]+)\{([^{}]*)\}/g;
+  let m;
+  while ((m = re.exec(bare))) {
+    const selector = m[1].trim();
+    if (selector.startsWith("@") || selector === ":root") continue;
+    out.push({ selector, body: m[2] });
+  }
+  return out;
+}
+
+check("★글자 토큰을 뒤집는 규칙은 바닥 토큰도 함께 뒤집는다", () => {
+  const offenders = [];
+  for (const file of cssFiles(path.join(root, "renderer"))) {
+    for (const rule of rules(fs.readFileSync(file, "utf8"))) {
+      if (!INK_TOKENS.test(rule.body)) continue;
+      if (SURFACE_TOKENS.test(rule.body)) continue;
+      offenders.push(`${path.relative(root, file)} :: ${rule.selector.slice(0, 80)}`);
+    }
+  }
+  assert.deepEqual(
+    offenders,
+    [],
+    "글자 토큰만 뒤집고 바닥 토큰은 그대로 둔 규칙입니다 — 그 안의 표면은 밝은 상자로 남고\n"
+      + "글자는 밝아져서 흰 상자에 흰 글자가 됩니다(One 말풍선에서 실제로 대비 1.00 이었습니다).\n"
+      + offenders.join("\n"),
+  );
+});
+
+check("★고장 주입 — 글자만 뒤집은 옛 말풍선이 실제로 걸린다", () => {
+  const broken = `.messageBody { --ink: var(--white); --design-ink: var(--white); }`;
+  const found = rules(broken).filter((r) => INK_TOKENS.test(r.body) && !SURFACE_TOKENS.test(r.body));
+  assert.equal(found.length, 1, "옛 모양을 못 잡으면 이 검사는 헛돕니다");
+  const fixed = `.messageBody { --design-ink: var(--white); --design-panel: rgba(255,255,255,.07); }`;
+  assert.equal(
+    rules(fixed).filter((r) => INK_TOKENS.test(r.body) && !SURFACE_TOKENS.test(r.body)).length,
+    0,
+    "고친 모양을 여전히 결함으로 셉니다",
+  );
+});
+
 check("허용 목록은 실재하는 자리만 가리킨다(죽은 예외 금지)", () => {
   for (const item of ALLOWED) {
     const full = path.join(root, item.file);

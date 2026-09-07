@@ -412,7 +412,7 @@ function createComposerEventSync({
     scopeLoading: false, scopeError: "",
     logbookRevisions: [], logbookLoading: false, logbookError: "",
     submissionArchiveProfiles: [], submissionArchiveExports: [], submissionArchiveLoading: false, submissionArchiveError: "",
-    datasetImportBusy: false, datasetImportError: "", workbookImportBusy: false, workbookImportError: "", workbookProjectionBusy: false, workbookProjectionError: "", workbookReadback: null, workbookSelectedSheetOrdinal: null, workbookFirstRow: 1, workbookLastRow: 1, workbookColumnMapping: {}, tablePageByArtifact: new Map(), statisticsViewByArtifact: new Map(), paleontologyViewByArtifact: new Map(), visualViewportByArtifact: new Map(),
+    datasetImportBusy: false, datasetImportError: "", workbookImportBusy: false, workbookImportError: "", workbookProjectionBusy: false, workbookProjectionError: "", workbookReadback: null, workbookSelectedSheetOrdinal: null, workbookFirstRow: 1, workbookLastRow: 1, workbookColumnMapping: {}, projectDataImportBusy: false, projectDataImportCandidateId: "", projectDataImportError: "", tablePageByArtifact: new Map(), statisticsViewByArtifact: new Map(), paleontologyViewByArtifact: new Map(), visualViewportByArtifact: new Map(),
     spatialViewByArtifact: new Map(), materialsStructureIndexByArtifact: new Map(),
     statisticsLaunchSourceArtifactId: null, statisticsLaunchTimeColumn: "", statisticsLaunchEventColumn: "", statisticsLaunchBusy: false, statisticsLaunchError: "", statisticsLaunchOpen: false,
     // The launch screen used to offer one analysis, because one analysis was written into it. These
@@ -2101,6 +2101,9 @@ function createComposerEventSync({
       state.workbookFirstRow = 1;
       state.workbookLastRow = 1;
       state.workbookColumnMapping = {};
+      state.projectDataImportBusy = false;
+      state.projectDataImportCandidateId = "";
+      state.projectDataImportError = "";
     }
     if (window.matchMedia("(max-width: 760px)").matches) state.railCollapsed = true;
     if (switchingProject && state.manuscriptDraftJob?.projectId !== projectId) state.manuscriptDraftJob = null;
@@ -6030,6 +6033,199 @@ function createComposerEventSync({
     }
   }
 
+  function projectDataSnapshotEntryIsCurrent(projectId, snapshotId, revision, candidateId, relativePath, contentSha256, { allowUnavailable = false } = {}) {
+    if (projectId !== state.selectedId) return false;
+    const snapshot = state.projectDataSnapshot;
+    // Activation and the filesystem watcher can persist another scan with the same
+    // revision while an action is reading the candidate. The candidate identity and
+    // content hash are the authority for the action; a scan id alone is not a change
+    // to the file and must not turn a valid Open into a misleading reopen error.
+    if (!snapshot || snapshot.projectId !== projectId || snapshot.revision !== revision) return false;
+    const entry = (Array.isArray(snapshot.entries) ? snapshot.entries : []).find((item) => item?.candidateId === candidateId && item?.relativePath === relativePath);
+    if (!entry || entry.contentSha256 !== contentSha256) return false;
+    if (allowUnavailable) return Boolean(entry.import?.contentSha256 === contentSha256);
+    return Boolean(entry.observed === true && entry.state !== "missing" && entry.state !== "unreadable");
+  }
+
+  function projectDataArtifactForImport(entry) {
+    const runId = entry?.import?.importRunId;
+    if (!runId || !Array.isArray(state.artifacts)) return null;
+    // CSV tables use the import run directly. Workbook tables are materialized by a
+    // later sheet-projection run whose parentRunId is the persisted workbook import.
+    const runIds = new Set([runId]);
+    for (const run of Array.isArray(state.runs) ? state.runs : []) {
+      if (run?.parentRunId === runId && run?.toolId === "agentlas.workbook-sheet-projection") runIds.add(run.id);
+    }
+    return state.artifacts.find((artifact) => artifact?.projectId === state.selectedId
+      && runIds.has(artifact?.sourceRunId)
+      && artifact?.kind === "table"
+      && artifact?.version?.rendererId === "agentlas.table") || null;
+  }
+
+  async function importProjectDataCandidate(target) {
+    const projectId = state.selectedId;
+    const snapshot = state.projectDataSnapshot;
+    const entry = projectDataEntryForAction(target);
+    const candidate = entry?.candidate;
+    const conversation = selectedConversation();
+    const originMessage = [...state.messages].reverse().find((message) => message.role === "user");
+    if (!projectId || !snapshot || !entry || !candidate || entry.observed !== true
+      || !["csv", "xlsx", "xls"].includes(candidate.extension)
+      || typeof entry.contentSha256 !== "string" || !/^[a-f0-9]{64}$/u.test(entry.contentSha256)) {
+      state.projectDataImportError = uiCopy("이 파일은 현재 가져올 수 없습니다. 연결 폴더를 다시 확인하세요.", "This file is not ready to import. Check the linked folder again.");
+      render();
+      return;
+    }
+    if (!conversation || !originMessage || !science.datasets?.readCandidate || !science.datasets?.importCandidate) {
+      state.projectDataImportError = projectDataActionErrorText("science-project-data-origin-not-found");
+      render();
+      return;
+    }
+    const snapshotId = snapshot.scanId;
+    const revision = snapshot.revision;
+    const candidateId = entry.candidateId;
+    const relativePath = entry.relativePath;
+    const expectedContentSha256 = entry.contentSha256;
+    state.projectDataImportBusy = true;
+    state.projectDataImportCandidateId = candidateId;
+    state.projectDataImportError = "";
+    render();
+    try {
+      const read = await science.datasets.readCandidate({
+        requestId: crypto.randomUUID(), projectId, candidateId, relativePath, scanId: snapshotId, revision,
+      });
+      if (projectId !== state.selectedId || read?.schema !== "agentlas.science-data-candidate-read/v1"
+        || read.candidate?.candidateId !== candidateId || read.candidate?.relativePath !== relativePath
+        || read.contentSha256 !== expectedContentSha256
+        || !projectDataSnapshotEntryIsCurrent(projectId, snapshotId, revision, candidateId, relativePath, expectedContentSha256)) {
+        throw new Error("science-project-data-candidate-stale");
+      }
+      const result = await science.datasets.importCandidate({
+        requestId: crypto.randomUUID(),
+        artifactRequestId: crypto.randomUUID(),
+        projectId,
+        conversationId: conversation.id,
+        originMessageId: originMessage.id,
+        candidateId,
+        relativePath,
+        scanId: snapshotId,
+        revision,
+        title: relativePath,
+      });
+      if (projectId !== state.selectedId || result?.schema !== "agentlas.science-data-import/v1"
+        || result.candidate?.candidateId !== candidateId || result.candidate?.relativePath !== relativePath
+        || result.candidate?.extension !== candidate.extension
+        || result.source?.version?.contentSha256 !== expectedContentSha256
+        || !projectDataSnapshotEntryIsCurrent(projectId, snapshotId, revision, candidateId, relativePath, expectedContentSha256)) {
+        throw new Error("science-project-data-candidate-stale");
+      }
+      state.projectDataImportBusy = false;
+      state.projectDataImportCandidateId = "";
+      if (candidate.extension === "csv") {
+        const artifact = result.artifact;
+        if (!artifact?.id || artifact.version?.rendererId !== "agentlas.table") throw new Error("science-project-data-import-artifact-not-found");
+        await selectProject(projectId, { preserveWorkspace: true });
+        if (projectId !== state.selectedId) return;
+        await openLab("data-table", artifact.id, null, originMessage.id, artifact.currentVersion);
+        return;
+      }
+      const readback = result.workbook;
+      if (!readback || readback.schema !== "agentlas.science-workbook-readback/v1" || !Array.isArray(readback.sheets) || !readback.sheets.length || !result.run?.id) {
+        throw new Error("science-workbook-readback-invalid");
+      }
+      const firstSheet = readback.sheets[0];
+      state.workbookReadback = readback;
+      state.workbookSelectedSheetOrdinal = firstSheet.ordinal;
+      state.workbookFirstRow = 1;
+      state.workbookLastRow = workbookDefaultLastRow(firstSheet);
+      state.workbookColumnMapping = {};
+      await loadProjectDataSnapshot(projectId, { renderOnReady: false });
+      if (projectId !== state.selectedId) return;
+      state.projectDataImportError = "";
+      render();
+    } catch (error) {
+      if (projectId !== state.selectedId) return;
+      state.projectDataImportBusy = false;
+      state.projectDataImportCandidateId = "";
+      state.projectDataImportError = projectDataActionErrorText(error instanceof Error ? error.message : String(error));
+      render();
+    }
+  }
+
+  async function openProjectDataCandidate(target) {
+    const projectId = state.selectedId;
+    const snapshot = state.projectDataSnapshot;
+    const entry = projectDataEntryForAction(target);
+    if (!projectId || !snapshot || !entry?.import || !entry.relativePath) {
+      state.projectDataImportError = uiCopy("이 표를 열 수 없습니다. 연결 폴더를 다시 확인하세요.", "This table cannot be opened. Check the linked folder again.");
+      render();
+      return;
+    }
+    const snapshotId = snapshot.scanId;
+    const revision = snapshot.revision;
+    const candidateId = entry.candidateId;
+    const relativePath = entry.relativePath;
+    const expectedContentSha256 = entry.contentSha256;
+    state.projectDataImportBusy = true;
+    state.projectDataImportCandidateId = candidateId;
+    state.projectDataImportError = "";
+    render();
+    try {
+      let artifact = projectDataArtifactForImport(entry);
+      if (!artifact && science.artifacts?.list) {
+        const artifacts = await science.artifacts.list(projectId);
+        if (projectId !== state.selectedId || !projectDataSnapshotEntryIsCurrent(projectId, snapshotId, revision, candidateId, relativePath, expectedContentSha256, { allowUnavailable: true })) throw new Error("science-project-data-candidate-stale");
+        state.artifacts = Array.isArray(artifacts) ? artifacts : state.artifacts;
+        artifact = projectDataArtifactForImport(entry);
+      }
+      if (!artifact && science.runs?.list) {
+        const runs = await science.runs.list(projectId);
+        if (projectId !== state.selectedId || !projectDataSnapshotEntryIsCurrent(projectId, snapshotId, revision, candidateId, relativePath, expectedContentSha256, { allowUnavailable: true })) throw new Error("science-project-data-candidate-stale");
+        state.runs = Array.isArray(runs) ? runs : state.runs;
+        artifact = projectDataArtifactForImport(entry);
+      }
+      if (artifact?.id && artifact.version?.rendererId === "agentlas.table") {
+        const context = await science.artifacts.context(projectId, artifact.id, artifact.currentVersion);
+        if (projectId !== state.selectedId || !context || context.artifact?.projectId !== projectId || context.artifact?.id !== artifact.id
+          || context.selectedVersion?.version !== artifact.currentVersion || context.selectedVersion?.contentSha256 !== artifact.version.contentSha256
+          || !context.linkage?.labId || !projectDataSnapshotEntryIsCurrent(projectId, snapshotId, revision, candidateId, relativePath, expectedContentSha256, { allowUnavailable: true })) {
+          throw new Error("science-project-data-import-artifact-not-found");
+        }
+        state.projectDataImportBusy = false;
+        state.projectDataImportCandidateId = "";
+        await openLab(context.linkage.labId, artifact.id, null, context.linkage.origin?.messageId || null, artifact.currentVersion, context);
+        return;
+      }
+      const importedRun = (Array.isArray(state.runs) ? state.runs : []).find((run) => run?.id === entry.import.importRunId);
+      if (importedRun?.toolId === "agentlas.workbook-ingest" && science.datasets?.workbook) {
+        const readback = await science.datasets.workbook({ projectId, runId: importedRun.id });
+        if (projectId !== state.selectedId || !readback || readback.schema !== "agentlas.science-workbook-readback/v1"
+          || !Array.isArray(readback.sheets) || !readback.sheets.length
+          || !projectDataSnapshotEntryIsCurrent(projectId, snapshotId, revision, candidateId, relativePath, expectedContentSha256, { allowUnavailable: true })) {
+          throw new Error("science-workbook-readback-invalid");
+        }
+        const firstSheet = readback.sheets[0];
+        state.projectDataImportBusy = false;
+        state.projectDataImportCandidateId = "";
+        state.workbookReadback = readback;
+        state.workbookSelectedSheetOrdinal = firstSheet.ordinal;
+        state.workbookFirstRow = 1;
+        state.workbookLastRow = workbookDefaultLastRow(firstSheet);
+        state.workbookColumnMapping = {};
+        render();
+        return;
+      }
+      throw new Error("science-project-data-import-artifact-not-found");
+
+    } catch (error) {
+      if (projectId !== state.selectedId) return;
+      state.projectDataImportBusy = false;
+      state.projectDataImportCandidateId = "";
+      state.projectDataImportError = projectDataActionErrorText(error instanceof Error ? error.message : String(error));
+      render();
+    }
+  }
+
   async function importCsvDataset() {
     if (state.datasetImportBusy || !state.selectedId) return;
     const conversation = selectedConversation();
@@ -7226,6 +7422,32 @@ function createComposerEventSync({
     return `<section class="artifactSemanticReview${warnings.length ? " hasWarnings" : ""}" data-artifact-semantic-review aria-label="${escapeHtml(uiCopy("아티팩트 확인 항목", "Artifact review items"))}">${warningMarkup}${fitCoreMarkup}${detailsMarkup}</section>`;
   }
 
+  function projectDataActionErrorText(value) {
+    const code = String(value || '').trim();
+    if (!code) return '';
+    const copy = {
+      'science-project-data-candidate-stale': uiCopy('파일이 바뀌었습니다. 연결 폴더를 다시 확인한 뒤 가져오세요.', 'The file changed. Check the linked folder again before importing.'),
+      'science-project-data-candidate-not-found': uiCopy('파일을 찾지 못했습니다. 연결 폴더를 다시 확인하세요.', 'The file was not found. Check the linked folder and try again.'),
+      'science-project-data-candidate-unavailable': uiCopy('파일을 읽을 수 없습니다. 파일 접근 권한을 확인하세요.', 'The file could not be read. Check file access and try again.'),
+      'science-project-data-candidate-not-supported': uiCopy('지원하지 않는 파일 형식입니다. CSV 또는 Excel 파일을 선택하세요.', 'This file type is not supported. Choose a CSV or Excel file.'),
+      'science-project-data-origin-not-found': uiCopy('현재 연구 대화와 연결된 원본 질문을 찾지 못했습니다.', 'The source question for this research conversation is unavailable.'),
+      'science-project-data-import-artifact-not-found': uiCopy('가져온 표를 다시 열지 못했습니다. Data Table을 새로 고쳐 주세요.', 'The imported table could not be reopened. Refresh the Data Table and try again.'),
+      'science-workbook-readback-invalid': uiCopy('Excel 원본을 다시 열지 못했습니다. 파일을 다시 가져오세요.', 'The Excel source could not be reopened. Import the file again.'),
+      'science-project-data-candidate-read-failed': uiCopy('파일을 읽지 못했습니다. 연결 폴더의 접근 권한을 확인하세요.', 'The file could not be read. Check access to the linked folder.'),
+      'science-project-data-import-run-source-binding-not-found': uiCopy('가져온 원본의 기록을 확인하지 못했습니다. 다시 가져오세요.', 'The imported source record could not be verified. Import it again.'),
+    };
+    return copy[code] || uiCopy('파일을 가져오지 못했습니다. 연결 폴더를 확인하고 다시 시도하세요.', 'The file could not be imported. Check the linked folder and try again.');
+  }
+
+  function projectDataEntryForAction(target) {
+    const snapshot = state.projectDataSnapshot;
+    if (!snapshot || snapshot.projectId !== state.selectedId) return null;
+    const candidateId = target?.dataset?.projectDataCandidateId;
+    const relativePath = target?.dataset?.projectDataRelativePath;
+    if (!candidateId || !relativePath) return null;
+    return (Array.isArray(snapshot.entries) ? snapshot.entries : []).find((entry) => entry?.candidateId === candidateId && entry?.relativePath === relativePath) || null;
+  }
+
   function projectDataSnapshotMarkup() {
     const snapshot = state.projectDataSnapshot;
     if (!snapshot) {
@@ -7245,6 +7467,45 @@ function createComposerEventSync({
     const missingCount = Number(changes.missing) || 0;
     const unreadableCount = Number(changes.unreadable) || 0;
     const attentionCount = missingCount + unreadableCount;
+    const projectDataFileRows = entries.map((entry) => {
+      const candidate = entry?.candidate;
+      const relativePath = typeof candidate?.relativePath === "string"
+        ? candidate.relativePath
+        : typeof entry?.relativePath === "string" ? entry.relativePath : "";
+      if (!relativePath) return "";
+      const extension = String(candidate?.extension || "").toLowerCase();
+      const supported = ["csv", "xlsx", "xls"].includes(extension);
+      const hashVerified = typeof entry?.contentSha256 === "string" && /^[a-f0-9]{64}$/u.test(entry.contentSha256);
+      const observed = entry?.observed === true;
+      const imported = Boolean(entry?.import);
+      const changedAfterImport = imported && entry?.state === "changed";
+      const canImport = observed && supported && hashVerified && (!imported || changedAfterImport);
+      const canOpen = imported && Boolean(entry?.import?.importRunId) && !changedAfterImport;
+      const entryState = String(entry?.state || "unreadable");
+      const unavailableState = entryState === "missing" || entryState === "unreadable";
+      const stateKey = changedAfterImport ? "changed" : unavailableState ? entryState : imported ? "imported" : ["new", "changed", "unchanged", "missing", "unreadable"].includes(entryState) ? entryState : "unverified";
+      const stateLabels = {
+        new: uiCopy("새 파일", "New"),
+        changed: uiCopy("변경됨", "Changed"),
+        unchanged: uiCopy("확인됨", "Checked"),
+        imported: uiCopy("가져옴", "Imported"),
+        missing: uiCopy("없음 · 폴더에서 확인", "Missing · check folder"),
+        unreadable: uiCopy("읽기 실패 · 접근 권한 확인", "Unreadable · check access"),
+        unverified: uiCopy("확인 필요", "Review needed"),
+      };
+      const projectDataRevision = snapshot.revision;
+      const actionAttributes = `data-project-data-candidate-id="${escapeHtml(entry?.candidateId || "")}" data-project-data-relative-path="${escapeHtml(relativePath)}" data-project-data-scan-id="${escapeHtml(entry?.scanId || snapshot.scanId || "")}" data-project-data-revision="${escapeHtml(projectDataRevision)}"`;
+      const busyThis = state.projectDataImportBusy && state.projectDataImportCandidateId === entry?.candidateId;
+      const action = canImport
+        ? `<button type="button" class="secondaryButton" data-action="import-project-data-candidate" ${actionAttributes} ${state.projectDataImportBusy ? "disabled" : ""}>${busyThis ? uiCopy("가져오는 중…", "Importing…") : uiCopy("가져오기", "Import")}</button>`
+        : canOpen
+          ? `<button type="button" class="secondaryButton" data-action="open-project-data-candidate" ${actionAttributes}>${uiCopy("열기", "Open")}</button>`
+          : "";
+      return `<li class="projectDataFileRow" data-project-data-file-state="${escapeHtml(stateKey)}" data-project-data-file-observed="${observed}" data-project-data-file-imported="${imported}"><div class="projectDataFileMain"><strong>${escapeHtml(relativePath)}</strong></div><div class="projectDataFileActions"><span>${escapeHtml(stateLabels[stateKey] || stateKey)}</span>${action}</div></li>`;
+    }).filter(Boolean).join("");
+    const projectDataFilesMarkup = projectDataFileRows
+      ? `<section class="projectDataFiles" data-project-data-files aria-label="${escapeHtml(uiCopy("연결 폴더 파일", "Files in linked folder"))}"><header><strong>${uiCopy("연결 폴더 파일", "Files in linked folder")}</strong><span>${escapeHtml(entries.length)} ${uiCopy("개", entries.length === 1 ? "file" : "files")}</span></header><ul>${projectDataFileRows}</ul>${state.projectDataImportError ? `<p class="labStartError projectDataActionError" role="alert">${escapeHtml(state.projectDataImportError)}</p>` : ""}</section>`
+      : state.projectDataImportError ? `<section class="projectDataFiles" data-project-data-files><p class="labStartError projectDataActionError" role="alert">${escapeHtml(state.projectDataImportError)}</p></section>` : "";
     const statusText = snapshot.status !== "complete" || attentionCount > 0
       ? uiCopy("확인 필요", "Review needed")
       : changedCount > 0 || newCount > 0
@@ -7261,7 +7522,8 @@ function createComposerEventSync({
       unreadableCount > 0 ? `${unreadableCount} ${uiCopy("읽기 실패", "unreadable")}` : "",
       importedCount > 0 ? `${importedCount} ${uiCopy("가져옴", "imported")}` : "",
     ].filter(Boolean);
-    return `<section class="originStrip projectDataSnapshotStrip" data-project-data-snapshot="ready" data-project-data-revision="${escapeHtml(snapshot.revision)}" data-project-data-status="${escapeHtml(statusText)}" role="status"><div class="originStripMain"><strong>${escapeHtml(uiCopy("폴더 데이터", "Folder data"))} · ${escapeHtml(statusText)}</strong><span>${escapeHtml(statusDetail)}</span></div><div class="originStripActions"><span>${escapeHtml(metricParts.join(" · "))}</span></div></section>`;
+    const statusMarkup = `<section class="originStrip projectDataSnapshotStrip" data-project-data-snapshot="ready" data-project-data-revision="${escapeHtml(snapshot.revision)}" data-project-data-status="${escapeHtml(statusText)}" role="status"><div class="originStripMain"><strong>${escapeHtml(uiCopy("폴더 데이터", "Folder data"))} · ${escapeHtml(statusText)}</strong><span>${escapeHtml(statusDetail)}</span></div><div class="originStripActions"><span>${escapeHtml(metricParts.join(" · "))}</span></div></section>`;
+    return `${statusMarkup}${projectDataFilesMarkup}`;
   }
 
   function artifactWorkbench() {
@@ -7273,7 +7535,7 @@ function createComposerEventSync({
     if (!labArtifacts.length) {
       if (state.selectedLabId === "data-table") {
         if (state.workbookReadback) return labDecisionEmptyMarkup(`${projectDataStatus}<section class="emptyView labStartView" data-empty-source="science.sqlite"><div class="labStartCard">${workbookIntakeMarkup()}</div></section>`);
-        return labDecisionEmptyMarkup(`${projectDataStatus}<section class="emptyView labStartView" data-empty-source="science.sqlite"><div class="labStartCard"><span class="researchKicker">Data & Statistics · ${escapeHtml(lifecycleLabel())}</span><strong>${uiCopy("CSV 또는 Excel 파일을 표로 가져오세요.", "Import a CSV or Excel workbook as a table.")}</strong><p>${uiCopy("원본은 보존됩니다. CSV는 바로 표가 되고, XLSX/XLS는 시트·행 범위·열 이름을 직접 선택해 표를 만듭니다.", "The original is preserved. CSV opens as a table; for XLSX/XLS, choose a sheet, row range, and column names to create a table.")}</p><p class="workbookPickerBoundary">${uiCopy("입력 CSV · XLSX · XLS · 원본 보존 · 시트·행 범위·열 이름을 직접 선택", "Input CSV · XLSX · XLS · original preserved · choose the sheet, row range, and column names explicitly")}</p><div class="workbookIntakeActions"><button class="primaryButton importDatasetButton" data-action="import-csv-dataset" ${state.datasetImportBusy || state.workbookImportBusy ? "disabled" : ""}>${state.datasetImportBusy ? uiCopy("검증하며 가져오는 중…", "Validating…") : uiCopy("CSV 가져오기", "Import CSV")}</button><button class="secondaryButton importDatasetButton" data-action="import-workbook-dataset" ${state.datasetImportBusy || state.workbookImportBusy ? "disabled" : ""}>${state.workbookImportBusy ? uiCopy("Excel을 읽는 중…", "Reading workbook…") : uiCopy("Excel 선택 (.xlsx/.xls)", "Choose Excel (.xlsx/.xls)")}</button></div>${state.datasetImportError ? `<p class="labStartError" role="alert">${escapeHtml(state.datasetImportError)}</p>` : ""}${state.workbookImportError ? `<p class="labStartError" role="alert">${escapeHtml(state.workbookImportError)}</p>` : ""}</div></section>`);
+        return labDecisionEmptyMarkup(`${projectDataStatus}<section class="emptyView labStartView" data-empty-source="science.sqlite"><div class="labStartCard"><span class="researchKicker">Data & Statistics · ${escapeHtml(lifecycleLabel())}</span><strong>${uiCopy("CSV 또는 Excel 파일을 표로 가져오세요.", "Import a CSV or Excel workbook as a table.")}</strong><p class="workbookPickerBoundary">${uiCopy("원본은 보존됩니다. CSV·Excel 또는 연결 폴더 파일을 선택하세요.", "The original is preserved. Choose a CSV, Excel, or a file from the linked folder.")}</p><div class="workbookIntakeActions"><button class="primaryButton importDatasetButton" data-action="import-csv-dataset" ${state.datasetImportBusy || state.workbookImportBusy ? "disabled" : ""}>${state.datasetImportBusy ? uiCopy("검증하며 가져오는 중…", "Validating…") : uiCopy("CSV 가져오기", "Import CSV")}</button><button class="secondaryButton importDatasetButton" data-action="import-workbook-dataset" ${state.datasetImportBusy || state.workbookImportBusy ? "disabled" : ""}>${state.workbookImportBusy ? uiCopy("Excel을 읽는 중…", "Reading workbook…") : uiCopy("Excel 선택 (.xlsx/.xls)", "Choose Excel (.xlsx/.xls)")}</button></div>${state.datasetImportError ? `<p class="labStartError" role="alert">${escapeHtml(state.datasetImportError)}</p>` : ""}${state.workbookImportError ? `<p class="labStartError" role="alert">${escapeHtml(state.workbookImportError)}</p>` : ""}</div></section>`);
       }
       if (state.selectedLabId === "statistics-analysis") return labDecisionEmptyMarkup(statisticsLaunchCard());
       if (state.selectedLabId === "data-visualization") return labDecisionEmptyMarkup(publicationFigureStartMarkup());
@@ -11646,6 +11908,8 @@ function createComposerEventSync({
     if (target.dataset.action === "export-manuscript") { void exportManuscript(target.dataset.format || "pdf"); return; }
     if (target.dataset.action === "send-turn") { void startComposerTurn(); return; }
     if (target.dataset.action === "cancel-turn") { void cancelComposerTurn(); return; }
+    if (target.dataset.action === "import-project-data-candidate") { void importProjectDataCandidate(target); return; }
+    if (target.dataset.action === "open-project-data-candidate") { void openProjectDataCandidate(target); return; }
     if (target.dataset.action === "import-csv-dataset") { void importCsvDataset(); return; }
     if (target.dataset.action === "import-workbook-dataset") { void importWorkbookDataset(); return; }
     if (target.dataset.action === "clear-workbook-intake") {

@@ -1797,7 +1797,32 @@ app.whenReady().then(async () => {
       resolved = os.homedir();
     }
     resolved = path.resolve(resolved);
-    if (!fs.existsSync(resolved)) {
+    /*
+     * A typed path is a real need -- without one a researcher who cannot reach the OS dialog cannot
+     * create a project at all. But the reason only the dialog could name a folder was that a human
+     * chose the location. Replacing the dialog with "any absolute path the extension asks for" hands
+     * that choice to the Science UI, which may then create a directory anywhere this account can
+     * write, including inside another application's data.
+     *
+     * So the typed path keeps the human's territory and loses everything else: it must be inside the
+     * home directory, and it must not reach into a hidden directory, the macOS Library, or this
+     * app's own storage. The OS dialog is unaffected and can still go anywhere the person points it.
+     */
+    const home = path.resolve(os.homedir());
+    const inside = (root: string, target: string) => target === root || target.startsWith(`${root}${path.sep}`);
+    const relativeToHome = path.relative(home, resolved);
+    if (!inside(home, resolved) || relativeToHome.startsWith("..") || path.isAbsolute(relativeToHome)) {
+      throw new Error("science-project-folder-outside-home");
+    }
+    const segments = relativeToHome ? relativeToHome.split(path.sep) : [];
+    if (segments.some((segment) => segment.startsWith("."))) throw new Error("science-project-folder-hidden-path");
+    if (segments[0] === "Library") throw new Error("science-project-folder-reserved-path");
+    if (inside(path.resolve(app.getPath("userData")), resolved)) throw new Error("science-project-folder-reserved-path");
+    const existing = fs.existsSync(resolved) ? fs.lstatSync(resolved) : null;
+    if (existing && (existing.isSymbolicLink() || !existing.isDirectory())) {
+      throw new Error("science-project-folder-not-a-directory");
+    }
+    if (!existing) {
       try {
         fs.mkdirSync(resolved, { recursive: true });
       } catch {

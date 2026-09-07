@@ -177,7 +177,8 @@
     "gate:audio-picker-absent": "node scripts/gate-audio-picker-absent.cjs",
     "verify:pinned-lookup": "node scripts/verify-pinned-lookup-shape.mjs",
     "verify:seat-migration": "npm run build:electron && node scripts/verify-seat-migration.cjs",
-    "gate:colour-tokens": "node scripts/gate-colour-tokens.cjs"
+    "gate:colour-tokens": "node scripts/gate-colour-tokens.cjs",
+    "test:science-folder-boundary": "node scripts/science-project-folder-boundary-contract.cjs"
   },
   "dependencies": {
     "@file-viewer/preset-lite": "^2.3.0",
@@ -211,9 +212,7 @@
     "styled-exceljs": "0.21.1",
     "three": "0.173.0",
     "ws": "^8.18.0",
-    "zod": "^3.23.8",
-    "sharp": ">=0.35.0",
-    "molstar": "5.11.0"
+    "zod": "^3.23.8"
   },
   "devDependencies": {
     "@electron/fuses": "^1.8.0",

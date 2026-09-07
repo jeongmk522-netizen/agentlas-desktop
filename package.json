@@ -145,6 +145,7 @@
     "test:runtime-fallback-choice": "tsc -p electron/tsconfig.json && node scripts/runtime-fallback-does-not-change-choice-contract.cjs",
     "test:resolved-model": "tsc -p electron/tsconfig.json && node scripts/resolved-model-is-read-not-written-contract.cjs",
     "test:run-alerts": "tsc -p electron/tsconfig.json && node scripts/run-alerts-contract.cjs",
+    "test:role-write-failure": "node scripts/role-write-failure-reaches-the-screen-contract.cjs",
     "test:inline-mcp-authenticity": "tsc -p electron/tsconfig.json && node scripts/inline-mcp-authenticity-survives-recompression-contract.cjs",
     "probe:permission-vectors": "tsc -p electron/tsconfig.json && node scripts/probe-runtime-permission-bypass.mjs",
     "probe:permission-live": "tsc -p electron/tsconfig.json && node scripts/probe-runtime-permission-bypass.mjs --live --check",
@@ -198,6 +199,7 @@
     "test:denied-tool-way-out": "node scripts/local/denied-tool-offers-a-way-out-contract.cjs",
     "test:one-bubble-width": "node scripts/local/one-bubble-fits-its-text-contract.cjs",
     "test:ask-card-label-truth": "node scripts/local/ask-card-label-tells-the-truth-contract.cjs",
+    "test:gates-report-failure": "node scripts/local/electron-gates-report-failure-contract.cjs",
     "test:comparable-refusal-reason": "node scripts/local/comparable-refusal-names-its-reason-contract.cjs"
   },
   "dependencies": {

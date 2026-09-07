@@ -42,6 +42,7 @@ import {
   cliModels,
   defaultByokModel,
   setResolvedCliModelAlias,
+  resolvedCliModelAlias,
 } from "../../shared/models";
 import { recallRuntimeSelection, rememberRuntimeSelection } from "./selection-memory";
 import { clearCliVersionProbeCache } from "./exec";
@@ -319,7 +320,15 @@ export async function detectRuntimes(force = false): Promise<RuntimeStatus[]> {
   detectInFlight = flight;
   detectInFlightGeneration = requestGeneration;
   try {
-    const list = markSignedOutRuntimes(await flight);
+    /*
+     * 모델 미지정("엔진 설정 사용") 실행에서 실제로 쓰인 모델을 각 런타임에 실어 보낸다.
+     * 레지스트리는 main 에만 있고 그 행은 렌더러가 만들기 때문에, 여기서 붙이지 않으면
+     * 기본값으로 쓰는 사람은 실제 모델을 영영 못 본다(QA 실측 2026-09-08).
+     */
+    const list = markSignedOutRuntimes(await flight).map((runtime) => {
+      const observed = resolvedCliModelAlias(runtime.kind, "");
+      return observed ? { ...runtime, observedDefaultModel: observed } : runtime;
+    });
     // A runtime update/store change may have invalidated this probe while it
     // was running. Let its caller finish, but never make that old generation
     // the source for a later dashboard read.

@@ -794,6 +794,13 @@ export interface RuntimeCommand {
 }
 
 export interface RuntimeStatus {
+  /**
+   * 모델을 지정하지 않고("엔진 설정 사용") 이 런타임을 돌렸을 때 **실제로 쓰인 모델 id**.
+   * 실행 결과에서만 나오는 값이라 벤더가 세대를 올려도 저절로 따라간다.
+   * 한 번도 안 돌렸으면 미설정 — 짐작해서 채우지 않는다.
+   */
+  observedDefaultModel?: string;
+
   /** Credential access is separate from runtime/model discovery; absence has no runtime row. */
   credentialAccess?:
     | { status: "available" }

@@ -110,7 +110,9 @@ export function lastGoodDiscovery(runtime: string): StoredRun | null {
 export function recordResolvedAlias(runtime: string, alias: string, model: string): void {
   const key = `${runtime}:${alias}`;
   const value = String(model || "").trim();
-  if (!runtime || !alias || !value || value === alias || value.length > 128) return;
+  // alias === "" 는 **모델 미지정 실행**을 뜻한다(= 이 런타임의 기본 선택이 실제로
+  // 무엇으로 풀렸는가). 기본값으로 쓰는 사람이 대다수라 이 칸을 막으면 아무도 못 본다.
+  if (!runtime || typeof alias !== "string" || !value || value === alias || value.length > 128) return;
   const file = readStore();
   const current = file.resolvedAliases?.[key];
   if (current?.model === value) return;
@@ -124,7 +126,7 @@ export function storedResolvedAliases(): Array<{ runtime: string; alias: string;
   const out: Array<{ runtime: string; alias: string; model: string }> = [];
   for (const [key, value] of Object.entries(entries)) {
     const separator = key.indexOf(":");
-    if (separator <= 0 || !value?.model) continue;
+    if (separator <= 0 || !value?.model) continue;  // alias 는 빈 문자열일 수 있다(기본 선택)
     out.push({ runtime: key.slice(0, separator), alias: key.slice(separator + 1), model: value.model });
   }
   return out;

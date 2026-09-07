@@ -15,6 +15,7 @@ import {
   type RuntimeModelPickerOption,
 } from "./RuntimeModelPicker";
 import { runtimeUsesEngineModelSetting } from "@shared/models";
+import { describeRoleWriteFailure } from "@/lib/runtime-role-failure";
 
 // resolvedId: 별칭이 실제로 어느 모델로 풀렸는지(실행이 알려준 값). 없으면 모르는 것.
 type ModelRow = { id: string; label: string; tag?: string; resolvedId?: string };
@@ -199,6 +200,21 @@ export function RuntimeControl() {
   const [loading, setLoading] = useState(() => !readViewData<RuntimeStatus[]>("dashboard.runtimes"));
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
+  const [messageTone, setMessageTone] = useState<"info" | "error">("info");
+  /**
+   * ★실패는 화면에 도착해야 한다 (QA 실측 2026-09-08, 오너 2026-09-07 "안된다 금지").
+   *
+   * 이 화면의 쓰기 경로 세 곳이 전부 `catch { setMessage(""); }` 였다. 저장이 거절되면
+   * 문구가 **지워진다** — 즉 "아무 일도 안 일어난 화면"과 "거절당한 화면"이 픽셀 단위로
+   * 같았다. QA 가 오케스트레이터 행의 × 를 다섯 번 누르고도 이유를 못 본 것이 이것이고,
+   * 옛 저장소에서 멀티모달 저장이 CHECK 로 막히는 것도 같은 방식으로 안 보인다.
+   *
+   * 그래서 문구를 지우는 대신 **왜 거절됐는지와 푸는 길**을 적는다.
+   */
+  const say = (text: string, tone: "info" | "error" = "info") => {
+    setMessage(text);
+    setMessageTone(tone);
+  };
   const [pool, setPool] = useState<RuntimeRolePoolState | null>(() => (
     readViewData<RuntimeRolePoolState>("dashboard.runtime-role-pool")?.value ?? null
   ));
@@ -227,10 +243,16 @@ export function RuntimeControl() {
         { maxAgeMs: 300_000 },
       );
       setPool(next);
-    } catch {
-      /* 풀 미지원 빌드 — 읽기 전용 빈 상태 유지 */
+    } catch (error) {
+      /*
+       * 풀을 지원하지 않는 빌드는 위에서 이미 return 했다. 여기에 도달했다는 것은
+       * **지원하는데 실패한 것**이다 — 그때 빈 목록을 조용히 그리면 사용자는 그것을
+       * "후보가 하나도 없음"으로 읽고 다시 만들려 한다. 사실은 못 읽은 것이다.
+       */
+      setMessage(describeRoleWriteFailure(error, ko));
+      setMessageTone("error");
     }
-  }, []);
+  }, [ko]);
 
   useEffect(() => {
     void loadPool();
@@ -261,10 +283,16 @@ export function RuntimeControl() {
       );
       setRuntimes(detected);
       setMessage("");
+      setMessageTone("info");
     } catch {
-      // Keep the last verified projection. Operational evidence stays in Main
-      // for One recovery and never becomes dashboard copy.
-      setMessage("");
+      // Keep the last verified projection -- but say that it is the last one.
+      // 조용히 낡은 목록을 보여주면 사용자는 그것을 '지금'으로 읽는다.
+      setMessage(
+        ko
+          ? "런타임을 새로 확인하지 못했습니다. 아래 목록은 마지막으로 확인된 상태입니다 — 새로고침으로 다시 시도하세요."
+          : "Runtimes could not be re-checked. The list below is the last verified state -- refresh to try again.",
+      );
+      setMessageTone("error");
     } finally {
       setLoading(false);
     }
@@ -405,10 +433,10 @@ export function RuntimeControl() {
       const detected = await api.runtime.detect();
       writeViewData("dashboard.runtimes", detected);
       setRuntimes(detected);
-      setMessage(success);
+      say(success);
       return true;
-    } catch {
-      setMessage("");
+    } catch (error) {
+      say(describeRoleWriteFailure(error, ko), "error");
       return false;
     } finally {
       setBusy(false);
@@ -564,13 +592,13 @@ export function RuntimeControl() {
       writeViewData("dashboard.runtimes", detected);
       setPool(nextPool);
       setRuntimes(detected);
-      setMessage(
+      say(
         ko
           ? "연결된 런타임과 현재 역할을 기준으로 우선순위를 자동 설정했습니다."
           : "Priority tables were configured from connected runtimes and current roles.",
       );
-    } catch {
-      setMessage("");
+    } catch (error) {
+      say(describeRoleWriteFailure(error, ko), "error");
     } finally {
       setBusy(false);
     }
@@ -1035,7 +1063,14 @@ export function RuntimeControl() {
             {renderRole("multimodal")}
           </div>
           {message && (
-            <div className="dashboard-runtime-message">{message}</div>
+            <div
+              className="dashboard-runtime-message"
+              data-tone={messageTone}
+              role="status"
+              aria-live="polite"
+            >
+              {message}
+            </div>
           )}
         </>
       )}

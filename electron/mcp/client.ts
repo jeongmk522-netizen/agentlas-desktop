@@ -6066,12 +6066,27 @@ ${effectiveUserPrompt}`;
      * 별칭(`opus`)뿐이고 화면에도 그것만 보였다. 실행 결과가 실제 id 를 싣고 오므로
      * 그것을 남긴다 — 벤더가 세대를 올리면 다음 실행이 알아서 덮는다. 우리가 적는 값은 없다.
      */
-    if (result.observedModel && active.model && result.observedModel !== active.model) {
-      setResolvedCliModelAlias(active.kind, active.model, result.observedModel);
-      try {
-        recordResolvedAlias(active.kind, active.model, result.observedModel);
-      } catch {
-        // 저장 실패는 이번 세션의 표시를 막지 않는다(메모리 레지스트리는 이미 갱신됐다).
+    /*
+     * ★기본값으로 돌린 실행도 기록한다 (QA 실측 2026-09-08).
+     *
+     * 처음에는 `active.model` 이 있을 때만 기록했다. 그런데 오케스트레이터 행을
+     * **"엔진 설정 사용"**(모델 미지정)으로 두고 쓰는 것이 기본 사용법이고, 그 경우
+     * active.model 은 비어 있다. 그래서 claude-code 로 5번을 완주해도 화면은 계속
+     * "Anthropic · Claude Code" 였고 사용량 패널은 "모델 미상" 이었다 —
+     * **기본값으로 쓰는 사람은 영원히 못 보는 구조**였다.
+     *
+     * 모델 미지정 실행의 관측값은 빈 별칭("")에 기록한다. 그것이 곧 "이 런타임의
+     * 기본 선택이 실제로 무엇으로 풀렸는가" 이고, 피커의 "엔진 설정 사용" 행이 그걸 쓴다.
+     */
+    if (result.observedModel) {
+      const alias = active.model ?? "";
+      if (result.observedModel !== alias) {
+        setResolvedCliModelAlias(active.kind, alias, result.observedModel);
+        try {
+          recordResolvedAlias(active.kind, alias, result.observedModel);
+        } catch {
+          // 저장 실패는 이번 세션의 표시를 막지 않는다(메모리 레지스트리는 이미 갱신됐다).
+        }
       }
     }
     const finalObservedTokens = Math.max(result.tokens ?? 0, liveUsageHigh);
@@ -6091,7 +6106,16 @@ ${effectiveUserPrompt}`;
           invocationId: memoryTurnId,
           modelRole: invocationModelRole,
           provider: active.backend ?? active.kind,
-          model: active.model ?? null,
+          /*
+           * ★실행이 알려준 모델이 있으면 그것을 적는다 (QA 실측 2026-09-08:
+           * 사용량 패널이 `Orch · anthropic · **모델 미상** · … · 3` — 실행 3건이
+           * 집계됐는데 모델이 미상이었다).
+           *
+           * 원인은 "모델 미지정으로 돌렸으니 적을 모델이 없다"였다. 하지만 우리는 실제로
+           * 무엇이 돌았는지 **알고 있다** — 러너가 result.observedModel 로 알려준다.
+           * 요청값(비어 있음)이 아니라 관측값을 적는다. 관측이 없을 때만 요청값이다.
+           */
+          model: result.observedModel ?? active.model ?? null,
           // Persist the exact effort that the runner applied. The model may
           // have clamped a stale UI value (for example Spark max -> xhigh), so
           // the runner result is authoritative; the resolved runtime value is

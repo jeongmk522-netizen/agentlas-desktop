@@ -277,7 +277,12 @@ export function RuntimeModelPicker({
 
   useEffect(() => {
     if (!open) return;
-    const frame = window.requestAnimationFrame(() => optionRefs.current[activeIndex]?.focus());
+    const frame = window.requestAnimationFrame(() => {
+      const element = optionRefs.current[activeIndex];
+      element?.focus();
+      // 포커스가 어떤 이유로든 실패해도 활성 줄은 눈에 보여야 한다.
+      element?.scrollIntoView({ block: "nearest" });
+    });
     return () => window.cancelAnimationFrame(frame);
   }, [activeIndex, open]);
 
@@ -297,15 +302,30 @@ export function RuntimeModelPicker({
     setActiveIndex((current) => (current + delta + options.length) % options.length);
   };
 
-  const onTriggerKeyDown = (event: ReactKeyboardEvent<HTMLButtonElement>) => {
-    if (event.key !== "Enter" && event.key !== " " && event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
-    event.preventDefault();
+  /*
+   * ★키는 **고른 자리(root)에서** 받는다 (QA 실측 2026-09-08: "방향키로 목록이
+   *   스크롤되지 않는다", "Esc 가 가끔 안 닫힌다").
+   *
+   *   증상은 둘이었지만 원인은 하나다. 예전에는 방향키·Escape 를 **항목(option)** 에서만
+   *   처리했다. 그래서 열린 뒤 포커스가 항목까지 못 갔을 때 — 포커스는 트리거에 남는다 —
+   *     · ArrowDown → 트리거 핸들러가 잡아 activeIndex 를 **선택값으로 되돌리고** 다시 연다
+   *       → 목록이 한 칸도 안 움직인다("스크롤이 안 된다"로 보인다)
+   *     · Escape    → 트리거 핸들러가 아예 안 보는 키라 아무 일도 안 일어난다
+   *   "가끔"인 이유가 이것이다: 포커스가 항목에 닿았는지에 따라 갈렸다.
+   *
+   *   그래서 root 에서 한 번만 처리한다. 포커스가 트리거에 있든 항목에 있든 같은 답이 된다.
+   *   (측정: focus() 자체는 목록을 스크롤시킨다 — 0 → 560px. 스크롤 배관이 아니라
+   *    포커스가 도달하지 못한 것이 원인이었다.)
+   */
+  const onPickerKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
     if (disabled || options.length === 0) return;
-    setActiveIndex(selectedIndex >= 0 ? selectedIndex : 0);
-    setOpen(true);
-  };
-
-  const onOptionKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>, index: number) => {
+    if (!open) {
+      if (event.key !== "Enter" && event.key !== " " && event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
+      event.preventDefault();
+      setActiveIndex(selectedIndex >= 0 ? selectedIndex : 0);
+      setOpen(true);
+      return;
+    }
     if (event.key === "ArrowDown") {
       event.preventDefault();
       moveActive(1);
@@ -320,7 +340,9 @@ export function RuntimeModelPicker({
       setActiveIndex(Math.max(0, options.length - 1));
     } else if (event.key === "Enter" || event.key === " ") {
       event.preventDefault();
-      const option = options[index];
+      // 손으로 받은 index 가 아니라 **지금 활성인 것**을 고른다 — 포커스가 항목에 없을 때도
+      // 사람이 화면에서 보고 있는 그 줄이 선택된다.
+      const option = options[activeIndex];
       if (option) selectOption(option);
     } else if (event.key === "Escape") {
       event.preventDefault();
@@ -331,7 +353,12 @@ export function RuntimeModelPicker({
   };
 
   return (
-    <div className="dashboard-runtime-model-picker" ref={rootRef} data-open={open ? "true" : "false"}>
+    <div
+      className="dashboard-runtime-model-picker"
+      ref={rootRef}
+      data-open={open ? "true" : "false"}
+      onKeyDown={onPickerKeyDown}
+    >
       <button
         ref={triggerRef}
         type="button"
@@ -347,7 +374,6 @@ export function RuntimeModelPicker({
           setActiveIndex(selectedIndex >= 0 ? selectedIndex : 0);
           setOpen((current) => !current);
         }}
-        onKeyDown={onTriggerKeyDown}
       >
         {selected ? (
           <>
@@ -398,7 +424,6 @@ export function RuntimeModelPicker({
                   data-unavailable={optionIsUnavailable(option) ? "true" : "false"}
                   className="dashboard-runtime-model-picker-option"
                   onClick={() => selectOption(option)}
-                  onKeyDown={(event) => onOptionKeyDown(event, index)}
                 >
                   <span className="dashboard-runtime-model-picker-option-mark" aria-hidden="true">
                     {logo ? <img src={logo} alt="" /> : <span>{provider.slice(0, 1).toUpperCase()}</span>}

@@ -182,7 +182,8 @@
     "verify:seat-migration": "npm run build:electron && node scripts/verify-seat-migration.cjs",
     "gate:colour-tokens": "node scripts/gate-colour-tokens.cjs",
     "test:science-folder-boundary": "node scripts/science-project-folder-boundary-contract.cjs",
-    "test:chat-notice-honesty": "node scripts/chat-notice-and-preview-honesty-contract.cjs"
+    "test:chat-notice-honesty": "node scripts/chat-notice-and-preview-honesty-contract.cjs",
+    "test:goal-pass-failure": "node scripts/goal-pass-failure-contract.cjs"
   },
   "dependencies": {
     "@file-viewer/preset-lite": "^2.3.0",

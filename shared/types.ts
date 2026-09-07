@@ -4547,7 +4547,7 @@ export interface McpInvocationEvent {
   status?: string;
   /** Machine-readable transient progress. Status copy is presentation only. */
   activity?: {
-    code: "runtime_wait" | "queue_wait" | "recovery_retry" | "session_resume";
+    code: "runtime_wait" | "queue_wait" | "recovery_retry" | "session_resume" | "goal_pass_retry";
   };
   text?: string;
   /** Validated semantic ask projection; raw control markers remain hidden. */

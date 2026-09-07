@@ -153,6 +153,7 @@ function activityCodeLabel(code: OneActivityCode | undefined, locale: "ko" | "en
   if (code === "runtime_wait") return locale === "ko" ? "실행 결과를 기다리는 중…" : "Waiting for runtime output…";
   if (code === "queue_wait") return locale === "ko" ? "차례를 기다리는 중…" : "Waiting in queue…";
   if (code === "recovery_retry") return locale === "ko" ? "중단된 단계를 다시 시도하는 중…" : "Retrying a blocked step…";
+  if (code === "goal_pass_retry") return locale === "ko" ? "실패한 턴을 잠시 뒤 다시 시도하는 중…" : "Retrying the failed pass shortly…";
   if (code === "session_resume") return locale === "ko" ? "이전 실행을 이어가는 중…" : "Resuming the previous run…";
   return "";
 }

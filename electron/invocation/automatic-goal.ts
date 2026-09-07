@@ -8,12 +8,21 @@ import { resolveAutomaticGoalIntent } from "../long-run/judged-auto-goal-intent"
 import type { GoalSourceMessage } from "../../shared/auto-goal";
 import type { LongRunRecord } from "../store/long-runs";
 
-/** Bounded default, not a promise to finish within three passes. Unfinished
- * goals retain their criteria and pause. Money metering is unavailable here:
- * null explicitly means no monetary enforcement, never an invented $0 cost.
+/** Bounded default, not a promise to finish inside it. Unfinished goals retain their criteria and
+ * pause with their remaining budget intact. Money metering is unavailable here: null explicitly
+ * means no monetary enforcement, never an invented $0 cost.
+ *
+ * The old pair -- 3 cycles, 10 minutes -- was not a budget, it was a stopwatch. Measured against a
+ * real long-running orchestration on this machine: 189 turns over 25.9 hours, with a 75-minute gap
+ * between two consecutive turns and four failed turns in the middle. Under 3-and-10 that work ends
+ * during its first pause and looks to the person like the product gave up.
+ *
+ * A working day is the defensible automatic default: long enough that ordinary thinking, waiting and
+ * retrying fit inside it, short enough that a request auto-admitted from a plain sentence cannot run
+ * unattended forever. The explicit Goal path stays unbounded; that one the person asked for.
  */
-export const AUTOMATIC_GOAL_CYCLE_LIMIT = 3;
-export const AUTOMATIC_GOAL_TIME_LIMIT_MS = 10 * 60_000;
+export const AUTOMATIC_GOAL_CYCLE_LIMIT = 64;
+export const AUTOMATIC_GOAL_TIME_LIMIT_MS = 8 * 60 * 60_000;
 
 export async function prepareInvocationAutomaticGoal(input: {
   runId: string;
@@ -73,9 +82,19 @@ export function automaticGoalResumeRequest(chatId: string, expectedVersion: numb
   if (getLongRunGoalRevisionBinding(run.id)?.revision !== revision.revision) throw new Error("auto_goal_resume_revision_pending");
   const pending = getDb().prepare("SELECT COUNT(*) AS n FROM long_run_worker_attempts WHERE run_id = ? AND state IN ('running','uncertain')").get(run.id) as { n: number };
   if (pending.n) throw new Error("auto_goal_resume_attempt_unsettled");
-  if (run.budget.maxCycles == null || run.cycleCount >= run.budget.maxCycles ||
-      !run.budget.wallclockDeadline || Date.parse(run.budget.wallclockDeadline) <= Date.now() ||
-      (run.budget.maxCostUsd !== null && run.costUsedUsd >= run.budget.maxCostUsd)) throw new Error("auto_goal_budget_exhausted");
+  /*
+   * An absent limit is no limit, not a spent one.
+   *
+   * `maxCycles == null` and `wallclockDeadline == null` mean the goal was admitted without that
+   * bound -- which is exactly what the explicit Goal path does. Reading them as exhausted made the
+   * resume button throw `auto_goal_budget_exhausted` for precisely the runs the person had asked to
+   * run without a limit, so the only goals that could be resumed were the ones that needed it least.
+   */
+  const cyclesSpent = run.budget.maxCycles != null && run.cycleCount >= run.budget.maxCycles;
+  const deadlinePassed = run.budget.wallclockDeadline != null
+    && Date.parse(run.budget.wallclockDeadline) <= Date.now();
+  const costSpent = run.budget.maxCostUsd !== null && run.costUsedUsd >= run.budget.maxCostUsd;
+  if (cyclesSpent || deadlinePassed || costSpent) throw new Error("auto_goal_budget_exhausted");
   const authority = revision.authorityRefs.map((ref) => /^invocation:([^:]+):permission:(read|write|full)$/.exec(ref)).find(Boolean);
   if (!authority) throw new Error("auto_goal_resume_authority_missing");
   return { chatId, promptOrigin: "system", taskIntent: "task", permissions: authority[2] as "read" | "write" | "full",

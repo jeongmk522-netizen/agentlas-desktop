@@ -2,6 +2,7 @@
 // PRD §3.1 6단계 BYOC: 사용자 머신에서 사용자의 구독/키로 직접 호출.
 // chatId 기반 — chat에서 agent + project 컨텍스트 lookup.
 import fs from "node:fs";
+import { passFailureVerdict } from "../long-run/pass-failure-verdict";
 import { isCallOnlyHubAgent } from "../../shared/call-only-agent";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
@@ -4939,6 +4940,10 @@ ${effectiveUserPrompt}`;
      */
     let goalClaimSeen = false;
     let goalClaimEvidence: string | null = null;
+    /** Consecutive transient failures on the current pass; reset by any pass that succeeds. */
+    let passFailureTransientAttempts = 0;
+    /** Set when a failed pass stopped the loop while leaving the goal open and resumable. */
+    let goalPassStop: { reason: string; retryAfterHint?: string } | null = null;
     for (let pass = 2; pass <= maxPasses; pass += 1) {
       const rawContinuation = stripStormbreakerContinueMarker(result.text);
       const passClaim = stripGoalCompleteMarker(rawContinuation.text);
@@ -5031,8 +5036,59 @@ ${effectiveUserPrompt}`;
       };
       result = await invokeCurrentRuntime(activeRunnerReq);
       if (result.failure) {
-        throw new Error(`${result.failure.runtime} runtime ${result.failure.kind}: ${result.failure.message}`);
+        /*
+         * A failed pass is not the end of the goal.
+         *
+         * Throwing here escaped the loop, and nothing downstream scheduled a successor -- so a goal
+         * meant to run for hours died on the first hiccup, and the person saw the product give up.
+         * Measured on a real 25.9-hour orchestration: four turns failed (a model at capacity, two
+         * rejected parameters, one usage limit) and the work continued past every one of them.
+         *
+         * The next move comes from the typed failure marker, never the wording, because vendor
+         * notices change on every release and a run must not start dying because a sentence moved.
+         */
+        const verdict = passFailureVerdict(result.failure, passFailureTransientAttempts);
+        tryRecordRunEvent({
+          runId: req.runId ?? "",
+          chatId: req.chatId ?? "",
+          kind: "goal_pass_failed",
+          payload: {
+            pass,
+            action: verdict.action,
+            reason: verdict.reason,
+            runtime: result.failure.runtime,
+            failureKind: result.failure.kind,
+            ...(verdict.retryAfterHint ? { retryAfterHint: verdict.retryAfterHint } : {}),
+          },
+        });
+        if (verdict.action === "retry") {
+          passFailureTransientAttempts += 1;
+          sink({
+            kind: "tool-use",
+            status: locale === "ko"
+              ? `${pass}턴째가 실패해 ${Math.round(verdict.retryAfterMs / 1000)}초 뒤 같은 턴을 다시 시도합니다.`
+              : `Pass ${pass} failed; retrying the same pass in ${Math.round(verdict.retryAfterMs / 1000)}s.`,
+            activity: { code: "goal_pass_retry" },
+          });
+          await new Promise((resolve) => setTimeout(resolve, verdict.retryAfterMs));
+          if (signal?.aborted) break;
+          pass -= 1;
+          continue;
+        }
+        goalPassStop = { reason: verdict.reason, ...(verdict.retryAfterHint ? { retryAfterHint: verdict.retryAfterHint } : {}) };
+        sink({
+          kind: "notice",
+          notice: {
+            level: "warning",
+            code: `goal-pass-${verdict.action}`,
+            message: locale === "ko"
+              ? `${pass}턴째에서 멈췄습니다(사유: ${verdict.reason}). 목표는 살아 있고 남은 예산도 그대로입니다${verdict.retryAfterHint ? ` — 런타임 안내: ${verdict.retryAfterHint}` : ""}.`
+              : `Stopped at pass ${pass} (${verdict.reason}). The goal is still open with its remaining budget${verdict.retryAfterHint ? ` — runtime says: ${verdict.retryAfterHint}` : ""}.`,
+          },
+        });
+        break;
       }
+      passFailureTransientAttempts = 0;
       result = sanitizeRestrictedPass(result);
       advanceUsageFloor();
     }

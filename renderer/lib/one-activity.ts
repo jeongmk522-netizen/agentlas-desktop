@@ -4,7 +4,7 @@ import { classifyToolFailure, isToolFailureCode, type ToolFailureCode } from "@s
 
 export type OneActivityStatus = "running" | "cancelling" | "completed" | "failed" | "cancelled" | "info";
 export type OneActivityKind = "run" | "reasoning" | "tool" | "agent" | "notice" | "result" | "terminal";
-export type OneActivityCode = "runtime_wait" | "queue_wait" | "recovery_retry" | "session_resume";
+export type OneActivityCode = "runtime_wait" | "queue_wait" | "recovery_retry" | "session_resume" | "goal_pass_retry";
 
 export type OneHandoffStatus = "running" | "completed" | "failed" | "cancelled";
 
@@ -846,7 +846,7 @@ function ledgerPermissionMode(value: unknown): "auto" | "read" | "write" | "full
 }
 
 function ledgerActivityCode(value: unknown): NonNullable<McpInvocationEvent["activity"]>["code"] | undefined {
-  return value === "runtime_wait" || value === "queue_wait" || value === "recovery_retry" || value === "session_resume"
+  return value === "runtime_wait" || value === "queue_wait" || value === "recovery_retry" || value === "session_resume" || value === "goal_pass_retry"
     ? value
     : undefined;
 }

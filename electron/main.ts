@@ -1836,9 +1836,9 @@ app.whenReady().then(async () => {
     const input = envelope && typeof envelope === "object" && "input" in envelope ? (envelope as { input?: unknown }).input : null;
     if (!input || typeof input !== "object" || Array.isArray(input)) throw new Error("science-loop-input-invalid");
     const record = input as StartScienceLoopSessionInput;
-    const { scienceRuntimePreference } = await import("./science/runtime-preferences");
+    const { resolveScienceRuntimeSelection } = await import("./science/runtime-preferences");
     assertScienceSender(event, envelope, "science:agent-runtime");
-    const runtimeSelection = scienceRuntimePreference(scienceStore(), record);
+    const runtimeSelection = await resolveScienceRuntimeSelection(scienceStore(), record);
     if (!runtimeSelection?.model) throw new Error("science-runtime-selection-required");
     return scienceStore().startLoopSession({ ...record, runtimeSelection });
   });
@@ -1945,9 +1945,9 @@ app.whenReady().then(async () => {
     const projectId = String(record.projectId ?? "");
     const conversationId = String(record.conversationId ?? "");
     const { normalizeScienceRuntimeSelection } = await import("./science/runtime-selection");
-    const { scienceRuntimePreference } = await import("./science/runtime-preferences");
+    const { resolveScienceRuntimeSelection } = await import("./science/runtime-preferences");
     assertScienceSender(event, envelope, "science:agent-runtime");
-    const runtimeSelection = normalizeScienceRuntimeSelection(record.runtimeSelection ?? scienceRuntimePreference(scienceStore(), { projectId, conversationId }));
+    const runtimeSelection = normalizeScienceRuntimeSelection(record.runtimeSelection ?? await resolveScienceRuntimeSelection(scienceStore(), { projectId, conversationId }));
     if (!runtimeSelection?.model) throw new Error("science-runtime-selection-required");
     ensureScienceTurnProjection();
     scienceTurnSubscribers.set(event.sender.id, { projectId, conversationId });

@@ -60,8 +60,59 @@ async function modelOptions(): Promise<ScienceModelOption[]> {
   return groups.flat();
 }
 
+/**
+ * Science keeps its own model choice, but "its own" was implemented as "its last one" -- and a
+ * machine that has never chosen has none. On a first run the preference is null, so every start
+ * path threw `science-runtime-selection-required` and **research could not begin at all**: the
+ * composer said "Choose a model to begin" while the app had already detected a working runtime.
+ * The live study harness died here at turn 1, and so does any new user until they find the picker.
+ *
+ * Independence is about not inheriting Work/One *role defaults*, not about starting empty. So when
+ * nothing has been chosen yet, elect the detected active runtime's model once and persist it as
+ * Science's own choice. Everything after that is the researcher's choice and this never runs again.
+ */
+/**
+ * The first-run choice, as a pure decision so a gate can call it instead of matching source text.
+ * Prefer the runtime the app already resolved as active (same kind+backend, and its exact model
+ * when it names one); otherwise take the first offered model. No options means no choice.
+ */
+export function electScienceRuntimeSelection(
+  options: ScienceModelOption[],
+  active: { kind?: string; backend?: string; model?: string | null } | null,
+): RuntimeSelection | null {
+  if (!options.length) return null;
+  if (active) {
+    const exact = options.find((option) => option.selection.kind === active.kind
+      && option.selection.backend === active.backend
+      && Boolean(active.model) && option.selection.model === active.model);
+    if (exact) return exact.selection;
+    const sameRuntime = options.find((option) => option.selection.kind === active.kind
+      && option.selection.backend === active.backend);
+    if (sameRuntime) return sameRuntime.selection;
+  }
+  return options[0].selection;
+}
+
+export async function resolveScienceRuntimeSelection(
+  store: ScienceStore,
+  input: { projectId: string; conversationId: string },
+): Promise<RuntimeSelection | null> {
+  const existing = scienceRuntimePreference(store, input);
+  if (existing?.model) return existing;
+  const options = await modelOptions();
+  const { detectRuntimes } = await import("../runtime/detect");
+  const runtimes = await detectRuntimes().catch(() => []);
+  const elected = electScienceRuntimeSelection(options, runtimes.find((runtime) => runtime.active) ?? null);
+  if (!elected) return null;
+  const chat = conversationChat(store, input);
+  const saved = setChatRuntimeSelection(chat.id, elected).runtimeSelection;
+  if (!saved?.model) return null;
+  setMeta(PREFERENCE_KEY, JSON.stringify(saved));
+  return normalizeScienceRuntimeSelection(saved);
+}
+
 export async function inspectScienceRuntime(store: ScienceStore, input: { projectId: string; conversationId: string }) {
-  const selection = scienceRuntimePreference(store, input);
+  const selection = await resolveScienceRuntimeSelection(store, input);
   const options = await modelOptions();
   return { selection, options, unavailable: Boolean(selection && !options.some((option) => sameModel(option.selection, selection))) };
 }

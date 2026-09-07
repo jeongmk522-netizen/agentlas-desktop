@@ -2147,9 +2147,55 @@ function parseArray(value: unknown): unknown[] {
   }
 }
 
+/**
+ * The project title is the label a researcher reads in the rail, the tab strip, every destination
+ * heading, the library card and the folder screen -- one derivation feeds all of them. It used to
+ * be the first 72 characters of the question, so a normal research request became the title
+ * verbatim, ending in "…확인해줘." That reads as a pasted prompt, not as the name of a study.
+ *
+ * This stays deterministic and instant (creating a project must not wait on a model round trip),
+ * but it takes the question's first *sentence*, drops the request wrapper the researcher addressed
+ * to the agent, and cuts on a word boundary instead of mid-word.
+ */
+const TITLE_REQUEST_TAILS = [
+  // Korean: the imperative that turns a subject into a request.
+  /[\s,]*(?:좀\s*)?(?:한번\s*)?(?:확인|분석|조사|검증|정리|계산|비교|평가|추정|검토|설명|요약)?\s*(?:해|해서)?\s*(?:주세요|줘요|줄래\??|주라|줘|봐요|보자|봐|다오|주시겠어요\??|주시겠습니까\??|부탁(?:해|합니다|드립니다|드려요)?)\s*[.!?]*$/u,
+  /[\s,]*(?:부탁(?:해|합니다|드립니다|드려요))\s*[.!?]*$/u,
+  // English: the polite imperative wrapper.
+  /[\s,]*(?:for me\s*)?(?:please)?\s*[.!?]*$/iu,
+];
+const TITLE_REQUEST_HEADS = [
+  /^(?:저기|혹시|일단|우선|그럼|자|음)[\s,]+/u,
+  /^(?:please|could you|can you|would you|i want you to|i'd like you to)\s+/iu,
+];
+
 function defaultTitle(question: string): string {
   const firstLine = question.split("\n", 1)[0].trim();
-  return firstLine.length > 72 ? `${firstLine.slice(0, 69).trimEnd()}…` : firstLine;
+  // Strip the request wrapper off the WHOLE line first. Doing it after the length cut never fires,
+  // because on a long question the "…확인해줘." sits past the limit and survives as a truncation.
+  let title = firstLine;
+  for (const head of TITLE_REQUEST_HEADS) title = title.replace(head, "").trim();
+  const sentence = (title.match(/^[\s\S]*?[.!?？。]/u)?.[0] ?? title).trim();
+  if (sentence.length >= 12) title = sentence;
+  for (const tail of TITLE_REQUEST_TAILS) title = title.replace(tail, "").trim();
+  title = title.replace(/[\s,·、]+$/u, "").trim();
+  if (!title) title = firstLine;
+  if (title.length <= 60) return capitalizeLatinStart(title);
+
+  // Still long: a research question is usually "subject, and also X, and also Y". Name it by the
+  // subject -- the first clause -- rather than filling sixty characters and cutting mid-thought.
+  const clause = title.match(/^[\s\S]*?(?=(?:,|、)\s*(?:그리고|또(?:한)?|및|and\b|plus\b)|(?:,|、))/u)?.[0]?.trim() ?? "";
+  if (clause.length >= 16 && clause.length <= 60) return capitalizeLatinStart(clause);
+
+  const window = title.slice(0, 60);
+  const cut = Math.max(window.lastIndexOf(","), window.lastIndexOf(" "), window.lastIndexOf("·"), window.lastIndexOf("、"));
+  const kept = (cut >= 24 ? window.slice(0, cut) : window).replace(/[\s,·、]+$/u, "").trimEnd();
+  return `${capitalizeLatinStart(kept)}…`;
+}
+
+/** Dropping "Can you " leaves a title that starts lowercase; a label should not. */
+function capitalizeLatinStart(value: string): string {
+  return /^[a-z]/.test(value) ? value[0].toUpperCase() + value.slice(1) : value;
 }
 
 function normalizeRelatedDomains(value: unknown, primaryDomain: ScienceDomain): ScienceDomain[] {

@@ -1375,7 +1375,30 @@ async function runPreparedAntigravity(
             runtime: "antigravity",
             source: "marker" as const,
           }
-          : antigravityExitFailure(body, stderr));
+          : antigravityExitFailure(body, stderr)
+          /*
+           * ★답이 없는 성공은 성공이 아니다.
+           *
+           * agy 는 exit 0 + `status:"SUCCESS"` 로 끝나면서 응답이 비어 있을 수 있다(도구가
+           * 조용히 막혔거나 모델이 아무것도 내지 않은 경우). 그동안 이 자리는 실패를 만들지
+           * 않았고, 그래서 세 가지가 한꺼번에 일어났다: 화면에 아무 일도 일어나지 않고,
+           * 사유가 어디에도 안 남고, **빈 대화가 세션으로 저장됐다.** 다음 턴은 그 세션을
+           * 이어받아 히스토리 없이 새 한 줄만 보내므로, 사용자가 "d" 라고 치면 모델은 앞의
+           * 2,000자를 본 적 없는 채로 "무엇을 할까요" 라고 되묻는다(실측 보고 2026-09-07).
+           *
+           * 빈 답은 `empty` 로 표식을 단다: 실패한 턴은 저장되지 않고, 연속 실행은 이 종류를
+           * 일시적 실패로 보고 같은 턴을 다시 시도한다.
+           */
+          ?? (!trimmed && reportedAgyTools.size === 0
+            ? {
+              kind: "empty" as const,
+              message: runReq.locale === "ko"
+                ? "Antigravity 가 아무 답도 내지 않고 실행을 끝냈습니다. 이 턴은 결과로 인정하지 않습니다."
+                : "Antigravity ended the run without producing any answer. This turn is not counted as a result.",
+              runtime: "antigravity" as const,
+              source: "exit" as const,
+            }
+            : undefined));
         /*
          * ★대화 ID 를 저장해야 재개가 다음 턴에 실제로 걸린다. 이 한 줄이 없으면
          * `--conversation` 배선은 영원히 죽은 코드다 — 저장 없이는 되돌릴 ID 가 없다.

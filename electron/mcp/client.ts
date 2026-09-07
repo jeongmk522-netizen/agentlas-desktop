@@ -4414,12 +4414,23 @@ ${effectiveUserPrompt}`;
                     hubMode: req.hubMode,
                   }
                 : {
-                    v: "agentlas.chat-session-seed.v2",
+                    /*
+                     * Only things that are stable for the whole conversation belong here.
+                     *
+                     * `mcpIsolation` was in this seed, and it flips the moment a turn happens to
+                     * need the browser tool. So a conversation that used the browser once and then
+                     * went back to ordinary work changed its own session identity mid-thread, and
+                     * the runtime session was silently dropped -- the transcript still looked
+                     * continuous, because the last 80 messages are replayed every turn, while
+                     * everything the CLI actually held (what it read, what its tools returned, the
+                     * plan it was working from) was gone. Which MCP config a turn uses is a command
+                     * line argument, not an identity.
+                     */
+                    v: "agentlas.chat-session-seed.v3",
                     chatId: chat.id,
                     agentId: agent.id,
                     locale,
                     executionMode: oneTeamExecutionPolicy ? "one-task-surface-v1" : "conversation",
-                    mcpIsolation: isolatedMcpConfig ? "agentlas-browser-only" : "provider-defaults",
                   },
             ),
           }),

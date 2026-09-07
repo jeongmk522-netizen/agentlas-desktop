@@ -190,6 +190,7 @@ import type {
 } from "../shared/science-evidence-graph";
 import { scienceLabDecisionProjectionsForProject } from "./science/lazy-services";
 import { registerScienceWorkbookIntakeHandlers } from "./science/workbook-intake-ipc";
+import { registerScienceProjectDataHandlers } from "./science/project-data-ipc";
 import { inspectScienceEpisodeResultReview, recordScienceEpisodeResultReview } from "./science/lazy-services";
 import { commitScienceVegaEdit, parseScienceVegaEditInput } from "./science/lazy-services";
 import {
@@ -1696,6 +1697,13 @@ app.whenReady().then(async () => {
     return `${event.senderFrame.processId}:${event.senderFrame.routingId}:${scienceFolderDocuments.get(event.sender.id)}:${actualUrl.href}`;
   };
   registerScienceWorkbookIntakeHandlers({ ipcMain, assertScienceSender, assertScienceProjectDocument, scienceStore });
+  registerScienceProjectDataHandlers({
+    ipcMain,
+    assertScienceSender,
+    assertScienceProjectDocument,
+    scienceStore,
+    datasetIngestionService: createScienceDatasetIngestionService,
+  });
   ipcMain.handle("science:projects:pickFolder", async (event, envelope: unknown) => {
     const documentId = assertScienceProjectDocument(event, envelope);
     const senderId = event.sender.id;

@@ -47,6 +47,7 @@ contextBridge.exposeInMainWorld("agentlasScience", Object.freeze({
     create: (input: unknown) => ipcRenderer.invoke("science:projects:create", { extensionId, input }),
     get: (projectId: string) => ipcRenderer.invoke("science:projects:get", { extensionId, projectId }),
     updateRelatedDomains: (input: unknown) => ipcRenderer.invoke("science:projects:updateRelatedDomains", { extensionId, input }),
+    discoverData: (input: unknown) => ipcRenderer.invoke("science:projects:discoverData", { extensionId, input }),
   }),
   workspace: Object.freeze({
     get: (projectId: string) => ipcRenderer.invoke("science:workspace:get", { extensionId, projectId }),
@@ -127,6 +128,8 @@ contextBridge.exposeInMainWorld("agentlasScience", Object.freeze({
     },
     workbook: (input: unknown) => ipcRenderer.invoke("science:datasets:workbook", { extensionId, input }),
     projectWorkbook: (input: unknown) => ipcRenderer.invoke("science:datasets:projectWorkbook", { extensionId, input }),
+    readCandidate: (input: unknown) => ipcRenderer.invoke("science:datasets:readCandidate", { extensionId, input }),
+    importCandidate: (input: unknown) => ipcRenderer.invoke("science:datasets:importCandidate", { extensionId, input }),
   }),
   sourceFigures: Object.freeze({
     list: (projectId: string) => ipcRenderer.invoke("science:sourceFigures:list", { extensionId, projectId }),

@@ -9,6 +9,14 @@ import { SCIENCE_WORKBOOK_MAX_OUTPUT_BYTES, verifyScienceWorkbook } from "../../
 type Workbook = ReturnType<typeof workbookToCells>;
 const MAX_RAW = 8 * 1024 * 1024;
 const MAX_OUTPUT = SCIENCE_WORKBOOK_MAX_OUTPUT_BYTES;
+
+export interface ScienceWorkbookFileIdentity {
+  device: number;
+  inode: number;
+  byteSize: number;
+  modifiedAtMs: number;
+  changedAtMs: number;
+}
 function hash(bytes: Buffer): string { return createHash("sha256").update(bytes).digest("hex"); }
 
 function canonicalJson(value: unknown): string {
@@ -23,11 +31,15 @@ function canonicalJson(value: unknown): string {
 export async function prepareScienceWorkbook(
   filePath: string,
   workerPath = path.join(__dirname, "workers", "workbook-to-cells.js"),
+  expectedIdentity?: ScienceWorkbookFileIdentity,
 ): Promise<{ rawBytes: Buffer; outputBytes: Buffer; workbook: Workbook; workerSha256: string; outputSha256: string; environmentSha256: string }> {
   const fd = fs.openSync(filePath, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0));
   let rawBytes: Buffer;
   try {
     const before = fs.fstatSync(fd);
+    if (expectedIdentity && (Number(before.dev) !== expectedIdentity.device || Number(before.ino) !== expectedIdentity.inode
+      || Number(before.size) !== expectedIdentity.byteSize || Number(before.mtimeMs) !== expectedIdentity.modifiedAtMs
+      || Number(before.ctimeMs) !== expectedIdentity.changedAtMs)) throw new Error("science-data-candidate-stale");
     if (!before.isFile() || before.size < 8 || before.size > MAX_RAW) throw new Error("science-workbook-raw-size-invalid");
     rawBytes = Buffer.alloc(before.size);
     let offset = 0;
@@ -38,7 +50,10 @@ export async function prepareScienceWorkbook(
     }
     const after = fs.fstatSync(fd);
     if (offset !== before.size || before.dev !== after.dev || before.ino !== after.ino
-      || before.size !== after.size || before.mtimeMs !== after.mtimeMs) throw new Error("science-workbook-file-changed");
+      || before.size !== after.size || before.mtimeMs !== after.mtimeMs) throw new Error(expectedIdentity ? "science-data-candidate-stale" : "science-workbook-file-changed");
+    if (expectedIdentity && (Number(after.dev) !== expectedIdentity.device || Number(after.ino) !== expectedIdentity.inode
+      || Number(after.size) !== expectedIdentity.byteSize || Number(after.mtimeMs) !== expectedIdentity.modifiedAtMs
+      || Number(after.ctimeMs) !== expectedIdentity.changedAtMs)) throw new Error("science-data-candidate-stale");
   } finally { fs.closeSync(fd); }
   const workerStat = fs.lstatSync(workerPath);
   if (!workerStat.isFile() || workerStat.isSymbolicLink()) throw new Error("science-workbook-worker-invalid");

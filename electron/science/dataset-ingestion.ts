@@ -14,6 +14,14 @@ import { ScienceStore } from "./store";
 const MAX_RAW_BYTES = 8 * 1024 * 1024;
 const MAX_NORMALIZED_BYTES = 4 * 1024 * 1024;
 
+export interface ScienceDatasetFileIdentity {
+  device: number;
+  inode: number;
+  byteSize: number;
+  modifiedAtMs: number;
+  changedAtMs: number;
+}
+
 function canonicalJson(value: unknown): string {
   if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
   if (value && typeof value === "object") {
@@ -25,12 +33,15 @@ function canonicalJson(value: unknown): string {
 
 function sha256(value: Buffer | string): string { return createHash("sha256").update(value).digest("hex"); }
 
-function readRegularFileNoFollow(filePath: string): Buffer {
+function readRegularFileNoFollow(filePath: string, expectedIdentity?: ScienceDatasetFileIdentity): Buffer {
   let fd: number | null = null;
   try {
     const noFollow = typeof fs.constants.O_NOFOLLOW === "number" ? fs.constants.O_NOFOLLOW : 0;
     fd = fs.openSync(filePath, fs.constants.O_RDONLY | noFollow);
     const before = fs.fstatSync(fd);
+    if (expectedIdentity && (Number(before.dev) !== expectedIdentity.device || Number(before.ino) !== expectedIdentity.inode
+      || Number(before.size) !== expectedIdentity.byteSize || Number(before.mtimeMs) !== expectedIdentity.modifiedAtMs
+      || Number(before.ctimeMs) !== expectedIdentity.changedAtMs)) throw new Error("science-data-candidate-stale");
     if (!before.isFile() || before.size < 1 || before.size > MAX_RAW_BYTES) throw new Error("science-dataset-raw-size-invalid");
     const chunks: Buffer[] = [];
     let total = 0;
@@ -44,11 +55,14 @@ function readRegularFileNoFollow(filePath: string): Buffer {
     }
     const after = fs.fstatSync(fd);
     if (after.dev !== before.dev || after.ino !== before.ino || after.size !== before.size || after.mtimeMs !== before.mtimeMs || total !== before.size) {
-      throw new Error("science-dataset-file-changed");
+      throw new Error(expectedIdentity ? "science-data-candidate-stale" : "science-dataset-file-changed");
     }
+    if (expectedIdentity && (Number(after.dev) !== expectedIdentity.device || Number(after.ino) !== expectedIdentity.inode
+      || Number(after.size) !== expectedIdentity.byteSize || Number(after.mtimeMs) !== expectedIdentity.modifiedAtMs
+      || Number(after.ctimeMs) !== expectedIdentity.changedAtMs)) throw new Error("science-data-candidate-stale");
     return Buffer.concat(chunks, total);
   } catch (error) {
-    if (error instanceof Error && error.message.startsWith("science-dataset-")) throw error;
+    if (error instanceof Error && (error.message.startsWith("science-dataset-") || error.message.startsWith("science-data-candidate-"))) throw error;
     throw new Error("science-dataset-file-read-failed");
   } finally {
     if (fd !== null) try { fs.closeSync(fd); } catch { /* best effort */ }
@@ -81,8 +95,13 @@ async function runWorker(workerPath: string, jobRoot: string): Promise<void> {
 export class ScienceDatasetIngestionService {
   constructor(private readonly store: ScienceStore, private readonly workerPath = path.join(__dirname, "workers", "csv-to-table.js")) {}
 
-  async importFile(filePath: string, input: ImportScienceDatasetCsvInput): Promise<ImportScienceDatasetCsvResult> {
-    const rawBytes = readRegularFileNoFollow(filePath);
+  async importFile(
+    filePath: string,
+    input: ImportScienceDatasetCsvInput,
+    expectedIdentity?: ScienceDatasetFileIdentity,
+    beforeCommit?: () => void,
+  ): Promise<ImportScienceDatasetCsvResult> {
+    const rawBytes = readRegularFileNoFollow(filePath, expectedIdentity);
     let workerStat: fs.Stats;
     try { workerStat = fs.lstatSync(this.workerPath); }
     catch { throw new Error("science-dataset-worker-missing"); }
@@ -96,7 +115,7 @@ export class ScienceDatasetIngestionService {
       electron: process.versions.electron ?? null,
       platform: process.platform,
       arch: process.arch,
-      network: "denied",
+      network: "not-enforced",
       rawLimitBytes: MAX_RAW_BYTES,
       rowLimit: SCIENCE_TABLE_LIMITS.maxRows,
       normalizedLimitBytes: MAX_NORMALIZED_BYTES,
@@ -112,6 +131,7 @@ export class ScienceDatasetIngestionService {
       let table: ScienceDatasetTablePayload;
       try { table = JSON.parse(fs.readFileSync(outputPath, "utf8")) as ScienceDatasetTablePayload; }
       catch { throw new Error("science-dataset-worker-output-invalid"); }
+      beforeCommit?.();
       const result = this.store.commitDatasetIngestion({
         requestId: input.requestId,
         projectId: input.projectId,

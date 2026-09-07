@@ -80,6 +80,16 @@ export interface ScienceWorkbookReadback {
   sheets: ScienceWorkbookSheetPreview[];
 }
 
+export interface ScienceWorkbookImportInput {
+  requestId: string;
+  projectId: string;
+  conversationId: string;
+  originMessageId: string;
+  title?: string;
+}
+
+export type PreparedScienceWorkbook = Awaited<ReturnType<typeof prepareScienceWorkbook>>;
+
 function inputRecord(envelope: unknown): Record<string, unknown> {
   if (!envelope || typeof envelope !== "object" || Array.isArray(envelope)) throw new Error("science-workbook-input-invalid");
   const input = "input" in envelope ? (envelope as { input?: unknown }).input : null;
@@ -188,6 +198,30 @@ function persistedWorkbookReadback(store: ScienceStore, projectId: string, runId
   }, sheetOrdinal);
 }
 
+export function persistPreparedScienceWorkbook(
+  store: ScienceStore,
+  selectedPath: string,
+  input: ScienceWorkbookImportInput,
+  prepared: PreparedScienceWorkbook,
+): { source: ScienceSource; run: ScienceResearchRun; workbook: ScienceWorkbookReadback; replayed: boolean } {
+  const extension = path.extname(selectedPath).toLowerCase();
+  if (extension !== ".xlsx" && extension !== ".xls") throw new Error("science-workbook-format-invalid");
+  const title = optionalTitle(input.title, path.basename(selectedPath, extension));
+  const imported = store.commitWorkbookIngestion({
+    requestId: input.requestId,
+    projectId: input.projectId,
+    conversationId: input.conversationId,
+    originMessageId: input.originMessageId,
+    title,
+    rawBytes: prepared.rawBytes,
+    workbook: prepared.workbook,
+    workerSha256: prepared.workerSha256,
+    environmentSha256: prepared.environmentSha256,
+  });
+  const workbook = persistedWorkbookReadback(store, input.projectId, imported.run.id);
+  return { source: imported.source, run: imported.run, workbook, replayed: imported.replayed };
+}
+
 function assertWorkbookOrigin(store: ScienceStore, projectId: string, conversationId: string, originMessageId: string): void {
   if (!store.getProject(projectId)) throw new Error("science-project-not-found");
   if (!store.getMessageForProject(projectId, conversationId, originMessageId)) throw new Error("science-workbook-origin-not-found");
@@ -234,20 +268,14 @@ export function registerScienceWorkbookIntakeHandlers(options: {
       const prepared = await prepareScienceWorkbook(selectedPath);
       if (options.assertScienceProjectDocument(event, envelope) !== documentId) throw new Error("science-workbook-document-changed");
       assertWorkbookOrigin(store, projectId, conversationId, originMessageId);
-      const title = optionalTitle(input.title, path.basename(selectedPath, extension));
-      const imported = store.commitWorkbookIngestion({
+      const imported = persistPreparedScienceWorkbook(store, selectedPath, {
         requestId,
         projectId,
         conversationId,
         originMessageId,
-        title,
-        rawBytes: prepared.rawBytes,
-        workbook: prepared.workbook,
-        workerSha256: prepared.workerSha256,
-        environmentSha256: prepared.environmentSha256,
-      });
-      const workbook = persistedWorkbookReadback(store, projectId, imported.run.id);
-      return { canceled: false as const, source: imported.source, run: imported.run, workbook, replayed: imported.replayed };
+        title: typeof input.title === "string" ? input.title : undefined,
+      }, prepared);
+      return { canceled: false as const, ...imported };
     } finally {
       pickerBusy.delete(senderId);
     }

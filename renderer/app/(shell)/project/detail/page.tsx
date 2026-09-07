@@ -2,6 +2,7 @@
 "use client";
 
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type DragEvent, type PointerEvent as ReactPointerEvent } from "react";
+import { taskTitleForDisplay } from "@/lib/task-title";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import {
@@ -232,6 +233,8 @@ function ProjectPage() {
   const [inspectorCollapsed, setInspectorCollapsed] = useState(false);
   const [loading, setLoading] = useState(true);
   const [recoveryPending, setRecoveryPending] = useState(false);
+  /** "새 채팅" 만들기가 실패한 이유. 읽기 실패(recoveryPending)와 섞지 않는다. */
+  const [startChatError, setStartChatError] = useState("");
   const [taskStartOpen, setTaskStartOpen] = useState(false);
   const [externalSessionsOpen, setExternalSessionsOpen] = useState(false);
   const [externalSessions, setExternalSessions] = useState<ExternalCliSessionSummary[]>([]);
@@ -394,6 +397,14 @@ function ProjectPage() {
     }
   }, [inspectorCollapsed]);
 
+  /*
+   * ★"새 채팅"이 실패하면 **만들기가 실패했다고 말해야 한다** (QA 실측 2026-09-08:
+   *   "새 채팅을 눌러도 채팅으로 안 넘어가고 작업 (0) 만 보인다").
+   *
+   *   예전에는 catch 가 setRecoveryPending(true) 만 했다. 그 깃발이 켜지면 화면에는
+   *   "프로젝트 정보 일부를 불러오지 못했습니다" 가 뜬다 — **읽기 실패 문구**다.
+   *   사람은 만들기를 눌렀는데 읽기가 안 됐다는 말을 듣는다. 이유도, 다시 할 방법도 없다.
+   */
   async function startNewChat() {
     const api = ipc();
     if (!api) {
@@ -401,12 +412,39 @@ function ProjectPage() {
       return;
     }
     if (!project) return;
+    setStartChatError("");
     try {
       const target = await api.tasks.createProject({ projectId: project.id });
       window.dispatchEvent(new Event("agentlas:tasks-changed"));
       navigate(`/workspace/task?id=${encodeURIComponent(target.chatId)}&task=${encodeURIComponent(target.taskId)}&projectId=${encodeURIComponent(project.id)}`);
-    } catch {
-      setRecoveryPending(true);
+    } catch (error) {
+      const raw = (error instanceof Error ? error.message : String(error ?? "")).replace(/^(Error:\s*)+/, "").trim();
+      /*
+       * 엔진이 내는 이유는 셋뿐이다(electron/ipc.ts "tasks:createProject").
+       * 그 영어 문장을 그대로 보여 주면 "무엇을 해야 하는지"가 없다 — 뜻과 다음 할 일로 옮긴다.
+       */
+      const ko = locale === "ko";
+      const explained =
+        /orchestrator is unavailable/i.test(raw)
+          ? (ko
+            ? "기본 작업 오케스트레이터가 설치되어 있지 않습니다. 설정 > 에이전트에서 내장 에이전트를 다시 설치한 뒤 시도하세요."
+            : "The built-in task orchestrator is not installed. Reinstall the built-in agents in Settings > Agents, then try again.")
+          : /Project is unavailable/i.test(raw)
+            ? (ko
+              ? "이 프로젝트를 찾지 못했습니다. 목록으로 돌아갔다 다시 열어 보세요."
+              : "This project could not be found. Go back to the list and open it again.")
+            : /Project is required/i.test(raw)
+              ? (ko
+                ? "프로젝트가 지정되지 않았습니다. 목록에서 프로젝트를 다시 열어 주세요."
+                : "No project was given. Open the project again from the list.")
+              : raw
+                ? (ko ? `이유: ${raw}` : `Reason: ${raw}`)
+                : (ko ? "이유가 오지 않았습니다." : "No reason came back.");
+      setStartChatError(
+        ko
+          ? `새 채팅을 만들지 못했습니다. ${explained}`
+          : `The new conversation could not be created. ${explained}`,
+      );
     }
   }
 
@@ -869,6 +907,29 @@ function ProjectPage() {
         />
       )}
 
+      {startChatError && (
+        <section style={{ maxWidth: 1280, margin: "16px auto 0", padding: "0 24px" }} role="alert">
+          <div style={{ ...pageNotice, display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+            <span style={{ minWidth: 0, flex: 1 }}>{startChatError}</span>
+            <button
+              type="button"
+              onClick={() => { void startNewChat(); }}
+              style={{ minHeight: 32, padding: "0 12px", border: "1px solid var(--paper-edge-strong)", borderRadius: 8, background: "var(--paper)", color: "var(--ink)", font: "inherit", fontSize: 12, cursor: "pointer" }}
+            >
+              {locale === "ko" ? "다시 시도" : "Try again"}
+            </button>
+            <button
+              type="button"
+              onClick={() => setStartChatError("")}
+              aria-label={locale === "ko" ? "닫기" : "Dismiss"}
+              style={{ minHeight: 32, padding: "0 10px", border: 0, background: "transparent", color: "var(--muted-deep)", font: "inherit", fontSize: 12, cursor: "pointer" }}
+            >
+              {locale === "ko" ? "닫기" : "Dismiss"}
+            </button>
+          </div>
+        </section>
+      )}
+
       {recoveryPending && (
         <section style={{ maxWidth: 1280, margin: "16px auto 0", padding: "0 24px" }} role="alert">
           <div style={pageNotice}>{locale === "en" ? "Some project information could not be loaded. Your saved work was not changed." : "프로젝트 정보 일부를 불러오지 못했습니다. 저장된 작업은 변경되지 않았습니다."}</div>
@@ -1055,7 +1116,7 @@ function ProjectPage() {
                       style={chatLinkStyle}
                     >
                       <span style={chatTitleStyle}>
-                        {task.title.trim() || (locale === "ko" ? "새 작업" : "New task")}
+                        {taskTitleForDisplay(task.title, locale === "ko")}
                       </span>
                       {agent && (
                         <span style={{ fontSize: 11, color: "var(--muted-deep)", flexShrink: 0 }}>

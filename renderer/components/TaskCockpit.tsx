@@ -2,6 +2,7 @@
 "use client";
 
 import { filePreviewEmptyMessage } from "@/lib/file-preview-reason";
+import { isPlaceholderTaskTitle, taskTitleForDisplay } from "@/lib/task-title";
 import { Suspense, useCallback, useEffect, useRef, useState, useMemo, type CSSProperties, type Dispatch, type SetStateAction } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { grantForPastedImage, ipc, ipcEvents } from "@/lib/ipc";
@@ -113,10 +114,6 @@ import {
 
 function uid(): string {
   return Math.random().toString(36).slice(2);
-}
-
-function isPlaceholderTaskTitle(value: string): boolean {
-  return ["", "새 채팅", "New chat", "새 작업", "New task"].includes(value.trim());
 }
 
 function taskTitleFromFirstPrompt(value: string): string {
@@ -5979,7 +5976,7 @@ function ChatPage() {
               }}
               title={t("chat.rename_hint")}
             >
-              {chat.title.trim() || (locale === "ko" ? "새 작업" : "New task")}
+              {taskTitleForDisplay(chat.title, locale === "ko")}
             </div>
           )}
         </div>

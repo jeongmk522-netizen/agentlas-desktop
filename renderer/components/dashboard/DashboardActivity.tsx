@@ -1,6 +1,7 @@
 // 대시보드 작업 활동 — canonical ProjectTask만 표시한다.
 "use client";
 import { useCallback, useEffect, useState } from "react";
+import { taskTitleForDisplay } from "@/lib/task-title";
 import { ipc } from "@/lib/ipc";
 import { useVisibleInterval } from "@/lib/useVisibleInterval";
 import { useT } from "@/lib/i18n";
@@ -123,7 +124,7 @@ export function DashboardActivity() {
               >
                 {running ? <LiveDot /> : <span className="dashboard-muted-dot" />}
                 <span>
-                  {c.title || (ko ? "새 작업" : "New task")}
+                  {taskTitleForDisplay(c.title, ko)}
                 </span>
                 <span>
                   {running ? (ko ? "실행 중" : "running") : relTime(c.updatedAt, ko)}

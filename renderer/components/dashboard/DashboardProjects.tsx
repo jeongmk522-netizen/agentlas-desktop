@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { taskTitleForDisplay } from "@/lib/task-title";
 import { ipc } from "@/lib/ipc";
 import { navigate } from "@/lib/navigation";
 import { useT } from "@/lib/i18n";
@@ -42,7 +43,7 @@ export function DashboardProjects() {
       const agentCount = Array.isArray(project.agentPool)
         ? project.agentPool.filter((member) => isUserFacingProjectPoolMember(member, agents)).length
         : 0;
-      return <button type="button" key={project.id} onClick={() => navigate(`/project/detail?id=${encodeURIComponent(project.id)}`)}><span data-active={active.length > 0 ? "true" : "false"} /><div><strong>{project.name}</strong><small>{latest ? latest.title || (ko ? "새 작업" : "New task") : (ko ? "아직 작업 없음" : "No tasks yet")}</small></div><em>{active.length > 0 ? `${active.length}${ko ? "개 진행" : " active"}` : `${agentCount}${ko ? "명" : ` agent${agentCount === 1 ? "" : "s"}`}`}</em></button>;
+      return <button type="button" key={project.id} onClick={() => navigate(`/project/detail?id=${encodeURIComponent(project.id)}`)}><span data-active={active.length > 0 ? "true" : "false"} /><div><strong>{project.name}</strong><small>{latest ? taskTitleForDisplay(latest.title, ko) : (ko ? "아직 작업 없음" : "No tasks yet")}</small></div><em>{active.length > 0 ? `${active.length}${ko ? "개 진행" : " active"}` : `${agentCount}${ko ? "명" : ` agent${agentCount === 1 ? "" : "s"}`}`}</em></button>;
     })}</div>
     {projects.length === 0 ? <button type="button" className="dashboard-projects-empty" onClick={() => navigate("/project/new")}>{ko ? "첫 프로젝트를 연결하세요" : "Connect your first project"}</button> : null}
   </section>;

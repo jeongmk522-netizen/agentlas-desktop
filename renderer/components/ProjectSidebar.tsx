@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { taskTitleForDisplay } from "@/lib/task-title";
 import { useSearchParams } from "next/navigation";
 import { ipc } from "@/lib/ipc";
 import { navigate } from "@/lib/navigation";
@@ -91,7 +92,7 @@ export function ProjectSidebar() {
               <button type="button" className="project-sidebar-project-link" data-active={currentId === project.id} onClick={() => navigate(`/project/detail?id=${encodeURIComponent(project.id)}`)}><IconFolder size={15} /><span>{project.name}</span></button>
               {projectTasks.length > 0 ? <button type="button" className="project-sidebar-collapse" onClick={() => toggleProjectChats(project.id)} aria-label={chatsCollapsed ? (ko ? `${project.name}의 채팅 펼치기` : `Expand chats for ${project.name}`) : (ko ? `${project.name}의 채팅 접기` : `Collapse chats for ${project.name}`)} aria-expanded={!chatsCollapsed}>{chatsCollapsed ? <IconChevronRight size={14} /> : <IconChevronDown size={14} />}</button> : null}
             </div>
-            {!chatsCollapsed && projectTasks.map((task) => <button type="button" className="project-sidebar-task" key={task.id} onClick={() => navigate(`/workspace/task?id=${encodeURIComponent(task.originChatId ?? "")}&task=${encodeURIComponent(task.id)}&projectId=${encodeURIComponent(project.id)}`)}><span>{task.title || (ko ? "새 작업" : "New task")}</span></button>)}
+            {!chatsCollapsed && projectTasks.map((task) => <button type="button" className="project-sidebar-task" key={task.id} onClick={() => navigate(`/workspace/task?id=${encodeURIComponent(task.originChatId ?? "")}&task=${encodeURIComponent(task.id)}&projectId=${encodeURIComponent(project.id)}`)}><span>{taskTitleForDisplay(task.title, ko)}</span></button>)}
           </div>;
         })}
         {loadFailed ? <div className="project-sidebar-empty" role="alert">{ko ? "프로젝트 목록을 불러오지 못했습니다" : "Projects are temporarily unavailable"}</div> : null}

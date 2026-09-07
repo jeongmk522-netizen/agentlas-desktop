@@ -59,6 +59,7 @@ function auditObstruction(scopeSelector) {
   const CLIP_SLACK = 2;      // 서브픽셀 반올림 여유
   const clipped = [];
   const covered = [];
+  const painted = [];
   const label = (el) => (el.innerText || el.textContent || "").trim().replace(/\s+/g, " ").slice(0, 60);
   const describe = (el) => `${el.tagName.toLowerCase()}${el.id ? "#" + el.id : ""}`
     + `${(el.className || "").toString().trim() ? "." + (el.className || "").toString().trim().split(/\s+/)[0] : ""}`;
@@ -69,6 +70,22 @@ function auditObstruction(scopeSelector) {
    */
   const scope = scopeSelector ? document.querySelector(scopeSelector) : document.body;
   if (!scope) return { clipped: [], covered: [], missingScope: scopeSelector };
+  /*
+   * 위에 떠 있는 물체들 — 자리 잡힌(positioned) 요소 중 실제로 보이는 것.
+   * pointer-events 를 안 받아도 **그려지기는 한다**. 그것이 이 검사의 요점이다.
+   */
+  const floaters = [...scope.querySelectorAll("*")].filter((node) => {
+    const style = getComputedStyle(node);
+    if (!["absolute", "fixed", "sticky"].includes(style.position)) return false;
+    if (style.display === "none" || style.visibility === "hidden" || Number(style.opacity) < 0.5) return false;
+    const r = node.getBoundingClientRect();
+    if (r.width < 8 || r.height < 8) return false;
+    // 배경도 글자도 없는 순수 레이아웃 상자는 무엇도 가리지 않는다.
+    const paints = style.backgroundImage !== "none"
+      || (style.backgroundColor && !/rgba\(0, 0, 0, 0\)|transparent/.test(style.backgroundColor))
+      || (node.tagName === "IMG" || node.tagName === "SVG" || node.tagName === "CANVAS");
+    return paints;
+  });
   for (const el of scope.querySelectorAll("*")) {
     const style = getComputedStyle(el);
     if (style.display === "none" || style.visibility === "hidden" || Number(style.opacity) === 0) continue;
@@ -87,6 +104,31 @@ function auditObstruction(scopeSelector) {
     const ellipsis = style.textOverflow === "ellipsis";
     if (hidesOverflow && el.scrollWidth > el.clientWidth + CLIP_SLACK) {
       clipped.push({ el: describe(el), text, need: el.scrollWidth, have: el.clientWidth, ellipsis });
+    }
+
+    /*
+     * ②-b 덮임 — **그려진 것**으로 잰다.
+     *
+     * ★왜 따로 필요한가 (QA 실측 2026-09-08): 마스코트 로봇이 "Not now" 라벨 위에
+     *   그려져 글자가 "Not n" 까지만 읽혔는데, 그 로봇은 pointer-events 를 받지 않는다.
+     *   그래서 elementFromPoint(아래 ②)는 **원리적으로 통과시킨다** — 클릭은 실제로
+     *   통과되고 기능도 살아 있다. 안 보이는 것은 글자뿐이다.
+     *   "누를 수 있는가"와 "읽을 수 있는가"는 다른 질문이고, 사람이 겪는 것은 후자다.
+     */
+    for (const layer of floaters) {
+      if (layer === el || el.contains(layer) || layer.contains(el)) continue;
+      const lr = layer.getBoundingClientRect();
+      const overlapW = Math.min(rect.right, lr.right) - Math.max(rect.left, lr.left);
+      const overlapH = Math.min(rect.bottom, lr.bottom) - Math.max(rect.top, lr.top);
+      if (overlapW <= 2 || overlapH <= 2) continue;
+      // 글자 면적의 15% 이상을 덮을 때만 — 모서리 1~2px 겹침은 사고가 아니다.
+      if ((overlapW * overlapH) / Math.max(1, rect.width * rect.height) < 0.15) continue;
+      painted.push({
+        el: describe(el), text,
+        by: describe(layer),
+        cover: Math.round(100 * (overlapW * overlapH) / Math.max(1, rect.width * rect.height)),
+      });
+      break;
     }
 
     // ② 가림 — 글자 한가운데를 찍는다.
@@ -121,7 +163,7 @@ function auditObstruction(scopeSelector) {
       label: el.getAttribute("aria-label") || "",
     });
   }
-  return { clipped, covered, blank };
+  return { clipped, covered, painted, blank };
 }
 
 async function main() {
@@ -137,7 +179,9 @@ async function main() {
     { label: "라이브러리·MCP", url: "/library/mcps.html", wait: "main" },
   ];
   // 한 크기만 재는 것은 "봤다"가 아니다 — 좁은 창에서만 나는 결함이 이 계열의 대부분이다.
-  const SIZES = [{ width: 1440, height: 980 }, { width: 1180, height: 820 }, { width: 1024, height: 720 }];
+  // ★1920 을 넣는다. QA 가 그 크기에서만 마스코트 겹침을 재현했고, 내 목록엔 없었다
+  // — 없는 크기에서 나는 결함은 "0건"으로 보인다(2026-09-08).
+  const SIZES = [{ width: 1920, height: 1055 }, { width: 1440, height: 980 }, { width: 1180, height: 820 }, { width: 1024, height: 720 }];
   const report = [];
   /*
    * ★두 언어를 모두 잰다. 영어가 대체로 더 길다("Not now" vs "나중에", "Settings" vs "설정")
@@ -215,7 +259,7 @@ async function main() {
    *   한 언어만 재면 긴 쪽에서만 나는 잘림을 원리적으로 못 본다.
    */
   const scienceRounds = [];
-  for (const lang of ["ko", "en"]) for (const size of [...SIZES, { width: 900, height: 640 }]) scienceRounds.push({ lang, size });
+  for (const lang of ["ko", "en"]) for (const size of [...SIZES, { width: 900, height: 640 }]) scienceRounds.push({ lang, size });  // SIZES 에 1920 포함
   for (const { lang, size } of scienceRounds) {
     const context = await browser.newContext({ viewport: size, locale: lang === "ko" ? "ko-KR" : "en-US" });
     await context.addInitScript(setupMockAgentlasBridge, mockBridgeOptions());
@@ -250,14 +294,18 @@ async function main() {
   server.close();
 
   console.log("=== 잘리거나 가려진 자리 ===\n");
-  let clip = 0, cover = 0, blankCount = 0;
+  let clip = 0, cover = 0, blankCount = 0, paintedCount = 0;
   for (const r of report) {
     if (r.error) { console.log(`[${r.screen} ${r.size}] 열지 못함 — ${r.error}`); continue; }
-    if (!r.clipped.length && !r.covered.length && !(r.blank || []).length) continue;
+    if (!r.clipped.length && !r.covered.length && !(r.blank || []).length && !(r.painted || []).length) continue;
     console.log(`[${r.screen} ${r.size}]`);
     for (const c of r.clipped) {
       clip++;
       console.log(`   잘림${c.ellipsis ? "(…표시)" : "★(말없이)"}  ${JSON.stringify(c.text)}  ${c.have}px 자리에 ${c.need}px  <${c.el}>`);
+    }
+    for (const c of (r.painted || [])) {
+      paintedCount++;
+      console.log(`   ★덮임  ${JSON.stringify(c.text)}  위에 <${c.by}> 가 ${c.cover}% 그려짐  <${c.el}>`);
     }
     for (const c of (r.blank || [])) {
       blankCount++;
@@ -269,7 +317,7 @@ async function main() {
     }
     console.log("");
   }
-  console.log(`잘림 ${clip}건 / 가림 ${cover}건 / 빈 자리 ${blankCount}건`);
+  console.log(`잘림 ${clip}건 / 가림 ${cover}건 / 덮임 ${paintedCount}건 / 빈 자리 ${blankCount}건`);
   const outFile = path.join(root, "output", "obstructed-ui.json");
   fs.mkdirSync(path.dirname(outFile), { recursive: true });
   fs.writeFileSync(outFile, JSON.stringify(report, null, 2));

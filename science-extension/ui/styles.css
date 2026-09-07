@@ -5888,3 +5888,14 @@ button:has(> span:only-child > .uiIcon:only-child):not(.projectHubInlineBack) {
   .artifactWorkspace:has(.statisticsAnalysisSurface) .artifactSemanticWarnings li + li { margin-top: 2px; }
   .artifactWorkspace:has(.statisticsAnalysisSurface) .artifactSemanticDetails { display: none; }
 }
+
+/* Keep the compact statistics surface reachable below the chat dock on narrow windows. */
+@media (max-width: 760px) {
+  .artifactWorkspace:has(.statisticsAnalysisSurface) {
+    overflow-y: auto;
+    overscroll-behavior: contain;
+  }
+  .artifactWorkspace:has(.statisticsAnalysisSurface) .artifactCanvasFrame {
+    overflow: visible;
+  }
+}

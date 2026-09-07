@@ -6051,10 +6051,11 @@ function createComposerEventSync({
     const runId = entry?.import?.importRunId;
     if (!runId || !Array.isArray(state.artifacts)) return null;
     // CSV tables use the import run directly. Workbook tables are materialized by a
-    // later sheet-projection run whose parentRunId is the persisted workbook import.
+    // later sheet-projection or normalization run whose parentRunId is the persisted workbook import.
     const runIds = new Set([runId]);
     for (const run of Array.isArray(state.runs) ? state.runs : []) {
-      if (run?.parentRunId === runId && run?.toolId === "agentlas.workbook-sheet-projection") runIds.add(run.id);
+      if (run?.parentRunId === runId
+        && (run?.toolId === "agentlas.workbook-sheet-projection" || run?.toolId === "agentlas.workbook-normalize")) runIds.add(run.id);
     }
     return state.artifacts.find((artifact) => artifact?.projectId === state.selectedId
       && runIds.has(artifact?.sourceRunId)

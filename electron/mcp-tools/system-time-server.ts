@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import path from "node:path";
-import { gzipSync } from "node:zlib";
+import { gunzipSync, gzipSync } from "node:zlib";
 
 export const AGENTLAS_SYSTEM_TIME_CATALOG_ID = "agentlas-time";
 export const AGENTLAS_SYSTEM_TIME_TOOL_NAMES = ["get_current_time", "convert_time"] as const;
@@ -202,11 +202,32 @@ export function systemTimeMcpSourceDigest(): string {
   return SYSTEM_TIME_SOURCE_SHA256;
 }
 
+/**
+ * ★압축된 바이트로 판정하지 않는다 — 같은 병이 컴퓨터 유즈에서 실제로 터졌다
+ * (2026-09-07: 소스 sha256 은 바이트까지 같은데 gzip 결과가 6372 vs 6424 로 달라
+ * 설치된 서버가 "위조"로 걸려 MCP 설정에서 통째로 빠졌다. 화면엔 아무 오류도 없었다).
+ * gzip 출력은 zlib 버전이 바뀌면 재현되지 않으므로, 앱 업데이트가 곧 기능 소멸이 된다.
+ *
+ * 지켜야 할 것은 "저 인자가 **우리 코드**를 실행하는가"다. 그러니 소스 해시로 판정한다.
+ * 자세한 근거는 electron/computer-use/mcp-server.ts 의 같은 함수 주석에 있다.
+ */
 export function isAuthenticSystemTimeMcpLaunch(command: string | null, args: readonly string[]): boolean {
   if (!command || path.resolve(command) !== path.resolve(process.execPath)) return false;
-  const expected = systemTimeMcpLaunchArgs();
-  return systemTimeMcpLaunchWithinBudget() &&
-    args.length === expected.length && args.every((arg, index) => arg === expected[index]);
+  if (!systemTimeMcpLaunchWithinBudget()) return false;
+  if (args.length !== 3 || args[0] !== "-e" || args[1] !== SYSTEM_TIME_INLINE_BOOTSTRAP) return false;
+  return systemTimeInlinePayloadDigest(args[2]) === SYSTEM_TIME_SOURCE_SHA256;
+}
+
+/** 인라인 payload 를 풀어 소스 sha256 을 낸다. 못 풀면 null. 상한은 부트스트랩과 같다. */
+export function systemTimeInlinePayloadDigest(payloadBase64: string): string | null {
+  try {
+    if (typeof payloadBase64 !== "string" || payloadBase64.length > AGENTLAS_SYSTEM_TIME_INLINE_ARGS_MAX_JSON_CHARS) return null;
+    const source = gunzipSync(Buffer.from(payloadBase64, "base64"), { maxOutputLength: 65_536 });
+    if (source.length > 65_536) return null;
+    return createHash("sha256").update(source).digest("hex");
+  } catch {
+    return null;
+  }
 }
 
 export function isCanonicalSystemTimeMcpServer(server: {

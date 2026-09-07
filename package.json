@@ -145,6 +145,7 @@
     "test:runtime-fallback-choice": "tsc -p electron/tsconfig.json && node scripts/runtime-fallback-does-not-change-choice-contract.cjs",
     "test:resolved-model": "tsc -p electron/tsconfig.json && node scripts/resolved-model-is-read-not-written-contract.cjs",
     "test:run-alerts": "tsc -p electron/tsconfig.json && node scripts/run-alerts-contract.cjs",
+    "test:inline-mcp-authenticity": "tsc -p electron/tsconfig.json && node scripts/inline-mcp-authenticity-survives-recompression-contract.cjs",
     "probe:permission-vectors": "tsc -p electron/tsconfig.json && node scripts/probe-runtime-permission-bypass.mjs",
     "probe:permission-live": "tsc -p electron/tsconfig.json && node scripts/probe-runtime-permission-bypass.mjs --live --check",
     "test:store-sidecar-lock-safety": "tsc -p electron/tsconfig.json && electron scripts/store-sidecar-lock-safety-contract.cjs",

@@ -692,6 +692,68 @@ const COMPARATIVE_GENOMICS_TABLE_PARSER_ID = "agentlas.comparative-genomics-publ
 const COMPARATIVE_GENOMICS_TABLE_INPUT_MIME = "application/vnd.agentlas.science.comparative-genomics-table-input+json";
 const COMPARATIVE_GENOMICS_SOURCE_TABLE_MIME = "application/vnd.agentlas.science-table+json";
 const COMPARATIVE_GENOMICS_NORMALIZED_TABLE_MIME = "application/vnd.agentlas.science.table+json";
+/**
+ * ResearchRun is also used for source acquisition, table preparation and artifact
+ * materialization.  Keep the library's analysis count tied to the explicit
+ * analytical tool registry rather than inferring a role from a tool-name suffix.
+ * The IDs below are the stable IDs declared by the corresponding analysis module
+ * or Science descriptor; a new analytical tool must be added here deliberately.
+ */
+const SCIENCE_ANALYTICAL_RESEARCH_TOOL_ROLES = Object.freeze({
+  // Statistical and economic analysis engines.
+  "agentlas.statistics-analysis": "statistical-analysis",
+  "agentlas.economic-indicator-growth-analysis": "economic-analysis",
+
+  // Astronomy analysis registry (electron/science/astronomy-analysis.ts) and
+  // the gateway's generalized Lomb–Scargle tool.
+  "agentlas.astronomy-light-curve-periodicity": "astronomy-analysis",
+  "agentlas.astronomy-light-curve-periodicity-depth": "astronomy-analysis",
+  "agentlas.astronomy-transit-search-bls": "astronomy-analysis",
+  "agentlas.astronomy-galactic-kinematics": "astronomy-analysis",
+  "agentlas.astronomy-colour-magnitude-diagram": "astronomy-analysis",
+  "agentlas.astronomy-flat-lambda-cdm-cosmology": "astronomy-analysis",
+  "agentlas.astronomy-sed-blackbody-fit": "astronomy-analysis",
+  "agentlas.astronomy-radial-velocity-orbit": "astronomy-analysis",
+
+  // Earth analysis registry and the Gutenberg–Richter domain analysis.
+  "agentlas.earth-aftershock-table-study": "earth-analysis",
+  "agentlas.earth-seismicity-b-value-analysis": "earth-analysis",
+  "agentlas.earth-aftershock-productivity-analysis": "earth-analysis",
+  "agentlas.earth-tidal-harmonic-analysis": "earth-analysis",
+  "agentlas.earth-climate-trend-analysis": "earth-analysis",
+  "agentlas.earth-drought-index-analysis": "earth-analysis",
+  "agentlas.earth-flood-frequency-analysis": "earth-analysis",
+  "agentlas.earth-isochron-analysis": "earth-analysis",
+  "agentlas.earth-tas-classification": "earth-analysis",
+  "agentlas.earth-spatial-autocorrelation-analysis": "earth-analysis",
+  "agentlas.earth-gutenberg-richter-analysis": "earth-analysis",
+
+  // Physics analysis registry and HEPData chi-square analysis. The physics
+  // dataset/live-source tools remain acquisition or preparation runs.
+  "agentlas.physics-hepdata-chi-square-analysis": "physics-analysis",
+  "agentlas.physics-spectrum-fit-analysis": "physics-analysis",
+  "agentlas.physics-significance-limits-analysis": "physics-analysis",
+  "agentlas.physics-uncertainty-propagation-analysis": "physics-analysis",
+  "agentlas.physics-unit-analysis": "physics-analysis",
+  "agentlas.physics-ode-simulation-analysis": "physics-analysis",
+  "agentlas.physics-signal-analysis": "physics-analysis",
+  "agentlas.physics-york-fit-analysis": "physics-analysis",
+  "agentlas.physics-lab-experiment-analysis": "physics-analysis",
+
+  // Materials and paleontology analytical services.
+  "agentlas.materials-lattice-metrics-analysis": "materials-analysis",
+  "agentlas.paleontology-stratigraphic-support": "paleontology-analysis",
+  "agentlas.paleontology-candidate-comparison": "paleontology-analysis",
+  "agentlas.paleontology-deextinction-feasibility": "paleontology-analysis",
+
+  // Comparative-genomics analytical services. Gene-tree, ASR and locus QC
+  // compute or assess scientific results; the publication-table and reference
+  // assembly runs are preparation/materialization and are intentionally absent.
+  "agentlas.comparative-genomics-gene-tree": "comparative-genomics-analysis",
+  "agentlas.comparative-genomics-hypothetical-fitch-asr": "comparative-genomics-analysis",
+  "agentlas.materialize-extant-archosaur-locus-panel": "comparative-genomics-analysis",
+} as const);
+const SCIENCE_ANALYTICAL_RESEARCH_TOOL_IDS = Object.freeze(Object.keys(SCIENCE_ANALYTICAL_RESEARCH_TOOL_ROLES));
 const CLAIM_SEGMENTATION_POLICY_ID = "agentlas.markdown-sentence-segmenter";
 const CLAIM_SEGMENTATION_POLICY_VERSION = 2;
 const CLAIM_SENTENCE_MAX_CODE_UNITS = 64 * 1024;
@@ -10050,11 +10112,14 @@ export class ScienceStore {
 
   listProjectLibrarySummaries(limit = 100): ScienceProjectLibrarySummary[] {
     const safeLimit = Math.max(1, Math.min(500, Math.floor(limit)));
+    const analyticalToolPlaceholders = SCIENCE_ANALYTICAL_RESEARCH_TOOL_IDS.map(() => "?").join(",");
     const rows = this.db.prepare(`SELECT p.id AS project_id,
       (SELECT COUNT(*) FROM artifacts a WHERE a.project_id = p.id AND a.status = 'ready' AND a.kind = 'table') AS table_count,
-      (SELECT COUNT(*) FROM research_runs r WHERE r.project_id = p.id AND r.status = 'succeeded') AS analysis_count,
+      (SELECT COUNT(*) FROM research_runs r WHERE r.project_id = p.id AND r.status = 'succeeded'
+        AND r.tool_id IN (${analyticalToolPlaceholders})) AS analysis_count,
       (SELECT COUNT(*) FROM manuscripts m WHERE m.project_id = p.id) AS manuscript_count
-      FROM projects p WHERE p.status != 'archived' ORDER BY p.updated_at DESC, p.id LIMIT ?`).all(safeLimit) as Record<string, unknown>[];
+      FROM projects p WHERE p.status != 'archived' ORDER BY p.updated_at DESC, p.id LIMIT ?`)
+      .all(...SCIENCE_ANALYTICAL_RESEARCH_TOOL_IDS, safeLimit) as Record<string, unknown>[];
     const summaries = new Map(rows.map((row) => [String(row.project_id), {
       projectId: String(row.project_id),
       fileCount: 0,

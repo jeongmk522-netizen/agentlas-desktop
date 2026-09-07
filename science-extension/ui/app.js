@@ -394,7 +394,7 @@ function createComposerEventSync({
     blocksByMessage: new Map(), citationsByMessage: new Map(), evidenceById: new Map(), selectedSourceId: null, sourceVersionsByKey: new Map(), sourceLookupRequestId: null, sourceLookupCitationId: null, sourceLookupLoading: false, sourceLookupError: "", selectedArtifactId: null,
     evidenceGraph: null, evidenceGraphReviews: [], evidenceGraphLoading: false, evidenceGraphRefreshId: null, evidenceGraphError: "", selectedEvidenceGraphNodeId: null, selectedEvidenceGraphCandidateId: null, evidenceGraphExactRecordRequestId: null, evidenceGraphExactRecordNodeId: null, evidenceGraphExactRecordLoading: false, evidenceGraphExactRecordError: "", evidenceGraphReviewSheet: false, evidenceGraphReviewDecision: "accepted", evidenceGraphReviewBusy: false, evidenceGraphReviewError: "", evidenceGraphPathAnchorId: null, evidenceGraphPath: null,
     mode: "session", drawer: null, modal: false, manuscriptModal: false, saving: false, loadingProject: false, projectError: "", projectFolderOpenBusy: false, projectFolderOpenError: "", activeVegaView: null, activeCytoscape: null, activeNumericSurface: null, activeJBrowseTarget: null, scrollByMode: { session: 0, lab: 0, manuscript: 0 }, returnMessageId: null,
-    workspaceTabs: [{ id: "research", kind: "research", dirty: false }], activeWorkspaceTabId: "research", currentDestination: "overview", hypotheses: [], hypothesesError: "", approvalPolicy: null, approvalPolicyError: "", workspaceSyncError: "",
+    workspaceTabs: [{ id: "research", kind: "research", dirty: false }], activeWorkspaceTabId: "research", currentDestination: "overview", hypotheses: [], hypothesesLoaded: false, hypothesesError: "", approvalPolicy: null, approvalPolicyError: "", workspaceSyncError: "",
     analysisRuns: [], analysisRunArtifacts: [], analysisRunsError: "", analysisRunsProjectId: null,
     resultArtifacts: [], resultFigureIds: new Set(), resultValidations: new Map(), resultsError: "", resultsProjectId: null,
     literatureSources: [], literatureUnresolvedIds: [], literatureLoading: false, literatureError: "",
@@ -2719,10 +2719,12 @@ function createComposerEventSync({
       const rows = await science.hypotheses.list(projectId);
       if (projectId !== state.selectedId) return;
       state.hypotheses = Array.isArray(rows) ? rows : [];
+      state.hypothesesLoaded = true;
       state.hypothesesError = "";
     } catch (error) {
       if (projectId !== state.selectedId) return;
       state.hypotheses = [];
+      state.hypothesesLoaded = false;
       state.hypothesesError = String(error?.message ?? error);
     }
     render();
@@ -2754,7 +2756,17 @@ function createComposerEventSync({
     if (state.loadingProject) return `<div class="loadingState" aria-live="polite">프로젝트 기록을 불러오는 중…</div>`;
     if (state.projectError) return errorState();
     const rows = Array.isArray(state.hypotheses) ? state.hypotheses : [];
-    const body = rows.length === 0
+    /*
+     * ★안 불러온 것을 "없다"고 말하지 않는다.
+     *
+     * 이 목록은 탭을 열 때 비로소 읽힌다. 그런데 빈 배열을 곧장 "아직 기록된 가설이 없습니다"로
+     * 그렸다. 그래서 이미 승인된 가설 두 개가 있는 연구에서도, 탭을 누르기 전 요약 패널은
+     * 자신 있게 "없다"고 말했다 — 연구자는 이미 결정된 것을 다시 승인할 뻔했다(실측 2026-09-07).
+     * 0은 부재의 증거가 아니다.
+     */
+    const body = rows.length === 0 && !state.hypothesesLoaded
+      ? `<div class="loadingState" aria-live="polite">${uiCopy("가설 기록을 불러오는 중…", "Loading the recorded hypotheses…")}</div>`
+      : rows.length === 0
       ? `<div class="emptyCopy pageEmpty"><strong>아직 기록된 가설이 없습니다.</strong><p>연구가 가설을 제안하면 여기에서 승인하거나 기각할 수 있습니다.</p></div>`
       : rows.map((hypothesis) => {
         const decided = hypothesis.status === "approved" || hypothesis.status === "rejected";
@@ -9039,6 +9051,15 @@ function createComposerEventSync({
 
   function render() {
     rememberChatScroll();
+    // Background events (the autonomous research loop advancing, an artifact landing, a project
+    // data refresh) call render() directly, without going through one of the explicit navigation
+    // sites that call rememberScroll(). Those sites left `state.scrollByMode` stale at whatever it
+    // was on the last click, so a live re-render mid-scroll snapped `.contentPane` back to that old
+    // position -- the page jumped out from under a researcher scrolled down reading the evidence
+    // graph queue, and their next click landed on whatever now sat under the cursor (the header).
+    // Capturing the real current scroll position here, on every render, keeps it stable regardless
+    // of what triggered the redraw.
+    rememberScroll();
     if (state.drawer && window.matchMedia("(max-width: 760px)").matches) state.railCollapsed = true;
     const selectedRendererIdentity = (() => {
       if (state.mode !== "lab" || state.inspectedArtifactVersion) return null;

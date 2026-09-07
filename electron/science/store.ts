@@ -19288,6 +19288,7 @@ export class ScienceStore {
         AND (a.source_run_id IS NULL OR (e.phase = 'committed' AND b.id IS NOT NULL)
           OR (r.status = 'succeeded' AND b.id IS NOT NULL AND (
             (r.tool_id = 'agentlas.csv-ingest' AND r.tool_version = '1.0.0')
+            OR (r.tool_id = 'agentlas.workbook-sheet-projection' AND r.tool_version = '1.0.0')
             OR (r.tool_id = 'agentlas.biodiversity-catalog' AND r.tool_version = '1.0.0')
             OR (r.tool_id = 'agentlas.ensembl-variant-track' AND r.tool_version IN ('1.0.0','1.1.0'))
             OR (r.tool_id = 'agentlas.comparative-genomics-gene-tree' AND r.tool_version = '1.0.0')

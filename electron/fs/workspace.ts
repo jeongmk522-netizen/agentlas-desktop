@@ -55,7 +55,7 @@ export interface TextFilePreview {
   truncated: boolean;
   size: number;
   /** 텍스트가 아니라고 판정되면 content=''; reason 필드에 사유 */
-  reason?: "binary" | "too-large" | "not-text-ext" | "missing" | "not-a-file";
+  reason?: "binary" | "too-large" | "not-text-ext" | "missing" | "not-a-file" | "not-read";
 }
 
 function isHiddenName(name: string): boolean {

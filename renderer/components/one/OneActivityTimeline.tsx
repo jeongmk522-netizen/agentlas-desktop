@@ -620,7 +620,7 @@ function ChatFileOpenViewer({ file, locale, onExpand }: { file: ChatFileItem; lo
     </div>}
     <div style={{ minHeight: 0, flex: 1, overflow: liveKind ? "hidden" : "auto" }}>
       {file.kind === "directory" || ["markdown", "json", "text"].includes(preview.viewerKind) ? (
-        <pre style={{ margin: 0, padding: 12, fontFamily: "var(--font-mono)", fontSize: 11.5, lineHeight: 1.55, whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>{preview.content || filePreviewEmptyMessage(preview.reason, locale, preview.name)}</pre>
+        <pre style={{ margin: 0, padding: 12, fontFamily: "var(--font-mono)", fontSize: 11.5, lineHeight: 1.55, whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>{preview.content || filePreviewEmptyMessage(preview.reason, locale, preview.name, preview.path)}</pre>
       ) : liveKind && file.fileUrl ? (
         <LiveOutputViewer
           source={file.fileUrl}

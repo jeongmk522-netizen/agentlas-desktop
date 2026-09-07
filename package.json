@@ -193,7 +193,8 @@
     "test:runtime-sign-in-honesty": "node scripts/local/runtime-sign-in-honesty-contract.cjs",
     "test:one-transcript-monotonic": "node scripts/local/one-transcript-monotonic-contract.cjs",
     "test:science-chat-does-not-lose-work": "node scripts/local/science-chat-does-not-lose-work-contract.cjs",
-    "test:curator-judgment-ladder": "node scripts/local/curator-uses-the-judgment-ladder-contract.cjs"
+    "test:curator-judgment-ladder": "node scripts/local/curator-uses-the-judgment-ladder-contract.cjs",
+    "test:result-rail-truth": "node scripts/local/result-rail-tells-the-truth-contract.cjs"
   },
   "dependencies": {
     "@file-viewer/preset-lite": "^2.3.0",

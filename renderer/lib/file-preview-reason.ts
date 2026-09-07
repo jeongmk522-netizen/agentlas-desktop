@@ -9,15 +9,27 @@
  *
  * An empty file is not a failure and must not be dressed as one.
  */
-export type FilePreviewReason = "binary" | "too-large" | "not-text-ext" | "missing" | "not-a-file";
+/*
+ * ★"아직 안 읽었다"는 판정이 아니라 상태다.
+ *
+ * 결과 패널은 미디어·링크 파일의 자리표시로 reason:"binary" 를 쓰고 있었다. 예전엔 그것이
+ * "내용을 읽을 수 없습니다"라는 애매한 한 문장으로 흡수돼 티가 안 났는데, 사유별 문장을
+ * 만들자 순수 UTF-8 한글 텍스트 파일을 "글자가 아닌 파일"이라고 **단정**하게 됐다.
+ * 애매한 문장이 확실하게 틀린 문장이 된 것이다(QA 실측 2026-09-07, note.txt 7바이트).
+ * 자리표시에는 자리표시의 이름을 준다.
+ */
+export type FilePreviewReason = "binary" | "too-large" | "not-text-ext" | "missing" | "not-a-file" | "not-read";
 
 export function filePreviewEmptyMessage(
   reason: FilePreviewReason | undefined,
   locale: string,
   name?: string,
+  /** 같은 이름의 파일이 여러 개일 때 어느 것인지 못 가리던 결함 — 경로가 있으면 함께 말한다. */
+  fullPath?: string,
 ): string {
   const ko = locale === "ko";
-  const subject = name ? `"${name}"` : ko ? "이 파일" : "this file";
+  const shown = fullPath && fullPath !== name ? `${name ?? fullPath} (${fullPath})` : name;
+  const subject = shown ? `"${shown}"` : ko ? "이 파일" : "this file";
   switch (reason) {
     case "missing":
       return ko
@@ -27,6 +39,10 @@ export function filePreviewEmptyMessage(
       return ko
         ? `${subject}은(는) 일반 파일이 아니라 폴더이거나 바로가기입니다.`
         : `${subject} is not a regular file — it is a directory or a link.`;
+    case "not-read":
+      return ko
+        ? `${subject}의 내용은 아직 읽지 않았습니다. 외부 앱으로 열어 보세요.`
+        : `${subject} has not been read here. Open it in an external application.`;
     case "binary":
       return ko
         ? `${subject}은(는) 글자가 아닌 파일이라 여기서는 못 보여 줍니다. 외부 앱으로 열어 보세요.`

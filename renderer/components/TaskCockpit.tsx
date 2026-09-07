@@ -47,6 +47,7 @@ import {
 } from "@/components/ChatStream";
 import { ToolApprovalInline } from "@/components/ToolApprovalInline";
 import { normalizeToolCall, shadowsToolRecordedPath } from "@shared/tool-call-detail";
+import { shellWrittenPaths } from "@shared/shell-written-paths";
 import { runtimeSelectionReceiptMatches } from "@shared/runtime-selection-receipt";
 import { ChatQuestionSheet, type QuestionSheetAnswer } from "@/components/ChatQuestionSheet";
 import { McpKeyRequestSheet } from "@/components/McpKeyRequestSheet";
@@ -185,7 +186,7 @@ function workspacePreviewFromMedia(media: MediaArtifact): WorkspaceFilePreview {
     openTargets,
     content: "",
     truncated: false,
-    reason: "binary",
+    reason: "not-read",
   };
 }
 
@@ -199,7 +200,7 @@ function workspacePreviewFromImageUrl(url: string, index: number): WorkspaceFile
     openTargets: [url],
     content: "",
     truncated: false,
-    reason: "binary",
+    reason: "not-read",
   };
 }
 
@@ -263,6 +264,25 @@ function toolFilePathsFromSteps(
     try {
       detail = normalizeToolCall({ name: step.tool, args: step.args, result: step.result });
     } catch {
+      continue;
+    }
+    /*
+     * ★셸로 만든 파일도 이 턴의 산출물이다.
+     *
+     * 쓰기 도구가 승인 거부되면 모델은 셸로 우회한다. 그렇게 만들어진 파일은 여기서 한 번도
+     * 안 잡혔고, 결과 레일은 "결과물 0"이라고 적었다 — 디스크에는 다섯 개가 있는데. 그 빈
+     * 자리를 답변 산문에서 주워 온 경로가 채웠고, 그건 만들어진 적 없는 파일이었다.
+     * 방향이 정확히 반대였다(QA 실측 2026-09-07).
+     *
+     * 명령이 **명시적으로** 쓴 곳만 읽는다. 결과 레일의 잘못된 항목은 없는 항목보다 나쁘다 —
+     * 사람을 있지도 않은 파일로 보낸다.
+     */
+    if (detail.type === "shell") {
+      for (const written of shellWrittenPaths(detail.command)) {
+        if (seen.has(written)) continue;
+        seen.add(written);
+        out.push(written);
+      }
       continue;
     }
     if (detail.type === "read" && !includeReads) continue;
@@ -332,7 +352,7 @@ function workspacePreviewFromLocalServer(url: string): WorkspaceFilePreview {
     openTargets: [url],
     content: "",
     truncated: false,
-    reason: "binary",
+    reason: "not-read",
   };
 }
 
@@ -351,7 +371,7 @@ function workspacePreviewFromBrowserUrl(url: string): WorkspaceFilePreview | nul
       openTargets: [url],
       content: "",
       truncated: false,
-      reason: "binary",
+      reason: "not-read",
     };
   } catch {
     return null;
@@ -371,7 +391,7 @@ function workspacePreviewFromLocalFile(path: string): WorkspaceFilePreview {
     openTargets: [path, fileUrl],
     content: "",
     truncated: false,
-    reason: "binary",
+    reason: "not-read",
   };
 }
 
@@ -389,7 +409,7 @@ function workspacePreviewFromLinkedFile(file: LinkedFileArtifact): WorkspaceFile
     openTargets: uniqueStrings([file.path, ...(file.paths ?? []), file.href, file.fileUrl]),
     content: "",
     truncated: false,
-    reason: "binary",
+    reason: "not-read",
   };
 }
 
@@ -722,7 +742,7 @@ function WorkRailResult({
     return <Markdown text={preview.content || ""} messageId={`work-rail:${preview.path || preview.fileUrl}`} />;
   }
   if (preview.viewerKind === "json" || preview.viewerKind === "text") {
-    return <pre style={{ margin: 0, padding: 16, whiteSpace: "pre-wrap", overflow: "auto", fontFamily: "var(--font-mono)", fontSize: 12, lineHeight: 1.55 }}>{preview.content || filePreviewEmptyMessage(preview.reason, locale, preview.name)}</pre>;
+    return <pre style={{ margin: 0, padding: 16, whiteSpace: "pre-wrap", overflow: "auto", fontFamily: "var(--font-mono)", fontSize: 12, lineHeight: 1.55 }}>{preview.content || filePreviewEmptyMessage(preview.reason, locale, preview.name, preview.path)}</pre>;
   }
   return (
     <div

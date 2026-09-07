@@ -4748,7 +4748,7 @@ export interface TextFilePreview {
   content: string;
   truncated: boolean;
   size: number;
-  reason?: "binary" | "too-large" | "not-text-ext" | "missing" | "not-a-file";
+  reason?: "binary" | "too-large" | "not-text-ext" | "missing" | "not-a-file" | "not-read";
 }
 
 /** Main-authoritative read scope. Renderer paths never act as their own roots. */

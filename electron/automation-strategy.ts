@@ -17,10 +17,14 @@ const MAX_ERROR_CHARS = 280;
 
 // 2026-07-23 보안 강화 — 자동화 실패 원문은 (1) 자동화가 방금 스크랩한 웹페이지/API
 // 응답을 그대로 담고 있을 수 있어 프롬프트 인젝션 매개체가 될 수 있고, (2) URL
+// ★ sk-/ghp_ 앞의 경계가 없으면 낱말 **안쪽**이 열쇠로 오인된다.
+// 실제로 decision-ta|sk-projection-failed| 가 잘려 "decision-ta[redacted]" 만 남았고,
+// 자율 연구가 왜 죽었는지 알아낼 길이 사라졌다(di|sk-quota-exceeded| 도 같은 계열).
+// OpenAI 키는 토큰 시작에만 오므로 경계를 요구해도 탐지력은 그대로다.
 // 쿼리스트링·헤더에 토큰/키가 섞여 나올 수 있다. 이 함수를 거치지 않은 원문은 모델
 // 프롬프트·에이전트 메모리·Experience 레코드 어디에도 닿지 않아야 한다(정책: 시크릿
 // 유출 금지 + "원문 그대로" 주입 금지 — 재작성/스크럽된 신호만 통과).
-const SECRET_REDACT_RE = /(?:sk-[A-Za-z0-9_-]{12,}|gh[pousr]_[A-Za-z0-9]{20,}|(?:api[_-]?key|token|secret|password|authorization|cookie|private[_-]?key)\s*[:=]\s*\S+|BEGIN (?:RSA |OPENSSH |EC |DSA )?PRIVATE KEY|Bearer\s+[A-Za-z0-9._~-]{12,})/gi;
+const SECRET_REDACT_RE = /(?:(?<![A-Za-z0-9_-])sk-[A-Za-z0-9_-]{12,}|(?<![A-Za-z0-9_-])gh[pousr]_[A-Za-z0-9]{20,}|(?:api[_-]?key|token|secret|password|authorization|cookie|private[_-]?key)\s*[:=]\s*\S+|BEGIN (?:RSA |OPENSSH |EC |DSA )?PRIVATE KEY|Bearer\s+[A-Za-z0-9._~-]{12,})/gi;
 // 전체 URL은 쿼리스트링에 토큰이 실려 있을 수 있어 host만 남긴다(경로·쿼리 폐기).
 const URL_REDACT_RE = /https?:\/\/([^\s/?#]+)[^\s]*/gi;
 

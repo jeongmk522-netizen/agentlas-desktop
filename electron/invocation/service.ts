@@ -399,6 +399,9 @@ function exactOneInvocationParticipants(
   return participants;
 }
 
+/** 마지막 Task 투영 실패의 이유. 호출부가 사람이 읽을 수 있는 실패를 만들 수 있게 남긴다. */
+let lastTaskProjectionFailure: { chatId: string; status: string; at: string; reason: string } | null = null;
+
 function trySetTaskStatus(
   chatId: string,
   status: CanonicalTaskStatus,
@@ -443,9 +446,16 @@ function trySetTaskStatus(
       ],
     });
     return updated;
-  } catch {
+  } catch (error) {
     // Task projection is a durable companion to the run ledger. A temporary
     // projection failure must not prevent the underlying invocation.
+    //
+    // ★ 이유까지 버리면 안 된다. 자율 연구의 연속 턴이 여기서 null 을 받아
+    // decision-task-projection-failed 로 죽었는데, 왜 실패했는지는 이 catch 가
+    // 삼켜서 남아 있지 않았다 -- 증거가 스스로를 지우는 구조다. 실행은 그대로
+    // 진행시키되, 이유는 남긴다.
+    lastTaskProjectionFailure = { chatId, status, at: new Date().toISOString(), reason: error instanceof Error ? error.message : String(error) };
+    console.error(`[task-projection] ${status} failed for chat ${chatId}: ${lastTaskProjectionFailure.reason}`);
     return null;
   }
 }
@@ -1843,7 +1853,7 @@ export class InvocationService {
               true,
               invocationOrigin,
             );
-            if (!canonicalTask) throw new Error("decision-task-projection-failed");
+            if (!canonicalTask) throw new Error(`decision-task-projection-failed: ${lastTaskProjectionFailure?.reason ?? "reason-not-recorded"}`);
             taskMaterialized = true;
             recordRunEvent({
               runId,

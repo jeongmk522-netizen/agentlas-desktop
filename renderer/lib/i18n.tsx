@@ -107,7 +107,7 @@ const dict = {
     "nav.publish": "내 에이전트 올리기",
     "nav.group.environment": "환경설정(MCP등)",
     "nav.env_keys": "API 키",
-    "nav.mcp_tools": "MCP, Plugin",
+    "nav.mcp_tools": "MCP·플러그인",
     "nav.apps_library": "만든 앱",
     "nav.tool_library": "만든 도구",
     "nav.surfaces": "만든 화면",

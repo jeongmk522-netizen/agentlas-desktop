@@ -69,9 +69,11 @@ export function OneTaskforceRail({
   /** One 이 고른 캐릭터 — 화면마다 다른 얼굴을 보여 주지 않기 위해 함께 내려온다. */
   oneAvatarIcon?: string;
 }) {
-  return <section className={styles.rail} aria-label="Taskforces">
+  const ko = locale === "ko";
+  return <section className={styles.rail} aria-label={ko ? "태스크포스" : "Taskforces"}>
     <header className={styles.railHeader}>
-      <span>Taskforces</span>
+      {/* 바로 아래 만들기 단추는 이미 "태스크포스"라고 말한다 — 제목만 영어로 남아 있었다. */}
+      <span>{ko ? "태스크포스" : "Taskforces"}</span>
       <button type="button" onClick={onCreate} aria-label={locale === "ko" ? "태스크포스 만들기" : "Create Taskforce"}>
         <IconPlus size={14} />
       </button>

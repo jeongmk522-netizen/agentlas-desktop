@@ -699,7 +699,23 @@ export function WorkFirstRunOnboarding({ onVisibilityChange }: { onVisibilityCha
           )}
         </footer>
         <nav className={styles.productNav} aria-label="Agentlas product navigation">
-          {([["⌂", "One"], ["◎", "Agents"], ["◉", "Work"], ["ϟ", "Automations"], ["⚙", "Settings"]] as const).map(([icon, label]) => <span key={label} className={label === "Work" ? styles.activeNav : ""}><b aria-hidden="true">{icon}</b>{label}</span>)}
+          {/*
+            * 이 줄은 **실제 좌측 내비게이션을 그린 그림**이다. 진짜 내비게이션은 번역되는데
+            * 여기 사본만 영어로 박혀 있어서, 한국어 사용자는 첫 화면에서 자기가 보게 될
+            * 것과 다른 메뉴를 배운다(한국어 화면 훑기 2026-09-08).
+            * One·Work 는 제품 이름이라 두 언어에서 같다.
+            */}
+          {([
+            ["⌂", "One", "One"],
+            ["◎", "Agents", "에이전트"],
+            ["◉", "Work", "Work"],
+            ["ϟ", "Automations", "자동화"],
+            ["⚙", "Settings", "설정"],
+          ] as const).map(([icon, label, korean]) => (
+            <span key={label} className={label === "Work" ? styles.activeNav : ""}>
+              <b aria-hidden="true">{icon}</b>{ko ? korean : label}
+            </span>
+          ))}
         </nav>
       </section>
     </div>

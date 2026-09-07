@@ -967,14 +967,17 @@ export function RuntimeControl() {
   function renderRole(role: RuntimeRole) {
     const view = views[role];
     const active = view.runtime;
+    // ★멀티모달만 번역돼 있었다 — 같은 묶음의 나머지 둘이 영어로 남아 한국어 화면에
+    //   "Orchestrator"/"Worker" 가 그대로 떴다(한국어 화면 훑기 2026-09-08).
+    //   어휘는 이 파일이 이미 쓰는 것과 맞춘다(아래 후보 행 라벨과 같은 말).
     const title =
       role === "orchestrator"
-        ? "Orchestrator"
+        ? ko ? "오케스트레이터" : "Orchestrator"
         : role === "multimodal"
           ? ko
             ? "멀티모달 생성 (이미지)"
             : "Multimodal generation (image)"
-          : "Worker";
+          : ko ? "워커" : "Worker";
     return (
       <section
         className="dashboard-runtime-role"

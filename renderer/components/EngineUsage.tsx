@@ -196,7 +196,12 @@ function ModelRoleUsage({ value, ko }: {
       {modelBuckets.length > 0 && (
         <div className="dashboard-role-usage-models" aria-label={ko ? "모델·작업량별 관측 사용량" : "Observed usage by model and effort"}>
           {modelBuckets.map((entry) => {
-            const role = entry.role === "orchestrator" ? "Orch" : "Worker";
+            /*
+             * ★칩 문구는 **들어갈 폭까지** 맞아야 한다. 정식 명칭("오케스트레이터")은 이
+             *   한 줄(`Orch · anthropic · 모델 미상 · 기본/미상 · 2K · 3`)을 밀어내므로
+             *   두 글자로 줄인다. 뜻은 옆의 title 이 온전히 말한다.
+             */
+            const role = entry.role === "orchestrator" ? (ko ? "지휘" : "Orch") : (ko ? "작업" : "Worker");
             const model = entry.model ?? (ko ? "모델 미상" : "unknown model");
             const effort = entry.effort ?? (ko ? "기본/미상" : "default/unknown");
             return (
@@ -622,7 +627,7 @@ export function EngineUsage() {
                           : "Worker default engine"
                     }
                   >
-                    {role === "orchestrator" ? "Orch" : "Worker"}
+                    {role === "orchestrator" ? (ko ? "지휘" : "Orch") : (ko ? "작업" : "Worker")}
                   </span>
                 ))}
               </>

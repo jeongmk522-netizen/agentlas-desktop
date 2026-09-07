@@ -412,7 +412,7 @@ function createComposerEventSync({
     scopeLoading: false, scopeError: "",
     logbookRevisions: [], logbookLoading: false, logbookError: "",
     submissionArchiveProfiles: [], submissionArchiveExports: [], submissionArchiveLoading: false, submissionArchiveError: "",
-    datasetImportBusy: false, datasetImportError: "", tablePageByArtifact: new Map(), statisticsViewByArtifact: new Map(), paleontologyViewByArtifact: new Map(), visualViewportByArtifact: new Map(),
+    datasetImportBusy: false, datasetImportError: "", workbookImportBusy: false, workbookImportError: "", workbookProjectionBusy: false, workbookProjectionError: "", workbookReadback: null, workbookSelectedSheetOrdinal: null, workbookFirstRow: 1, workbookLastRow: 1, workbookColumnMapping: {}, tablePageByArtifact: new Map(), statisticsViewByArtifact: new Map(), paleontologyViewByArtifact: new Map(), visualViewportByArtifact: new Map(),
     spatialViewByArtifact: new Map(), materialsStructureIndexByArtifact: new Map(),
     statisticsLaunchSourceArtifactId: null, statisticsLaunchTimeColumn: "", statisticsLaunchEventColumn: "", statisticsLaunchBusy: false, statisticsLaunchError: "", statisticsLaunchOpen: false,
     // The launch screen used to offer one analysis, because one analysis was written into it. These
@@ -425,6 +425,7 @@ function createComposerEventSync({
   let scopeLoadEpoch = 0;
   let composerRequestEpoch = 0;
   let compareEpoch = 0;
+  let workbookSheetReadbackEpoch = 0;
   let workspacePersistChain = Promise.resolve();
   let workspacePersistError = null;
   let jbrowseRuntimePromise = null;
@@ -2055,6 +2056,17 @@ function createComposerEventSync({
     const preserveRuntimeSelection = Boolean(preservedWorkspace && !switchingProject);
     state.selectedId = projectId;
     state.projectFolderOpen = Boolean(options.openFolder);
+    if (switchingProject) {
+      state.workbookImportBusy = false;
+      state.workbookImportError = "";
+      state.workbookProjectionBusy = false;
+      state.workbookProjectionError = "";
+      state.workbookReadback = null;
+      state.workbookSelectedSheetOrdinal = null;
+      state.workbookFirstRow = 1;
+      state.workbookLastRow = 1;
+      state.workbookColumnMapping = {};
+    }
     if (window.matchMedia("(max-width: 760px)").matches) state.railCollapsed = true;
     if (switchingProject && state.manuscriptDraftJob?.projectId !== projectId) state.manuscriptDraftJob = null;
     state.lifecycle = null;
@@ -5759,6 +5771,230 @@ function createComposerEventSync({
     }
   }
 
+  function workbookColumnIndex(column) {
+    return [...String(column || "")].reduce((total, character) => total * 26 + character.charCodeAt(0) - 64, 0);
+  }
+
+  function workbookColumnLabel(index) {
+    let value = Math.max(1, Number(index) || 1);
+    let label = "";
+    while (value > 0) {
+      const remainder = (value - 1) % 26;
+      label = String.fromCharCode(65 + remainder) + label;
+      value = Math.floor((value - 1) / 26);
+    }
+    return label;
+  }
+
+  function workbookRangeBounds(range) {
+    const match = /^([A-Z]+)(\d+)(?::([A-Z]+)(\d+))?$/u.exec(String(range || "").toUpperCase());
+    if (!match) return { firstColumn: "A", lastColumn: "A", firstRow: 1, lastRow: 1 };
+    return {
+      firstColumn: match[1] || "A",
+      lastColumn: match[3] || match[1] || "A",
+      firstRow: Math.max(1, Number(match[2]) || 1),
+      lastRow: Math.max(1, Number(match[4] || match[2]) || 1),
+    };
+  }
+
+  function workbookSheetForState() {
+    const sheets = Array.isArray(state.workbookReadback?.sheets) ? state.workbookReadback.sheets : [];
+    if (!sheets.length) return null;
+    return sheets.find((sheet) => sheet.ordinal === state.workbookSelectedSheetOrdinal) || sheets[0];
+  }
+
+  function workbookSheetColumns(sheet) {
+    const columns = new Set();
+    for (const cell of Array.isArray(sheet?.previewCells) ? sheet.previewCells : []) {
+      const match = /^([A-Z]{1,3})\d+$/u.exec(String(cell?.address || "").toUpperCase());
+      if (match) columns.add(match[1]);
+    }
+    const bounds = workbookRangeBounds(sheet?.range);
+    if (bounds.lastColumn) {
+      const firstIndex = workbookColumnIndex(bounds.firstColumn);
+      const lastIndex = Math.min(workbookColumnIndex(bounds.lastColumn), firstIndex + 999);
+      for (let index = firstIndex; index <= lastIndex; index += 1) {
+        columns.add(workbookColumnLabel(index));
+      }
+    }
+    return [...columns].sort((left, right) => workbookColumnIndex(left) - workbookColumnIndex(right));
+  }
+
+  function workbookDefaultLastRow(sheet) {
+    const bounds = workbookRangeBounds(sheet?.range);
+    const previewLastRow = (Array.isArray(sheet?.previewCells) ? sheet.previewCells : []).reduce((last, cell) => {
+      const match = /[A-Z]{1,3}(\d+)$/u.exec(String(cell?.address || "").toUpperCase());
+      return Math.max(last, Number(match?.[1] || 0));
+    }, 0);
+    return Math.max(bounds.lastRow, previewLastRow, 1);
+  }
+
+  function workbookRangeNoteText(sheet = workbookSheetForState()) {
+    if (!sheet) return "";
+    const bounds = workbookRangeBounds(sheet.range);
+    const sourceRange = sheet.range || `${bounds.firstColumn}${bounds.firstRow}:${bounds.lastColumn}${bounds.lastRow}`;
+    const sourceRowCount = Math.max(0, workbookDefaultLastRow(sheet) - bounds.firstRow + 1);
+    const firstRow = Number(state.workbookFirstRow);
+    const lastRow = Number(state.workbookLastRow);
+    const validRows = Number.isSafeInteger(firstRow) && Number.isSafeInteger(lastRow) && firstRow >= 1 && lastRow >= firstRow;
+    const selectedRowCount = validRows ? lastRow - firstRow + 1 : 0;
+    const selectedColumnCount = Object.values(state.workbookColumnMapping || {}).filter((item) => item?.selected === true).length;
+    const selectedRows = validRows ? `${firstRow.toLocaleString()}–${lastRow.toLocaleString()}` : uiCopy("범위를 확인하세요", "check range");
+    return uiCopy(
+      `원본 범위 ${sourceRange} · 원본 ${sourceRowCount.toLocaleString()}행 · 선택 행 ${selectedRows} (${selectedRowCount.toLocaleString()}행) · ${selectedColumnCount}개 열 선택`,
+      `Source range ${sourceRange} · ${sourceRowCount.toLocaleString()} source rows · selected rows ${selectedRows} (${selectedRowCount.toLocaleString()}) · ${selectedColumnCount} columns selected`,
+    );
+  }
+
+  function syncWorkbookRangeNote() {
+    const node = document.querySelector("[data-workbook-range-note]");
+    if (node) node.textContent = workbookRangeNoteText();
+  }
+
+  function workbookSelection() {
+    const sheet = workbookSheetForState();
+    const firstRow = Number(state.workbookFirstRow);
+    const lastRow = Number(state.workbookLastRow);
+    const entries = Object.entries(state.workbookColumnMapping || {})
+      .filter(([, item]) => item?.selected === true && typeof item?.name === "string" && item.name.trim())
+      .map(([sourceColumn, item]) => ({ sourceColumn, name: item.name.normalize("NFC").trim() }));
+    const names = new Set(entries.map((entry) => entry.name.toLowerCase()));
+    const validRows = Number.isSafeInteger(firstRow) && Number.isSafeInteger(lastRow) && firstRow >= 1 && lastRow >= firstRow && lastRow <= 1_048_576 && lastRow - firstRow + 1 <= 100_000;
+    const validColumns = Boolean(sheet && entries.length > 0 && entries.length <= 1_000 && entries.length * Math.max(1, lastRow - firstRow + 1) <= 250_000 && names.size === entries.length);
+    if (!sheet || !validRows || !validColumns) return null;
+    return { sheetOrdinal: sheet.ordinal, firstRow, lastRow, columns: entries };
+  }
+
+  function workbookPreviewMarkup(sheet) {
+    const cells = new Map((Array.isArray(sheet?.previewCells) ? sheet.previewCells : []).map((cell) => [String(cell.address || "").toUpperCase(), cell]));
+    const columns = workbookSheetColumns(sheet).slice(0, 12);
+    const rows = [...new Set((Array.isArray(sheet?.previewCells) ? sheet.previewCells : []).map((cell) => Number(/[A-Z]{1,3}(\d+)$/u.exec(String(cell?.address || "").toUpperCase())?.[1] || 0)).filter((row) => row > 0))].sort((left, right) => left - right).slice(0, 16);
+    if (!columns.length || !rows.length) return `<p class="workbookPreviewEmpty">${uiCopy("이 시트의 미리보기 셀이 없습니다.", "This sheet has no preview cells.")}</p>`;
+    return `<div class="manuscriptSemanticTableViewport workbookPreviewViewport"><table class="workbookPreviewTable"><thead><tr><th scope="col">${uiCopy("행", "Row")}</th>${columns.map((column) => `<th scope="col"><code>${escapeHtml(column)}</code></th>`).join("")}</tr></thead><tbody>${rows.map((row) => `<tr><th scope="row"><code>${row}</code></th>${columns.map((column) => { const cell = cells.get(`${column}${row}`); const value = cell?.value === null || cell?.value === undefined ? "" : String(cell.value); return `<td title="${escapeHtml(cell?.warning || value)}">${escapeHtml(value || "·")}${cell?.warning ? " ⚠" : ""}</td>`; }).join("")}</tr>`).join("")}</tbody></table></div>${sheet.previewCells?.length > rows.length * columns.length ? `<p class="workbookPreviewBoundary">${uiCopy("처음 16행·12열만 표시합니다. 전체 셀은 Main 저장본에서 선택 범위로 투영됩니다.", "Showing the first 16 rows and 12 columns. The full stored grid is projected only from your explicit range.")}</p>` : ""}`;
+  }
+
+  function workbookIntakeMarkup() {
+    const sheet = workbookSheetForState();
+    if (!sheet) return "";
+    const columns = workbookSheetColumns(sheet);
+    const selection = workbookSelection();
+    const mapping = state.workbookColumnMapping || {};
+    const format = String(state.workbookReadback?.format || "xlsx").toUpperCase();
+    return `<section class="workbookIntake statisticsLaunchCard" data-workbook-intake aria-labelledby="workbook-intake-title"><div class="workbookIntakeHeader"><div><span class="researchKicker">Workbook intake · ${escapeHtml(format)}</span><h3 id="workbook-intake-title">${uiCopy("시트와 열을 직접 선택하세요.", "Choose the sheet, range, and columns explicitly.")}</h3></div><button class="secondaryButton" type="button" data-action="clear-workbook-intake" ${state.workbookProjectionBusy ? "disabled" : ""}>${uiCopy("다른 파일", "Choose another")}</button></div><p class="workbookIntakeBoundary">${uiCopy("헤더 이름은 자동 추론하지 않습니다. 선택한 원본 열에 표 이름을 직접 입력해야 검증된 Data Table로 저장됩니다.", "Headers are not inferred. Give each selected source column an explicit table name before saving a verified Data Table.")}</p><div class="statisticsLaunchGrid workbookSheetControls"><label class="field"><span>${uiCopy("시트", "Sheet")}</span><select data-workbook-sheet>${state.workbookReadback.sheets.map((candidate) => `<option value="${escapeHtml(candidate.ordinal)}" ${candidate.ordinal === sheet.ordinal ? "selected" : ""}>${escapeHtml(candidate.name)}${candidate.hidden ? ` · ${uiCopy("숨김", "hidden")}` : ""} · ${escapeHtml(candidate.range || "empty")}</option>`).join("")}</select></label><label class="field"><span>${uiCopy("첫 행", "First row")}</span><input type="number" min="1" max="1048576" data-workbook-first-row value="${escapeHtml(state.workbookFirstRow)}"></label><label class="field"><span>${uiCopy("마지막 행", "Last row")}</span><input type="number" min="1" max="1048576" data-workbook-last-row value="${escapeHtml(state.workbookLastRow)}"></label></div><p class="workbookRangeNote" data-workbook-range-note>${escapeHtml(workbookRangeNoteText(sheet))}</p><h4 class="workbookSectionTitle">${uiCopy("저장할 열 이름", "Column mapping")}</h4><div class="statisticsMappingChecks workbookColumnMapping">${columns.map((column) => { const item = mapping[column] || {}; return `<label class="statisticsMappingCheck workbookColumnMappingRow"><input type="checkbox" data-workbook-column-toggle data-source-column="${escapeHtml(column)}" ${item.selected ? "checked" : ""}><span><code>${escapeHtml(column)}</code><input type="text" maxlength="240" data-workbook-column-name data-source-column="${escapeHtml(column)}" value="${escapeHtml(item.name || "")}" placeholder="${uiCopy("표 열 이름", "Table column name")}" ${item.selected ? "" : "disabled"}></span></label>`; }).join("") || `<p>${uiCopy("미리보기에서 사용할 열을 찾지 못했습니다.", "No preview columns were found.")}</p>`}</div><h4 class="workbookSectionTitle">${uiCopy("범위 미리보기", "Bounded preview")}</h4>${workbookPreviewMarkup(sheet)}${state.workbookProjectionError ? `<p class="labStartError" role="alert">${escapeHtml(state.workbookProjectionError)}</p>` : ""}<div class="workbookIntakeActions"><button class="primaryButton" type="button" data-action="project-workbook" ${!selection || state.workbookProjectionBusy ? "disabled" : ""}>${state.workbookProjectionBusy ? uiCopy("검증된 표로 저장 중…", "Saving verified table…") : uiCopy("선택 범위로 Data Table 만들기", "Create Data Table from selection")}</button><button class="secondaryButton" type="button" data-action="clear-workbook-intake" ${state.workbookProjectionBusy ? "disabled" : ""}>${uiCopy("취소", "Cancel")}</button></div></section>`;
+  }
+
+  async function importWorkbookDataset() {
+    if (state.workbookImportBusy || state.workbookProjectionBusy || !state.selectedId) return;
+    const conversation = selectedConversation();
+    const originMessage = [...state.messages].reverse().find((message) => message.role === "user");
+    if (!conversation || !originMessage || !science.datasets?.importWorkbook) {
+      state.workbookImportError = uiCopy("현재 연구 대화와 연결된 Excel 가져오기 런타임을 찾지 못했습니다.", "The Excel workbook intake runtime is unavailable for this research conversation.");
+      render();
+      return;
+    }
+    const projectId = state.selectedId;
+    state.workbookImportBusy = true;
+    state.workbookImportError = "";
+    state.workbookProjectionError = "";
+    render();
+    try {
+      const result = await science.datasets.importWorkbook({
+        requestId: crypto.randomUUID(),
+        projectId,
+        conversationId: conversation.id,
+        originMessageId: originMessage.id,
+        title: uiCopy("가져온 Excel 통합 문서", "Imported Excel workbook"),
+      });
+      if (projectId !== state.selectedId) return;
+      if (result?.canceled) {
+        state.workbookImportBusy = false;
+        render();
+        return;
+      }
+      const readback = result?.workbook;
+      if (!readback || readback.schema !== "agentlas.science-workbook-readback/v1" || !Array.isArray(readback.sheets) || !readback.sheets.length || !result?.run?.id) throw new Error("science-workbook-readback-invalid");
+      const firstSheet = readback.sheets[0];
+      state.workbookReadback = readback;
+      state.workbookSelectedSheetOrdinal = firstSheet.ordinal;
+      state.workbookFirstRow = 1;
+      state.workbookLastRow = workbookDefaultLastRow(firstSheet);
+      state.workbookColumnMapping = {};
+      state.workbookImportBusy = false;
+      render();
+    } catch (error) {
+      if (projectId !== state.selectedId) return;
+      state.workbookImportBusy = false;
+      state.workbookImportError = error instanceof Error ? error.message : String(error);
+      render();
+    }
+  }
+
+  async function projectWorkbookDataset() {
+    if (state.workbookProjectionBusy || !state.selectedId) return;
+    const selection = workbookSelection();
+    const conversation = selectedConversation();
+    const originMessage = [...state.messages].reverse().find((message) => message.role === "user");
+    if (!selection || !state.workbookReadback?.runId || !conversation || !originMessage || !science.datasets?.projectWorkbook) {
+      state.workbookProjectionError = uiCopy("시트·행 범위·열 이름을 모두 명시해야 합니다.", "Choose a sheet, valid row range, and explicit column names first.");
+      render();
+      return;
+    }
+    const projectId = state.selectedId;
+    state.workbookProjectionBusy = true;
+    state.workbookProjectionError = "";
+    render();
+    try {
+      const result = await science.datasets.projectWorkbook({
+        requestId: crypto.randomUUID(),
+        projectId,
+        parentRunId: state.workbookReadback.runId,
+        title: uiCopy("Excel 선택 표", "Workbook selection table"),
+        selection,
+      });
+      if (projectId !== state.selectedId) return;
+      if (!result?.artifact?.id || result.artifact.version?.rendererId !== "agentlas.table") throw new Error("science-workbook-table-artifact-invalid");
+      state.workbookProjectionBusy = false;
+      state.workbookReadback = null;
+      state.workbookSelectedSheetOrdinal = null;
+      state.workbookColumnMapping = {};
+      await selectProject(projectId, { preserveWorkspace: true });
+      await openLab("data-table", result.artifact.id, null, originMessage.id, result.artifact.currentVersion);
+    } catch (error) {
+      if (projectId !== state.selectedId) return;
+      state.workbookProjectionBusy = false;
+      state.workbookProjectionError = error instanceof Error ? error.message : String(error);
+      render();
+    }
+  }
+
+  async function reloadWorkbookSheet(sheetOrdinal) {
+    const projectId = state.selectedId;
+    const readback = state.workbookReadback;
+    if (!projectId || !readback?.runId || !science.datasets?.workbook) return;
+    const epoch = ++workbookSheetReadbackEpoch;
+    state.workbookProjectionBusy = true;
+    state.workbookProjectionError = "";
+    render();
+    try {
+      const next = await science.datasets.workbook({ projectId, runId: readback.runId, sheetOrdinal });
+      if (epoch !== workbookSheetReadbackEpoch || projectId !== state.selectedId || state.workbookReadback?.runId !== readback.runId) return;
+      const sheet = Array.isArray(next?.sheets) && next.sheets.length === 1 ? next.sheets[0] : null;
+      if (!sheet) throw new Error("science-workbook-sheet-readback-invalid");
+      state.workbookReadback = { ...readback, sheets: readback.sheets.map((candidate) => candidate.ordinal === sheet.ordinal ? sheet : candidate) };
+      state.workbookSelectedSheetOrdinal = sheet.ordinal;
+      state.workbookFirstRow = 1;
+      state.workbookLastRow = workbookDefaultLastRow(sheet);
+      state.workbookColumnMapping = {};
+      state.workbookProjectionBusy = false;
+      render();
+    } catch (error) {
+      if (epoch !== workbookSheetReadbackEpoch || projectId !== state.selectedId) return;
+      state.workbookProjectionBusy = false;
+      state.workbookProjectionError = error instanceof Error ? error.message : String(error);
+      render();
+    }
+  }
+
   async function importCsvDataset() {
     if (state.datasetImportBusy || !state.selectedId) return;
     const conversation = selectedConversation();
@@ -6961,7 +7197,10 @@ function createComposerEventSync({
     const labContexts = state.labContextsById.get(state.selectedLabId) || [];
     const labArtifacts = labContexts.map((context) => context.artifact);
     if (!labArtifacts.length) {
-      if (state.selectedLabId === "data-table") return labDecisionEmptyMarkup(`<section class="emptyView labStartView" data-empty-source="science.sqlite"><div class="labStartCard"><span class="researchKicker">Data & Statistics · ${escapeHtml(lifecycleLabel())}</span><strong>분석할 CSV를 검증된 Data Table로 가져오세요.</strong><p>원본 파일은 Main 프로세스에서만 읽고, 경로는 UI나 연구 에이전트에 노출하지 않습니다. 전체 파일을 파싱해 SourceVersion · CAS · ResearchRun · immutable source binding을 만든 뒤 표를 엽니다.</p><dl><div><dt>제한</dt><dd>8 MiB · 5,000 rows · 무음 truncation 없음</dd></div><div><dt>보존</dt><dd>typed cells · null · formula-looking text</dd></div><div><dt>출판</dt><dd>exact source/run/table SHA closure</dd></div></dl><button class="primaryButton importDatasetButton" data-action="import-csv-dataset" ${state.datasetImportBusy ? "disabled" : ""}>${state.datasetImportBusy ? "검증하며 가져오는 중…" : "CSV 데이터셋 가져오기"}</button>${state.datasetImportError ? `<p class="labStartError" role="alert">${escapeHtml(state.datasetImportError)}</p>` : ""}</div></section>`);
+      if (state.selectedLabId === "data-table") {
+        if (state.workbookReadback) return labDecisionEmptyMarkup(`<section class="emptyView labStartView" data-empty-source="science.sqlite"><div class="labStartCard">${workbookIntakeMarkup()}</div></section>`);
+        return labDecisionEmptyMarkup(`<section class="emptyView labStartView" data-empty-source="science.sqlite"><div class="labStartCard"><span class="researchKicker">Data & Statistics · ${escapeHtml(lifecycleLabel())}</span><strong>${uiCopy("CSV 또는 Excel 파일을 표로 가져오세요.", "Import a CSV or Excel workbook as a table.")}</strong><p>${uiCopy("원본은 보존됩니다. CSV는 바로 표가 되고, XLSX/XLS는 시트·행 범위·열 이름을 직접 선택해 표를 만듭니다.", "The original is preserved. CSV opens as a table; for XLSX/XLS, choose a sheet, row range, and column names to create a table.")}</p><p class="workbookPickerBoundary">${uiCopy("입력 CSV · XLSX · XLS · 원본 보존 · 시트·행 범위·열 이름을 직접 선택", "Input CSV · XLSX · XLS · original preserved · choose the sheet, row range, and column names explicitly")}</p><div class="workbookIntakeActions"><button class="primaryButton importDatasetButton" data-action="import-csv-dataset" ${state.datasetImportBusy || state.workbookImportBusy ? "disabled" : ""}>${state.datasetImportBusy ? uiCopy("검증하며 가져오는 중…", "Validating…") : uiCopy("CSV 가져오기", "Import CSV")}</button><button class="secondaryButton importDatasetButton" data-action="import-workbook-dataset" ${state.datasetImportBusy || state.workbookImportBusy ? "disabled" : ""}>${state.workbookImportBusy ? uiCopy("Excel을 읽는 중…", "Reading workbook…") : uiCopy("Excel 선택 (.xlsx/.xls)", "Choose Excel (.xlsx/.xls)")}</button></div>${state.datasetImportError ? `<p class="labStartError" role="alert">${escapeHtml(state.datasetImportError)}</p>` : ""}${state.workbookImportError ? `<p class="labStartError" role="alert">${escapeHtml(state.workbookImportError)}</p>` : ""}</div></section>`);
+      }
       if (state.selectedLabId === "statistics-analysis") return labDecisionEmptyMarkup(statisticsLaunchCard());
       if (state.selectedLabId === "data-visualization") return labDecisionEmptyMarkup(publicationFigureStartMarkup());
       if (state.selectedLabId === "economic-indicators") return labDecisionEmptyMarkup(`<section class="emptyView labStartView" data-empty-source="science.sqlite"><div class="labStartCard"><span class="researchKicker">Economics & Finance · ${escapeHtml(lifecycleLabel())}</span><strong>공식 World Bank 경제지표를 가져오세요.</strong><p>Economic Indicators는 World Bank의 국가·지표·연도 범위를 지정해 exact provider response, SourceVersion, ResearchRun과 Vega artifact lineage를 보존합니다. 주가·시세·거래 데이터 API는 제공하지 않습니다.</p><dl><div><dt>Economics</dt><dd>공식 World Bank indicator series</dd></div><div><dt>Finance</dt><dd>사용자 CSV → Data Table → Statistical Analysis / Vega</dd></div><div><dt>보존</dt><dd>source · run · artifact hash lineage</dd></div></dl><button class="secondaryButton" data-action="suggest-empty-lab-run">World Bank 지표를 연구 에이전트에게 요청</button></div></section>`);
@@ -6972,6 +7211,9 @@ function createComposerEventSync({
     // control that runs an analysis was gone, and the second one had to be asked for in chat. The
     // first thing anyone wants after a result is another analysis.
     if (state.selectedLabId === "statistics-analysis" && state.statisticsLaunchOpen) return labDecisionEmptyMarkup(statisticsLaunchCard());
+    if (state.selectedLabId === "data-table" && state.workbookReadback) {
+      return labDecisionEmptyMarkup(`<section class="emptyView labStartView" data-empty-source="science.sqlite"><div class="labStartCard">${workbookIntakeMarkup()}</div></section>`);
+    }
     const artifact = labArtifacts.find((item) => item.id === state.selectedArtifactId) || labArtifacts[0];
     const originVersion = artifact.id === state.selectedArtifactId ? state.selectedArtifactOriginVersion : null;
     const history = state.artifactHistoryById.get(artifact.id) || null;
@@ -7115,7 +7357,10 @@ function createComposerEventSync({
       || (artifact.version.rendererId === "agentlas.d3-sky" && skyView === "astronomy-distance");
     const decisionPanel = labDecisionPanelMarkup();
     const chartPriority = Boolean(economicPayload && !inspectingHistory);
-    return `<section class="artifactWorkspace ${state.historyOpen ? "historyOpen" : ""} ${state.artifactComparison ? "compareOpen" : ""} ${spatialArtifact ? "spatialArtifact" : ""} ${spatial3dOpen ? "spatial3dOpen" : ""}" data-chart-priority="${chartPriority}"><header class="labWorkspaceHeader visuallyHidden"><span>${escapeHtml(labCapabilityLabel(state.selectedLabId))}</span><strong>아티팩트 보관소 · 작업공간</strong><span class="originVersion">${capability}</span><button data-action="back-session">${state.returnMessageId ? "대화의 아티팩트로" : "세션으로 돌아가기"}</button></header>${tabs ? `<nav class="artifactTabs" data-count="${escapeHtml(labArtifacts.length)}" aria-label="Lab 아티팩트">${tabs}</nav>` : ""}${originStrip}${statisticsLineage}${paleontologyLineage}<div class="labWorkGrid"><div class="figureColumn">
+    const dataTableIntakeAction = state.selectedLabId === "data-table"
+      ? `<section class="workbookReimportBar" aria-label="${escapeHtml(uiCopy("표 데이터 추가", "Add table data"))}"><div><strong>${escapeHtml(uiCopy("표 데이터를 더 추가하시겠어요?", "Add another table source"))}</strong><span>${escapeHtml(uiCopy("원본을 보존한 채 CSV 또는 Excel 파일을 선택할 수 있습니다.", "Choose another CSV or Excel file while preserving the original."))}</span></div><div class="workbookIntakeActions"><button class="secondaryButton" type="button" data-action="import-csv-dataset" ${state.datasetImportBusy || state.workbookImportBusy ? "disabled" : ""}>${state.datasetImportBusy ? uiCopy("가져오는 중…", "Importing…") : uiCopy("CSV 추가", "Add CSV")}</button><button class="secondaryButton" type="button" data-action="import-workbook-dataset" ${state.datasetImportBusy || state.workbookImportBusy ? "disabled" : ""}>${state.workbookImportBusy ? uiCopy("Excel을 읽는 중…", "Reading workbook…") : uiCopy("Excel 선택", "Choose Excel")}</button></div>${state.datasetImportError ? `<p class="labStartError" role="alert">${escapeHtml(state.datasetImportError)}</p>` : ""}${state.workbookImportError ? `<p class="labStartError" role="alert">${escapeHtml(state.workbookImportError)}</p>` : ""}</section>`
+      : "";
+    return `<section class="artifactWorkspace ${state.historyOpen ? "historyOpen" : ""} ${state.artifactComparison ? "compareOpen" : ""} ${spatialArtifact ? "spatialArtifact" : ""} ${spatial3dOpen ? "spatial3dOpen" : ""}" data-chart-priority="${chartPriority}"><header class="labWorkspaceHeader visuallyHidden"><span>${escapeHtml(labCapabilityLabel(state.selectedLabId))}</span><strong>아티팩트 보관소 · 작업공간</strong><span class="originVersion">${capability}</span><button data-action="back-session">${state.returnMessageId ? "대화의 아티팩트로" : "세션으로 돌아가기"}</button></header>${dataTableIntakeAction}${tabs ? `<nav class="artifactTabs" data-count="${escapeHtml(labArtifacts.length)}" aria-label="Lab 아티팩트">${tabs}</nav>` : ""}${originStrip}${statisticsLineage}${paleontologyLineage}<div class="labWorkGrid"><div class="figureColumn">
       ${canvas}
       <section class="artifactInterpretation"><div><div class="researchKicker">${inspectingHistory ? "과거 버전 의미 기록" : "Semantic layer"}</div><h2>${escapeHtml(activeVersion?.semantic?.title || (inspectingHistory ? `v${state.inspectedArtifactVersion} 기록을 불러오는 중…` : artifact.title))}</h2><p>${escapeHtml(activeVersion?.semantic?.summary || (inspectingHistory ? "현재 버전 정보로 대체하지 않고, 선택한 과거 버전의 검증이 끝날 때까지 기다립니다." : ""))}</p></div>${observations ? `<dl class="observationGrid">${observations}</dl>` : ""}</section>
       <div data-artifact-compare-host>${artifactCompareMarkup(artifact, history)}</div>
@@ -11328,6 +11573,21 @@ function createComposerEventSync({
     if (target.dataset.action === "send-turn") { void startComposerTurn(); return; }
     if (target.dataset.action === "cancel-turn") { void cancelComposerTurn(); return; }
     if (target.dataset.action === "import-csv-dataset") { void importCsvDataset(); return; }
+    if (target.dataset.action === "import-workbook-dataset") { void importWorkbookDataset(); return; }
+    if (target.dataset.action === "clear-workbook-intake") {
+      if (state.workbookProjectionBusy) return;
+      state.workbookImportBusy = false;
+      state.workbookImportError = "";
+      state.workbookProjectionError = "";
+      state.workbookReadback = null;
+      state.workbookSelectedSheetOrdinal = null;
+      state.workbookFirstRow = 1;
+      state.workbookLastRow = 1;
+      state.workbookColumnMapping = {};
+      render();
+      return;
+    }
+    if (target.dataset.action === "project-workbook") { void projectWorkbookDataset(); return; }
     const mapMode = target.closest("[data-statistics-map-mode]");
     if (mapMode) {
       const property = mapMode.dataset.statisticsMapMode;
@@ -11478,6 +11738,29 @@ function createComposerEventSync({
   root.addEventListener("change", (event) => {
     const approvalScope = event.target.closest('input[data-action="toggle-approval-scope"]');
     if (approvalScope) { void toggleApprovalScope(approvalScope.dataset.scope, approvalScope.checked); return; }
+    const workbookSheet = event.target.closest("[data-workbook-sheet]");
+    if (workbookSheet && state.workbookReadback) {
+      const ordinal = Number(workbookSheet.value);
+      if (!Number.isSafeInteger(ordinal)) return;
+      void reloadWorkbookSheet(ordinal);
+      return;
+    }
+    const workbookRange = event.target.closest("[data-workbook-first-row], [data-workbook-last-row]");
+    if (workbookRange && state.workbookReadback) {
+      state.workbookProjectionError = "";
+      render();
+      return;
+    }
+    const workbookColumn = event.target.closest("[data-workbook-column-toggle]");
+    if (workbookColumn && state.workbookReadback) {
+      const sourceColumn = workbookColumn.dataset.sourceColumn;
+      if (!sourceColumn) return;
+      const current = state.workbookColumnMapping[sourceColumn] || { selected: false, name: "" };
+      state.workbookColumnMapping[sourceColumn] = { ...current, selected: workbookColumn.checked };
+      state.workbookProjectionError = "";
+      render();
+      return;
+    }
     const materialsStructure = event.target.closest("[data-materials-structure-index]");
     if (materialsStructure && state.selectedArtifactId) {
       const index = Number(materialsStructure.value);
@@ -11738,6 +12021,28 @@ function createComposerEventSync({
     if (projectSearch) {
       state.librarySearch = projectSearch.value;
       if (!event.isComposing && !librarySearchComposing) scheduleProjectSearchRender(projectSearch);
+      return;
+    }
+    const workbookRow = event.target.closest("[data-workbook-first-row], [data-workbook-last-row]");
+    if (workbookRow && state.workbookReadback) {
+      const value = Number(workbookRow.value);
+      if (workbookRow.matches("[data-workbook-first-row]")) state.workbookFirstRow = Number.isFinite(value) ? value : 0;
+      else state.workbookLastRow = Number.isFinite(value) ? value : 0;
+      state.workbookProjectionError = "";
+      syncWorkbookRangeNote();
+      const projectButton = document.querySelector('[data-action="project-workbook"]');
+      if (projectButton) projectButton.disabled = !workbookSelection() || state.workbookProjectionBusy;
+      return;
+    }
+    const workbookColumnName = event.target.closest("[data-workbook-column-name]");
+    if (workbookColumnName && state.workbookReadback) {
+      const sourceColumn = workbookColumnName.dataset.sourceColumn;
+      if (!sourceColumn) return;
+      const current = state.workbookColumnMapping[sourceColumn] || { selected: false, name: "" };
+      state.workbookColumnMapping[sourceColumn] = { ...current, name: workbookColumnName.value };
+      state.workbookProjectionError = "";
+      const projectButton = document.querySelector('[data-action="project-workbook"]');
+      if (projectButton) projectButton.disabled = !workbookSelection() || state.workbookProjectionBusy;
       return;
     }
     const newProjectForm = event.target.closest("#new-project-form");

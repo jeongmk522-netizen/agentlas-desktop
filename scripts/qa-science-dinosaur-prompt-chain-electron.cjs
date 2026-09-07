@@ -391,7 +391,9 @@ async function startScienceRecorder(desktop) {
   const framesDir = path.join(outputDir, "video-frames");
   fs.mkdirSync(framesDir, { recursive: true, mode: 0o700 });
   const ffmpegPath = resolveExecutable("ffmpeg", process.env.AGENTLAS_FFMPEG_PATH, [
-    "/Users/mason/.local/bin/ffmpeg",
+    // Personal install locations come from the environment, never from a path baked into a
+    // public repository.
+    path.join(os.homedir(), ".local/bin/ffmpeg"),
     "/opt/homebrew/bin/ffmpeg",
     "/usr/local/bin/ffmpeg",
   ]);

@@ -26,7 +26,14 @@ const path = require("node:path");
 
 const root = path.resolve(__dirname, "..");
 const DESKTOP_SETTINGS = path.join(root, "renderer/components/one/OneSettings.tsx");
-const WEB_SETTINGS = "/Users/mason/Documents/Agentlas_F/agentlas/AgentsAtlas/app/src/one/components/one/OneSettings.tsx";
+// The sibling web checkout, derived from this repository rather than one machine's home
+// directory. A hard-coded personal path is both a leak in a public repository and a gate
+// that only runs on the machine that wrote it.
+const WEB_SETTINGS = path.resolve(
+  root,
+  "..",
+  "agentlas/AgentsAtlas/app/src/one/components/one/OneSettings.tsx",
+);
 
 /** modalities 배열 리터럴에서 id: "..." 값들을 뽑는다. 파일이 없으면 던진다(감춤 금지). */
 function extractModalityIds(source) {

@@ -10179,7 +10179,16 @@ export class ScienceStore {
 
   searchSourceTextChunks(projectId: string, query: string, limit = 12): ScienceSourceTextSearchResult {
     if (!UUID_RE.test(projectId)) throw new Error("science-source-text-search-project-invalid");
-    const exactQuery = safeText(query, 2_000, "source-text-search-query");
+    // 검색 키는 저장되는 기록이 아니라 최선 노력 조회다. safeText 는 길이 초과에서
+    // 던지는데, 연구 지시 전체가 이 자리로 들어오면(모델이 실제로 그렇게 부른다)
+    // 2,000자에서 science-source-text-search-query-invalid 로 죽어 **모델이 돌기도
+    // 전에** 연구 턴 전체가 끝났다. 게다가 아래에서 어차피 앞의 낱말 24개만 쓰므로
+    // 그 길이 제한이 막아 주는 것은 아무것도 없었다.
+    // 빈 값·문자열 아님은 그대로 거절하고, 길이만 접는다. 접힌 키가 그대로 서명
+    // 기록의 query 가 되므로 "무엇으로 찾았는지"는 여전히 정확하다.
+    if (typeof query !== "string") throw new Error("science-source-text-search-query-invalid");
+    const exactQuery = query.replace(/\r\n/g, "\n").trim().slice(0, 2_000);
+    if (!exactQuery) throw new Error("science-source-text-search-query-invalid");
     const safeLimit = Math.max(1, Math.min(100, Math.floor(limit)));
     const tokens = exactQuery.normalize("NFKC").toLowerCase().match(/[\p{L}\p{N}]+/gu)?.filter((item) => item.length > 1).slice(0, 24) ?? [];
     if (!tokens.length) {

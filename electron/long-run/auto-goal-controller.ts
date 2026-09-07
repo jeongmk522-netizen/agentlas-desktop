@@ -5,6 +5,7 @@ import type { GoalIntakeDecision, GoalCriterion, GoalSourceMessage } from "../..
 import { LONG_RUN_TERMINAL_STATUSES, type LongRunBudget } from "../../shared/long-run";
 import { getDb } from "../store/db";
 import { createStoredAutomaticGoal, completeChatGoalContract } from "../store/chat-goals";
+import { getChat, setChatGoalBinding } from "../store/chats";
 import {
   appendLongRunEvent, bindCurrentGoalRevisionToLongRun, createLongRun, getLongRun,
   longRunContinueDecision, resumeLongRunByUser, transitionLongRun, type LongRunRecord,
@@ -96,7 +97,16 @@ export function controlAutomaticGoal(input: {
     }
     if (run.status === "cancelled") {
       completeChatGoalContract(run.goalId, "cancelled");
-      getDb().prepare("UPDATE chats SET goal_id = NULL WHERE id = ? AND goal_id = ?").run(run.rootChatId, run.goalId);
+      /*
+       * ★원장만 바꾸고 화면에 알리지 않으면, 끝난 목표가 화면에서 계속 진행 중이다.
+       *
+       * 여기는 결속을 직접 SQL 로 풀고 있었다. 그러면 setChatGoalBinding 안의
+       * emitDesktopStoreChange 를 지나지 않아 **대화 화면이 갱신 신호를 못 받는다.**
+       * 나머지 세 완료 지점은 전부 그 함수를 쓴다 — 이 자리만 달랐다.
+       * (QA 실측 2026-09-08: 원장이 닫힌 뒤에도 목표 칩과 "목표 추진" 토글이 그대로였다.)
+       */
+      const rootChatId = run.rootChatId;
+      if (rootChatId && getChat(rootChatId)?.goalId === run.goalId) setChatGoalBinding(rootChatId, null);
     }
     appendLongRunEvent({ runId: run.id, kind: "run.user_control", actorKind: "user", actorId: source.messageId,
       payload: { command: input.command, status: run.status } });

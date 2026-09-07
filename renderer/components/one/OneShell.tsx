@@ -4588,6 +4588,35 @@ export function OneShell() {
         setComposer(value);
         return;
       }
+      /*
+       * ★여기까지 왔다는 것은 **실행이 시작되지 않았다**는 뜻이다. 그러면 사용자의
+       * 글과 사진은 어디에도 없다 — Main 은 실행에 들어가야 그 턴을 저장하고(
+       * mcp/client.ts persistUserMessage), 화면의 낙관적 줄은 메모리에만 있어서
+       * 다음 기록 새로고침에 사라진다.
+       *
+       * 오너 실사용 2026-09-07: "내가 보낸 메세지가 자꾸 없어진다 사진도 없어지고".
+       * 위 두 갈래(새 대화 실패·첨부 준비 실패)만 초안을 되돌려 주고, **그 외 전부**는
+       * 아무것도 되돌리지 않았다. 실행 전에 던지는 길은 그 둘 말고도 많다 —
+       * 팀 preflight, 워크스페이스 영수증, IPC, 그리고 Main 이 저장 전에 던지는 모든 것.
+       *
+       * 실패는 사용자가 쓴 것을 없앨 이유가 아니다. 되돌려 주고, 화면에서도 그 줄을
+       * 지운다 — 기록에 없는 줄을 남겨 두면 "보냈다"고 읽히고 새로고침 때 또 사라진다.
+       */
+      if (!runIdRef.current) {
+        setMessages((current) => current.filter((item) => item.id !== preflightId));
+        setComposer((current) => {
+          if (!current.trim()) return value;
+          if (current === value) return current;
+          return `${value}\n${current}`;
+        });
+        if (attachmentSnapshot.length > 0) {
+          const restored = attachmentSnapshot.map((item) => ({ ...item, previewUrl: null }));
+          attachmentDraftsRef.current = restored;
+          setAttachmentDrafts(restored);
+        }
+        setTurnOverrides(overrideSnapshot);
+        setTurnAgentIds(turnAgentIds);
+      }
       requestOneOperationalRecovery("one-submit", cause);
       setError(null);
     }

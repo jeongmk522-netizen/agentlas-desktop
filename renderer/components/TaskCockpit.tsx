@@ -4277,15 +4277,31 @@ function ChatPage() {
           lastRunIdRef.current = runId;
           return false;
         }
-        setMessages((m) =>
-          m.map((msg) =>
+        /*
+         * ★"입력 내용은 보존되었습니다" 가 사실이 아니었다 (오너 실사용 2026-09-07:
+         * "내가 보낸 메세지가 자꾸 없어진다 사진도 없어지고").
+         *
+         * 여기까지 왔다는 것은 실행이 **시작되지 않았다**는 뜻이고, 그러면 Main 은 그 턴을
+         * 저장한 적이 없다(저장은 mcp/client.ts 의 persistUserMessage 에서 일어난다).
+         * 화면의 낙관적 사용자 줄은 메모리에만 있어서 다음 기록 새로고침에 사라진다.
+         * 문구는 보존됐다고 말하는데 되돌리는 코드는 어디에도 없었다 —
+         * setComposerPrefill 은 다른 자리에서만 쓰였다.
+         *
+         * 이제 실제로 되돌린다. 그리고 기록에 없는 줄은 화면에서도 지운다 — 남겨 두면
+         * "보냈다"로 읽히고 새로고침 때 또 사라진다.
+         */
+        setComposerPrefill(userPrompt);
+        const hadImages = (images?.length ?? 0) > 0;
+        setMessages((m) => m
+          .filter((msg) => msg.id !== userMessageId)
+          .map((msg) =>
             msg.id === placeholderId
               ? {
                   id: msg.id,
                   role: "system",
                   text: locale === "ko"
-                    ? "작업을 시작하지 못했습니다. 입력 내용은 보존되었습니다. 실행 환경을 확인한 뒤 다시 시도해 주세요."
-                    : "The task did not start. Your input was preserved. Check the runtime and try again.",
+                    ? `작업을 시작하지 못해 이 턴은 기록에 남지 않았습니다. 입력은 작성창에 되돌려 놓았습니다${hadImages ? " (사진은 다시 첨부해 주세요)" : ""}. 실행 환경을 확인한 뒤 다시 보내 주세요.`
+                    : `The task did not start, so this turn was not recorded. Your text is back in the composer${hadImages ? " (please attach the image again)" : ""}. Check the runtime and send it again.`,
                 }
               : msg,
           ),

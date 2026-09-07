@@ -159,6 +159,7 @@ import { getAgentApp } from "../store/agent-apps";
 import { autoSelectMcpTools, buildMcpAutoSelectionPrompt } from "../mcp-tools/auto-select";
 import { runMcpKeyElicitationGate } from "./run-key-elicitation";
 import { bridgeHubPluginCandidates } from "../mcp-tools/hub-plugin-bridge";
+import { noteRuntimeFailure, runtimeCooldown, clearRuntimeCooldown } from "../runtime/runtime-cooldown";
 import { buildMcpConfigFile } from "../mcp-tools/mcp-config";
 import {
   refreshBrowserCredentialsIfDue,
@@ -2315,6 +2316,30 @@ ${effectiveUserPrompt}`;
     }
   }
   let controllerFallbackBeforeRun: RuntimeStatus | null = null;
+  /*
+   * ★고른 런타임이 지금 한도에 걸려 있으면 **시작하기 전에** 비켜 간다.
+   *
+   * 실사용 실측 2026-09-07: agy 가 한도인 채로 실행이 들어가 `7m 4s 동안 작업 · 실패`
+   * 를 낸 뒤에야 폴백이 돌았다. 이미 아는 사실을 확인하려고 7분을 쓴 것이다.
+   * 저장된 선택은 건드리지 않는다 — 시한이 지나면 다음 턴이 알아서 원래 모델로 간다.
+   */
+  if (runtimeChoice && req.oneMode === true && runtimeResolution.pinHonored) {
+    const cooling = runtimeCooldown(runtimeChoice.active);
+    if (cooling) {
+      const fallback = rolePriorityRuntimes(runtimes, "orchestrator")[0];
+      const fallbackPicked = fallback ? pickRunner(fallback) : null;
+      if (fallback && fallbackPicked) {
+        runtimeChoice = { active: fallback, picked: fallbackPicked, override: null, unavailableOverride: null };
+        controllerFallbackBeforeRun = fallback;
+      } else {
+        /*
+         * 대신 갈 곳이 없다. 그러면 쿨다운을 **지키지 않는다** — 아무것도 안 하는 것보다
+         * 한 번 더 해 보는 쪽이 낫다(한도가 이미 풀렸을 수도 있다). 기록만 지운다.
+         */
+        clearRuntimeCooldown(runtimeChoice.active);
+      }
+    }
+  }
   // A One composer pin is a preference with an ordered recovery chain, not a
   // reason to stop before a runner starts. If the selected executable vanished
   // between the picker and dispatch, begin at orchestrator priority 1.
@@ -2481,20 +2506,29 @@ ${effectiveUserPrompt}`;
     const previous = controllerSelectionForFallback;
     controllerSelectionForFallback = nextSelection;
     req = { ...req, runtimeSelection: nextSelection };
-    let persisted = true;
-    try {
-      setChatRuntimeSelection(chat.id, nextSelection);
-    } catch (error) {
-      persisted = false;
-      console.error("[runtime-selection] failed to persist One fallback:", error);
-    }
+    /*
+     * ★폴백은 이번 실행의 우회로지 **사용자의 선택을 바꾸는 일이 아니다**.
+     *
+     * 실사용 실측 2026-09-07. 사용자가 제미나이를 골라 뒀는데 여기서
+     * `setChatRuntimeSelection(chat.id, nextSelection)` 으로 그 선택을 **영구히
+     * 덮어썼다.** agy 한도는 25분이면 풀리는데 대화는 영영 grok 에 남았고, 사용자는
+     * "제미나이로 했는데", "왜 자꾸 그록으로 바뀌냐", "자꾸 걍 그록만 호출된다" 를
+     * 반복해 겪었다. 매 턴 손으로 되돌려야 원래 모델로 돌아온다.
+     *
+     * 같은 자리의 Work 경로(아래 recovery 루프의 else 가지)는 처음부터 옳게 하고
+     * 있었다 — "저장된 선택은 변경하지 않았습니다". One 만 달랐다.
+     *
+     * 이제 선택은 사용자 것으로 두고, 대신 **고장 사실에 시한을 붙인다**
+     * (runtime-cooldown). 그래서 다음 턴은 죽은 런타임을 빠르게 건너뛰고, 한도가
+     * 풀리면 사용자가 아무것도 안 해도 원래 모델로 **스스로 돌아온다.**
+     */
     const fromLabel = `${previous.kind}${previous.model ? ` · ${previous.model}` : ""}`;
     const toLabel = `${nextSelection.kind}${nextSelection.model ? ` · ${nextSelection.model}` : ""}`;
     const reason = failure?.kind === "quota"
       ? locale === "ko" ? "사용 한도에 걸려" : "hit its usage limit"
       : locale === "ko" ? "실행할 수 없어" : "became unavailable";
-    const koMessage = `One 모델 ${fromLabel}이 ${reason} 오케스트레이터 우선순위 모델 ${toLabel}로 전환했습니다.`;
-    const enMessage = `One's ${fromLabel} ${failure?.kind === "quota" ? "hit its usage limit" : "became unavailable"}; switched to orchestrator-priority model ${toLabel}.`;
+    const koMessage = `One 모델 ${fromLabel}이 ${reason} 이번 실행만 ${toLabel}로 이어갑니다. 저장된 선택은 ${previous.kind}${previous.model ? ` · ${previous.model}` : ""} 그대로이고, 사용할 수 있게 되면 자동으로 돌아갑니다.`;
+    const enMessage = `One's ${fromLabel} ${failure?.kind === "quota" ? "hit its usage limit" : "became unavailable"}; continuing this run on ${toLabel}. Your saved selection is unchanged and will be used again as soon as it works.`;
     const message = locale === "ko"
       ? koMessage
       : enMessage;
@@ -2514,7 +2548,8 @@ ${effectiveUserPrompt}`;
           reason: failure?.kind ?? "unavailable-before-run",
           runtime: failure?.runtime ?? null,
           retryAfterHint: failure?.retryAfterHint ?? null,
-          persisted,
+          // 저장된 선택은 건드리지 않는다 — 폴백은 이번 실행에만 적용된다.
+          savedSelectionChanged: false,
         }),
       },
     });
@@ -4812,6 +4847,12 @@ ${effectiveUserPrompt}`;
         // First failure: this is when recovery actually begins.
         if (recoveryStartedAt == null) recoveryStartedAt = Date.now();
         originalFailure = originalFailure ?? failed;
+        /*
+         * ★"지금 못 쓴다"를 시한부 사실로 남긴다. 이게 없으면 다음 턴이 같은 죽은
+         * 런타임에 또 7분을 쓰고(실측), 폴백은 이미 한도 초과인 후보를 다시 고른다.
+         * 시한이 지나면 스스로 후보로 돌아오므로 사용자가 손댈 일이 없다.
+         */
+        noteRuntimeFailure(active, failed);
         const fallback = rolePriorityRuntimes(runtimes, "orchestrator", {
           failedRuntime: active,
           failure: failed,

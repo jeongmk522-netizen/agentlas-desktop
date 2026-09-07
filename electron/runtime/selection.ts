@@ -1,4 +1,5 @@
 import { isRuntimeCredentialUnavailable } from "./credential-access";
+import { runtimeCooldown } from "./runtime-cooldown";
 import type {
   AgentRuntimeOverride,
   RuntimeRole,
@@ -468,6 +469,15 @@ export function rolePriorityRuntimes(
   const excluded = options.exclude ?? [];
   const blocked = (candidate: RuntimeStatus): boolean => {
     if (isRuntimeCredentialUnavailable(candidate)) return true;
+    /*
+     * ★이미 한도에 걸린 런타임으로 폴백하지 않는다 (실사용 실측 2026-09-07).
+     *
+     * 사용자가 제미나이를 골라 뒀는데 agy 가 한도로 실패했고, 폴백이 grok 을 골랐다.
+     * 그런데 grok 은 **그 시점에 이미 한도 초과였다**(524673/500000, 24시간 롤링).
+     * 죽은 것에서 죽은 것으로 넘어가느라 실패 두 번과 8분을 썼다. 후보 필터에
+     * "지금 막혀 있다"는 개념이 없었기 때문이다. 시한이 지나면 스스로 다시 후보가 된다.
+     */
+    if (runtimeCooldown(candidate)) return true;
     if (excluded.some((item) => sameRuntimeIdentity(candidate, item))) return true;
     if (
       options.failedRuntime

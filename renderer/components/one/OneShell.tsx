@@ -2425,34 +2425,22 @@ export function OneShell() {
       return next;
     });
     if (event.kind === "notice" && event.notice?.code === "runtime-fallback" && event.runtimeSelection) {
-      const selection = event.runtimeSelection;
-      // Main has already persisted the new chat pin. Update the composer
-      // immediately as well, then refresh the exact live runtime so a provider
-      // switch (for example Antigravity -> Codex) changes the model menu too.
-      setOneRuntimePinned(true);
-      writeStoredOneRuntimeSelection(selection);
-      setActiveThreadChat((current) => current ? { ...current, runtimeSelection: selection } : current);
-      setOneRuntime((current) => {
-        if (!current || current.kind !== selection.kind || (selection.backend && current.backend !== selection.backend)) {
-          return current;
-        }
-        return withOneRuntimeSelection({ ...current, active: true }, selection.model ?? current.model ?? null, selection.effort ?? current.effort);
-      });
-      const api = ipc();
-      void api?.chats.setRuntimeSelection(chatId, selection).catch(() => null);
-      void api?.runtime.detect().then((runtimes) => {
-        const matched = runtimes.find((runtime) => (
-          runtime.kind === selection.kind
-          && (!selection.backend || runtime.backend === selection.backend)
-          && (!selection.source || runtime.source === selection.source)
-        )) ?? runtimes.find((runtime) => (
-          runtime.kind === selection.kind
-          && (!selection.backend || runtime.backend === selection.backend)
-        ));
-        if (!matched) return;
-        setOneRuntimeInventory(runtimes);
-        setOneRuntime(withOneRuntimeSelection({ ...matched, active: true }, selection.model ?? matched.model ?? null, selection.effort ?? matched.effort));
-      }).catch(() => null);
+      /*
+       * ★폴백은 **이번 실행의 우회로**다. 사용자의 모델 선택을 바꾸는 신호가 아니다.
+       *
+       * 실사용 실측 2026-09-07. 여기서 셋을 했었다:
+       *   writeStoredOneRuntimeSelection(selection)  ← One 의 **전역** 핀(localStorage)
+       *   api.chats.setRuntimeSelection(chatId, ...) ← 대화 핀을 DB 에 영구 저장
+       *   setOneRuntime(...)                          ← 작성창 칩을 폴백 모델로 교체
+       * 제미나이가 한도(25분이면 풀린다)로 한 번 실패하면 그 순간 One 이 통째로 grok 으로
+       * 굳었다. 대화 하나가 아니라 **전역 핀**이라 새 대화도 grok 으로 시작했다.
+       * 사용자가 겪은 것이 정확히 그것이다 — "제미나이로 했는데", "One이 지혼자 막 모델이
+       * 바뀜", "자꾸 걍 그록만 호출된다".
+       *
+       * 이제 Main 도 저장하지 않는다(mcp/client.ts emitControllerRuntimeFallback).
+       * 양쪽 끝을 같이 바꿔야 한다 — 한쪽만 고치면 다른 쪽이 계속 덮어쓴다.
+       * 알림 자체는 활동 리듀서가 이미 그렸고, 거기에 무엇으로 이어갔는지 적혀 있다.
+       */
     }
     if (event.kind === "mcp-key-request") {
       if (event.keyRequest && event.keyRequest.expiresAt > Date.now()) {
@@ -8498,14 +8486,41 @@ function ResolvedDecisionReceipt({ receipt, locale }: { receipt: CommittedQuesti
   );
 }
 
+/**
+ * 작성창의 Enter 처리 — **한글 조합 확정과 전송을 가르는 자리.**
+ *
+ * ★실사용 실측 2026-09-07 (오너): One 에서 한글을 치고 Enter 를 누르면 전송이 아니라
+ *   **줄바꿈이 들어갔다.** "다시" 를 치면 "다\n시" 가 된다. 사용자는 문장을 못 쓴다.
+ *
+ * 원인은 브라우저마다 다른 이벤트 순서다. 크로미움은 조합 확정 Enter 에서
+ * `compositionend` 를 **keydown 보다 먼저** 쏜다 — 그래서 그 keydown 은
+ * `isComposing === false` 로 온다. 그걸 잡으려고 `onCompositionEnd` 에서
+ * `setTimeout(…, 0)` 으로 ref 를 잠깐 더 켜 두는데(위 composerComposingRef),
+ * 옛 코드는 그 ref 가 켜져 있으면 **아무것도 안 하고 return** 했다.
+ * 전송은 막혔지만 `preventDefault()` 를 안 했으니 textarea 의 기본 동작
+ * (줄바꿈 삽입)이 그대로 일어난다. 막은 것이 아니라 다른 일이 일어나게 둔 것이다.
+ *
+ * 규칙:
+ *  - IME 가 아직 그 키를 쥐고 있으면(`isComposing`/229) 손대지 않는다. 그 Enter 는
+ *    조합을 확정하는 데 쓰이고 브라우저가 줄바꿈을 넣지 않는다.
+ *  - 조합이 방금 끝난 Enter(우리 ref 만 켜져 있는 상태)는 **전송도 줄바꿈도 아니다.**
+ *    삼키되 반드시 기본 동작을 막는다 — 이 한 줄이 빠져 있었다.
+ *  - 그 외 Enter 는 전송, Shift+Enter 는 평소대로 줄바꿈.
+ */
 function handleComposerKey(
   event: ReactKeyboardEvent<HTMLTextAreaElement>,
   action: () => void,
   composing = false,
 ) {
-  if (composing || event.nativeEvent.isComposing || event.keyCode === 229) return;
-  if (event.key === "Enter" && !event.shiftKey) {
+  // IME 가 아직 쥐고 있는 키는 건드리지 않는다(사파리/윈도우 경로).
+  if (event.nativeEvent.isComposing || event.keyCode === 229) return;
+  if (event.key !== "Enter" || event.shiftKey) return;
+  if (composing) {
+    // 크로미움 경로: 조합은 이미 끝났고 이 Enter 는 확정용이다.
+    // 막지 않으면 줄바꿈이 들어간다.
     event.preventDefault();
-    action();
+    return;
   }
+  event.preventDefault();
+  action();
 }

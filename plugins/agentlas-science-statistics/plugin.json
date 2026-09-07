@@ -574,8 +574,8 @@
       },
       {
         "path": "runtime/methods/resampling.cjs",
-        "sha256": "36a7c5d17481cae7f58dbbfafd05b7c0657dc6701a9cc4eac75488a0f3304962",
-        "bytes": 68999
+        "sha256": "0769b1c35c25de00c08b951a5b79246fff7fb82fd14213df96d8b2d1349974b2",
+        "bytes": 69728
       },
       {
         "path": "runtime/methods/shared-precision-distributions.cjs",

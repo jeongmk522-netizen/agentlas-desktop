@@ -474,7 +474,16 @@ export class ScienceConversationService {
             requestId: stableUuid(`science:evidence-graph-refresh:v1:${turn.invocationRunId}`),
             projectId: project.id,
           });
-          const boundedGraph = this.evidenceGraphService!.boundedContext(project.id, userMessage.content, 24);
+          // boundedContext's query is capped at 2000 chars (evidence-graph.ts safeText) and
+          // throws past that rather than truncating -- correct for a caller-supplied search
+          // term, wrong here, since userMessage.content is not a search term, it's the whole
+          // turn. The autonomous loop's own continuation prompt alone runs ~2800 chars, so every
+          // resumed turn hit this deterministically: the exact same "malformed query" refusal on
+          // every retry, because the "malformed" query was just an ordinary message being long
+          // (reported live as a crash-recovery deadlock across 7+ resume attempts, 2026-09-07).
+          // The graph search only needs enough of the message to seed a traversal; slice it
+          // rather than let an ordinary long message fail the entire turn dispatch.
+          const boundedGraph = this.evidenceGraphService!.boundedContext(project.id, userMessage.content.slice(0, 2000), 24);
           return boundedGraph ? {
             revisionId: refreshed.graph.id,
             revision: refreshed.graph.revision,

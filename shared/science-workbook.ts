@@ -1,5 +1,8 @@
 import { createHash } from "node:crypto";
 
+// Coordinate/formula metadata is larger than an analysis table; match the run-blob ceiling.
+export const SCIENCE_WORKBOOK_MAX_OUTPUT_BYTES = 64 * 1024 * 1024;
+
 export function canonicalWorkbookJson(value: unknown): string {
   if (Array.isArray(value)) return `[${value.map(canonicalWorkbookJson).join(",")}]`;
   if (value && typeof value === "object") return `{${Object.entries(value).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0).map(([k, v]) => `${JSON.stringify(k)}:${canonicalWorkbookJson(v)}`).join(",")}}`;

@@ -5,7 +5,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { TextDecoder } from "node:util";
 import { strFromU8, unzipSync } from "fflate";
 import { validateScienceProjectFolderPath } from "./project-folder-selection";
-import { verifyScienceWorkbook } from "../../shared/science-workbook";
+import { verifyScienceWorkbook, SCIENCE_WORKBOOK_MAX_OUTPUT_BYTES } from "../../shared/science-workbook";
 import { projectScienceWorkbookTable, type ScienceWorkbookTableSelection } from "../../shared/science-workbook-table";
 import type { RuntimeSelection } from "../../shared/types";
 import {
@@ -11597,7 +11597,7 @@ export class ScienceStore {
     const raw = Buffer.from(input.rawBytes);
     if (raw.length < 8 || raw.length > 8 * 1024 * 1024) throw new Error("science-workbook-raw-size-invalid");
     const rawSha256 = createHash("sha256").update(raw).digest("hex");
-    const workbook = safeJsonRecord(input.workbook, 4 * 1024 * 1024, "workbook");
+    const workbook = safeJsonRecord(input.workbook, SCIENCE_WORKBOOK_MAX_OUTPUT_BYTES, "workbook");
     verifyScienceWorkbook(workbook, rawSha256);
     const inputHash = sha256Json({ projectId: input.projectId, conversationId: input.conversationId,
       originMessageId: input.originMessageId, title, rawSha256, workbookSha256: workbook.workbookSha256,

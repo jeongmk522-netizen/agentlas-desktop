@@ -2,8 +2,9 @@ import fs from "node:fs";
 import path from "node:path";
 import { createHash } from "node:crypto";
 import * as XLSX from "styled-exceljs";
+import { SCIENCE_WORKBOOK_MAX_OUTPUT_BYTES } from "../../../shared/science-workbook";
 
-const LIMITS = { rawBytes: 8 * 1024 * 1024, outputBytes: 4 * 1024 * 1024, sheets: 100, cells: 250_000 };
+const LIMITS = { rawBytes: 8 * 1024 * 1024, outputBytes: SCIENCE_WORKBOOK_MAX_OUTPUT_BYTES, sheets: 100, cells: 250_000 };
 type CellValue = string | number | boolean | null;
 export interface WorkbookCell {
   address: string;

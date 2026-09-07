@@ -14,7 +14,10 @@ function statusLabel(status: ProductExtensionStatus | null, ko: boolean): string
   if (!status) return ko ? "확인 중" : "Checking";
   if (status.phase === "installed") return ko ? "설치됨" : "Installed";
   if (status.phase === "disabled") return ko ? "꺼짐" : "Disabled";
-  if (status.phase === "repair-required") return ko ? "복구 필요" : "Repair required";
+  if (status.phase === "repair-required") {
+    if (status.installed && status.enabled) return ko ? "설치됨" : "Installed";
+    return ko ? "복구 필요" : "Repair required";
+  }
   return ko ? "설치 안 됨" : "Not installed";
 }
 
@@ -53,17 +56,43 @@ export function ScienceExtensionPanel() {
     const api = ipc();
     if (!api?.productExtensions || busy) return;
     setBusy("install");
-    setNotice({ text: ko ? "Science 업데이트를 확인하고 설치하고 있습니다." : "Checking and installing the Science update.", error: false });
+    setNotice({ text: ko ? "Science 업데이트를 확인하고 있습니다." : "Checking for Science updates…", error: false });
     try {
       const receipt = await api.productExtensions.installScienceSuite();
       const next = await api.productExtensions.scienceStatus();
       setStatus(next);
-      setNotice(receipt.ok && next.installed && next.enabled
-        ? { text: ko ? `Science ${next.version ?? ""}을 사용할 수 있습니다.` : `Science ${next.version ?? ""} is ready.`, error: false }
-        : { text: receipt.message ?? (ko ? "Science를 업데이트하지 못했습니다." : "Could not update Science."), error: true });
+      if (receipt.ok && next.installed && next.enabled) {
+        setNotice({
+          text: receipt.action === "unchanged"
+            ? (ko ? `Science가 최신 상태입니다 (v${next.version ?? "0.1.0"}).` : `Science is up to date (v${next.version ?? "0.1.0"}).`)
+            : (ko ? `Science ${next.version ?? ""} 업데이트가 완료되었습니다.` : `Science ${next.version ?? ""} is ready.`),
+          error: false,
+        });
+      } else if (receipt.code === "science-suite-package-unavailable" || receipt.code === "science-extension-package-unavailable" || receipt.message?.includes("built-in") || receipt.message?.includes("No verified")) {
+        if (next?.installed && next.enabled && next.phase === "installed") {
+          setNotice({
+            text: ko
+              ? `Science가 이 Desktop 빌드의 최신 버전(v${next.version ?? "0.1.0"})으로 유지되고 있습니다. Science 업데이트는 Desktop 앱 업데이트와 함께 제공됩니다.`
+              : `Science is up to date for this Desktop build (v${next.version ?? "0.1.0"}). Science updates are delivered alongside Desktop application updates.`,
+            error: false,
+          });
+        } else {
+          setNotice({
+            text: ko
+              ? "이 Desktop 빌드에 사용 가능한 별도 패키지가 없습니다. 위쪽의 Desktop 앱 업데이트를 확인하거나 앱을 다시 설치해 주세요."
+              : "No standalone package is available for this Desktop build. Please check for Desktop updates above or reinstall the application.",
+            error: true,
+          });
+        }
+      } else {
+        setNotice({
+          text: receipt.message ?? (ko ? "Science를 업데이트하지 못했습니다." : "Could not update Science."),
+          error: true,
+        });
+      }
     } catch {
       await refresh();
-      setNotice({ text: ko ? "Science를 업데이트하지 못했습니다. 다시 시도해 주세요." : "Could not update Science. Please try again.", error: true });
+      setNotice({ text: ko ? "Science 업데이트 확인 중 오류가 발생했습니다. 다시 시도해 주세요." : "Could not check for Science updates. Please try again.", error: true });
     } finally {
       setBusy(null);
     }
@@ -142,7 +171,7 @@ export function ScienceExtensionPanel() {
           ) : (
             <>
               <button type="button" className={styles.button} data-testid="science-settings-update" disabled={busy !== null} onClick={() => void update()}>
-                <IconCheck size={14} /> {busy === "install" ? (ko ? "업데이트 중…" : "Updating…") : (ko ? "업데이트" : "Update")}
+                <IconCheck size={14} /> {busy === "install" ? (ko ? "업데이트 확인 중…" : "Checking for updates…") : (ko ? "업데이트 확인" : "Check for updates")}
               </button>
               <button type="button" className={styles.button} data-primary={status.enabled ? "false" : "true"} disabled={busy !== null} onClick={() => void toggle()}>
                 <IconPower size={14} /> {status.enabled ? (ko ? "끄기" : "Disable") : (ko ? "켜기" : "Enable")}

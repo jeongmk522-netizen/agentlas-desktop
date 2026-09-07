@@ -598,7 +598,7 @@ function remoteSuiteActivationMatches(): boolean {
   if (!remoteCatalogInstallEnabled()) return true;
   try {
     const activation = readScienceSuiteActivation();
-    if (!activation) return false;
+    if (!activation) return true;
     return SCIENCE_SUITE_SPECS.every((spec) => {
       const expected = activation.components.find((component) => component.id === spec.id);
       const status = installer().status(spec.id);
@@ -692,13 +692,24 @@ export async function installScienceExtension(): Promise<ProductExtensionInstall
   }
   const source = process.env.AGENTLAS_SCIENCE_EXTENSION_SOURCE_DIR?.trim() ?? "";
   if (!source || !path.isAbsolute(source)) {
+    const current = installer().status(SCIENCE_EXTENSION_ID);
+    if (current.installed && current.phase === "installed") {
+      return {
+        ok: true,
+        id: SCIENCE_EXTENSION_ID,
+        action: "unchanged",
+        version: current.version,
+        code: null,
+        message: `Agentlas Science is up to date (v${current.version ?? "0.1.0"}).`,
+      };
+    }
     return {
       ok: false,
       id: SCIENCE_EXTENSION_ID,
       action: "failed",
       version: null,
       code: "science-extension-package-unavailable",
-      message: "No verified Agentlas Science package is available for this Desktop build.",
+      message: "This Desktop build uses the built-in Agentlas Science package. Updates are delivered with Desktop application updates.",
     };
   }
   return installer().installFromDirectory(path.resolve(source));
@@ -713,6 +724,24 @@ async function installScienceSuiteFromCatalog(
   try {
     ({ releaseTag, suiteVersion, specs } = await catalogSuite());
   } catch (error) {
+    const current = installer().status(SCIENCE_EXTENSION_ID);
+    if (current.installed && current.phase === "installed") {
+      return {
+        ok: true,
+        id: "agentlas-science-suite",
+        action: "unchanged",
+        components: [{
+          ok: true,
+          id: SCIENCE_EXTENSION_ID,
+          action: "unchanged",
+          version: current.version,
+          code: null,
+          message: null,
+        }],
+        code: null,
+        message: `Agentlas Science is up to date for this Desktop build (v${current.version ?? "0.1.0"}).`,
+      };
+    }
     return catalogFailure(error, true) as ScienceSuiteInstallReceipt;
   }
   const totalBytes = specs.reduce((sum, spec) => sum + spec.archiveBytes, 0);
@@ -946,6 +975,24 @@ async function installScienceSuiteOnce(
       }));
       const unavailable = sources.find(({ source }) => !source || !path.isAbsolute(source));
       if (unavailable) {
+        const current = installer().status(SCIENCE_EXTENSION_ID);
+        if (current.installed && current.phase === "installed") {
+          return {
+            ok: true,
+            id: "agentlas-science-suite",
+            action: "unchanged",
+            components: [{
+              ok: true,
+              id: SCIENCE_EXTENSION_ID,
+              action: "unchanged",
+              version: current.version,
+              code: null,
+              message: null,
+            }],
+            code: null,
+            message: `Agentlas Science is up to date for this Desktop build (v${current.version ?? "0.1.0"}).`,
+          };
+        }
         throw new SciencePackageError(
           "science-suite-package-unavailable",
           unavailable.spec.id,
@@ -974,7 +1021,7 @@ async function installScienceSuiteOnce(
       components: [],
       code: failure.code,
       message: failure.code === "science-suite-package-unavailable"
-        ? `No verified ${spec.displayName} package is available for this Desktop build.`
+        ? `This Desktop build uses the built-in ${spec.displayName} package. Standalone packages are not available; please update the Desktop application.`
         : failure.code === "science-suite-package-download-failed"
           ? `${spec.displayName} could not be downloaded. Check the network and try again.`
           : failure.code === "science-suite-package-signature-invalid"

@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, type ReactNode } from "react";
+import { askCardFooterLabel } from "@shared/ask-card-footer";
 import styles from "./AskCard.module.css";
 
 /**
@@ -45,7 +46,13 @@ export function AskCard({
    * 건너뛰기는 선택지를 고르지 않고 넘어가는 길이므로, 낼 수 있는 질문에는
    * 언제나 빠져나갈 길이 있어야 한다는 규칙을 이 줄이 지킨다.
    */
-  footer?: { placeholder: string; skipLabel: string; onSkip: (freeText: string) => void };
+  /*
+   * ★ 이 단추는 두 가지 일을 한다. 입력란이 비었으면 건너뛰고, 글이 있으면 그 글을 답으로
+   * 보낸다. 그런데 라벨은 늘 "건너뛰기"였다 — 답을 적어 둔 사람이 그 단추를 누르면
+   * **적은 답이 그대로 나간다.** 라벨이 시킨 것과 정반대다.
+   * 그래서 라벨도 상태를 따라간다: 글이 있으면 submitLabel, 없으면 skipLabel.
+   */
+  footer?: { placeholder: string; skipLabel: string; submitLabel: string; onSkip: (freeText: string) => void };
   /** Optional controlled value for drafts that outlive this card instance. */
   freeText?: string;
   /** Called whenever the free-text input changes in controlled mode. */
@@ -119,7 +126,7 @@ export function AskCard({
             }}
           />
           <button type="button" className={styles.skip} onClick={() => footer.onSkip(currentFreeText.trim())}>
-            {footer.skipLabel}
+            {askCardFooterLabel(currentFreeText, footer)}
           </button>
         </div>
       )}

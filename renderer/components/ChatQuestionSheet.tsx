@@ -265,9 +265,10 @@ export function ChatQuestionSheet({
         }}
         footer={{
           placeholder: ko ? "여기에 답변을 입력하세요" : "Type your answer here",
-          skipLabel: busy
+          skipLabel: ko ? "건너뛰기" : "Skip",
+          submitLabel: busy
             ? (ko ? "실행이 정리되면 전송" : "Sends when settled")
-            : (ko ? "건너뛰기" : "Skip"),
+            : (ko ? "이 답 보내기" : "Send answer"),
           onSkip: (freeText) => {
             if (freeText) {
               const nts = { ...notes, [q.id]: freeText };

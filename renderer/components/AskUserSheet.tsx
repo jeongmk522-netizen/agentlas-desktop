@@ -162,6 +162,7 @@ export function AskUserSheet() {
             ? {
               placeholder: ko ? "직접 답하기" : "Answer in your own words",
               skipLabel: ko ? `답하지 않음 · ${secondsLeft}초` : `Skip · ${secondsLeft}s`,
+              submitLabel: ko ? `이 답 보내기 · ${secondsLeft}초` : `Send answer · ${secondsLeft}s`,
               onSkip: (text) => { void answer(text ? text : null); },
             }
             : undefined}

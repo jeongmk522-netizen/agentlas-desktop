@@ -5889,6 +5889,75 @@ button:has(> span:only-child > .uiIcon:only-child):not(.projectHubInlineBack) {
   .artifactWorkspace:has(.statisticsAnalysisSurface) .artifactSemanticDetails { display: none; }
 }
 
+/* Generic Data Table narrow windows: let short selections use their natural
+   height, then bound only long tables so the warning and research chat remain
+   reachable below the result. */
+@media (max-width: 760px) {
+  .workspaceBody:has(.dataTableSurface) {
+    display: block;
+    overflow-x: hidden;
+    overflow-y: auto;
+  }
+  .workspaceBody:has(.dataTableSurface) .workspaceCenter {
+    height: auto;
+    min-height: 0;
+    flex: none;
+    overflow: visible;
+  }
+  .workspaceBody:has(.dataTableSurface) .workspaceSurface,
+  .workspaceBody:has(.dataTableSurface) .contentPane {
+    height: auto;
+    min-height: 0;
+    overflow: visible;
+  }
+  .workspaceBody:has(.dataTableSurface) .chatDock {
+    height: auto;
+    min-height: 360px;
+    flex: none;
+    padding: 8px;
+  }
+  .workspaceBody:has(.dataTableSurface) .chatDockFrame {
+    height: auto;
+    min-height: 344px;
+  }
+  .artifactWorkspace:has(.dataTableSurface) {
+    height: auto;
+    min-height: 0;
+    overflow: visible;
+  }
+  .artifactWorkspace:has(.dataTableSurface) .labWorkGrid,
+  .artifactWorkspace:has(.dataTableSurface) .figureColumn {
+    height: auto;
+    min-height: 0;
+    flex: 0 0 auto;
+  }
+  .artifactWorkspace:has(.dataTableSurface) .artifactCanvasFrame {
+    height: auto;
+    min-height: 0;
+    overflow: visible;
+  }
+  .artifactWorkspace:has(.dataTableSurface) .dataTableCanvas,
+  .artifactWorkspace:has(.dataTableSurface) .dataTableSurface {
+    height: auto;
+    min-height: 0;
+    overflow: visible;
+  }
+  .artifactWorkspace:has(.dataTableSurface) .dataTableViewport {
+    height: auto;
+    min-height: 0;
+    flex: 0 0 auto;
+    overflow-x: auto;
+    overflow-y: hidden;
+    overscroll-behavior: contain;
+  }
+  .artifactWorkspace:has(.dataTableSurface tbody tr:nth-child(8)) .dataTableViewport {
+    height: clamp(180px, 38vh, 360px);
+    min-height: 180px;
+    flex: 0 0 auto;
+    overflow: auto;
+  }
+}
+
 /* Keep the compact statistics surface reachable below the chat dock on narrow windows. */
 @media (max-width: 760px) {
   .artifactWorkspace:has(.statisticsAnalysisSurface) {

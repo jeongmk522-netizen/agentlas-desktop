@@ -36,6 +36,7 @@ import {
 } from "./research-director";
 import type { ScienceEvidenceGraphService } from "./evidence-graph";
 import { normalizeScienceRuntimeSelection } from "./runtime-selection";
+import { scienceLoopContinuationPrompt } from "./loop-continuation-prompt";
 
 export type ScienceComposerStartInput = {
   requestId: string;
@@ -386,7 +387,15 @@ export class ScienceConversationService {
       conversationId: input.conversationId,
       parentTurnId: latest.id,
       mode: "append-controller-message",
-      content: "Resume the authorized research loop from its canonical state. Inspect the loop, lifecycle, evidence graph, and exact OCC receipts first. Plan and execute at most one successor episode, complete the loop if verified, or pause at a concrete decision, blocker, deadline, or budget boundary.",
+      content: scienceLoopContinuationPrompt({
+        episodesRemaining: Number.isFinite(session.maxEpisodes - session.currentEpisode)
+          ? Math.max(0, session.maxEpisodes - session.currentEpisode) : null,
+        hoursRemaining: session.deadlineAt
+          ? Math.max(0, (new Date(session.deadlineAt).getTime() - Date.now()) / 3_600_000) : null,
+        noProgressStreak: Number(latest.continuationBasis?.noProgressStreak ?? 0) || 0,
+        standingApprovalScopes: this.store.approvalPolicy(input.projectId).mode === "autonomous"
+          ? this.store.approvalPolicy(input.projectId).scopes : [],
+      }),
       continuationBasis,
       runtimeSelection: session.runtimeSelection,
       locale: input.locale ?? currentUiLocale(),

@@ -1863,9 +1863,27 @@ export class InvocationService {
               payload: { resultFolder: record.resultFolder, decisionRequested: true },
             });
           });
-          sealDecision.immediate();
-          decisionTerminalCommitted = true;
-        }
+          // 봉인이 실패하면 **결정만** 포기한다. 예전에는 여기서 던져 턴 전체가 죽었는데,
+          // 그 시점엔 모델의 작업이 이미 끝나 있었고 Decision 행도 durable 이었다. 즉 연구
+          // 한 턴이 통째로 사라지는 대가로 얻는 것이 companion 장부 한 줄이었다.
+          // trySetTaskStatus 자신이 "일시적 투영 실패가 실행을 막아서는 안 된다"고 적어 둔
+          // 계약을 호출부가 정확히 뒤집고 있었다.
+          //
+          // 트랜잭션이 통째로 되돌아가므로 "Decision 과 Task 가 어긋난 채 노출되는 일은
+          // 없다"는 원래 불변식은 그대로다. 달라지는 것은 실패의 값이다: 턴을 죽이는 대신
+          // 결정 표면을 이번엔 올리지 않고, 왜 못 올렸는지를 원장에 남긴다.
+          try {
+            sealDecision.immediate();
+            decisionTerminalCommitted = true;
+          } catch (error) {
+            const reason = error instanceof Error ? error.message : String(error);
+            console.error(`[decision-seal] chat ${runReq.chatId}: ${reason}`);
+            tryRecordRunEvent({
+              runId,
+              chatId: runReq.chatId,
+              kind: "invoke_completed",
+              payload: { resultFolder: record.resultFolder, decisionRequested: false, decisionSealSkipped: reason.slice(0, 240) },
+            }
 
         const rawSurfaceForArtifactBinding = event.kind === "surface" ? event.surface : undefined;
         // Desktop Work owns and consumes its native Work surface. Only One or

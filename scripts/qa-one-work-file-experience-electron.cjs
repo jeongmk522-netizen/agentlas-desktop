@@ -589,6 +589,11 @@ if (process.env.AGENTLAS_CHAT_FILE_QA_SEED === "1") {
     }
   })().catch((error) => {
     process.stderr.write(`${error?.stack || error}\n`);
-    process.exitCode = 1;
+    /*
+     * ★ app.quit() 을 쓰는 검사에서 process.exitCode 는 믿을 수 없다. quit() 은 종료를
+     * 시작하고 곧바로 돌아오므로, 그 뒤에 적은 종료 코드가 반영되기 전에 프로세스가 0 으로
+     * 끝난다 — 어떤 실패도 초록으로 보고된다. app.exit(code) 는 그 코드로 즉시 끝낸다.
+     */
+    app.exit(1);
   });
 }

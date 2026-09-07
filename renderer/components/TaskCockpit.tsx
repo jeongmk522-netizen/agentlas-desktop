@@ -35,7 +35,14 @@ import type {
   RunEventUi,
   RuntimeSelection,
 } from "@shared/types";
-import { ChatStream, workActivityStateFromMessage, type StreamMessage, type StreamStep, type PipelineStage } from "@/components/ChatStream";
+import {
+  ChatStream,
+  workActivityStateFromMessage,
+  type StreamActivityRun,
+  type StreamMessage,
+  type StreamStep,
+  type PipelineStage,
+} from "@/components/ChatStream";
 import { ToolApprovalInline } from "@/components/ToolApprovalInline";
 import { normalizeToolCall, shadowsToolRecordedPath } from "@shared/tool-call-detail";
 import { runtimeSelectionReceiptMatches } from "@shared/runtime-selection-receipt";
@@ -71,7 +78,12 @@ import { onAgentRosterChange } from "@/lib/agent-roster-events";
 import { OneSuggestionReviewHandoffBanner } from "@/components/one/OneSuggestionReviewHandoff";
 import { OneActivityArtifactRail, taskBrowserUrl, type OneLiveAppPreview } from "@/components/one/OneActivityTimeline";
 import oneActivityStyles from "@/components/one/OneActivityTimeline.module.css";
-import type { OneActivityState } from "@/lib/one-activity";
+import {
+  initialOneActivityState,
+  projectOneActivityFromLedger,
+  reduceOneActivity,
+  type OneActivityState,
+} from "@/lib/one-activity";
 import { CodeIdeViewer, isCodeArtifactName } from "@/components/CodeIdeViewer";
 import { LiveOutputViewer, type LiveOutputKind } from "@/components/LiveOutputViewer";
 import { NativeLiveWebView } from "@/components/NativeLiveWebView";
@@ -1135,12 +1147,30 @@ function completePipeline(stages: PipelineStage[] | undefined): PipelineStage[] 
   return stages.map((s) => ({ ...s, status: "done" as const }));
 }
 
-function historyEntryToStreamMessage(entry: { id: string; role: string; text: string; imageDataUrls?: string[] }): StreamMessage {
+function historyEntryToStreamMessage(entry: {
+  id: string;
+  role: string;
+  text: string;
+  createdAt?: string;
+  durableMessageId?: string;
+  imageDataUrls?: string[];
+}): StreamMessage {
   const parsedFiles = parseChatFileMessage(entry.text);
   const role: StreamMessage["role"] =
     entry.role === "assistant" ? "agent" : entry.role === "user" ? "user" : "system";
+  const durableIdentity = {
+    ...(entry.createdAt ? { createdAt: entry.createdAt } : {}),
+    ...(entry.durableMessageId ? { durableMessageId: entry.durableMessageId } : {}),
+  };
   if (role !== "agent") {
-    return { id: entry.id, role, text: parsedFiles.visibleText, imageDataUrls: entry.imageDataUrls, chatFileGroupIds: parsedFiles.groupIds };
+    return {
+      id: entry.id,
+      role,
+      text: parsedFiles.visibleText,
+      ...durableIdentity,
+      imageDataUrls: entry.imageDataUrls,
+      chatFileGroupIds: parsedFiles.groupIds,
+    };
   }
   const parsed = extractQuestions(parsedFiles.visibleText, entry.id);
   const setup = stripMultimodalSetup(parsed.text);
@@ -1148,6 +1178,7 @@ function historyEntryToStreamMessage(entry: { id: string; role: string; text: st
     id: entry.id,
     role,
     text: setup.text,
+    ...durableIdentity,
     imageDataUrls: entry.imageDataUrls,
     chatFileGroupIds: parsedFiles.groupIds,
     questions: parsed.questions.length > 0 ? parsed.questions : undefined,
@@ -1176,15 +1207,36 @@ function reconcileTranscriptSnapshot(
   // reconciliation races the history read; otherwise the MCP card or a
   // runtime-fallback disclosure flashes and disappears as soon as the run
   // finishes.
-  const richBySignature = new Map<string, StreamMessage>();
+  const richBySignature = new Map<string, StreamMessage[]>();
   for (const message of current) {
     const hasRichSteps = message.steps?.some((step) => step.tool && step.result) === true;
     const hasNotices = (message.notices?.length ?? 0) > 0;
-    if (message.role !== "agent" || (!hasRichSteps && !hasNotices)) continue;
-    richBySignature.set(signature(message), message);
+    const hasCanonicalActivity = Boolean(message.activityState && hasOneActivityEvidence(message.activityState))
+      || (message.activityRuns?.length ?? 0) > 0;
+    if (message.role !== "agent" || (!hasRichSteps && !hasNotices && !hasCanonicalActivity)) continue;
+    const candidates = richBySignature.get(signature(message)) ?? [];
+    candidates.push(message);
+    richBySignature.set(signature(message), candidates);
   }
-  const durableWithRichSteps = durable.map((message) => {
-    const live = richBySignature.get(signature(message));
+  const liveVisibleRunIds = new Set(
+    current
+      .filter((message) => message.role === "agent" && message.runId && message.text.trim())
+      .map((message) => message.runId!),
+  );
+  const durableWithRichSteps = durable
+    // During the live-to-history race the same exact run can be present as a
+    // visible live answer and as the explicit unbound row produced by
+    // hydration. Keep the live answer in that case; a reload with no live row
+    // still restores the unbound canonical run below.
+    .filter((message) => !(message.unboundRun && message.runId && liveVisibleRunIds.has(message.runId)))
+    .map((message) => {
+    const candidates = richBySignature.get(signature(message)) ?? [];
+    // Tool rows/notices can retain the old best-effort text fallback only when
+    // there is one unambiguous live candidate. Canonical One activity requires
+    // an exact identity; a repeated answer string must never move a run's
+    // artifacts, sources, handoffs, or runId onto another answer.
+    const canonicalLive = candidates.find((candidate) => exactMessageIdentityMatches(candidate, message));
+    const live = canonicalLive ?? (candidates.length === 1 ? candidates[0] : undefined);
     return live
       ? {
           ...message,
@@ -1192,9 +1244,12 @@ function reconcileTranscriptSnapshot(
           ...(live.notices?.length ? { notices: live.notices } : {}),
           ...(live.finishedAt != null ? { finishedAt: live.finishedAt } : {}),
           ...(live.tokens != null ? { tokens: live.tokens } : {}),
+          ...(canonicalLive?.runId ? { runId: canonicalLive.runId } : {}),
+          ...(canonicalLive?.activityState ? { activityState: canonicalLive.activityState } : {}),
+          ...(canonicalLive?.activityRuns?.length ? { activityRuns: canonicalLive.activityRuns } : {}),
         }
       : message;
-  });
+    });
   const durableIndexById = new Map(durableWithRichSteps.map((message, index) => [message.id, index]));
   // Anchor at the newest row both snapshots genuinely share. Comparing every
   // historical signature would suppress a new answer when it happens to have
@@ -1238,16 +1293,33 @@ function preserveRichStepsBySignature(
 ): StreamMessage[] {
   if (!Array.isArray(current) || !Array.isArray(durable)) return durable;
   const signature = (message: StreamMessage) => `${message.role}\u0000${typeof message.text === "string" ? message.text.trim() : ""}`;
-  const richBySignature = new Map<string, StreamMessage>();
+  const richBySignature = new Map<string, StreamMessage[]>();
   for (const message of current) {
     const steps = Array.isArray(message.steps) ? message.steps : [];
     const hasRichSteps = steps.some((step) => (step.tool && step.result) || step.reasoning === true);
     const hasNotices = (message.notices?.length ?? 0) > 0;
-    if (message.role !== "agent" || (!hasRichSteps && !hasNotices)) continue;
-    richBySignature.set(signature(message), message);
+    const hasCanonicalActivity = Boolean(message.activityState && hasOneActivityEvidence(message.activityState))
+      || (message.activityRuns?.length ?? 0) > 0;
+    if (message.role !== "agent" || (!hasRichSteps && !hasNotices && !hasCanonicalActivity)) continue;
+    const candidates = richBySignature.get(signature(message)) ?? [];
+    candidates.push(message);
+    richBySignature.set(signature(message), candidates);
   }
-  return durable.map((message) => {
-    const live = richBySignature.get(signature(message));
+  const liveVisibleRunIds = new Set(
+    current
+      .filter((message) => message.role === "agent" && message.runId && message.text.trim())
+      .map((message) => message.runId!),
+  );
+  return durable
+    // Initial hydration can finish after a live final. If its timeline also
+    // lacks the durable assistant anchor, it contributes an explicit unbound
+    // row; discard only that duplicate when the same run is already visible
+    // as a non-empty live answer. A later reload with no live answer retains it.
+    .filter((message) => !(message.unboundRun && message.runId && liveVisibleRunIds.has(message.runId)))
+    .map((message) => {
+    const candidates = richBySignature.get(signature(message)) ?? [];
+    const canonicalLive = candidates.find((candidate) => exactMessageIdentityMatches(candidate, message));
+    const live = canonicalLive ?? (candidates.length === 1 ? candidates[0] : undefined);
     return live
       ? {
           ...message,
@@ -1255,9 +1327,12 @@ function preserveRichStepsBySignature(
           ...(live.notices?.length ? { notices: live.notices } : {}),
           ...(live.finishedAt != null ? { finishedAt: live.finishedAt } : {}),
           ...(live.tokens != null ? { tokens: live.tokens } : {}),
-        }
+          ...(canonicalLive?.runId ? { runId: canonicalLive.runId } : {}),
+          ...(canonicalLive?.activityState ? { activityState: canonicalLive.activityState } : {}),
+          ...(canonicalLive?.activityRuns?.length ? { activityRuns: canonicalLive.activityRuns } : {}),
+      }
       : message;
-  });
+    });
 }
 
 /** Convert redacted durable tool-use rows back into chat steps after reload. */
@@ -1363,28 +1438,156 @@ function reasoningSummary(text: string | undefined): string | null {
   return clean.length > 2_000 ? `${clean.slice(0, 1_999)}…` : clean;
 }
 
-function stepsByMessageFromTimeline(
-  history: readonly { id: string; role: string; createdAt?: string }[],
+function hasOneActivityEvidence(state: OneActivityState): boolean {
+  return state.items.length > 0
+    || state.artifacts.length > 0
+    || state.sources.length > 0
+    || state.handoffs.length > 0;
+}
+
+function exactMessageIdentityMatches(a: StreamMessage, b: StreamMessage): boolean {
+  return Boolean(
+    (a.id && b.id && a.id === b.id)
+    || (a.durableMessageId && b.durableMessageId && a.durableMessageId === b.durableMessageId)
+    || (a.runId && b.runId && a.runId === b.runId),
+  );
+}
+
+function durableAssistantMessageIdFromRun(events: readonly RunEventUi[]): string | undefined {
+  // `recordMcpInvocationEvent` must persist this exact wire field. The
+  // producer's `durableAssistantMessageIdForVerification` is Main-only and is
+  // deliberately stripped before persistence; similarly named legacy or
+  // worker-envelope fields are not answer identities and must not become
+  // guessed anchors here.
+  const keys = ["durableMessageId"] as const;
+  for (let eventIndex = events.length - 1; eventIndex >= 0; eventIndex -= 1) {
+    const event = events[eventIndex];
+    // The assistant row is committed at the terminal final boundary. A
+    // matching property on any other event would be an untrusted fixture or
+    // a worker envelope and cannot establish run-to-answer ownership.
+    if (event?.kind !== "mcp_final") continue;
+    const payload = event.payload ?? {};
+    for (const key of keys) {
+      const value = payload[key];
+      if (typeof value === "string" && value.trim()) return value.trim();
+    }
+  }
+  return undefined;
+}
+
+interface HydratedWorkActivity {
+  runs: StreamActivityRun[];
+  steps: StreamStep[];
+}
+
+interface UnboundHydratedWorkActivity {
+  run: StreamActivityRun;
+  steps: StreamStep[];
+  startedAt: number;
+  finishedAt?: number;
+  busy: boolean;
+}
+
+interface HydratedWorkActivities {
+  byMessage: Map<string, HydratedWorkActivity>;
+  unbound: UnboundHydratedWorkActivity[];
+}
+
+/** Project every durable run through One's reducer before attaching it to its answer row. */
+function workActivitiesByMessageFromTimeline(
+  history: readonly { id: string; role: string; createdAt?: string; durableMessageId?: string }[],
   timeline: readonly { receipt: InvocationRunReceipt; events: RunEventUi[] }[],
-): Map<string, StreamStep[]> {
-  const byMessage = new Map<string, StreamStep[]>();
+): HydratedWorkActivities {
+  const byMessage = new Map<string, HydratedWorkActivity>();
+  const unbound: UnboundHydratedWorkActivity[] = [];
   const answers = history.filter((entry) => entry.role === "assistant");
-  if (answers.length === 0) return byMessage;
   const runs = [...timeline]
     .filter((entry) => entry.receipt?.runId && entry.receipt.startedAt)
-    .sort((a, b) => a.receipt.startedAt.localeCompare(b.receipt.startedAt));
+    .sort((a, b) => (
+      a.receipt.startedAt.localeCompare(b.receipt.startedAt)
+      || a.receipt.runId.localeCompare(b.receipt.runId)
+    ));
   for (const run of runs) {
     // 복원은 자르지 않는다. 창은 원장 조회(eventsPerRun)가 이미 정한다 —
     // 여기서 한 번 더 자르면 그만큼이 산출물에서 사라진다.
+    const state = projectOneActivityFromLedger(run.events);
     const steps = mcpStepsFromLedger(run.events, 0);
-    if (steps.length === 0) continue;
-    // 그 실행이 시작된 뒤 처음 나온 답변이 그 실행의 답이다. 못 찾으면 마지막 답변에 붙인다
-    // (예전 동작과 같은 자리) — 붙일 곳이 없다고 기록을 버리지는 않는다.
-    const target = answers.find((entry) => (entry.createdAt ?? "") >= run.receipt.startedAt)
-      ?? answers[answers.length - 1];
-    byMessage.set(target.id, [...(byMessage.get(target.id) ?? []), ...steps]);
+    if (!hasOneActivityEvidence(state) && steps.length === 0) continue;
+    const durableAssistantId = durableAssistantMessageIdFromRun(run.events);
+    const target = durableAssistantId
+      ? answers.find((entry) => entry.id === durableAssistantId || entry.durableMessageId === durableAssistantId)
+      : undefined;
+    const activityRun = { runId: run.receipt.runId, state };
+    if (!target) {
+      // There is no safe answer anchor in this ledger schema. Preserve the
+      // canonical run as its own explicitly unbound Work row instead of
+      // attributing it to an answer selected by time or matching text.
+      const startedAt = Date.parse(run.receipt.startedAt);
+      const finishedAt = run.receipt.finishedAt ? Date.parse(run.receipt.finishedAt) : NaN;
+      unbound.push({
+        run: activityRun,
+        steps,
+        startedAt: Number.isFinite(startedAt) ? startedAt : Date.now(),
+        ...(Number.isFinite(finishedAt) ? { finishedAt } : {}),
+        busy: run.receipt.status === "running" || run.receipt.status === "cancelling",
+      });
+      continue;
+    }
+    const current = byMessage.get(target.id) ?? { runs: [], steps: [] };
+    current.runs.push(activityRun);
+    current.steps.push(...steps);
+    byMessage.set(target.id, current);
   }
-  return byMessage;
+  return { byMessage, unbound };
+}
+
+function attachHydratedWorkActivities(
+  messages: StreamMessage[],
+  history: readonly { id: string; role: string; createdAt?: string; durableMessageId?: string }[],
+  timeline: readonly { receipt: InvocationRunReceipt; events: RunEventUi[] }[],
+): StreamMessage[] {
+  const hydrated = workActivitiesByMessageFromTimeline(history, timeline);
+  if (hydrated.byMessage.size === 0 && hydrated.unbound.length === 0) return messages;
+  const attached = messages.map((message) => {
+    const activity = hydrated.byMessage.get(message.id);
+    if (!activity || activity.runs.length === 0) return message;
+    const latest = activity.runs.at(-1)!;
+    return {
+      ...message,
+      runId: latest.runId,
+      activityState: latest.state,
+      activityRuns: activity.runs,
+      ...(activity.steps.length > 0
+        ? { steps: [...(message.steps ?? []), ...activity.steps] }
+        : {}),
+    };
+  });
+  // An unbound run is deliberately a separate, empty-answer Work row. The
+  // label is rendered by ChatStream so users can tell that its activity is
+  // durable while the assistant message identity was unavailable.
+  return [
+    ...attached,
+    ...hydrated.unbound.map(({ run, steps, startedAt, finishedAt, busy }) => ({
+      id: `work-run:${run.runId}`,
+      role: "agent" as const,
+      text: "",
+      runId: run.runId,
+      activityState: run.state,
+      activityRuns: [run],
+      startedAt,
+      ...(finishedAt != null ? { finishedAt } : {}),
+      ...(busy ? { busy: true } : {}),
+      unboundRun: true,
+      ...(steps.length > 0 ? { steps } : {}),
+    })),
+  ];
+}
+
+function hasHydratedWorkActivities(messages: StreamMessage[]): boolean {
+  return messages.some((message) => (
+    (message.activityRuns?.length ?? 0) > 0
+    || Boolean(message.activityState && hasOneActivityEvidence(message.activityState))
+  ));
 }
 
 function attachMcpStepsToLatestAgent(messages: StreamMessage[], steps: StreamStep[]): StreamMessage[] {
@@ -2185,7 +2388,16 @@ function ChatPage() {
   // 한 실행의 이벤트(라이브 스트림 OR 재접속 리플레이)를 메인 버블 + 네트워크 패널에 반영.
   // send()의 인라인 핸들러를 추출해 재접속 경로와 공유 — lastStatusRef는 중복 status 억제용(공유).
   const consumeEvent = useCallback(
-    (ev: McpInvocationEvent, placeholderId: string, lastStatusRef: { text: string }) => {
+    (
+      ev: McpInvocationEvent,
+      placeholderId: string,
+      lastStatusRef: { text: string },
+      sourceRunId?: string,
+    ) => {
+      // A subscription can outlive a steering/reconnect transition by one
+      // queued event. Main's run id is the authority; a stale event must not
+      // mutate the replacement bubble or its canonical One activity state.
+      if (sourceRunId && runIdRef.current !== sourceRunId) return;
       // 실행 전 API 키 요청 — 만료 전 요청만 시트로 올린다(재접속 리플레이의 낡은
       // 요청은 무시). 값 입력/저장은 McpKeyRequestSheet가 env.set으로만 처리한다.
       if (ev.kind === "mcp-key-request") {
@@ -2194,6 +2406,22 @@ function ChatPage() {
         }
         return;
       }
+      // Keep the exact typed One projection alongside the legacy Work step
+      // rows. `reduceOneActivity` owns sequence/idempotency and terminal
+      // immutability; the older branches below remain responsible for their
+      // existing status copy and network panel.
+      setMessages((current) => current.map((message) => {
+        if (message.id !== placeholderId) return message;
+        if (sourceRunId && message.runId && message.runId !== sourceRunId) return message;
+        const previous = message.activityState ?? initialOneActivityState();
+        const next = reduceOneActivity(previous, ev);
+        if (next === previous && (!sourceRunId || message.runId === sourceRunId)) return message;
+        return {
+          ...message,
+          ...(sourceRunId ? { runId: sourceRunId } : {}),
+          activityState: next,
+        };
+      }));
       // Main persists terminal answers before publishing `final`, but a
       // history request may already hold an older snapshot. Mark every live
       // run event before changing the visible transcript so that snapshot can
@@ -2721,6 +2949,7 @@ function ChatPage() {
             return {
               ...msg,
               text: setup.text,
+              ...(ev.durableMessageId ? { durableMessageId: ev.durableMessageId } : {}),
               imageDataUrls: ev.imageDataUrls ?? msg.imageDataUrls,
               busy: false,
               streaming: false,
@@ -2907,7 +3136,7 @@ function ChatPage() {
       const channel = api.invoke.eventChannel(runId);
       subRef.current?.();
       subRef.current = events.on(channel, (ev: McpInvocationEvent) => {
-        if (isCurrentChat()) consumeEventRef.current(ev, placeholderId, lastStatusRef);
+        if (isCurrentChat()) consumeEventRef.current(ev, placeholderId, lastStatusRef, runId);
       });
     },
     [isCurrentChat],
@@ -3148,7 +3377,6 @@ function ChatPage() {
             ? await api.runLedger.events(receipt.runId, 500).catch(() => [])
             : [];
           const mcpSteps = mcpStepsFromLedger(ledgerEvents);
-          const stepsByMessage = stepsByMessageFromTimeline(history, chatTimeline);
           if (
             requestedFocusMessageId
             && !history.some((entry) => entry.id === requestedFocusMessageId)
@@ -3163,13 +3391,13 @@ function ChatPage() {
             history.map(historyEntryToStreamMessage),
             committedReplies,
           );
-          // 원장에 지난 실행이 남아 있으면 실행마다 제 답변에 붙인다. 없으면 예전처럼
-          // 마지막 실행 하나만 마지막 답변에 붙인다(원장을 못 읽어도 화면은 나빠지지 않게).
-          const historyWithMcp = stepsByMessage.size > 0
-            ? historyMessages.map((message) => {
-                const steps = stepsByMessage.get(message.id);
-                return steps && steps.length > 0 ? { ...message, steps } : message;
-              })
+          // The ledger is the canonical Work projection too: preserve each run's
+          // identity and One reducer state on the assistant row it produced. Fall
+          // back to the legacy step-only projection only when this older/partial
+          // database has no projectable run events.
+          const hydratedHistory = attachHydratedWorkActivities(historyMessages, history, chatTimeline);
+          const historyWithMcp = hasHydratedWorkActivities(hydratedHistory)
+            ? hydratedHistory
             : attachMcpStepsToLatestAgent(historyMessages, mcpSteps);
           const recovery = receiptRecoveryMessage(receipt, locale);
           const restoredMessages = recovery ? [...historyWithMcp, recovery] : historyWithMcp;
@@ -3300,6 +3528,7 @@ function ChatPage() {
             id: placeholderId,
             role: "agent",
             text: "",
+            runId: attached.runId,
             busy: true,
             startedAt,
             steps: [
@@ -3319,7 +3548,7 @@ function ChatPage() {
         runIdRef.current = attached.runId;
         lastRunIdRef.current = attached.runId;
         const lastStatusRef = { text: "" };
-        for (const ev of attached.events) consumeEventRef.current(ev, placeholderId, lastStatusRef);
+        for (const ev of attached.events) consumeEventRef.current(ev, placeholderId, lastStatusRef, attached.runId);
         subscribeRun(attached.runId, placeholderId, lastStatusRef);
       }
     })().catch((error) => {
@@ -3443,6 +3672,7 @@ function ChatPage() {
               id: placeholderId,
               role: "agent",
               text: "",
+              runId: attached.runId,
               busy: true,
               startedAt,
               steps: [{
@@ -3464,7 +3694,7 @@ function ChatPage() {
           partialTextRef.current = "";
           processedTextLenRef.current = 0;
           const lastStatusRef = { text: "" };
-          for (const event of attached.events) consumeEventRef.current(event, placeholderId, lastStatusRef);
+          for (const event of attached.events) consumeEventRef.current(event, placeholderId, lastStatusRef, attached.runId);
           subscribeRun(attached.runId, placeholderId, lastStatusRef);
         }).catch(() => undefined);
         return;
@@ -3498,14 +3728,16 @@ function ChatPage() {
         api.invoke.history(chatId),
         receiptPromise,
         fetchCommittedReplies(api, chatId),
-      ]).then(async ([h, receipt, committedReplies]) => {
+        api.runLedger.chatTimeline(chatId, { maxRuns: 40, eventsPerRun: 400 }).catch(() => []),
+      ]).then(async ([h, receipt, committedReplies, chatTimeline]) => {
         const ledgerEvents = receipt && receipt.status !== "running" && receipt.status !== "cancelling"
           ? await api.runLedger.events(receipt.runId, 500).catch(() => [])
           : [];
-        const next = attachMcpStepsToLatestAgent(
-          restoreAnsweredQuestions(h.map(historyEntryToStreamMessage), committedReplies),
-          mcpStepsFromLedger(ledgerEvents),
-        );
+        const historyMessages = restoreAnsweredQuestions(h.map(historyEntryToStreamMessage), committedReplies);
+        const hydrated = attachHydratedWorkActivities(historyMessages, h, chatTimeline);
+        const next = hasHydratedWorkActivities(hydrated)
+          ? hydrated
+          : attachMcpStepsToLatestAgent(historyMessages, mcpStepsFromLedger(ledgerEvents));
         const recovery = receiptRecoveryMessage(receipt, locale);
         const status = receiptRecoveryStatus(receipt, locale);
         setLiveAgents((prev) =>
@@ -3554,14 +3786,16 @@ function ChatPage() {
             : Promise.resolve(null),
           fetchCommittedReplies(api, chatId),
         ]);
+        const chatTimeline = await api.runLedger.chatTimeline(chatId, { maxRuns: 40, eventsPerRun: 400 }).catch(() => []);
         const ledgerEvents = receipt && receipt.status !== "running" && receipt.status !== "cancelling"
           ? await api.runLedger.events(receipt.runId, 500).catch(() => [])
           : [];
         if (!stopped) {
-          const next = attachMcpStepsToLatestAgent(
-            restoreAnsweredQuestions(h.map(historyEntryToStreamMessage), committedReplies),
-            mcpStepsFromLedger(ledgerEvents),
-          );
+          const historyMessages = restoreAnsweredQuestions(h.map(historyEntryToStreamMessage), committedReplies);
+          const hydrated = attachHydratedWorkActivities(historyMessages, h, chatTimeline);
+          const next = hasHydratedWorkActivities(hydrated)
+            ? hydrated
+            : attachMcpStepsToLatestAgent(historyMessages, mcpStepsFromLedger(ledgerEvents));
           const recovery = receiptRecoveryMessage(receipt, locale);
           const status = receiptRecoveryStatus(receipt, locale);
           setLiveAgents((prev) =>
@@ -3738,6 +3972,9 @@ function ChatPage() {
       }
       if (!isCurrentChat()) return false;
       const images = opts?.images;
+      // Reserve the Main-owned run identity before painting the placeholder so
+      // every live event and replacement snapshot has the same exact anchor.
+      const runId = opts?.decisionContinuation?.runId ?? crypto.randomUUID();
       const placeholderId = uid();
       const imageDataUrls = images?.map(
         (img) => `data:${img.mediaType};base64,${img.data}`,
@@ -3775,6 +4012,7 @@ function ChatPage() {
           id: placeholderId,
           role: "agent",
           text: "",
+          runId,
           busy: true,
           startedAt,
           pipeline: opts?.pipelineStages?.map((stage) => ({
@@ -3833,7 +4071,6 @@ function ChatPage() {
 
       // runId를 렌더러가 먼저 생성하고 invoke 왕복 전에 구독한다(subscribe-before-trigger) —
       // 런타임이 즉시 emit하는 초기 이벤트도 절대 놓치지 않아 스트리밍/최종 답변이 라이브로 뜬다.
-      const runId = opts?.decisionContinuation?.runId ?? crypto.randomUUID();
       runIdRef.current = runId;
       lastRunIdRef.current = runId;
       partialTextRef.current = "";
@@ -5110,13 +5347,49 @@ function ChatPage() {
   })();
   const latestWorkActivityMessage = [...messages].reverse().find((message) => (
     message.role === "agent"
-    && Boolean(message.busy || message.steps?.length || message.notices?.length || message.failure)
+    && Boolean(
+      message.busy
+      || message.steps?.length
+      || message.notices?.length
+      || message.failure
+      || message.activityRuns?.length
+      || (message.activityState && hasOneActivityEvidence(message.activityState))
+    )
   )) ?? null;
   const workActivity = useMemo<OneActivityState>(
-    () => latestWorkActivityMessage
-      ? workActivityStateFromMessage(latestWorkActivityMessage)
-      : { items: [], artifacts: [], sources: [], handoffs: [], lastSequence: 0 },
-    [latestWorkActivityMessage],
+    () => {
+      const states = messages.flatMap((message) => (
+        message.role !== "agent"
+          ? []
+          : message.activityRuns?.length
+            ? message.activityRuns.map((run) => run.state)
+            : message.activityState && hasOneActivityEvidence(message.activityState)
+              ? [message.activityState]
+              : []
+      ));
+      if (states.length === 0) {
+        return latestWorkActivityMessage
+          ? workActivityStateFromMessage(latestWorkActivityMessage)
+          : initialOneActivityState();
+      }
+      const latest = states.at(-1)!;
+      const uniqueById = <T extends { id: string }>(rows: T[]): T[] => {
+        const seen = new Set<string>();
+        return rows.filter((row) => {
+          if (seen.has(row.id)) return false;
+          seen.add(row.id);
+          return true;
+        });
+      };
+      return {
+        ...latest,
+        items: uniqueById(states.flatMap((state) => state.items)),
+        artifacts: uniqueById(states.flatMap((state) => state.artifacts)),
+        sources: uniqueById(states.flatMap((state) => state.sources)),
+        handoffs: uniqueById(states.flatMap((state) => state.handoffs)),
+      };
+    },
+    [latestWorkActivityMessage, messages],
   );
   const workBrowserHistoryUrl = useMemo(() => taskBrowserUrl(workActivity.items), [workActivity.items]);
   const workRailResultKey = artifact

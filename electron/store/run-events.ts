@@ -1035,6 +1035,10 @@ export function recordMcpInvocationEvent(runId: string, req: McpInvocationReques
     reasoningDurationMs: ev.reasoning?.durationMs,
     // end에만 전문이 온다(delta는 live 전용 — 아래에서 원장에 안 남긴다).
     reasoningText: ev.reasoning?.phase === "end" ? ev.reasoning?.text : undefined,
+    // Main's exact committed assistant row identity. The renderer may bind a
+    // run to history only through this opaque ID; worker message IDs and
+    // timestamp/text guesses are intentionally not persisted as substitutes.
+    durableMessageId: ev.kind === "final" ? ev.durableMessageId : undefined,
     // Worker messaging and CLI process lifecycle are explicit durable facts.
     // Keep them flat in the diagnostic payload so old ledger readers can
     // replay the event without needing to understand a new nested schema.

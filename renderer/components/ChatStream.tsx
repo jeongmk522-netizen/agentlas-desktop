@@ -35,6 +35,13 @@ import type { OneActivityItem, OneActivityState } from "@/lib/one-activity";
  * reimplementing any row, disclosure, or status styling here.
  */
 export function workActivityStateFromMessage(message: StreamMessage): OneActivityState {
+  // A Work message may carry the same Main-owned typed projection that One
+  // renders. Keep this as the first branch so the compatibility fallback below
+  // remains useful for older transcript snapshots without replacing durable
+  // run identity, sequence, artifacts, sources, or handoffs with guessed rows.
+  const latestActivityRun = message.activityRuns?.at(-1);
+  if (latestActivityRun) return latestActivityRun.state;
+  if (message.activityState) return message.activityState;
   const startedAt = message.startedAt ?? Date.now();
   const startedIso = new Date(startedAt).toISOString();
   const finishedIso = message.finishedAt != null ? new Date(message.finishedAt).toISOString() : undefined;
@@ -189,10 +196,27 @@ export interface PipelineStage {
   status?: "pending" | "running" | "done";
 }
 
+/** A durable run projection attached to the assistant row it produced. */
+export interface StreamActivityRun {
+  runId: string;
+  state: OneActivityState;
+}
+
 export interface StreamMessage {
   id: string;
   role: "user" | "agent" | "system";
   text: string;
+  /** Main-issued invocation identity for this assistant turn, when available. */
+  runId?: string;
+  /** Canonical typed One activity projection for this turn's exact run. */
+  activityState?: OneActivityState;
+  /** Rare fallback when multiple durable runs have no distinct assistant row. */
+  activityRuns?: StreamActivityRun[];
+  /** Durable run has no Main-issued assistant row anchor; render it separately. */
+  unboundRun?: boolean;
+  /** Durable transcript timestamp used to bind a ledger run to its answer row. */
+  createdAt?: string;
+  durableMessageId?: string;
   /** 가장 최근 status — 단일 줄 fallback (steps와 병행 가능) */
   status?: string;
   /** 진행 중일 때 누적된 step log. final 도착 시 비워도 되고 남겨둬도 됨. */
@@ -863,6 +887,12 @@ const Bubble = memo(function Bubble({
   // hook-order crash exactly at that transition.
   const workspaceRootForRun = useContext(WorkspaceRootContext);
   const workActivity = useMemo(() => workActivityStateFromMessage(message), [message]);
+  const workActivities = useMemo(
+    () => message.activityRuns?.length
+      ? message.activityRuns.map((run) => ({ runId: run.runId, state: run.state }))
+      : [{ runId: message.runId ?? message.id, state: workActivity }],
+    [message.activityRuns, message.id, message.runId, workActivity],
+  );
   if (message.role === "user") {
     // 질문 시트 배치 답장(스캐폴드 "질문:/선택:/답변:")은 어시스턴트 턴의 인용 카드가
     // 이미 질문+답을 보여준다 — 영상처럼 원문 버블은 숨긴다(첨부 이미지가 있으면 유지).
@@ -943,11 +973,17 @@ const Bubble = memo(function Bubble({
   // summary가 있으면 One과 같은 투명 활동 타임라인으로 남긴다.
   const displayText = userFacingAssistantText(message.text, Boolean(message.streaming));
   const displayMessage = displayText === message.text ? message : { ...message, text: displayText };
-  const hasProgress = Boolean(message.busy || message.status || (message.steps && message.steps.length > 0));
-  const showWorkActivity = hasProgress && (
+  const hasCanonicalActivity = workActivities.some(({ state }) => (
+    state.items.length > 0
+    || state.artifacts.length > 0
+    || state.sources.length > 0
+    || state.handoffs.length > 0
+  ));
+  const hasProgress = Boolean(message.busy || message.status || (message.steps && message.steps.length > 0) || hasCanonicalActivity);
+  const showWorkActivity = hasCanonicalActivity || (hasProgress && (
     isParallelWorkMessage(message)
     || (message.steps ?? []).some((step) => step.reasoning === true || step.kind === "tool")
-  );
+  ));
   return (
     <div className="agentlas-chat-turn" style={{ display: "flex", gap: 0, alignSelf: "stretch", width: "100%", maxWidth: 740, minWidth: 0 }}>
       <div className="agentlas-chat-avatar" style={{ position: "relative", flexShrink: 0 }}>
@@ -960,15 +996,26 @@ const Bubble = memo(function Bubble({
         {message.chatFiles && message.chatFiles.length > 0 && onOpenChatFile && (
           <ChatFileCards files={message.chatFiles} locale={locale === "ko" ? "ko" : "en"} onOpen={onOpenChatFile} />
         )}
-        {showWorkActivity && (
+        {message.unboundRun && showWorkActivity && (
+          <div
+            data-work-run-unbound="true"
+            style={{ color: "var(--muted-deep)", fontSize: 11.5, marginBottom: 5 }}
+          >
+            {locale === "ko"
+              ? "실행 기록이 답변 행과 연결되지 않아 별도 작업 기록으로 표시됩니다."
+              : "This durable run has no linked answer row, so its work record is shown separately."}
+          </div>
+        )}
+        {showWorkActivity && workActivities.map(({ runId, state }, index) => (
           <OneTurnWork
-            state={workActivity}
-            busy={Boolean(message.busy)}
+            key={`work:${runId}`}
+            state={state}
+            busy={Boolean(message.busy && index === workActivities.length - 1)}
             startedAt={message.startedAt ?? null}
             locale={locale === "ko" ? "ko" : "en"}
             workspacePath={workspaceRootForRun ?? null}
           />
-        )}
+        ))}
         {showWorkActivity && displayText && message.busy && (
           <LiveOutputPanel
             text={displayText}

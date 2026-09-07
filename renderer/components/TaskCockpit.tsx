@@ -4127,9 +4127,35 @@ function ChatPage() {
         // Define exactly once, before the run. `defineGoal` returns the
         // existing active contract instead of overwriting it, so a later
         // steering turn can never become the goal by accident.
-        const defined = await api.chats.defineGoal(chat.id, userPrompt, locale).catch(() => null);
+        /*
+         * ★목표를 못 만들었으면 **그 자리에서 말한다** (오너 실사용 2026-09-08:
+         *   "goal 설정했는데 안 닫힌다. 진행도 안 된다").
+         *
+         *   예전에는 `.catch(() => null)` 이었다. 계약 생성이 실패해도 조용히 null 이 되고
+         *   실행은 **목표 없이** 그대로 진행됐다. 화면에는 목표 칩이 떠 있으니 사람은
+         *   목표가 걸린 줄 안다 — 그런데 닫을 대상이 없어 영원히 안 끝난다.
+         *   엔진·IPC·화면 세 곳이 모두 삼켜서 앱 로그에 "goal" 이 0줄이었다.
+         *
+         *   실행 자체는 막지 않는다(목표 없이라도 답은 나와야 한다). 다만 **목표가 안 걸렸다는
+         *   사실**은 반드시 보이게 한다.
+         */
+        let defined = null;
+        try {
+          defined = await api.chats.defineGoal(chat.id, userPrompt, locale);
+        } catch (cause) {
+          if (!isCurrentChat()) return false;
+          const why = failureMessage(cause);
+          setSessionNotice(locale === "ko"
+            ? `목표를 걸지 못했습니다${why ? `: ${why}` : ""}. 이번 실행은 목표 없이 진행됩니다 — 목표로 다시 걸려면 새 대화에서 시작해 주세요.`
+            : `The goal could not be set${why ? `: ${why}` : ""}. This run continues without a goal — start a new conversation to set one again.`);
+        }
         if (!isCurrentChat()) return false;
         if (defined) setGoalContext(defined);
+        else if (!goalContext?.objective) {
+          setSessionNotice(locale === "ko"
+            ? "목표가 걸리지 않았습니다. 이번 실행은 목표 없이 진행됩니다."
+            : "No goal was set. This run continues without one.");
+        }
       }
       let attachedChatFiles: ChatFileItem[] | undefined;
       let boundUserPrompt = userPrompt;

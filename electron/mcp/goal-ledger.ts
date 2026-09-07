@@ -142,10 +142,35 @@ export function ensureGoalLedgerGoal(input: {
       maxCostUsd: input.maxCostUsd,
       stallWindow: input.stallWindow,
     });
+    lastFailure = null;
     return !["blocked", "completed", "failed", "cancelled"].includes(run.status);
-  } catch {
+  } catch (error) {
+    /*
+     * ★목표가 조용히 안 만들어지고 있었다 (오너 실사용 2026-09-08:
+     *   "워크에서 goal 설정했는데 안 닫힌다. 진행도 안 된다").
+     *
+     *   여기 `catch { return false }` 가 **이유를 통째로 버렸다.** 그 false 를
+     *   부르는 쪽도 안 보거나(ipc.ts) 안 쓰고, 화면은 `.catch(() => null)` 로 또 버렸다.
+     *   삼킴이 세 겹이라, 앱 로그 3MB 안에 "goal" 이라는 글자가 **0줄**이었다.
+     *   실패조차 남지 않으면 무엇이 잘못됐는지 아무도 알 수 없다.
+     *
+     *   판정(boolean)은 그대로 둔다 — service.ts 가 그 값으로 분기한다.
+     *   대신 **이유를 남기고 물어볼 수 있게** 한다.
+     */
+    lastFailure = {
+      goalId: input.goalId,
+      reason: error instanceof Error ? error.message : String(error),
+      at: new Date().toISOString(),
+    };
+    console.error("[goal] could not create or update the goal contract:", lastFailure.goalId, lastFailure.reason);
     return false;
   }
+}
+
+/** 마지막으로 목표 계약을 못 만든 이유. 화면이 사람에게 옮겨 적을 수 있도록 남긴다. */
+let lastFailure: { goalId: string; reason: string; at: string } | null = null;
+export function lastGoalLedgerFailure(): { goalId: string; reason: string; at: string } | null {
+  return lastFailure;
 }
 
 export async function goalLedgerShouldContinue(

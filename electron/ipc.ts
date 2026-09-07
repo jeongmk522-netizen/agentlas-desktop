@@ -423,6 +423,7 @@ import {
   deriveGoalAcceptanceCriteria,
   ensureGoalLedgerGoal,
   getGoalLedgerGoal,
+  lastGoalLedgerFailure,
 } from "./mcp/goal-ledger";
 import { findAutomationByGoalId } from "./store/automations";
 import { emitDesktopStoreChange } from "./store/change-bus";
@@ -4268,13 +4269,30 @@ export function registerIpcHandlers(): void {
     const locale = requestedLocale === "ko" || requestedLocale === "en"
       ? requestedLocale
       : currentUiLocale() === "ko" ? "ko" : "en";
-    await ensureGoalLedgerGoal({
+    /*
+     * ★만들지 못했으면 **그렇게 말한다** (오너 실사용 2026-09-08: "goal 설정했는데
+     *   안 닫힌다. 진행도 안 된다"). 예전에는 이 반환값을 버렸다. 그래서 계약이 안 만들어져도
+     *   아래에서 null 을 돌려주고, 화면은 그것을 "목표 없음"과 구별하지 못했다.
+     *   목표 번호는 찍혀 있는데 계약 행이 없는 상태가 그렇게 만들어진다.
+     */
+    const created = ensureGoalLedgerGoal({
       goalId: chat.goalId,
       objective: normalizedObjective,
       acceptanceCriteria: deriveGoalAcceptanceCriteria(normalizedObjective, locale),
       projectDir,
     });
-    return getGoalLedgerGoal(chat.goalId, projectDir);
+    const context = getGoalLedgerGoal(chat.goalId, projectDir);
+    if (!created && !context) {
+      const failure = lastGoalLedgerFailure();
+      const error = new Error(
+        failure?.reason
+          ? `The goal contract was not created: ${failure.reason}`
+          : "The goal contract was not created and the engine gave no reason.",
+      ) as Error & { code?: string };
+      error.code = "goal_contract_not_created";
+      throw error;
+    }
+    return context;
   });
   ipcMain.handle("chats:resumeGoal", async (_e, id: string, expectedVersion: number) => {
     const chat = getChat(id);

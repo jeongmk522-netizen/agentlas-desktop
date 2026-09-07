@@ -1727,6 +1727,15 @@ export function OneShell() {
    * 건너뛰어도 되는 경우는 오직 "화면이 이미 이 대화를 그리고 있을 때"뿐이다.
    */
   const shownThreadChatIdRef = useRef<string | null>(null);
+  /**
+   * 화면에 보이는 대화가 몇 번 바뀌었는가 — 늦게 온 옛 읽기가 새 것을 덮지 못하게 하는 번호표.
+   *
+   * Work 는 이 규칙을 갖고 있고 One 은 없었다. 그래서 같은 대화에 대한 기록 읽기 두 개가
+   * 순서가 뒤바뀌어 도착하면 **오래된 쪽이 이겨** 방금 친 말풍선이 사라졌다가 다시 나타났다.
+   * 화면을 바꾸는 모든 자리에서 이 번호를 올리고, 비동기 읽기는 시작할 때 번호를 적어 두었다가
+   * 값을 넣기 직전에 같은 번호인지 확인한다.
+   */
+  const oneTranscriptRevisionRef = useRef(0);
   const streamTextRef = useRef("");
   const unsubscribeRunRef = useRef<(() => void) | null>(null);
   const selectedTaskIdRef = useRef(selectedTaskId);
@@ -2459,6 +2468,7 @@ export function OneShell() {
     if (event.kind === "partial") {
       if (typeof event.delta === "string") streamTextRef.current += event.delta;
       else streamTextRef.current = event.text ?? streamTextRef.current;
+      oneTranscriptRevisionRef.current += 1;
       setMessages((current) => upsertLiveMessage(current, streamTextRef.current, true));
       /*
        * ★ 답이 흘러나오는 동안에도 화면이 따라 내려간다 (오너 지적 2026-08-24).
@@ -2486,6 +2496,7 @@ export function OneShell() {
       // "one-live-response" row meant the next turn's live row *replaced* it
       // (measured 2026-08-15: the previous answer vanished while a queued
       // instruction ran, until the history reload brought it back).
+      oneTranscriptRevisionRef.current += 1;
       setMessages((current) => upsertLiveMessage(current, text, false).map((message) => (
         message.id === "one-live-response"
           ? { ...message, id: `one-answer:${settledRunId ?? uid()}`, createdAt: message.createdAt ?? new Date().toISOString(), ...(event.durableMessageId ? { durableMessageId: event.durableMessageId } : {}) }
@@ -2634,6 +2645,7 @@ export function OneShell() {
         setActivity(initialOneActivityState());
         setRunStartedAt(null);
       }
+      oneTranscriptRevisionRef.current += 1;
       setMessages([]);
       shownThreadChatIdRef.current = null;
       setCommittedAnswers([]);
@@ -2665,6 +2677,7 @@ export function OneShell() {
      * 사용자에게는 여러 세션이 하나로 합쳐진 것처럼 보인다.
      */
     const runChatIdBeforeSwitch = runChatIdRef.current;
+    const hydrationRevision = oneTranscriptRevisionRef.current;
     runChatIdRef.current = chatId;
     runTaskIdRef.current = taskId;
     void Promise.all([
@@ -2705,6 +2718,8 @@ export function OneShell() {
             runIdRef.current && runChatIdBeforeSwitch === chatId,
           );
           if (!screenStillOnThisThread || liveRunNowOwnsThread) return current;
+          // 이 읽기가 출발한 뒤 화면이 이미 움직였다면, 옛 스냅샷은 답이 아니다.
+          if (oneTranscriptRevisionRef.current !== hydrationRevision) return current;
           const hydratedNext = hydrateCachedChatFiles(
             next,
             chatFileGroupsIncludingMessages(oneChatFileGroupsRef.current, current),
@@ -4394,6 +4409,7 @@ export function OneShell() {
           runtimeSelection: submissionRuntimeSelection,
         };
         setPendingTeamPrompt(pendingPrompt);
+        oneTranscriptRevisionRef.current += 1;
         setMessages((current) => [
           ...current.filter((item) => item.id !== "one-live-response"),
         ]);
@@ -4441,6 +4457,7 @@ export function OneShell() {
       setRunStartedAt(null);
       setSurface(null);
       setReceipt(null);
+      oneTranscriptRevisionRef.current += 1;
       setMessages((current) => [
         ...current.filter((item) => item.id !== "one-live-response"),
         {
@@ -5000,6 +5017,7 @@ export function OneShell() {
     setSelected(null);
     setConversation(null);
     setFailureFocus(null);
+    oneTranscriptRevisionRef.current += 1;
     setMessages([]);
     // 화면을 비웠으니 그 화면이 누구 것이었는지도 함께 지운다.
     shownThreadChatIdRef.current = null;
@@ -5188,6 +5206,7 @@ export function OneShell() {
         selectedConversationIdRef.current = null;
         setSelected(projection);
         setConversation(null);
+        oneTranscriptRevisionRef.current += 1;
         setMessages([]);
         setReceipt(null);
         rememberLastOneConversation(projection.chatId);
@@ -5209,6 +5228,7 @@ export function OneShell() {
       setSelected(null);
       setConversation(nextConversation);
       setActiveThreadChat(nextConversation);
+      oneTranscriptRevisionRef.current += 1;
       setMessages([]);
       setReceipt(null);
     }
@@ -5324,6 +5344,7 @@ export function OneShell() {
       if (target?.chatId === activeThreadChatId) {
         selectedConversationIdRef.current = null;
         setConversation(null);
+        oneTranscriptRevisionRef.current += 1;
         setMessages([]);
         setSurface(null);
         setReceipt(null);
@@ -5353,6 +5374,7 @@ export function OneShell() {
       if (selectedConversationIdRef.current === chatId) {
         selectedConversationIdRef.current = null;
         setConversation(null);
+        oneTranscriptRevisionRef.current += 1;
         setMessages([]);
         setSurface(null);
         setReceipt(null);
@@ -5391,6 +5413,7 @@ export function OneShell() {
       });
       if (operation === "archive" && selectedTaskIdRef.current === taskId) {
         setSelected(null);
+        oneTranscriptRevisionRef.current += 1;
         setMessages([]);
         setSurface(null);
         setReceipt(null);

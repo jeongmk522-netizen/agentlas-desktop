@@ -187,7 +187,8 @@
     "test:goal-pass-failure": "node scripts/goal-pass-failure-contract.cjs",
     "test:long-run-startup-resume": "node scripts/long-run-startup-resume-contract.cjs",
     "test:session-continuity": "node scripts/session-continuity-contract.cjs",
-    "test:runtime-sign-in-honesty": "node scripts/runtime-sign-in-honesty-contract.cjs"
+    "test:runtime-sign-in-honesty": "node scripts/runtime-sign-in-honesty-contract.cjs",
+    "test:one-transcript-monotonic": "node scripts/one-transcript-monotonic-contract.cjs"
   },
   "dependencies": {
     "@file-viewer/preset-lite": "^2.3.0",

@@ -2772,6 +2772,14 @@ function OrgChart({
           <button
             type="button"
             onClick={() => onSelect(resolved)}
+            /* ★마우스로만 되던 자리 — 이 줄을 고르는 길이 여기뿐인데 Tab 으로 닿지 않았다. */
+            role="button"
+            tabIndex={0}
+            onKeyDown={(event) => {
+              if (event.key !== "Enter" && event.key !== " ") return;
+              event.preventDefault();
+              onSelect(resolved);
+            }}
             title={[displayName, roleLabel].filter(Boolean).join(" - ")}
             style={{
               flex: 1,

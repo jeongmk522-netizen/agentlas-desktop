@@ -5990,13 +5990,22 @@ function ChatPage() {
                 letterSpacing: 0.6,
               }}
             >
-              <span
+              {/*
+                * ★마우스로만 되던 자리 (실측 2026-09-08). 프로젝트로 가는 유일한 길인데
+                *   <span onClick> 이라 Tab 으로 닿지도, Enter 로 눌리지도 않았다.
+                *   진짜 단추로 바꾼다 — 모양은 그대로 두고 기본 단추 스타일만 지운다.
+                */}
+              <button
+                type="button"
                 onClick={() => router.push(`/project/detail?id=${project.id}`)}
-                style={{ cursor: "pointer", color: "var(--accent)", fontWeight: 600 }}
+                style={{
+                  cursor: "pointer", color: "var(--accent)", fontWeight: 600,
+                  border: 0, background: "transparent", padding: 0, font: "inherit",
+                }}
                 className="titlebar-nodrag"
               >
                 {project.name}
-              </span>
+              </button>
             </div>
           )}
           {editingTitle ? (

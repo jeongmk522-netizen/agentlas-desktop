@@ -41,6 +41,21 @@ export function CredentialImportDialog({
   const [error, setError] = useState<string | null>(null);
   const [loginRequired, setLoginRequired] = useState<string[]>([]);
 
+  /*
+   * ★대화상자는 Escape 로 닫혀야 한다 (실측 2026-09-08).
+   *   이 대화상자에는 Escape 처리가 **아예 없었다.** 나가는 길이 뒷배경 클릭뿐이라
+   *   키보드만 쓰는 사람은 갇힌다. 모달은 어디서나 같은 방법으로 닫혀야 한다.
+   */
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      event.stopPropagation();
+      onClose();
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
   // 1단계: 어떤 브라우저 프로필이 있는지.
   useEffect(() => {
     let alive = true;

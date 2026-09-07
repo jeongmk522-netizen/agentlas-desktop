@@ -567,8 +567,17 @@ function FirmDetailPage() {
             </button>
           ) : (
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", width: "100%" }}>
+              {/* ★마우스로만 되던 자리 — 조직 보기로 돌아가는 길이 여기뿐인데 Tab 으로 닿지 않았다. */}
               <div
                 onClick={() => setSelectedNode(null)}
+                role="button"
+                tabIndex={0}
+                aria-label={locale === "ko" ? "조직 보기로 돌아가기" : "Back to the organization view"}
+                onKeyDown={(event) => {
+                  if (event.key !== "Enter" && event.key !== " ") return;
+                  event.preventDefault();
+                  setSelectedNode(null);
+                }}
                 style={{ flex: 1, cursor: "pointer", display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}
               >
                 <IconBuilding size={14} style={{ color: "var(--accent)" }} />
@@ -907,8 +916,20 @@ function OrgGroupLabel({ node }: { node: ResolvedNode }) {
 function OrgNodeCard({ node, tier, active, onClick }: { node: ResolvedNode; tier: 1 | 2 | 3; active: boolean; onClick: () => void }) {
   const isCeo = tier === 1;
   return (
+    /*
+     * ★마우스로만 되던 자리 (실측 2026-09-08). 이 줄을 누르면 노드가 열리는데
+     *   <div onClick> 이라 Tab 으로 닿지도, Enter/Space 로 눌리지도 않았다.
+     *   모양을 바꾸지 않으려고 태그는 그대로 두고 **단추의 성질만** 준다.
+     */
     <div
       onClick={onClick}
+      role="button"
+      tabIndex={0}
+      onKeyDown={(event) => {
+        if (event.key !== "Enter" && event.key !== " ") return;
+        event.preventDefault();
+        onClick?.();
+      }}
       style={{
         display: "flex",
         alignItems: "center",
@@ -999,6 +1020,14 @@ function OrgChart({
       <div key={node.agentSlug} style={{ marginTop: depth === 0 ? 0 : 6 }}>
         <div
           onClick={() => onSelect(resolved)}
+          /* ★마우스로만 되던 자리 — 이 줄을 고르는 길이 여기뿐인데 Tab 으로 닿지 않았다. */
+          role="button"
+          tabIndex={0}
+          onKeyDown={(event) => {
+            if (event.key !== "Enter" && event.key !== " ") return;
+            event.preventDefault();
+            onSelect(resolved);
+          }}
           style={{
             display: "flex",
             alignItems: "center",

@@ -6795,9 +6795,28 @@ export function OneShell() {
                     </div>
                   </section>
                 )}
+                {/*
+                  ★"이 요청은 안전하게 이어갈 수 없어서 멈췄어요" 를 아무 때나 띄우지 않는다.
+                  (오너 2026-09-07: "이딴거 나오면 뒤진다", "이거 왜나옴?")
+
+                  이 줄은 팀을 꾸린 뒤 실행이 완료에 도달하지 못하면 떴다 — **이유와 무관하게.**
+                  오늘처럼 런타임 한도로 실패한 날에는 계속 뜨는데, 정작 원장에는 진짜 사유가
+                  적혀 있었다("Individual quota reached … Resets in 3m32s"). 사용자에게는
+                  아무 정보도 없는 문장과 "다시 보내세요"만 갔고, 다시 보내면 같은 이유로
+                  또 실패한다. 알 수 없는 말로 막다른 길을 만드는 자리였다.
+
+                  이제 순서가 반대다: 런타임이 말한 사유가 있으면 **그것을 보여 준다.**
+                  사유가 정말 없을 때만 일반 문구로 떨어진다.
+                */}
                 {teamPreflight && ["workforce_reserved", "recovery_required"].includes(teamPreflight.status) && receipt?.status !== "completed" && !teamPreflightBusy && !busy && !awaitingWorkforceConsent && (
                   <p className={styles.teamPreflightRecovery} role="status">
-                    {tFor(appLocale, "one.shell.thread.recovery")}
+                    {receipt?.errorMessage?.trim()
+                      ? receipt.errorMessage.trim().slice(0, 300)
+                      : receipt?.status === "cancelled" || receipt?.status === "interrupted"
+                        ? (appLocale === "ko"
+                            ? "이 실행은 끝나기 전에 멈췄습니다. 같은 내용을 다시 보내면 이어서 진행합니다."
+                            : "This run stopped before it finished. Send the same request again to continue.")
+                        : tFor(appLocale, "one.shell.thread.recovery")}
                   </p>
                 )}
                 {/*

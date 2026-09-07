@@ -126,7 +126,6 @@ export function OneAdaptiveResult({
   receipt,
   locale,
   onRetryUnfinished,
-  onAcceptResult,
   onSemanticAction,
   onOpenAgentDraft,
   autoRecovery,
@@ -156,7 +155,10 @@ export function OneAdaptiveResult({
   onManageImprovementAsset?: (asset: OneImprovementReusedAssetV1) => void;
   /** 끝까지 완료되지 않은 실행을 한 번의 클릭으로 이어서 진행한다. */
   onRetryUnfinished?: () => void;
-  /** Main verifies the exact Task version and completed run receipt. */
+  /**
+   * 호출부 계약은 유지한다(모바일 브리지가 같은 경로를 쓴다). 이 화면은 더 이상
+   * 단추를 그리지 않는다 — 오너 결정 2026-09-07.
+   */
   onAcceptResult?: () => Promise<void>;
   /** Render rich media/document surfaces as a full-height in-app result. */
   inOutputRail?: boolean;
@@ -203,13 +205,6 @@ export function OneAdaptiveResult({
     surface && !renderDecision?.native && oneSurfaceNeedsDedicatedResult(surface),
   );
   const hasDedicatedResult = hasNativeResult || hasFallbackResult;
-  const canAcceptResult = Boolean(
-    projection.canonicalStatus === "partial"
-    && receipt?.status === "completed"
-    && receipt.chatId === projection.chatId
-    && onAcceptResult,
-  );
-  const standaloneAcceptance = canAcceptResult && !hasManifest;
   const showNative = Boolean(surface && renderDecision?.native);
   const hasSourceListBlock = Boolean(surface?.blocks.some((block) => block.type === "SourceList"));
   const semanticActions = showNative && surface
@@ -307,50 +302,14 @@ export function OneAdaptiveResult({
           autoRecovery={autoRecovery}
         />
       )}
-      {canAcceptResult && onAcceptResult && (
-        <ResultAcceptance locale={locale} standalone={!hasDedicatedResult || standaloneAcceptance} onAccept={onAcceptResult} />
-      )}
+      {/*
+        ★"작업 완료로 표시" 버튼 제거 (오너 2026-09-07: "작업 완료로 표시 버튼 없애").
+        답이 끝난 자리마다 "이거 끝난 거 맞아?"를 사람에게 되묻는 단추였다.
+        경로 자체(tasks.acceptResult)는 남아 있고 모바일 브리지가 그대로 쓴다 —
+        지운 것은 이 화면의 단추뿐이다.
+      */}
       {/* Value/experience/proof records keep compounding internally. They are
           deliberately absent from the ordinary One conversation surface. */}
-    </section>
-  );
-}
-
-function ResultAcceptance({ locale, standalone, onAccept }: {
-  locale: "ko" | "en";
-  standalone: boolean;
-  onAccept: () => Promise<void>;
-}) {
-  const [acceptingResult, setAcceptingResult] = useState(false);
-  const [acceptanceFailed, setAcceptanceFailed] = useState(false);
-  return (
-    <section
-      className={styles.standaloneAcceptance}
-      data-standalone={standalone ? "true" : "false"}
-      aria-label={tFor(locale, "one.res.aria.confirm_result")}
-    >
-      {acceptanceFailed && (
-        <p className={styles.standaloneAcceptanceCopy} role="alert">
-          {tFor(locale, "one.res.acceptance_failed")}
-        </p>
-      )}
-      <button
-        type="button"
-        className={styles.acceptanceButton}
-        disabled={acceptingResult}
-        onClick={() => {
-          if (acceptingResult) return;
-          setAcceptingResult(true);
-          setAcceptanceFailed(false);
-          void onAccept()
-            .catch(() => setAcceptanceFailed(true))
-            .finally(() => setAcceptingResult(false));
-        }}
-      >
-        {acceptingResult
-          ? tFor(locale, "one.res.finishing")
-          : tFor(locale, "one.res.finish_here")}
-      </button>
     </section>
   );
 }

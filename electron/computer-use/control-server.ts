@@ -84,13 +84,29 @@ function recordAudit(action: string, result: NativeInputResult, textLength?: num
     ...(typeof textLength === "number" ? { textLength } : {}),
   });
   if (auditRows.length > MAX_AUDIT_ROWS) auditRows.splice(0, auditRows.length - MAX_AUDIT_ROWS);
-  // Computer History is opt-in inside the summary writer. We record the
-  // observable action, never the screen pixels, coordinates, or credentials.
-  void recordComputerHistorySummary({
-    title: result.ok ? `Computer · ${action}` : `Computer action failed · ${action}`,
-    body: result.ok ? `컴퓨터에서 ${action} 작업이 수행되었습니다.` : `컴퓨터에서 ${action} 작업이 실패했습니다.`,
-    apps: [],
-  });
+  /*
+   * ★기록이 동작을 죽이면 안 된다 (실측 2026-09-07).
+   *
+   * 이 호출이 동기로 던지면 recordAudit 가 던지고, 그러면 runAction 이 던지고,
+   * /action 은 500 `action-failed` 로 끝난다 — **모든** 컴퓨터 유즈 동작이. 실측에서
+   * 무해한 `move` 조차 action-failed 로 죽었고, 화면에는 이유가 한 글자도 안 나온다.
+   * (같은 병을 /capture 에서도 잡았다: 캡처는 성공했는데 뒷정리가 던져 응답이 영영
+   *  안 나가고 요청이 매달렸다.)
+   *
+   * Computer History 는 **동의 기반 부가 기록**이다. 저장소가 아직 안 열렸든 디스크가
+   * 찼든, 사람이 시킨 동작의 성패를 쥘 이유가 없다.
+   */
+  try {
+    // Computer History is opt-in inside the summary writer. We record the
+    // observable action, never the screen pixels, coordinates, or credentials.
+    void Promise.resolve(recordComputerHistorySummary({
+      title: result.ok ? `Computer · ${action}` : `Computer action failed · ${action}`,
+      body: result.ok ? `컴퓨터에서 ${action} 작업이 수행되었습니다.` : `컴퓨터에서 ${action} 작업이 실패했습니다.`,
+      apps: [],
+    })).catch(() => undefined);
+  } catch {
+    // 부가 기록 실패는 동작을 삼키지 않는다.
+  }
 }
 
 function safeString(value: unknown, max: number): string | null {
@@ -287,14 +303,38 @@ export function startComputerUseControlServer(): Promise<number> {
             // 미리보기 패널은 IPC로 captureComputerUsePreview 를 직접 부르므로 여기서
             // 저장해도 틱마다 디스크가 불지 않는다. 채팅에 보일 수 있는 캡처는
             // 반드시 정본 파일을 남기고, 그 절대경로(savedPath)를 모델에게 알린다.
-            const savedPath = saveScreenCaptureArtifact(preview.dataUrl);
-            // Computer History has a separate, explicit-consent retention
-            // policy. General CUA evidence remains governed by its own 300-file
-            // cap; only an opted-in capture receives the seven-day local copy.
-            recordComputerHistoryCapture(preview.dataUrl);
+            /*
+             * ★화면은 이미 찍혔다. 뒷정리가 실패해도 **답은 반드시 나간다.**
+             *
+             * 실측 2026-09-07: 이 두 줄(증거 파일 저장 · 히스토리 기록) 중 하나가 던지면
+             * onFulfilled 가 중단되어 `writeJson` 에 도달하지 못하고, 그 실패는 아래
+             * onRejected 가 아니라 **아무도 안 잡는 rejection** 이 된다(`void` 로 버려진다).
+             * 결과: HTTP 응답이 영영 안 나가고 요청이 매달린다. 에이전트에게는
+             * "Computer Use request timed out." 으로만 보인다 — 화면은 멀쩡히 찍혔는데.
+             * (프로브 실측: /status 200, /capture 는 8초 무응답.)
+             *
+             * 증거 저장과 히스토리는 부가 기능이다. 도구 호출의 성패를 쥐면 안 된다.
+             */
+            let savedPath: string | null = null;
+            try {
+              savedPath = saveScreenCaptureArtifact(preview.dataUrl);
+            } catch {
+              // 증거 파일을 못 남겨도 에이전트는 화면을 받아야 한다.
+            }
+            try {
+              // Computer History has a separate, explicit-consent retention
+              // policy. General CUA evidence remains governed by its own 300-file
+              // cap; only an opted-in capture receives the seven-day local copy.
+              recordComputerHistoryCapture(preview.dataUrl);
+            } catch {
+              // 보관은 동의 기반 부가 기능이다 — 실패해도 캡처를 삼키지 않는다.
+            }
             writeJson(res, 200, { ok: true, preview: savedPath ? { ...preview, savedPath } : preview });
           }, () => {
             writeJson(res, 500, { ok: false, error: "capture-failed" });
+          }).catch(() => {
+            // 여기까지 왔다면 응답 쓰기 자체가 실패한 것이다. 그래도 매달아 두지 않는다.
+            try { writeJson(res, 500, { ok: false, error: "capture-failed" }); } catch { /* 소켓이 이미 닫혔다 */ }
           });
           return;
         }

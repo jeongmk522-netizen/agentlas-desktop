@@ -58,6 +58,21 @@ export class InvocationLifecycleRegistry<T extends InvocationLifecycleRecord> {
 
   register(runId: string, record: T): void {
     if (this.hasSeen(runId)) throw new Error("Invocation runId has already been used");
+    /*
+     * ★"죽은 자리를 회수한다"를 넣었다가 되돌렸다 (2026-09-07).
+     *
+     * 오너 기기 로그에서 `This chat already has an active invocation` 이 3초 안에 세 번
+     * 찍혔고 사용자는 "왜안되냐고" 를 쳤다. 그래서 중지 신호가 떨어진 자리를 다음 전송에서
+     * 회수하게 만들었는데, scripts/test-invocation-lifecycle.cjs 가 **정확히 반대 계약**을
+     * 지키고 있었다: 취소를 요청해도 **호스트 자식 프로세스가 아직 살아 있으므로**
+     * 그것이 실제로 정산될 때까지 재시도를 막아야 한다(그 게이트는 진짜 자식과 손자
+     * 프로세스를 띄워 생존을 확인한다). 자리를 일찍 놓으면 같은 대화에 CLI 자식이 둘 뜬다.
+     *
+     * 즉 이 잠금 자체는 옳다. 진짜 문제는 **정산에 도달하지 못하는 경로**이고, 그것은
+     * 여기서 시간이나 신호로 짐작해 풀 수 없다(취소 시각은 호출자가 넘기는 값이라
+     * 경과 시간으로도 못 가른다 — 게이트가 과거 시각을 넘긴다).
+     * 그래서 여기서는 잠그되, 아래 assertInvocationChatAvailable 이 **푸는 길을 말한다.**
+     */
     assertInvocationChatAvailable(record.chatId, this.active.values());
     this.active.set(runId, record);
   }

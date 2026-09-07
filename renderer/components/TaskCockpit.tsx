@@ -1909,6 +1909,7 @@ function ChatPage() {
     })).then((groups) => {
       if (cancelled) return;
       for (const [groupId, files] of groups) hydratedChatFileGroupsRef.current.set(groupId, files);
+      transcriptRevisionRef.current += 1;
       setMessages((current) => current.map((message) => {
         const files = (message.chatFileGroupIds ?? []).flatMap((groupId) => hydratedChatFileGroupsRef.current.get(groupId) ?? []);
         return files.length > 0 ? { ...message, chatFiles: files } : message;
@@ -2521,6 +2522,7 @@ function ChatPage() {
       // rows. `reduceOneActivity` owns sequence/idempotency and terminal
       // immutability; the older branches below remain responsible for their
       // existing status copy and network panel.
+      transcriptRevisionRef.current += 1;
       setMessages((current) => current.map((message) => {
         if (message.id !== placeholderId) return message;
         if (sourceRunId && message.runId && message.runId !== sourceRunId) return message;
@@ -2707,6 +2709,7 @@ function ChatPage() {
         }
         // 메인 버블에도 활동 반영 — OneTurnWork가 "돌아가는 중 + 도구 N개"를
         // 보여줘 긴 멀티에이전트 실행 중 불안을 줄인다 (per-agent 상세는 네트워크 패널).
+        transcriptRevisionRef.current += 1;
         setMessages((m) =>
           m.map((msg) => {
             if (msg.id !== placeholderId) return msg;
@@ -2763,6 +2766,7 @@ function ChatPage() {
           }),
         );
         // 파이프라인 단계 진행 — 이 에이전트가 어떤 단계인지 매칭되면 켠다(best-effort, 비차단).
+        transcriptRevisionRef.current += 1;
         setMessages((m) =>
           m.map((msg) =>
             msg.id === placeholderId && msg.pipeline ? { ...msg, pipeline: advancePipeline(msg.pipeline, ev) } : msg,
@@ -2774,6 +2778,7 @@ function ChatPage() {
         // 라이브 누적 토큰 — 상태줄 "{N}s · {tokens} tokens" 실시간 갱신(단조 증가만 허용).
         if (ev.tokens != null && ev.tokens > 0) {
           const nextTokens = ev.tokens;
+          transcriptRevisionRef.current += 1;
           setMessages((m) =>
             m.map((msg) =>
               msg.id === placeholderId && (msg.liveTokens ?? 0) < nextTokens
@@ -2788,6 +2793,7 @@ function ChatPage() {
         // thinking 구간 신호 — 상태줄 문구 회전("생각 중…")과 "N초 동안 생각함"의 근거.
         const phase = ev.reasoning.phase;
         const durationMs = ev.reasoning.durationMs;
+        transcriptRevisionRef.current += 1;
         setMessages((m) =>
           m.map((msg) => {
             if (msg.id !== placeholderId) return msg;
@@ -2846,6 +2852,7 @@ function ChatPage() {
         // anchorTextLen: 이 도구 이벤트 도착 시점의 '표시 좌표계' 본문 길이 — ChatStream이
         // 텍스트 사이에 도구 그룹을 영상처럼 끼워 넣는 분할 앵커로 쓴다.
         const anchorTextLen = processedTextLenRef.current;
+        transcriptRevisionRef.current += 1;
         setMessages((m) =>
           m.map((msg) =>
             msg.id === placeholderId
@@ -2894,6 +2901,7 @@ function ChatPage() {
             }).catch(() => undefined);
           }
         }
+        transcriptRevisionRef.current += 1;
         setMessages((prev) => {
           const lastAgent = [...prev].reverse().find((m) => m.role === "agent");
           if (!lastAgent) {
@@ -2915,6 +2923,7 @@ function ChatPage() {
         setMediaPreview(null);
         setSurface({ id: surfaceId, manifest: ev.surface });
         openPanelTab("panel");
+        transcriptRevisionRef.current += 1;
         setMessages((m) =>
           m.map((msg) =>
             msg.id === placeholderId
@@ -2956,12 +2965,14 @@ function ChatPage() {
           // Heartbeats refresh one compact live line. They never append another
           // step/card, which is what previously turned a single long run into
           // dozens of duplicate-looking rows.
+          transcriptRevisionRef.current += 1;
           setMessages((current) => current.map((message) =>
             message.id === placeholderId ? { ...message, status: publicStatus } : message
           ));
           return;
         }
         pushWorkflow("status", status);
+        transcriptRevisionRef.current += 1;
         setMessages((m) =>
           m.map((msg) =>
             msg.id === placeholderId
@@ -3000,6 +3011,7 @@ function ChatPage() {
               const resync = extractQuestions(snapText, placeholderId);
               const resyncSetup = stripMultimodalSetup(resync.text);
               processedTextLenRef.current = resyncSetup.text.length;
+              transcriptRevisionRef.current += 1;
               setMessages((m) =>
                 m.map((msg) => {
                   if (msg.id !== placeholderId) return msg;
@@ -3025,6 +3037,7 @@ function ChatPage() {
         const { text: extractedText, questions } = extractQuestions(raw, placeholderId);
         const setup = stripMultimodalSetup(extractedText);
         processedTextLenRef.current = setup.text.length;
+        transcriptRevisionRef.current += 1;
         setMessages((m) =>
           m.map((msg) => {
             if (msg.id !== placeholderId) return msg;
@@ -3044,6 +3057,7 @@ function ChatPage() {
         );
       } else if (ev.kind === "final") {
         pushWorkflow("status", locale === "ko" ? "완료" : "Done", { tokens: ev.tokens });
+        transcriptRevisionRef.current += 1;
         setMessages((m) =>
           m.map((msg) => {
             if (msg.id !== placeholderId) return msg;
@@ -3190,6 +3204,7 @@ function ChatPage() {
               pendingContinuationAutoResume: undefined,
             }];
           });
+        transcriptRevisionRef.current += 1;
         setMessages((current) => {
           const settled = keepPlaceholder(current);
           if (wasUserCancel || wasSteeringCancel || settled.some((message) => message.id === failureId)) return settled;
@@ -3299,6 +3314,7 @@ function ChatPage() {
     // 보여준다(다른 챗 눌러도 지금 세션이 뜨는 버그). 캐시 히트면 스냅샷을 즉시 그려 빈 화면
     // 플래시를 없애고, 히스토리 로드가 곧바로 이어서 최신본으로 교체한다(라이브 드래프트 없음).
     const restored = readChatViewSnapshot(chatId);
+    transcriptRevisionRef.current += 1;
     setMessages(restored?.messages ?? []);
     setBusy(false);
     questionCommitPendingRef.current = null;
@@ -4220,6 +4236,7 @@ function ChatPage() {
           if (continued.status === "already-terminal") {
             subRef.current?.();
             subRef.current = null;
+            transcriptRevisionRef.current += 1;
             setMessages((messages) => messages.filter((message) => (
               message.id !== userMessageId && message.id !== placeholderId
             )));
@@ -4268,6 +4285,7 @@ function ChatPage() {
           // Main rejected the continuation or its transport was unavailable.
           // Keep the durable Decision card as the only retry surface; an
           // optimistic user row here would look like a second accepted answer.
+          transcriptRevisionRef.current += 1;
           setMessages((messages) => messages.filter((message) => (
             message.id !== userMessageId && message.id !== placeholderId
           )));
@@ -4292,6 +4310,7 @@ function ChatPage() {
          */
         setComposerPrefill(userPrompt);
         const hadImages = (images?.length ?? 0) > 0;
+        transcriptRevisionRef.current += 1;
         setMessages((m) => m
           .filter((msg) => msg.id !== userMessageId)
           .map((msg) =>
@@ -4409,6 +4428,7 @@ function ChatPage() {
         })().catch((cause) => {
           steerQueueRef.current = steerQueueRef.current.filter((item) => item.optimisticMessageId !== optimisticMessageId);
           setQueuedSteers(steerQueueRef.current.map((item) => item.text));
+          transcriptRevisionRef.current += 1;
           setMessages((current) => current.map((message) => message.id === optimisticMessageId
             ? { id: message.id, role: "system", text: locale === "ko" ? "방향 전환을 전달하지 못했습니다. 다시 보내 주세요." : "The new direction was not delivered. Please send it again." }
             : message));
@@ -4552,6 +4572,7 @@ function ChatPage() {
           const retryable = receipt?.continuationRunId
             ? continuationTransportRetryableRef.current.has(receipt.continuationRunId)
             : false;
+          transcriptRevisionRef.current += 1;
           setMessages((messages) => messages.map((message) => message.id === messageId
             ? {
                 ...message,
@@ -4569,6 +4590,7 @@ function ChatPage() {
               : "Your answer is safely saved, but the follow-up did not start. It was not run again automatically."));
           return;
         }
+        transcriptRevisionRef.current += 1;
         setMessages((m) =>
           m.map((msg) =>
             msg.id === messageId
@@ -4600,6 +4622,7 @@ function ChatPage() {
 
   /** 질문 시트 × 닫기 — 이 배치의 미답 질문을 잠가("—") 시트를 접는다. 전송 없음. */
   const dismissQuestionBatch = useCallback((messageId: string) => {
+    transcriptRevisionRef.current += 1;
     setMessages((m) =>
       m.map((msg) =>
         msg.id === messageId
@@ -4657,6 +4680,7 @@ function ChatPage() {
       if (!isCurrentChat()) return;
       if (!resumed) {
         const retryable = continuationTransportRetryableRef.current.has(continuationRunId);
+        transcriptRevisionRef.current += 1;
         setMessages((messages) => messages.map((message) => message.id === sheet.messageId
           ? { ...message, pendingContinuationAutoResume: retryable }
           : message));
@@ -4669,6 +4693,7 @@ function ChatPage() {
             : "The saved answer's follow-up did not start. It was not run again automatically."));
         return;
       }
+      transcriptRevisionRef.current += 1;
       setMessages((messages) => messages.map((message) => {
         if (message.id !== sheet.messageId) return message;
         return {
@@ -4726,6 +4751,7 @@ function ChatPage() {
         if (approval && !(await ensureSurfaceApproval(api, activeSurface.id, action, approval, locale))) return;
         const pendingId = uid();
         const label = manifest.app?.name || manifest.title;
+        transcriptRevisionRef.current += 1;
         setMessages((m) => [
           ...m,
           {
@@ -4735,6 +4761,7 @@ function ChatPage() {
           },
         ]);
         const update = (text: string) => {
+          transcriptRevisionRef.current += 1;
           setMessages((m) =>
             m.map((msg) => (msg.id === pendingId ? { ...msg, text } : msg)),
           );
@@ -4996,6 +5023,7 @@ function ChatPage() {
         permissions: action.permission === "full" ? "full" : action.permission === "read" ? "read" : "write",
       });
       if (!launched) {
+        transcriptRevisionRef.current += 1;
         setMessages((m) => [
           ...m,
           {
@@ -5034,6 +5062,7 @@ function ChatPage() {
         );
       })
       .catch(() => {
+        transcriptRevisionRef.current += 1;
         setMessages((m) => [
           ...m,
           {
@@ -5069,6 +5098,7 @@ function ChatPage() {
         recapGenerationRef.current += 1;
         setRecap(null);
         void api.invoke.clearHistory(chat.id).then(() => {
+          transcriptRevisionRef.current += 1;
           setMessages([]);
           setLiveAgents({});
           setNetTimeline([]);
@@ -5282,6 +5312,7 @@ function ChatPage() {
       // 로컬 사본을 비워서 거절된 삭제가 빈 화면으로 보이지 않게 한다.
       await api.chats.remove(removedId);
       setChat(null);
+      transcriptRevisionRef.current += 1;
       setMessages([]);
       dropChatViewSnapshot(removedId);
       router.replace("/");
@@ -5741,6 +5772,7 @@ function ChatPage() {
       setArtifact(null);
       setMediaPreview(railPreview);
       openPanelTab("panel");
+      transcriptRevisionRef.current += 1;
       setMessages((current) => [
         ...current,
         { ...durableMessage, imageDataUrls: [captured.dataUrl], chatFiles: [chatFile], chatFileGroupIds: [snapshot.groupId] },

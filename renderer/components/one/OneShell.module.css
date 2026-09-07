@@ -3327,6 +3327,20 @@
   --design-line: rgba(255, 255, 255, .18);
   --design-line-2: rgba(255, 255, 255, .24);
   --output-surface-ink: var(--white);
+  /* ★ 2026-09-08 실측: 글자만 뒤집고 **바닥은 안 뒤집었다**.
+     위에서 --design-ink 를 흰색으로 바꿨는데 --design-panel 계열은 최상위의 밝은 값
+     (var(--paper) = #ffffff)으로 남아 있었다. 그래서 이 검은 말풍선 안에 산출물 표면이
+     들어오면 **흰 상자에 흰 글자**가 된다 — playwright 로 잰 대비비가 1.00 이었다
+     (panel 1.00 / muted 1.03 / bg 1.00). 오너 실사용 2026-09-07:
+     "검은 대화창 안에 또 흰색 밝은 회색 박스 안에 밝은글자 나오는건 뭐하는짓ㅇ이지".
+
+     바닥은 말풍선 색(--black)에 얹는 것이므로 **투명한 흰색 겹**으로 낸다. 테마 토큰을
+     쓰면 라이트 테마에서 다시 흰 상자가 되므로 여기서는 쓰지 않는다.
+     --output-surface-* 는 .design-output-surface[data-design-surface] 규칙이 이
+     --design-* 에서 다시 파생시키므로 함께 어두워진다. */
+  --design-bg: rgba(255, 255, 255, .05);
+  --design-panel: rgba(255, 255, 255, .07);
+  --design-panel-muted: rgba(255, 255, 255, .11);
 }
 
 .messageBody > :global(div) {

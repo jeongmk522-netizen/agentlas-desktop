@@ -21,6 +21,11 @@ import {
   type ScienceProjectDataSnapshotEntry,
   type ScienceProjectDataEntryImportResult,
 } from "../../shared/science-project-data-refresh";
+
+// Snapshot projection follows only the current head's same-content ancestry.
+// The bound protects a corrupt previous_entry_id chain from turning a read into
+// an unbounded recursive query; normal refreshes stay far below this limit.
+const SCIENCE_PROJECT_DATA_MAX_ANCESTRY = 512;
 import {
   normalizeScienceRuntimeSelection,
   scienceRuntimeSelectionSha256,
@@ -4536,6 +4541,10 @@ export class ScienceStore {
         ON science_project_data_entries(scan_id, relative_path, id);
       CREATE INDEX IF NOT EXISTS idx_science_project_data_entries_project_hash
         ON science_project_data_entries(project_id, content_sha256, relative_path, id);
+      CREATE INDEX IF NOT EXISTS idx_science_project_data_entries_scan_project
+        ON science_project_data_entries(project_id, scan_id, id, content_sha256);
+      CREATE INDEX IF NOT EXISTS idx_science_project_data_entries_previous_hash
+        ON science_project_data_entries(project_id, previous_entry_id, content_sha256);
       CREATE TABLE IF NOT EXISTS science_project_data_entry_imports (
         id TEXT PRIMARY KEY,
         project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
@@ -4551,6 +4560,8 @@ export class ScienceStore {
         ON science_project_data_entry_imports(project_id, entry_id, created_at DESC, id DESC);
     `);
   }
+      CREATE INDEX IF NOT EXISTS idx_science_project_data_entry_imports_entry_hash
+        ON science_project_data_entry_imports(entry_id, content_sha256, created_at DESC, id DESC);
 
   /**
    * Add the completion scope as an additive contract field.  NULL preserves
@@ -10482,31 +10493,49 @@ export class ScienceStore {
     const scan = this.db.prepare(`SELECT * FROM science_project_data_scans WHERE id = ? AND project_id = ?`).get(scanId, projectId) as Record<string, unknown> | undefined;
     if (!scan) throw new Error("science-project-data-scan-not-found");
     const rows = this.db.prepare(`SELECT * FROM science_project_data_entries WHERE scan_id = ? AND project_id = ? ORDER BY relative_path, id`).all(scanId, projectId) as Record<string, unknown>[];
-    const allEntryRows = this.db.prepare(`SELECT id, previous_entry_id, content_sha256
-      FROM science_project_data_entries WHERE project_id = ?`).all(projectId) as Record<string, unknown>[];
-    const entryById = new Map(allEntryRows.map((row) => [String(row.id), row]));
-    const imports = this.db.prepare(`SELECT * FROM science_project_data_entry_imports
-      WHERE project_id = ? ORDER BY created_at DESC, id DESC`).all(projectId) as Record<string, unknown>[];
+    // Import lineage is resolved from current rows through the indexed
+    // previous_entry_id chain. Avoid loading every historical entry/import for
+    // a project on every activation or watcher refresh.
+    const imports = this.db.prepare(`
+      WITH RECURSIVE lineage(current_entry_id, ancestor_entry_id, content_sha256, depth) AS (
+        SELECT e.id, e.id, e.content_sha256, 0
+        FROM science_project_data_entries e
+        WHERE e.scan_id = ? AND e.project_id = ? AND e.content_sha256 IS NOT NULL
+        UNION ALL
+        SELECT lineage.current_entry_id, previous.id, lineage.content_sha256, lineage.depth + 1
+        FROM lineage
+        JOIN science_project_data_entries current
+          ON current.id = lineage.ancestor_entry_id AND current.project_id = ?
+        JOIN science_project_data_entries previous
+          ON previous.id = current.previous_entry_id
+         AND previous.project_id = ?
+         AND previous.content_sha256 = lineage.content_sha256
+        WHERE lineage.depth < ?
+      )
+      SELECT lineage.current_entry_id AS lineage_current_entry_id, imports.*
+      FROM science_project_data_entry_imports imports
+      JOIN lineage
+        ON lineage.ancestor_entry_id = imports.entry_id
+       AND lineage.content_sha256 = imports.content_sha256
+      WHERE imports.project_id = ?
+      ORDER BY imports.created_at DESC, imports.id DESC
+    `).all(
+      scanId,
+      projectId,
+      projectId,
+      projectId,
+      SCIENCE_PROJECT_DATA_MAX_ANCESTRY,
+      projectId,
+    ) as Record<string, unknown>[];
     const importByEntry = new Map<string, ScienceProjectDataEntryImportAssociation>();
     for (const row of imports) {
-      const entryId = String(row.entry_id);
+      const entryId = String(row.lineage_current_entry_id ?? row.entry_id);
       if (!importByEntry.has(entryId)) importByEntry.set(entryId, scienceProjectDataImportAssociationFromRow(row));
     }
     const importForEntry = (row: Record<string, unknown>): ScienceProjectDataEntryImportAssociation | null => {
       const contentSha256 = row.content_sha256 === null || row.content_sha256 === undefined ? null : String(row.content_sha256);
       if (!contentSha256) return null;
-      const seen = new Set<string>();
-      let entryId: string | null = String(row.id);
-      while (entryId && !seen.has(entryId)) {
-        seen.add(entryId);
-        const association = importByEntry.get(entryId);
-        if (association) return association.contentSha256 === contentSha256 ? association : null;
-        const previous = entryById.get(entryId);
-        if (!previous || (previous.content_sha256 === null || previous.content_sha256 === undefined)
-          || String(previous.content_sha256) !== contentSha256) return null;
-        entryId = previous.previous_entry_id === null || previous.previous_entry_id === undefined ? null : String(previous.previous_entry_id);
-      }
-      return null;
+      return importByEntry.get(String(row.id)) ?? null;
     };
     const entries = rows.map((row) => scienceProjectDataSnapshotEntryFromRow(row, importForEntry(row)));
     const changes = { new: 0, changed: 0, unchanged: 0, missing: 0, duplicate: 0, unreadable: 0 };

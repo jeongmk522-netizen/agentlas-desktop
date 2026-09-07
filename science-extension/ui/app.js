@@ -2557,6 +2557,25 @@ function createComposerEventSync({
     return scienceChatMarkdown(landmarkSafe);
   }
 
+  /*
+   * ★저장된 답변도 제어 블록을 거쳐야 한다.
+   *
+   * 제거는 실시간 스트리밍 텍스트(scienceLiveResponseText)에만 걸려 있었다. 대화가 저장된
+   * 뒤 다시 그릴 때는 아무도 부르지 않아서, 연구자 화면에 내부 결정 메뉴 JSON 이 산문처럼
+   * 찍히고 끝에 닫는 태그 <</agentlas-ask>> 가 오타처럼 남았다(실측 2026-09-07):
+   *   {"label":"Stop the analysis branch...","description":"..."}]}<</agentlas-ask>>
+   * 과학자가 자기 연구가 왜 멈췄는지 읽으려던 자리에서 이것을 본다. 다른 모든 표시의
+   * 신뢰까지 같이 무너진다.
+   */
+  function scienceVisibleMessageText(raw) {
+    try {
+      return stripAgentControlBlocks(String(raw ?? ""), { streaming: false });
+    } catch {
+      // 정리에 실패해도 원문을 그대로 내보내지는 않는다 — 최소한 닫는 태그는 지운다.
+      return String(raw ?? "").split("<</agentlas-ask>>").join("");
+    }
+  }
+
   function messageMarkup(message) {
     const blocks = state.blocksByMessage.get(message.id) || [];
     const artifactContexts = state.artifactContextsByMessage.get(message.id) || [];
@@ -2571,8 +2590,8 @@ function createComposerEventSync({
       return `<div class="inlineArtifactItem"><button class="inlineArtifact" data-inline-artifact-id="${escapeHtml(context.artifact.id)}" data-inline-artifact-version="${escapeHtml(version)}" data-inline-conversation-id="${escapeHtml(message.conversationId)}" data-inline-message-id="${escapeHtml(message.id)}" aria-label="${escapeHtml(uiCopy(`${title} 아티팩트 v${version} 열기`, `Open ${title}, artifact version ${version}`))}">${preview}<strong>${escapeHtml(title)}</strong><span>${escapeHtml(versionLabel)}</span></button><button class="inlineArtifactRetry" type="button" data-action="retry-inline-preview" hidden>${uiCopy("미리보기 다시 시도", "Retry preview")}</button></div>`;
     }).join("")}</div>` : "";
     if (message.role === "user") return `<article class="questionBubble"><div>${escapeHtml(message.content)}</div><span>${escapeHtml(formatDate(message.createdAt))}</span></article>`;
-    if (!blocks.length) return `<article class="answer" id="message-${escapeHtml(message.id)}" data-message-id="${escapeHtml(message.id)}" tabindex="-1"><div class="answerMeta">${message.role === "assistant" ? "Agentlas Science" : escapeHtml(message.role)}</div><div class="scienceArticleMarkdown">${scienceArticleMarkdown(message.content)}</div>${artifactCards}</article>`;
-    return `<article class="answer" id="message-${escapeHtml(message.id)}" data-message-id="${escapeHtml(message.id)}" tabindex="-1"><div class="answerMeta">Agentlas Science · evidence-linked response</div>${blocks.map((block) => `<section class="answerBlock" data-block-kind="${escapeHtml(block.kind)}"><div class="scienceArticleMarkdown">${scienceArticleMarkdown(block.content)}</div>${citationButtons(message.id, block.id)}</section>`).join("")}${artifactCards}</article>`;
+    if (!blocks.length) return `<article class="answer" id="message-${escapeHtml(message.id)}" data-message-id="${escapeHtml(message.id)}" tabindex="-1"><div class="answerMeta">${message.role === "assistant" ? "Agentlas Science" : escapeHtml(message.role)}</div><div class="scienceArticleMarkdown">${scienceArticleMarkdown(scienceVisibleMessageText(message.content))}</div>${artifactCards}</article>`;
+    return `<article class="answer" id="message-${escapeHtml(message.id)}" data-message-id="${escapeHtml(message.id)}" tabindex="-1"><div class="answerMeta">Agentlas Science · evidence-linked response</div>${blocks.map((block) => `<section class="answerBlock" data-block-kind="${escapeHtml(block.kind)}"><div class="scienceArticleMarkdown">${scienceArticleMarkdown(scienceVisibleMessageText(block.content))}</div>${citationButtons(message.id, block.id)}</section>`).join("")}${artifactCards}</article>`;
   }
 
   function evidenceGraphContextMarkup(context) {
@@ -7933,7 +7952,12 @@ function createComposerEventSync({
     const artifactContexts = state.artifactContextsByMessage.get(message.id) || [];
     const artifacts = artifactContexts.map((context) => `<button class="chatArtifactLink" data-chat-artifact-id="${escapeHtml(context.artifact.id)}" data-chat-artifact-version="${escapeHtml(context.selectedVersion.version)}" data-chat-conversation-id="${escapeHtml(message.conversationId)}" data-chat-message-id="${escapeHtml(message.id)}" title="${escapeHtml(`Open exact v${context.selectedVersion.version} in ${labLabel(context.linkage.labId)}`)}"><strong>${escapeHtml(context.artifact.title)}</strong><span>${escapeHtml(labLabel(context.linkage.labId))} · open v${escapeHtml(context.selectedVersion.version)} →</span></button>`).join("");
     const user = message.role === "user";
-    return `<article class="chatMessage ${user ? "isUser" : "isAssistant"}" data-chat-message-id="${escapeHtml(message.id)}"><div class="chatMessageRole">${user ? "You" : "Agentlas Science"}</div><div class="chatMessageContent${user ? "" : " scienceChatMarkdown"}">${user ? escapeHtml(text) : scienceChatMarkdown(text)}</div>${instructions}${artifacts}${paleontologyCatalogReceiptMarkup(message)}</article>`;
+    // Persisted assistant messages carry the same internal control fences (<<agentlas-ask>>,
+    // <<agentlas-surface>>, memory ticket envelopes, ...) that the live streaming path already
+    // strips via scienceLiveResponseText. Without stripping here too, a message that finished
+    // streaming and got saved to history shows that raw internal JSON to the researcher.
+    const renderedText = user ? text : stripAgentControlBlocks(text);
+    return `<article class="chatMessage ${user ? "isUser" : "isAssistant"}" data-chat-message-id="${escapeHtml(message.id)}"><div class="chatMessageRole">${user ? "You" : "Agentlas Science"}</div><div class="chatMessageContent${user ? "" : " scienceChatMarkdown"}">${user ? escapeHtml(renderedText) : scienceChatMarkdown(renderedText)}</div>${instructions}${artifacts}${paleontologyCatalogReceiptMarkup(message)}</article>`;
   }
 
   function manuscriptProposalCardsMarkup() {
@@ -8253,6 +8277,8 @@ function createComposerEventSync({
       && project.id === state.selectedId && conversation.id === selectedConversation()?.id;
     let requestId = crypto.randomUUID();
     let startInput = null;
+    /** 보낼 때 사람이 쓴 글. 어떤 실패 경로에서도 이 값으로 입력칸을 되살린다. */
+    const draftAtSend = state.composerDraft;
     const recoverFailure = async (reason) => {
       if (!isCurrent()) return;
       let recoveredReceiptTurn = null;
@@ -8285,7 +8311,16 @@ function createComposerEventSync({
       if (!isCurrent()) return;
       state.composerSending = false;
       const recovered = recoveredReceiptTurn || (state.activeTurn?.requestId === requestId ? state.activeTurn : null);
+      /*
+       * ★사람이 쓴 글은 실패의 대가가 아니다.
+       *
+       * 실행 중에 후속 지시를 보내다 상태 오류가 나면 타이핑한 350자가 그대로 사라졌다.
+       * 어디에도 안 남고, 다시 칠 수밖에 없다(실측 2026-09-07). 실제로 기록된 턴을 되찾았을
+       * 때만 입력칸을 비운다 — 그때는 그 글이 대화에 남아 있으므로 지우는 게 맞다. 그 외에는
+       * 무슨 일이 있어도 남긴다.
+       */
       if (recovered) state.composerDraft = "";
+      else state.composerDraft = draftAtSend;
       recordRunFailure(recovered ? composerTurnError(recovered) : reason);
     };
     const needsInitialRun = !options.forceAppend && state.messages.length === 1 && state.messages[0].role === "user" && !state.messages.some((message) => message.role === "assistant");
@@ -8365,6 +8400,19 @@ function createComposerEventSync({
         }
       }
       await recoverFailure(error);
+    } finally {
+      /*
+       * ★입력칸은 어떤 경로로도 잠긴 채 남지 않는다.
+       *
+       * 이 함수에는 finally 가 없었다(바로 아래 cancelComposerTurn 에는 있다). 그래서 실패
+       * 경로 몇 개가 composerSending 을 켜 둔 채 빠져나갔고, 그 뒤로는 타이핑해도 글자가
+       * 들어가지 않았다 — "연구 상태를 갱신하지 못했습니다"가 지워지지 않은 채로. 사람이
+       * 보기에 앱이 죽은 것과 구별되지 않는다(실측 2026-09-07).
+       */
+      if (state.composerSending) {
+        state.composerSending = false;
+        renderChatDock();
+      }
     }
   }
 
@@ -13377,6 +13425,12 @@ function createComposerEventSync({
           state.journalActionError = "";
         }
         render();
+        // The hypothesis list is fetched once on project open and again on navigating to the
+        // Hypotheses tab, but nothing reloaded it while the researcher stayed put. A study that
+        // proposes and records hypotheses mid-session left the tab (and the rail badge counting
+        // pending decisions) showing a stale "no hypothesis" empty state next to a chat transcript
+        // that already reported them. Reload here too, whenever the lifecycle actually moves.
+        void loadHypotheses(projectId);
       }).catch((error) => {
         state.projectError = error instanceof Error ? error.message : String(error);
         render();

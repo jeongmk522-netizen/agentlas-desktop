@@ -3468,7 +3468,22 @@ function ChatPage() {
       }).catch(() => undefined);
     };
     return events.onStoreChanged((change) => {
-      if (change.entity === "runtime") refresh();
+      if (change.entity === "runtime") { refresh(); return; }
+      /*
+       * ★목표가 닫혀도 화면이 그 사실을 못 받던 자리 (QA 실측 2026-09-08).
+       *
+       * 목표가 완료되면 Main 은 계약을 닫고 대화의 목표 결속을 풀며 store 변경을
+       * 알린다. 원장은 정확했다 — 계약 completed, 대화의 목표 번호 null. 그런데 이
+       * 구독은 `entity === "runtime"` 만 보고 있어서 **chat 변경을 아무도 안 받았다.**
+       * 그래서 끝난 목표의 칩과 "목표 추진" 토글이 화면에 계속 떠 있었고, 다른 대화에
+       * 갔다 와야(=다시 읽어야) 그제야 사라졌다. 사용자에게는 "목표가 안 닫힌다"로 보인다.
+       *
+       * 이 대화가 바뀌었다고 알려 오면 대화를 다시 읽는다. 목표 결속·제목처럼 Main 이
+       * 소유한 값은 이 경로로만 화면에 도착한다.
+       */
+      if (change.entity === "chat" && change.id === chatId) {
+        void api.chats.get(chatId).then((next) => { if (next) setChat(next); }).catch(() => undefined);
+      }
     });
   }, [chat?.runtimeSelection, chatId]);
 

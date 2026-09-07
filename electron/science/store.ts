@@ -12470,7 +12470,7 @@ export class ScienceStore {
         : `${verified.table.profile.rowCount} rows and ${verified.table.profile.columnCount} typed columns imported from the exact selected ${sourceDescription}.`;
       const semanticWarnings = [
         ...(verified.normalization && verified.normalization.droppedRowCount > 0
-          ? [`${verified.normalization.droppedRowCount} source row(s) were excluded by recorded normalization rules; inspect normalization provenance for exact source rows, rule IDs, ranges, and reasons.`]
+          ? [`${verified.normalization.droppedRowCount} source row(s) were excluded by the recorded normalization plan; inspect normalization details for source-row provenance.`]
           : []),
         ...(verified.normalization
           ? ["Typed values and column names were produced by the recorded normalization plan; the original workbook remains immutable."]

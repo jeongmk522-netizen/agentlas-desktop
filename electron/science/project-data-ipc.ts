@@ -6,12 +6,15 @@ import type { ScienceDatasetIngestionService } from "./dataset-ingestion";
 import { createScienceDatasetIngestionService } from "./lazy-services";
 import {
   discoverScienceProjectData,
-  scienceProjectDataRootIdentity,
   revalidateResolvedScienceProjectDataCandidate,
   readResolvedScienceProjectDataCandidate,
   resolveScienceProjectDataCandidate,
   type ScienceProjectDataCandidate,
 } from "./project-data-discovery";
+import {
+  ScienceProjectDataAutoRefreshCoordinator,
+  scienceProjectDataRefreshInputFromFilesystem,
+} from "./project-data-auto-refresh";
 import {
   persistPreparedScienceWorkbook,
   type ScienceWorkbookImportInput,
@@ -97,11 +100,6 @@ function refreshMode(value: unknown): "manual" | "automatic" {
   return value;
 }
 
-function projectDataErrorCode(error: unknown): string {
-  if (error instanceof Error && /^science-project-data-[a-z0-9-]+$/u.test(error.message)) return error.message;
-  return "science-project-data-candidate-read-failed";
-}
-
 /** Main-owned linked-project data discovery and candidate import boundary. */
 export function registerScienceProjectDataHandlers(options: {
   ipcMain: IpcBoundary;
@@ -111,6 +109,7 @@ export function registerScienceProjectDataHandlers(options: {
   datasetIngestionService?: DatasetServiceFactory;
 }): void {
   const datasetService = options.datasetIngestionService ?? ((store: ScienceStore) => createScienceDatasetIngestionService(store));
+  const autoRefresh = new ScienceProjectDataAutoRefreshCoordinator({ store: options.scienceStore });
 
   options.ipcMain.handle("science:projects:discoverData", (event, envelope: unknown) => {
     options.assertScienceSender(event, envelope, "science:artifacts");
@@ -121,6 +120,15 @@ export function registerScienceProjectDataHandlers(options: {
     return discoverScienceProjectData(options.scienceStore(), projectId);
   });
 
+  options.ipcMain.handle("science:projects:activate", (event, envelope: unknown) => {
+    options.assertScienceSender(event, envelope);
+    options.assertScienceProjectDocument(event, envelope);
+    const input = inputRecord(envelope);
+    const projectId = uuid(input.projectId, "science-project-id-invalid");
+    autoRefresh.attachSenderCleanup(event.sender);
+    return autoRefresh.activate(projectId, event.sender.id);
+  });
+
   options.ipcMain.handle("science:projects:refreshData", (event, envelope: unknown) => {
     options.assertScienceSender(event, envelope, "science:artifacts");
     const documentId = options.assertScienceProjectDocument(event, envelope);
@@ -129,35 +137,9 @@ export function registerScienceProjectDataHandlers(options: {
     const projectId = uuid(input.projectId, "science-project-id-invalid");
     const mode = refreshMode(input.mode);
     const store = options.scienceStore();
-    const rootIdentity = scienceProjectDataRootIdentity(store, projectId);
-    const discovery = discoverScienceProjectData(store, projectId);
-    const observations = discovery.candidates.map((candidate) => {
-      try {
-        const resolved = resolveScienceProjectDataCandidate(store, projectId, candidate.candidateId, candidate.relativePath);
-        const bytes = readResolvedScienceProjectDataCandidate(resolved);
-        return {
-          candidate,
-          hash: { status: "verified" as const, contentSha256: sha256(bytes) },
-          identityJson: JSON.stringify(resolved.identity),
-        };
-      } catch (error) {
-        return {
-          candidate,
-          hash: { status: "unreadable" as const, reason: projectDataErrorCode(error) },
-          identityJson: null,
-        };
-      }
-    });
+    const refreshInput = scienceProjectDataRefreshInputFromFilesystem(store, { requestId, projectId, mode });
     if (options.assertScienceProjectDocument(event, envelope) !== documentId) throw new Error("science-project-data-document-changed");
-    const result = store.refreshScienceProjectData({
-      requestId,
-      projectId,
-      mode,
-      rootIdentity,
-      status: discovery.truncated ? "truncated" : "complete",
-      skippedCount: discovery.skippedCount,
-      observations,
-    });
+    const result = store.refreshScienceProjectData(refreshInput);
     return { ...result.snapshot, replayed: result.replayed };
   });
 

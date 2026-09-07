@@ -48,6 +48,7 @@ contextBridge.exposeInMainWorld("agentlasScience", Object.freeze({
     get: (projectId: string) => ipcRenderer.invoke("science:projects:get", { extensionId, projectId }),
     updateRelatedDomains: (input: unknown) => ipcRenderer.invoke("science:projects:updateRelatedDomains", { extensionId, input }),
     discoverData: (input: unknown) => ipcRenderer.invoke("science:projects:discoverData", { extensionId, input }),
+    activate: (projectId: string) => ipcRenderer.invoke("science:projects:activate", { extensionId, input: { projectId } }),
     refreshData: (input: unknown) => ipcRenderer.invoke("science:projects:refreshData", { extensionId, input }),
     dataSnapshot: (projectId: string) => ipcRenderer.invoke("science:projects:dataSnapshot", { extensionId, input: { projectId } }),
   }),

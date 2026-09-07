@@ -2055,6 +2055,13 @@ function createComposerEventSync({
     } : null;
     const preserveRuntimeSelection = Boolean(preservedWorkspace && !switchingProject);
     state.selectedId = projectId;
+    // Main owns the linked-folder snapshot and watcher. Activation only queues
+    // bounded discovery; it never imports a file or starts an analysis run.
+    if (science.projects.activate) {
+      void science.projects.activate(projectId).catch((error) => {
+        console.warn("[science-project-data] automatic activation unavailable", error);
+      });
+    }
     state.projectFolderOpen = Boolean(options.openFolder);
     if (switchingProject) {
       state.workbookImportBusy = false;

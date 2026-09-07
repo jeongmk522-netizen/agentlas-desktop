@@ -8122,6 +8122,14 @@ function createComposerEventSync({
   function scienceResearchLoopControlsMarkup() {
     const session = state.researchLoopInspection?.session;
     if (!session || session.status !== "paused" || session.projectId !== state.selectedId) return "";
+    // `state.researchLoopInspection` is a cached snapshot; `state.activeTurn` is live truth.
+    // Sending an ordinary chat message (rather than clicking "Continue research") starts a
+    // real turn without ever refreshing this cached "paused" snapshot, so the stale block --
+    // including a leftover error from an earlier failed resume click -- kept showing next to
+    // the composer's own "Agent runtime is researching..." status: three contradictory
+    // statements on screen at once (reported twice, 2026-09-07). A turn already running proves
+    // the study is not waiting on this control, regardless of what the snapshot still says.
+    if (state.activeTurn && SCIENCE_RUNTIME_RUNNING_STATUSES.has(state.activeTurn.status)) return "";
     const busy = state.researchLoopActionBusy;
     const error = scienceResearchLoopActionErrorText(state.researchLoopActionError);
     const detail = uiCopy(
@@ -8451,7 +8459,43 @@ function createComposerEventSync({
     if (message.includes("folder-selection") || message.includes("folder selection")) return uiCopy("폴더를 다시 선택해 주세요.", "Choose the folder again.");
     if (message.includes("busy")) return uiCopy("폴더 선택 창이 이미 열려 있거나 준비 중입니다. 경로를 직접 입력할 수도 있습니다.", "Folder picker is busy. You can also enter the folder path directly.");
     if (message.includes("path-invalid") || message.includes("not-directory") || message.includes("unavailable")) return uiCopy("올바른 폴더 경로를 입력해 주세요.", "Please enter a valid directory path.");
-    return message || uiCopy("폴더를 선택하지 못했습니다.", "The folder could not be selected.");
+    /*
+     * ★막는 이유마다 사람이 읽을 문장이 있어야 한다.
+     *
+     * 경로 제한은 잘 걸리는데 화면에는 이런 것이 그대로 떴다(QA 실측 2026-09-07):
+     *   Error invoking remote method 'science:projects:specifyFolder': Error: science-project-folder-outside-home
+     * 왜 안 되는지도, 어디면 되는지도 없다. 아래 마지막 줄이 "아는 게 없으면 원문을 뱉는다"
+     * 였기 때문이다 — 새 사유가 생길 때마다 조용히 내부 문자열이 사용자에게 샌다.
+     */
+    if (message.includes("outside-home")) {
+      return uiCopy(
+        "내 사용자 폴더 안의 경로만 쓸 수 있습니다. 예: ~/Science/내연구 — 아니면 '폴더 찾기'로 직접 고르세요.",
+        "Choose a folder inside your home directory, for example ~/Science/my-study — or use Browse to pick one.",
+      );
+    }
+    if (message.includes("hidden-path")) {
+      return uiCopy(
+        "이름이 점(.)으로 시작하는 숨김 폴더에는 만들 수 없습니다. 다른 이름의 폴더를 고르세요.",
+        "A hidden folder (one whose name starts with a dot) cannot hold a project. Choose another folder.",
+      );
+    }
+    if (message.includes("reserved-path")) {
+      return uiCopy(
+        "이 위치는 시스템과 앱이 쓰는 곳이라 연구 폴더로 쓸 수 없습니다. 예: ~/Science/내연구 처럼 골라 주세요.",
+        "This location belongs to the system and to apps, so a project cannot live here. Try ~/Science/my-study instead.",
+      );
+    }
+    if (message.includes("not-a-directory")) {
+      return uiCopy("그 경로는 폴더가 아니라 파일이거나 바로가기입니다. 폴더를 골라 주세요.", "That path is a file or a link, not a folder. Choose a folder.");
+    }
+    /*
+     * 여기까지 왔으면 우리가 모르는 사유다. 내부 문자열을 그대로 보여주지 않는다 — 사람에게는
+     * 할 수 있는 일을 말하고, 원문은 자세히 보기로만 남긴다.
+     */
+    return uiCopy(
+      "이 폴더는 쓸 수 없습니다. 다른 폴더를 고르거나 '폴더 찾기'로 직접 선택해 주세요.",
+      "This folder cannot be used. Pick another one, or use Browse to choose it directly.",
+    );
   }
 
   async function pickNewProjectFolder() {
@@ -11580,6 +11624,35 @@ function createComposerEventSync({
     }));
   }
 
+  /*
+   * ★비어 있는 필수 칸을 브라우저 기본 말풍선이 영어로 말하고 있었다.
+   *
+   * 한국어 화면에서 "Please fill out this field." 가 떴다(QA 실측 2026-09-07). 기본 문구는
+   * 앱 언어를 모르고 무엇을 적어야 하는지도 말해 주지 않는다. invalid 는 버블링하지 않으므로
+   * 캡처 단계에서 받아 그 칸이 무엇인지 아는 문장으로 바꾼다. 값이 채워지면 바로 해제한다 —
+   * 안 지우면 그 칸은 영영 무효로 남는다.
+   */
+  root.addEventListener("invalid", (event) => {
+    const field = event.target;
+    if (!field || typeof field.setCustomValidity !== "function") return;
+    const label = (field.closest("label")?.querySelector("span")?.textContent || "").trim();
+    if (field.validity.valueMissing) {
+      field.setCustomValidity(label
+        ? uiCopy(`${label}을(를) 입력해 주세요.`, `Please fill in ${label}.`)
+        : uiCopy("이 칸을 입력해 주세요.", "Please fill in this field."));
+      return;
+    }
+    if (field.validity.tooLong) {
+      field.setCustomValidity(uiCopy(`${field.maxLength}자까지 쓸 수 있습니다.`, `Up to ${field.maxLength} characters.`));
+      return;
+    }
+    field.setCustomValidity(uiCopy("입력한 내용을 확인해 주세요.", "Please check what you entered."));
+  }, true);
+  root.addEventListener("input", (event) => {
+    const field = event.target;
+    if (field && typeof field.setCustomValidity === "function") field.setCustomValidity("");
+  }, true);
+
   root.addEventListener("click", (event) => {
     const target = event.target.closest("button");
     if (!target) return;
@@ -13218,6 +13291,11 @@ function createComposerEventSync({
       state.activeWorkspaceTabId = RESEARCH_TAB_ID;
       state.composerDraft = manuscriptDraftJobPrompt(job);
       render();
+      // Landing here bypasses navigateProjectDestination("literature"), which is the only other
+      // place that loads this list. Without this call the screen showed whatever was last cached
+      // -- nothing, on a project never visited here before -- as a confident "no source has been
+      // registered" over a corpus of 150 real sources (reported from a live study, 2026-09-07).
+      void loadLiterature(project.id);
       try {
         await startComposerTurn({ forceAppend: true });
         if (state.composerError) {

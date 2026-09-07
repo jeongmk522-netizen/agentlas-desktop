@@ -1187,6 +1187,81 @@ function historyEntryToStreamMessage(entry: {
   };
 }
 
+function streamMessageIdentity(message: StreamMessage): string | null {
+  if (message.role !== "agent") return null;
+  const durableMessageId = message.durableMessageId?.trim();
+  if (durableMessageId) return `durable:${durableMessageId}`;
+  const runId = message.runId?.trim();
+  if (runId) return `run:${runId}`;
+  return null;
+}
+
+function mergeStreamMessageDuplicate(existing: StreamMessage, candidate: StreamMessage): StreamMessage {
+  const existingRichness = Number(Boolean(existing.text.trim()))
+    + Number(Boolean(existing.activityState && hasOneActivityEvidence(existing.activityState))) * 2
+    + (existing.activityRuns?.length ?? 0)
+    + (existing.steps?.length ?? 0) / 100;
+  const candidateRichness = Number(Boolean(candidate.text.trim()))
+    + Number(Boolean(candidate.activityState && hasOneActivityEvidence(candidate.activityState))) * 2
+    + (candidate.activityRuns?.length ?? 0)
+    + (candidate.steps?.length ?? 0) / 100;
+  const preferred = candidateRichness >= existingRichness ? candidate : existing;
+  const runs = new Map<string, StreamActivityRun>();
+  for (const run of [...(existing.activityRuns ?? []), ...(candidate.activityRuns ?? [])]) {
+    const previous = runs.get(run.runId);
+    if (!previous || run.state.lastSequence >= previous.state.lastSequence) runs.set(run.runId, run);
+  }
+  const steps = new Map<string, StreamStep>();
+  for (const step of [...(existing.steps ?? []), ...(candidate.steps ?? [])]) steps.set(step.id, step);
+  const notices = new Map<string, NonNullable<StreamMessage["notices"]>[number]>();
+  for (const notice of [...(existing.notices ?? []), ...(candidate.notices ?? [])]) notices.set(notice.id, notice);
+  return {
+    ...existing,
+    ...preferred,
+    id: existing.id,
+    text: preferred.text.trim() ? preferred.text : existing.text || candidate.text,
+    ...(preferred.durableMessageId || existing.durableMessageId || candidate.durableMessageId
+      ? { durableMessageId: preferred.durableMessageId ?? existing.durableMessageId ?? candidate.durableMessageId }
+      : {}),
+    ...(preferred.runId || existing.runId || candidate.runId
+      ? { runId: preferred.runId ?? existing.runId ?? candidate.runId }
+      : {}),
+    ...(runs.size > 0 ? { activityRuns: [...runs.values()] } : {}),
+    ...(preferred.activityState || existing.activityState || candidate.activityState
+      ? { activityState: preferred.activityState ?? existing.activityState ?? candidate.activityState }
+      : {}),
+    ...(steps.size > 0 ? { steps: [...steps.values()] } : {}),
+    ...(notices.size > 0 ? { notices: [...notices.values()] } : {}),
+    ...(existing.startedAt != null || candidate.startedAt != null
+      ? { startedAt: Math.min(existing.startedAt ?? Infinity, candidate.startedAt ?? Infinity) }
+      : {}),
+    ...(existing.finishedAt != null || candidate.finishedAt != null
+      ? { finishedAt: Math.max(existing.finishedAt ?? 0, candidate.finishedAt ?? 0) }
+      : {}),
+    unboundRun: existing.unboundRun === true && candidate.unboundRun === true ? true : undefined,
+  };
+}
+
+function dedupeStreamMessages(messages: StreamMessage[]): StreamMessage[] {
+  const indexByIdentity = new Map<string, number>();
+  const result: StreamMessage[] = [];
+  for (const message of messages) {
+    const identity = streamMessageIdentity(message);
+    if (!identity) {
+      result.push(message);
+      continue;
+    }
+    const existingIndex = indexByIdentity.get(identity);
+    if (existingIndex == null) {
+      indexByIdentity.set(identity, result.length);
+      result.push(message);
+    } else {
+      result[existingIndex] = mergeStreamMessageDuplicate(result[existingIndex], message);
+    }
+  }
+  return result;
+}
+
 /**
  * A live final can be painted a few milliseconds before a follow-up history
  * read observes the same durable row. Replacing the whole transcript with that
@@ -1277,7 +1352,7 @@ function reconcileTranscriptSnapshot(
   ));
   const next = [...durableWithRichSteps, ...tail];
   if (recovery && !new Set(next.map(signature)).has(signature(recovery))) next.push(recovery);
-  return next;
+  return dedupeStreamMessages(next);
 }
 
 /**
@@ -1310,7 +1385,7 @@ function preserveRichStepsBySignature(
       .filter((message) => message.role === "agent" && message.runId && message.text.trim())
       .map((message) => message.runId!),
   );
-  return durable
+  return dedupeStreamMessages(durable
     // Initial hydration can finish after a live final. If its timeline also
     // lacks the durable assistant anchor, it contributes an explicit unbound
     // row; discard only that duplicate when the same run is already visible
@@ -1332,7 +1407,7 @@ function preserveRichStepsBySignature(
           ...(canonicalLive?.activityRuns?.length ? { activityRuns: canonicalLive.activityRuns } : {}),
       }
       : message;
-    });
+    }));
 }
 
 /** Convert redacted durable tool-use rows back into chat steps after reload. */
@@ -1565,7 +1640,7 @@ function attachHydratedWorkActivities(
   // An unbound run is deliberately a separate, empty-answer Work row. The
   // label is rendered by ChatStream so users can tell that its activity is
   // durable while the assistant message identity was unavailable.
-  return [
+  return dedupeStreamMessages([
     ...attached,
     ...hydrated.unbound.map(({ run, steps, startedAt, finishedAt, busy }) => ({
       id: `work-run:${run.runId}`,
@@ -1580,7 +1655,7 @@ function attachHydratedWorkActivities(
       unboundRun: true,
       ...(steps.length > 0 ? { steps } : {}),
     })),
-  ];
+  ]);
 }
 
 function hasHydratedWorkActivities(messages: StreamMessage[]): boolean {

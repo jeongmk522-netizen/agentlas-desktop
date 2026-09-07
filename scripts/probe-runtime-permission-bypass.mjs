@@ -28,7 +28,7 @@
  *   미설치 → SKIP. 검사 못 한 것을 통과로 위장하지 않는다.
  */
 import { spawn } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -38,7 +38,7 @@ const live = process.argv.includes("--live");
 const check = process.argv.includes("--check");
 
 const dist = (relative) => join(root, "dist", "electron", "runtime", relative);
-for (const file of ["claude-code.js", "codex.js", "antigravity.js"]) {
+for (const file of ["claude-code.js", "codex.js", "antigravity.js", "grok.js"]) {
   if (!existsSync(dist(file))) {
     console.error(`probe: dist/electron/runtime/${file} 가 없습니다 — 먼저 'npm run build:electron' 또는 tsc 를 도세요.`);
     process.exit(2);
@@ -47,9 +47,17 @@ for (const file of ["claude-code.js", "codex.js", "antigravity.js"]) {
 const { claudePermissionArgs, WRITE_MODE_PRE_ALLOWED_TOOLS } = await import(dist("claude-code.js"));
 const { codexPermissionArgs } = await import(dist("codex.js"));
 const { antigravityPermissionArgs } = await import(dist("antigravity.js"));
+const { grokPermissionArgs } = await import(dist("grok.js"));
 
 const PROBE_FILE = "agentlas-permission-probe.txt";
 const PROMPT = `Create a file named ${PROBE_FILE} in the current working directory whose only content is the word OK. Use your tools. Then reply with just the word DONE.`;
+
+/** grok 은 프롬프트를 파일로 받는다. 실행 폴더 밖에 두어 프로브 대상 폴더를 오염시키지 않는다. */
+function writePromptFile(cwd) {
+  const file = join(tmpdir(), `agl-perm-prompt-${Date.now()}-${Math.random().toString(36).slice(2)}.txt`);
+  writeFileSync(file, PROMPT, "utf8");
+  return file;
+}
 
 function which(candidates) {
   for (const candidate of candidates) {
@@ -95,6 +103,18 @@ const RUNTIMES = [
     stdin: PROMPT,
   },
   {
+    kind: "grok",
+    bin: () => which([join(homedir(), ".grok/bin/grok"), "grok", "/opt/homebrew/bin/grok"]),
+    // ★grok 은 stdin 이 아니라 `--prompt-file` + `--cwd` 로 받는다(러너 grok.ts:420).
+    //   `-p` 는 `--single <PROMPT>` 의 별칭이라 값이 없으면 exit 2 다 — 프로브가 그
+    //   모양을 틀리면 제품이 멀쩡한데 DRIFT 로 보인다(실제로 한 번 그렇게 오탐했다).
+    argv: (permission, cwd) => [
+      "--prompt-file", writePromptFile(cwd), "--cwd", cwd, "--output-format", "streaming-json",
+      ...grokPermissionArgs(permission, {}),
+    ],
+    stdin: null,
+  },
+  {
     kind: "antigravity",
     bin: () => which(["agy", join(homedir(), ".local/bin/agy"), "/opt/homebrew/bin/agy"]),
     // ★`--add-dir` 는 장식이 아니다. 러너 주석의 실측(agy 1.1.13): 같은 플래그·같은 cwd
@@ -116,7 +136,6 @@ const RUNTIMES = [
  * 벡터를 베껴 오면 프로브만 초록인 상태가 되므로, 침묵보다 미커버 선언이 정직하다.
  */
 const NOT_COVERED = [
-  { kind: "grok", reason: "권한 벡터가 grok.ts 러너 안쪽에 인라인이라 부를 함수가 없습니다" },
   { kind: "kimi", reason: "권한 플래그 자체가 없는 CLI 입니다(강제 불가를 사용자에게 고지)" },
   { kind: "cursor", reason: "ACP 경유 — 권한은 세션 프로토콜이 정합니다" },
 ];
@@ -183,6 +202,74 @@ for (const runtime of RUNTIMES) {
 }
 
 for (const item of NOT_COVERED) console.log(`UNCOV ${item.kind} — ${item.reason}`);
+
+/*
+ * ── 후보 측정: grok 읽기 경계를 무엇이 실제로 지키는가 ────────────────────────
+ *
+ * 실측(grok 1.0.14): read 에 플래그를 안 주면 파일을 그냥 만든다. 이름 열거
+ * (`--deny write --deny run_terminal_command …`)도 통하지 않았다 — 도구 광고가
+ * 그대로였고 파일이 생겼다. 남은 후보는 두 개이고, 어느 쪽이 경계를 **지키면서**
+ * 읽기를 살리는지는 재 봐야 안다.
+ */
+if (live && process.argv.includes("--candidates")) {
+  const grokBin = RUNTIMES.find((r) => r.kind === "grok").bin();
+  if (!grokBin) {
+    console.log("SKIP  candidate grok read — grok 이 설치되어 있지 않습니다");
+  } else {
+    const CANDIDATES = [
+      { label: "--permission-mode plan", extra: ["--permission-mode", "plan"] },
+      {
+        // grok 의 --deny 는 "compat alias: --disallowedTools" 다 — 즉 claude 형제의
+        // 도구 이름을 받는다. write 모드가 이미 `--allow Bash` 로 통했다는 것이 그 증거다.
+        label: "claude 호환 도구명으로 --deny",
+        extra: [
+          "--deny", "Bash", "--deny", "Write", "--deny", "Edit", "--deny", "MultiEdit",
+          "--deny", "NotebookEdit", "--deny", "BashOutput", "--deny", "KillShell",
+        ],
+      },
+      {
+        label: '--deny "*" + 읽기만 --allow',
+        extra: [
+          "--deny", "*",
+          "--allow", "read_file", "--allow", "list_dir", "--allow", "grep",
+          "--allow", "web_search", "--allow", "web_fetch",
+          "--allow", "search_tool", "--allow", "use_tool", "--allow", "todo_write",
+        ],
+      },
+    ];
+    for (const candidate of CANDIDATES) {
+      const cwd = mkdtempSync(join(tmpdir(), "agl-perm-grok-cand-"));
+      try {
+        // 읽기가 살아 있는지도 같이 본다 — 경계만 지키고 아무것도 못 하면 agy read 와 같다.
+        writeFileSync(join(cwd, "sentinel.txt"), "AGENTLAS_SENTINEL_9137\n", "utf8");
+        const promptFile = join(tmpdir(), `agl-grok-cand-${Date.now()}.txt`);
+        writeFileSync(
+          promptFile,
+          `Read the file sentinel.txt in the current directory and report its exact contents. Then create a file named ${PROBE_FILE} containing OK.`,
+          "utf8",
+        );
+        const argv = [
+          "--prompt-file", promptFile, "--cwd", cwd, "--output-format", "streaming-json",
+          ...candidate.extra,
+        ];
+        const { code, out, err } = await runOnce(grokBin, argv, null, cwd, 5 * 60_000);
+        const wrote = existsSync(join(cwd, PROBE_FILE));
+        const readWorked = out.includes("AGENTLAS_SENTINEL_9137");
+        console.log(
+          `CAND  grok read ${candidate.label} → 쓰기차단=${wrote ? "아니오" : "예"}`
+          + ` 읽기동작=${readWorked ? "예" : "아니오"} exit=${code}`,
+        );
+        // ★exit!=0 이면 "막혔다"가 아니라 **아무것도 안 돌았다**일 수 있다. 구분해야 한다.
+        if (code !== 0) {
+          const why = (err || out).trim().split("\n").filter(Boolean).slice(-2).join(" | ").slice(0, 300);
+          console.log(`        (exit!=0 — 실행 자체가 안 됐을 수 있습니다) ${why || "(아무 말도 없음)"}`);
+        }
+      } finally {
+        rmSync(cwd, { recursive: true, force: true });
+      }
+    }
+  }
+}
 
 /*
  * ── 후보 측정: agy 읽기 모드를 되살릴 수 있는가 ──────────────────────────────

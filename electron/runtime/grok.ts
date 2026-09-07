@@ -63,6 +63,78 @@ function grokCandidates(): string[] {
  *   AGENTLAS_GROK_SUBAGENTS=0|off|false  → `--no-subagents`
  * 병렬 워커가 실제로 해를 끼치는 실측이 다시 나오면, 그 관측을 여기 적고 기본값을 뒤집을 것.
  */
+
+/**
+ * read 권한에서 grok 에게 주지 않는 도구 — claude 의 READ_ONLY_DENIED_TOOLS 와 같은 자리.
+ * 이름은 grok 1.0.14 가 `available_commands` 로 광고한 실물 목록에서 왔다.
+ * judgment-exempt: 관측된 이름을 분류하는 게 아니라 이 CLI 에 넘길 --deny **열거** 목록이다.
+ */
+export const GROK_READ_ONLY_DENIED_TOOLS = [
+  // 실측 2026-09-07 (grok 1.0.14): `--deny` 는 **claude 호환 이름을 검증한다.**
+  //   `--deny "NotebookEdit"` → `unsupported tool prefix: NotebookEdit` 로 exit 1.
+  //   그 앞의 Bash·Write·Edit·MultiEdit 는 통과했다(파서가 순서대로 검증한다).
+  //   반대로 grok 자기 내부 이름(`write`, `run_terminal_command` …)은 **조용히 먹히고
+  //   아무것도 막지 못했다** — 도구 광고가 그대로였고 파일이 생겼다. 소문자 이름은
+  //   셸 명령 규칙으로 해석되는 것으로 보인다.
+  "Bash",
+  "BashOutput",
+  "KillShell",
+  "Write",
+  "Edit",
+  "MultiEdit",
+];
+
+/**
+ * 권한 칩 → grok 권한 플래그. **순수 함수다.**
+ *
+ * 모듈 밖으로 꺼내 둔 이유(2026-09-07): 설치된 CLI 로 이 벡터가 아직 통하는지 재는
+ * 프로브(scripts/probe-runtime-permission-bypass.mjs)가 벡터를 **베끼지 않고** 이
+ * 함수를 그대로 부르게 하기 위해서다. 사본을 두면 러너가 바뀌어도 프로브는 안 바뀌어,
+ * 프로브만 초록이고 제품은 막히는 상태가 만들어진다.
+ *
+ * read 는 플래그를 주지 않는다 — claude 처럼 이름으로 도구를 빼는 자리는 아래
+ * untrustedNoTools 경로(`--deny "*"`)가 따로 맡는다.
+ */
+export function grokPermissionArgs(
+  permission: RunnerRequest["permission"],
+  opts: { untrustedNoTools?: boolean } = {},
+): string[] {
+  if (opts.untrustedNoTools) return [];
+  if (permission === "full") return ["--permission-mode", "bypassPermissions"];
+  if (permission === "write") {
+    // ★오너 결정(2026-08-15) — 헤드리스는 답할 사람이 없으니 권한 범위 안의 도구는
+    // 처음부터 풀어 둔다(claude 형제 규칙: acceptEdits 는 셸·웹을 여전히 묻는다).
+    // grok --help 실측: `--allow <RULE>` (compat alias: --allowedTools).
+    // judgment-exempt: 위 claude 와 같다 — grok CLI 에 넘길 --allow **열거** 목록이지
+    //   관측된 호출의 분류가 아니다.
+    return ["--permission-mode", "acceptEdits", "--allow", "Bash", "--allow", "WebFetch", "--allow", "WebSearch"];
+  }
+  /*
+   * ★read 는 "플래그 없음"이 아니다 — 그렇게 두었더니 경계가 거짓말이었다.
+   *
+   * 실측 2026-09-07 (grok 1.0.14, scripts/probe-runtime-permission-bypass.mjs --live):
+   * 읽기 권한으로 파일 생성을 시켰더니 **그냥 만들었다.** 플래그가 없으면 grok 은
+   * run_terminal_command · write · search_replace 를 전부 들고 시작한다. 옛 기록에는
+   * grok 이 이 요청을 거절했다고 적혀 있지만(2026-08 claude-code.ts 주석), 지금 판은
+   * 거절하지 않는다 — 벤더 기본값이 바뀐 것이고, 우리가 그것을 인식하지 못했다.
+   *
+   * claude 형제 규칙 그대로 **변경 수단을 이름으로 막는다.** 셸까지 막는 이유도 같다:
+   * 셸을 열어 둔 채 "읽기 전용"이라고 말하면 그 경계는 거짓말이다.
+   * MCP 도구(use_tool·search_tool)와 웹 읽기는 남긴다 — 오너 결정 2026-08-18(읽기 실행도
+   * 승인된 MCP 는 쓴다). 읽기·검색·분석은 그대로 가능하다.
+   *
+   * ★아직 끝까지 재지 못했다 — 정직하게 적어 둔다. 이 이름들이 CLI 파서를 통과하는
+   *   것까지는 확인했지만, 실제로 쓰기를 막는지는 그 측정 도중 grok 무료 한도에
+   *   걸려(“You've reached your free Grok Build usage limit”) 확인하지 못했다.
+   *   한도가 풀리면 이 한 줄로 끝난다:  npm run probe:permission-live
+   *   (거기서 `DRIFT grok read` 가 뜨면 이름 목록이 아직 부족한 것이다.)
+   *   그 사이에도 플래그 없음보다는 낫다 — 플래그 없음은 파일 생성이 **재현되는**
+   *   상태였다. 후보 둘은 이미 탈락했다: grok 내부 소문자 이름은 무효였고,
+   *   `--permission-mode plan` 은 같은 조건에서 만들기도 하고 안 만들기도 했다(비결정적).
+   */
+  return GROK_READ_ONLY_DENIED_TOOLS.flatMap((tool) => ["--deny", tool]);
+}
+
 export function grokSubagentsDisabled(env: NodeJS.ProcessEnv = process.env): boolean {
   const raw = (env.AGENTLAS_GROK_SUBAGENTS ?? "").trim().toLowerCase();
   return raw === "0" || raw === "off" || raw === "false" || raw === "no";
@@ -403,15 +475,7 @@ export const runGrok: Runner = async (req: RunnerRequest, events: RunnerEvents):
   if (resumeSessionId) args.unshift("--resume", resumeSessionId);
   if (req.model) args.push("-m", req.model); // grok --help 확인: -m, --model <model>
   if (req.effort) args.push("--effort", req.effort);
-  if (!req.untrustedNoTools && req.permission === "full") args.push("--permission-mode", "bypassPermissions");
-  else if (!req.untrustedNoTools && req.permission === "write") {
-    // ★오너 결정(2026-08-15) — 헤드리스는 답할 사람이 없으니 권한 범위 안의 도구는
-    // 처음부터 풀어 둔다(claude 형제 규칙: acceptEdits 는 셸·웹을 여전히 묻는다).
-    // grok --help 실측: `--allow <RULE>` (compat alias: --allowedTools).
-    // judgment-exempt: 위 claude 와 같다 — grok CLI 에 넘길 --allow **열거** 목록이지
-    //   관측된 호출의 분류가 아니다.
-    args.push("--permission-mode", "acceptEdits", "--allow", "Bash", "--allow", "WebFetch", "--allow", "WebSearch");
-  }
+  args.push(...grokPermissionArgs(req.permission, { untrustedNoTools: Boolean(req.untrustedNoTools) }));
   if (req.untrustedNoTools) {
     // ★도구 0개는 선언이 아니라 인자로 만든다. 실측 2026-08-19: `--disallowed-tools` 로
     //   이름을 열거하면 grok 이 여전히 파일을 찾아다녔고, `--deny "*"` 를 주자 스스로

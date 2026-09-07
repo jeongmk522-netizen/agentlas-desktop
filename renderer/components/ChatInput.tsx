@@ -1642,22 +1642,13 @@ function ChatInputComponent({
                 return;
               }
               if (e.key === "Enter" && !e.metaKey && !e.ctrlKey) {
-                /*
-                 * ★고른 것이 없으면 Enter 는 원래 하던 일을 해야 한다 — 보내기.
-                 *
-                 * 목록이 떠 있기만 하면 Enter 를 막고, 선택된 항목이 없으면 아무 일도 하지 않고
-                 * 돌아갔다. 그래서 사용자가 보기에 Enter 가 **통째로 삼켜졌다**: 전송도 줄바꿈도
-                 * 안 된다. 목록은 사용자가 ↑↓ 를 누르기 전까지 아무것도 선택하지 않으므로, 그냥
-                 * 쓰다가 /나 @ 가 섞이면 바로 이 상태가 된다. Cmd+Enter 만 되는 이유가 이것이고,
-                 * 처음 쓰는 사람은 그걸 알 길이 없다(QA 실측 2026-09-07).
-                 */
+                // 여기까지 왔다는 것은 목록에 후보가 있다는 뜻이고(위 가드),
+                // selectedAutocompleteOption() 은 아무것도 안 골랐어도 첫 후보로 떨어진다.
+                // 그래서 Enter 는 늘 무언가를 고른다 — 삼켜지는 경우는 없다.
+                e.preventDefault();
                 const opt = selectedAutocompleteOption();
-                if (opt) {
-                  e.preventDefault();
-                  applyAutocomplete(opt);
-                  return;
-                }
-                // 고른 것이 없다 — 아래 일반 Enter 처리(전송)로 흘려보낸다.
+                if (opt) applyAutocomplete(opt);
+                return;
               }
             }
             // 매칭 후보가 없으면 Enter는 사용자가 쓴 텍스트 그대로 전송한다. Tab만 포커스 이탈 방지.

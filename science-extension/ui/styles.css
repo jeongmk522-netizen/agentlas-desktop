@@ -5786,3 +5786,105 @@ button:has(> span:only-child > .uiIcon:only-child):not(.projectHubInlineBack) {
     flex: none;
   }
 }
+
+
+/* Statistical result hierarchy: make the populated statistics result lead with the
+   sample and result surface; keep hashes, mapping, and diagnostics available on demand. */
+.artifactWorkspace:has(.statisticsAnalysisSurface) .statisticsAnalysisHeader code {
+  display: none;
+}
+.artifactWorkspace:has(.statisticsAnalysisSurface) .statisticsExecutionRailCompact {
+  min-height: 0;
+  display: block;
+  flex: 0 0 auto;
+  overflow: visible;
+  border-bottom: 1px solid var(--line);
+  background: var(--surface-muted);
+  padding: 0;
+}
+.statisticsExecutionRailCompact .statisticsCompactSummary {
+  min-width: 0;
+  min-height: 48px;
+  display: grid;
+  grid-template-columns: minmax(70px, .55fr) minmax(170px, 1.35fr) minmax(110px, .8fr) minmax(82px, .65fr) minmax(130px, 1fr);
+  align-items: stretch;
+  gap: 0;
+}
+.statisticsCompactMetric {
+  min-width: 0;
+  display: grid;
+  align-content: center;
+  gap: 2px;
+  border-right: 1px solid var(--line);
+  padding: 7px 12px;
+}
+.statisticsCompactMetric:last-child { border-right: 0; }
+.statisticsCompactMetric span { color: var(--muted); font-size: 9px; font-weight: 780; letter-spacing: .08em; text-transform: uppercase; }
+.statisticsCompactMetric strong { min-width: 0; overflow: hidden; color: var(--ink); font-size: 11px; line-height: 1.25; text-overflow: ellipsis; white-space: nowrap; }
+.statisticsCompactMetric:nth-child(4) strong { color: #315b41; }
+.statisticsTechnicalDetails { margin: 0; border-top: 1px solid color-mix(in srgb, var(--line) 72%, transparent); background: color-mix(in srgb, var(--surface) 40%, transparent); }
+.statisticsTechnicalDetails > summary { cursor: pointer; list-style: none; min-height: 28px; display: flex; align-items: center; padding: 5px 12px; color: var(--muted-deep); font-size: 10px; font-weight: 700; }
+.statisticsTechnicalDetails > summary::-webkit-details-marker { display: none; }
+.statisticsTechnicalDetails > summary::before { content: "▸"; display: inline-block; margin-right: 6px; color: var(--muted); transition: transform .16s ease; }
+.statisticsTechnicalDetails[open] > summary::before { transform: rotate(90deg); }
+.statisticsTechnicalBody { min-width: 0; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0; border-top: 1px solid var(--line); }
+.statisticsTechnicalBody > section { min-width: 0; display: grid; align-content: start; gap: 4px; border-right: 1px solid var(--line); padding: 8px 12px 9px; }
+.statisticsTechnicalBody > section:last-child { border-right: 0; }
+.statisticsTechnicalBody > section > span { color: var(--muted); font-size: 9px; font-weight: 780; letter-spacing: .08em; }
+.statisticsTechnicalBody > section > strong { min-width: 0; overflow: hidden; color: var(--ink); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.statisticsTechnicalBody > section > p { min-width: 0; margin: 0; overflow: hidden; color: var(--muted-deep); font-size: 10px; line-height: 1.35; text-overflow: ellipsis; white-space: nowrap; }
+.statisticsTechnicalBody code { min-width: 0; overflow: hidden; color: var(--muted); font: 8px ui-monospace, SFMono-Regular, Menlo, monospace; text-overflow: ellipsis; white-space: nowrap; }
+.statisticsTechnicalBody .statisticsMappingChips, .statisticsTechnicalBody .statisticsDiagnosticChips { max-height: 28px; }
+.statisticsTechnicalColumnList { min-width: 0; display: grid; gap: 2px; max-height: 72px; overflow: auto; }
+.statisticsTechnicalColumnList > span { min-width: 0; display: flex; align-items: baseline; justify-content: space-between; gap: 7px; border-bottom: 1px solid color-mix(in srgb, var(--line) 70%, transparent); padding: 2px 0; }
+.statisticsTechnicalColumnList > span:last-child { border-bottom: 0; }
+.statisticsTechnicalColumnList strong { min-width: 0; overflow: hidden; color: var(--ink); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.statisticsTechnicalColumnList em { flex: 0 0 auto; color: var(--muted); font: 8px ui-monospace, SFMono-Regular, Menlo, monospace; font-style: normal; white-space: nowrap; }
+.statisticsTechnicalBody .statisticsMappingChips em { padding: 2px 4px; font-size: 9px; }
+.statisticsTechnicalBody .statisticsMappingChips strong { max-width: 90px; padding: 2px 5px; font-size: 8px; }
+.statisticsTechnicalBody .statisticsDiagnosticChips span { padding: 2px 5px; font-size: 9px; }
+@media (max-width: 900px) {
+  .statisticsExecutionRailCompact .statisticsCompactSummary { grid-template-columns: repeat(5, minmax(0, 1fr)); }
+  .statisticsCompactMetric { padding-inline: 8px; }
+  .statisticsCompactMetric span { font-size: 8px; }
+  .statisticsCompactMetric strong { font-size: 10px; }
+  .statisticsTechnicalBody { grid-template-columns: 1fr; }
+  .statisticsTechnicalBody > section { border-right: 0; border-bottom: 1px solid var(--line); }
+  .statisticsTechnicalBody > section:last-child { border-bottom: 0; }
+}
+
+/* Keep semantic review adjacent to compact
+   one-row statistical table instead of consuming the empty table viewport. */
+.artifactWorkspace:has(.statisticsAnalysisSurface) .artifactCanvasFrame {
+  height: auto;
+  min-height: 0;
+  overflow: visible;
+}
+.artifactWorkspace:has(.statisticsAnalysisSurface) .figureColumn,
+.artifactWorkspace:has(.statisticsAnalysisSurface) .artifactVisualViewport,
+.artifactWorkspace:has(.statisticsAnalysisSurface) .artifactVisualViewport.artifactCanvas {
+  height: auto;
+  min-height: 0;
+  flex: 0 0 auto;
+  overflow: visible;
+}
+.artifactWorkspace:has(.statisticsAnalysisSurface) .statisticsAnalysisContent {
+  flex: 0 0 auto;
+}
+
+@media (max-width: 760px) {
+  .artifactWorkspace:has(.statisticsAnalysisSurface) .artifactSemanticReview {
+    margin: 5px 8px 7px;
+    gap: 5px;
+    padding: 7px;
+  }
+  .artifactWorkspace:has(.statisticsAnalysisSurface) .artifactSemanticWarnings {
+    gap: 4px;
+    padding: 7px 8px;
+  }
+  .artifactWorkspace:has(.statisticsAnalysisSurface) .artifactSemanticWarningsHeader strong { font-size: 11px; }
+  .artifactWorkspace:has(.statisticsAnalysisSurface) .artifactSemanticWarningsHeader span { font-size: 10px; }
+  .artifactWorkspace:has(.statisticsAnalysisSurface) .artifactSemanticWarnings ul { padding-left: 15px; font-size: 10px; line-height: 1.35; }
+  .artifactWorkspace:has(.statisticsAnalysisSurface) .artifactSemanticWarnings li + li { margin-top: 2px; }
+  .artifactWorkspace:has(.statisticsAnalysisSurface) .artifactSemanticDetails { display: none; }
+}

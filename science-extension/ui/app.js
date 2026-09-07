@@ -1514,8 +1514,9 @@ function createComposerEventSync({
   function statisticsTableColumnLabel(column, payload) {
     const label = String(column?.label || column?.key || "");
     const columnName = statisticsPrimaryInputColumn(payload);
-    if (!columnName || column?.key !== "value") return label;
-    return label === "Value" ? columnName : `${label} · ${columnName}`;
+    const contextualLabel = !columnName || column?.key !== "value" ? label : (label === "Value" ? columnName : `${label} · ${columnName}`);
+    const unit = typeof column?.unit === "string" ? column.unit.trim() : "";
+    return unit ? `${contextualLabel} (${unit})` : contextualLabel;
   }
   function statisticsUnderflowDisplay(payload, column, row, value) {
     // A zero p-value is not universally an underflow: exact/permutation methods may legitimately
@@ -6897,6 +6898,18 @@ function createComposerEventSync({
     return value.toExponential(5).replace(/e([+-])0+(\d+)/, "e$1$2");
   }
 
+  function formatArtifactSemanticWarning(warning) {
+    const raw = String(warning || "").trim();
+    const match = /^(.*?)(?::\s*|\s+)(requires_[a-z0-9_]+)$/iu.exec(raw);
+    const prefix = match?.[1]?.trim() || "";
+    const code = String(match?.[2] || "").toLowerCase();
+    const copy = {
+      requires_design_review: "study design review required before interpretation",
+      requires_domain_review: "outcome scale and domain review required before interpretation",
+    }[code];
+    return { raw, text: copy ? `${prefix ? `${prefix}: ` : ""}${copy}` : raw };
+  }
+
   function artifactSemanticReviewMarkup(semantic, payload) {
     if (!semantic || typeof semantic !== "object") return "";
     const rawObservations = Array.isArray(semantic.observations) ? semantic.observations : [];
@@ -6907,10 +6920,11 @@ function createComposerEventSync({
       const unit = typeof item.unit === "string" ? item.unit.trim() : "";
       return label && value !== null ? { label, value, unit, key: label.replace(/[\s_.\-−–—]/g, "").toLowerCase() } : null;
     }).filter(Boolean).slice(0, 200);
-    const warnings = [...new Set((Array.isArray(semantic.warnings) ? semantic.warnings : [])
+    const warnings = [...new Map((Array.isArray(semantic.warnings) ? semantic.warnings : [])
       .filter((warning) => typeof warning === "string")
       .map((warning) => warning.trim())
-      .filter(Boolean))].slice(0, 200);
+      .filter(Boolean)
+      .map((warning) => [warning, formatArtifactSemanticWarning(warning)])).values()].slice(0, 200);
     const isPhysicsFit = payload?.schema === "agentlas.science.physics-analysis-artifact/v1"
       || payload?.toolId === "agentlas.physics-spectrum-fit-analysis";
     const findObservation = (...keys) => observations.find((item) => keys.includes(item.key));
@@ -6923,7 +6937,7 @@ function createComposerEventSync({
     const summary = typeof semantic.summary === "string" ? semantic.summary.trim() : "";
     if (!observations.length && !warnings.length && !summary) return "";
     const warningMarkup = warnings.length
-      ? `<section class="artifactSemanticWarnings" data-artifact-semantic-warnings data-warning-count="${warnings.length}" aria-label="${escapeHtml(uiCopy("아티팩트 확인 필요 항목", "Artifact items requiring review"))}"><div class="artifactSemanticWarningsHeader"><strong>${escapeHtml(uiCopy("확인 필요", "Review required"))}</strong><span>${escapeHtml(uiCopy(`${warnings.length}건의 경고가 기록되어 있습니다.`, `${warnings.length} warning${warnings.length === 1 ? "" : "s"} recorded.`))}</span></div><ul>${warnings.map((warning) => `<li>${escapeHtml(warning)}</li>`).join("")}</ul>${isPhysicsFit ? `<p class="artifactSemanticBoundary">${escapeHtml(uiCopy("적합 결과에서는 수렴만으로 적합도나 매개변수 불확실성이 타당하다고 볼 수 없습니다. 기록된 경고를 검토하세요.", "For fitted results, convergence alone does not establish fit quality or valid parameter uncertainty. Review the recorded warnings."))}</p>` : ""}</section>`
+      ? `<section class="artifactSemanticWarnings" data-artifact-semantic-warnings data-warning-count="${warnings.length}" aria-label="${escapeHtml(uiCopy("아티팩트 확인 필요 항목", "Artifact items requiring review"))}"><div class="artifactSemanticWarningsHeader"><strong>${escapeHtml(uiCopy("확인 필요", "Review required"))}</strong><span>${escapeHtml(uiCopy(`${warnings.length}건의 경고가 기록되어 있습니다.`, `${warnings.length} warning${warnings.length === 1 ? "" : "s"} recorded.`))}</span></div><ul>${warnings.map((warning) => `<li title="${escapeHtml(warning.raw)}">${escapeHtml(warning.text)}</li>`).join("")}</ul>${isPhysicsFit ? `<p class="artifactSemanticBoundary">${escapeHtml(uiCopy("적합 결과에서는 수렴만으로 적합도나 매개변수 불확실성이 타당하다고 볼 수 없습니다. 기록된 경고를 검토하세요.", "For fitted results, convergence alone does not establish fit quality or valid parameter uncertainty. Review the recorded warnings."))}</p>` : ""}</section>`
       : "";
     const fitCoreMarkup = fitCore.length
       ? `<div class="artifactSemanticFitCore" data-artifact-semantic-fit-core aria-label="${escapeHtml(uiCopy("적합 핵심 수치", "Fit core metrics"))}">${fitCore.map(([label, item]) => `<span class="artifactSemanticFitMetric"><span class="artifactSemanticFitMetricLabel">${escapeHtml(label)}</span><strong class="artifactSemanticFitMetricValue">${escapeHtml(formatArtifactSemanticValue(item.value))}${item.unit ? ` <small>${escapeHtml(item.unit)}</small>` : ""}</strong></span>`).join("")}</div>`
@@ -8939,46 +8953,66 @@ function createComposerEventSync({
     const explicitBoundaries = diagnostics.filter((item) => item && (Object.hasOwn(item, "boundary")
       || (Array.isArray(item.unsupported) && item.unsupported.length > 0)
       || /(?:boundary|only|requires_|warning|not_)/u.test(String(item.status || ""))));
+    const semanticWarnings = [...new Map((Array.isArray(version?.semantic?.warnings) ? version.semantic.warnings : [])
+      .filter((warning) => typeof warning === "string" && warning.trim())
+      .map((warning) => [warning.trim(), formatArtifactSemanticWarning(warning)])).values()];
+    const reviewCount = semanticWarnings.length || explicitBoundaries.length;
     const rail = document.createElement("section");
-    rail.className = "statisticsExecutionRail";
+    rail.className = "statisticsExecutionRail statisticsExecutionRailCompact";
     rail.dataset.statisticsExecutionRail = "";
     rail.dataset.statisticsPurpose = String(binding.purpose || "");
     rail.dataset.statisticsResultStatus = String(result.status || "");
+    rail.dataset.statisticsReviewCount = String(reviewCount);
     rail.dataset.statisticsEngineVersion = String(result.engine?.version || "");
     rail.dataset.statisticsRunId = String(version?.provenance?.sourceRunId || "");
 
-    const sourceCard = document.createElement("article");
-    sourceCard.className = "statisticsExecutionCard statisticsSourceMapping";
-    sourceCard.dataset.statisticsSourceMapping = "";
     const sourceTitle = projectionReceipt
       ? `Data Table v${projectionReceipt.sourceArtifact.artifactVersion}`
       : binding.inputArtifacts?.length ? `${binding.inputArtifacts.length} bound input artifact${binding.inputArtifacts.length === 1 ? "" : "s"}` : "Inline validated input";
+    const rowCount = projectionReceipt ? statisticsProjectionRowCount(projectionReceipt)
+      : result.sample?.n ?? result.sampleSize ?? result.n ?? "—";
+    const methodLabel = statisticsMethodLabel(payload.method || "descriptive");
+    const purposeLabel = String(binding.purpose || "descriptive");
+    const statusLabel = String(result.status || "unknown").toUpperCase();
+    const reviewLabel = semanticWarnings.length
+      ? `Review required · ${semanticWarnings.length}`
+      : explicitBoundaries.length ? `Review required · ${explicitBoundaries.length}` : "No review boundaries";
     const mappingChips = projectionReceipt ? statisticsProjectionColumnPairs(projectionReceipt)
       .map(([role, column]) => `<span><em>${escapeHtml(role)}</em><strong>${escapeHtml(column)}</strong></span>`).join("") : `<span><em>binding</em><strong>${escapeHtml(binding.inputArtifacts?.length ? "exact artifact" : "request hash")}</strong></span>`;
-    const sourceMeta = projectionReceipt
-      ? `${statisticsProjectionRowCount(projectionReceipt)} rows · projection ${statisticsShortHash(projectionReceipt.receiptSha256)}`
-      : `input ${statisticsShortHash(payload.inputSha256)}`;
-    sourceCard.innerHTML = `<header><span>01 · SOURCE MAPPING</span><strong>${escapeHtml(sourceTitle)}</strong></header><div class="statisticsMappingChips">${mappingChips}</div><footer title="${escapeHtml(projectionReceipt?.receiptSha256 || payload.inputSha256 || "")}">${escapeHtml(sourceMeta)}</footer>`;
-
-    const planCard = document.createElement("article");
-    planCard.className = "statisticsExecutionCard statisticsAnalysisPlan";
-    planCard.dataset.statisticsAnalysisPlan = plan ? "frozen" : String(binding.purpose || "unplanned");
-    if (plan) {
-      const modelParts = [plan.model?.family, plan.model?.formula, plan.model?.distribution, plan.model?.link].filter(Boolean);
-      planCard.innerHTML = `<header><span>02 · FROZEN ANALYSISSPEC</span><strong>${escapeHtml(analysisSpec?.title || plan.analysisSpecId)}</strong><em>FROZEN · v${escapeHtml(plan.version)}</em></header><p>${escapeHtml(modelParts.join(" · "))}</p><footer><code title="${escapeHtml(plan.modelSha256)}">model ${escapeHtml(statisticsShortHash(plan.modelSha256))}</code><code title="${escapeHtml(plan.contentSha256)}">spec ${escapeHtml(statisticsShortHash(plan.contentSha256))}</code></footer>`;
-    } else {
-      planCard.innerHTML = `<header><span>02 · ANALYSIS BOUNDARY</span><strong>${escapeHtml(String(binding.purpose || "descriptive").toUpperCase())}</strong><em>NO FROZEN PLAN</em></header><p>이 실행에는 frozen AnalysisSpec이 연결되지 않았습니다.</p><footer><code title="${escapeHtml(binding.bindingSha256 || "")}">binding ${escapeHtml(statisticsShortHash(binding.bindingSha256))}</code></footer>`;
-    }
-
-    const runCard = document.createElement("article");
-    runCard.className = "statisticsExecutionCard statisticsRunBoundary";
-    runCard.dataset.statisticsRunBoundary = "";
     const diagnosticChips = diagnostics.slice(0, 4).map((diagnostic) => {
       const status = String(diagnostic?.status || "recorded");
       return `<span data-diagnostic-status="${escapeHtml(status)}" title="${escapeHtml(diagnostic?.name || "diagnostic")}: ${escapeHtml(status)}">${escapeHtml(diagnostic?.name || "diagnostic")} · ${escapeHtml(status)}</span>`;
     }).join("");
-    runCard.innerHTML = `<header><span>03 · RUN & DIAGNOSTICS</span><strong>${escapeHtml(result.engine?.id || "statistics engine")} · ${escapeHtml(result.engine?.version || "—")}</strong><em data-status="${escapeHtml(result.status || "unknown")}">${escapeHtml(String(result.status || "unknown").toUpperCase())}</em></header><div class="statisticsDiagnosticChips">${diagnosticChips || `<span>진단 기록 없음</span>`}</div><footer><span>${escapeHtml(diagnostics.length)} diagnostics · ${escapeHtml(explicitBoundaries.length)} explicit review boundaries</span><code title="${escapeHtml(version?.provenance?.sourceRunId || "")}">run ${escapeHtml(statisticsShortHash(version?.provenance?.sourceRunId))}</code><code title="${escapeHtml(payload.executionReceipt?.receiptSha256 || "")}">receipt ${escapeHtml(statisticsShortHash(payload.executionReceipt?.receiptSha256))}</code></footer>`;
-    rail.append(sourceCard, planCard, runCard);
+    const modelParts = plan ? [plan.model?.family, plan.model?.formula, plan.model?.distribution, plan.model?.link].filter(Boolean) : [];
+    const selectedTable = result.artifacts?.[Number(payload.selectedTableIndex)]?.payload;
+    const tableColumns = Array.isArray(selectedTable?.columns) ? selectedTable.columns : [];
+    const tableSchema = tableColumns.map((column) => {
+      const label = statisticsTableColumnLabel(column, payload);
+      const type = String(column?.type || "unknown");
+      const unit = typeof column?.unit === "string" && column.unit.trim() ? ` · ${column.unit.trim()}` : "";
+      return `<span><strong>${escapeHtml(label)}</strong><em>${escapeHtml(`${type}${unit}`)}</em></span>`;
+    }).join("");
+    const receiptId = result.receipt?.receiptId || payload.executionReceipt?.receiptSha256 || "";
+    const compactSummary = document.createElement("div");
+    compactSummary.className = "statisticsCompactSummary";
+    compactSummary.setAttribute("aria-label", "Statistical execution summary");
+    compactSummary.innerHTML = [
+      ["N", rowCount],
+      ["Method", methodLabel],
+      ["Purpose", purposeLabel],
+      ["Run", statusLabel],
+      ["Review", reviewLabel],
+    ].map(([label, value]) => `<div class="statisticsCompactMetric"><span>${escapeHtml(label)}</span><strong>${escapeHtml(String(value))}</strong></div>`).join("");
+
+    const details = document.createElement("details");
+    details.className = "statisticsTechnicalDetails";
+    details.innerHTML = `<summary>Technical details</summary><div class="statisticsTechnicalBody">
+      <section><span>SOURCE & MAPPING</span><strong>${escapeHtml(sourceTitle)}</strong><div class="statisticsMappingChips">${mappingChips}</div><code title="${escapeHtml(projectionReceipt?.receiptSha256 || payload.inputSha256 || "")}">${escapeHtml(projectionReceipt ? `projection ${statisticsShortHash(projectionReceipt.receiptSha256)}` : `input ${statisticsShortHash(payload.inputSha256)}`)}</code></section>
+      <section><span>TABLE SCHEMA</span><strong>${escapeHtml(tableColumns.length)} fields</strong><div class="statisticsTechnicalColumnList">${tableSchema || "<span>Column schema unavailable</span>"}</div></section>
+      <section><span>ANALYSIS BOUNDARY</span><strong>${escapeHtml(analysisSpec?.title || plan?.analysisSpecId || purposeLabel.toUpperCase())}</strong><p>${escapeHtml(modelParts.join(" · ") || (plan ? `frozen AnalysisSpec v${plan.version}` : "이 실행에는 frozen AnalysisSpec이 연결되지 않았습니다."))}</p><code title="${escapeHtml(plan?.modelSha256 || binding.bindingSha256 || "")}">${escapeHtml(plan ? `model ${statisticsShortHash(plan.modelSha256)} · spec ${statisticsShortHash(plan.contentSha256)}` : `binding ${statisticsShortHash(binding.bindingSha256)}`)}</code></section>
+      <section><span>RUN & DIAGNOSTICS</span><strong>${escapeHtml(result.engine?.id || "statistics engine")} · ${escapeHtml(result.engine?.version || "—")}</strong><div class="statisticsDiagnosticChips">${diagnosticChips || "<span>진단 기록 없음</span>"}</div><p>${escapeHtml(`${diagnostics.length} diagnostics · ${reviewCount} review boundaries`)}</p><code title="${escapeHtml(receiptId)}">run ${escapeHtml(statisticsShortHash(version?.provenance?.sourceRunId))} · receipt ${escapeHtml(statisticsShortHash(receiptId))}</code></section>
+    </div>`;
+    rail.append(compactSummary, details);
     return rail;
   }
 
@@ -9056,14 +9090,10 @@ function createComposerEventSync({
     const header = document.createElement("header");
     header.className = "statisticsAnalysisHeader";
     const identity = document.createElement("div");
-    const kicker = document.createElement("span"); kicker.textContent = "RECEIPT-BOUND STATISTICAL ANALYSIS";
+    const kicker = document.createElement("span"); kicker.textContent = "STATISTICAL ANALYSIS";
     const selectedTableTitle = selectedTable?.artifact?.payload?.title || statisticsMethodLabel(payload.method);
     const title = document.createElement("strong"); title.textContent = statisticsContextualLabel(selectedTableTitle, payload);
-    const receipt = document.createElement("code");
-    const receiptId = String(result.receipt?.receiptId || "");
-    receipt.title = receiptId;
-    receipt.textContent = receiptId ? `receipt ${statisticsShortHash(receiptId)}` : "receipt unavailable";
-    identity.append(kicker, title, receipt);
+    identity.append(kicker, title);
     const switcher = document.createElement("nav"); switcher.setAttribute("aria-label", "통계 결과 산출물");
     for (const entry of tableEntries) {
       const button = document.createElement("button"); button.type = "button"; button.dataset.statisticsView = `table:${entry.index}`;
@@ -9116,7 +9146,9 @@ function createComposerEventSync({
       const thead = document.createElement("thead"); const headRow = document.createElement("tr");
       for (const column of tablePayload.columns) {
         const th = document.createElement("th"); const label = document.createElement("span"); label.textContent = statisticsTableColumnLabel(column, payload);
-        const type = document.createElement("em"); type.textContent = column.type; th.append(label, type); headRow.append(th);
+        const type = [column.type, typeof column.unit === "string" && column.unit.trim() ? column.unit.trim() : ""].filter(Boolean).join(" · ");
+        if (type) th.title = type;
+        th.append(label); headRow.append(th);
       }
       thead.append(headRow); const tbody = document.createElement("tbody");
       for (const row of tablePayload.rows) {

@@ -80,7 +80,7 @@ const PROVIDERS: Array<{ id: Provider; label: string; logo: string; cli: "codex"
 ];
 
 export function WorkFirstRunOnboarding({ onVisibilityChange }: { onVisibilityChange?: (visible: boolean) => void }) {
-  const { locale } = useT();
+  const { locale, setPref } = useT();
   const router = useRouter();
   const ko = locale === "ko";
   const [open, setOpen] = useState(false);
@@ -203,6 +203,21 @@ export function WorkFirstRunOnboarding({ onVisibilityChange }: { onVisibilityCha
       window.localStorage.setItem(STORAGE_KEY, "1");
       window.localStorage.removeItem(PHASE_KEY);
     } catch { /* ignore */ }
+    setOpen(false);
+  }, []);
+
+  /**
+   * "나중에 보기" — 닫되 **완료로 표시하지 않는다**.
+   *
+   * ★왜 (QA 실측 2026-09-08): × 를 누르면 닫히지 않고 7단계로 넘어갔다
+   *   (`step < 7 ? setStep(7) : finish()`). 닫기라고 쓰여 있는 것이 닫지 않으면
+   *   사람은 자기가 잘못 눌렀다고 생각하고 다시 누른다.
+   *
+   * finish() 와 다른 점: finish 는 "다 봤다"고 기록해 다시 안 뜬다. × 의 라벨은
+   * "나중에 보기"이므로 다시 볼 수 있어야 한다. 진행 단계(PHASE_KEY)는 남겨
+   * 다음에 열 때 보던 자리에서 이어진다.
+   */
+  const dismiss = useCallback(() => {
     setOpen(false);
   }, []);
 
@@ -483,7 +498,14 @@ export function WorkFirstRunOnboarding({ onVisibilityChange }: { onVisibilityCha
           <div className={styles.headerCenter}><span className={styles.eyebrow}>{copy.label}</span><div className={styles.progress}>{STEPS.map((item) => <span key={item} data-current={step === item} data-done={step > item} />)}</div></div>
           {/* 설명 중 × 는 세팅으로 이동하고, 세팅 중 × 는 "나중에"로 온보딩을 닫는다.
               세팅 각 단계는 아무것도 고르지 않고 다음을 눌러 건너뛸 수도 있다. */}
-          <div className={styles.headerActions}><button className={styles.language} type="button">EN · KO</button><button className={styles.close} onClick={() => step < 7 ? setStep(7) : finish()} aria-label={copy.close}><IconClose size={16} /></button></div>
+          <div className={styles.headerActions}><button
+            className={styles.language}
+            type="button"
+            /* ★이 단추에는 onClick 이 없었다 — 눌러도 아무 일도 안 일어나는 죽은 단추였다
+               (한국어 화면 훑기 2026-09-08). 지금 언어의 반대를 눌러 바꾼다. */
+            onClick={() => setPref(ko ? "en" : "ko")}
+            aria-label={ko ? "English 로 바꾸기" : "한국어로 바꾸기"}
+          >{ko ? "KO · EN" : "EN · KO"}</button><button className={styles.close} onClick={dismiss} aria-label={copy.close}><IconClose size={16} /></button></div>
         </header>
         <main className={styles.content}>
           {step === 1 && <><h1 id="work-onboarding-title">{copy.s1}</h1><p>{copy.s1sub}</p><div className={styles.choiceGrid}>{(["beginner", "intermediate", "expert"] as Experience[]).map((item) => <button key={item} className={`${styles.choice} ${experience === item ? styles.selected : ""}`} onClick={() => chooseExperience(item)}><div className={styles.choiceIllustration}>{item === "beginner" ? "01" : item === "intermediate" ? "02" : "03"}</div><strong>{copy[item]}</strong><small>{copy[`${item}Sub` as "beginnerSub" | "intermediateSub" | "expertSub"]}</small></button>)}</div></>}

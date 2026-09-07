@@ -6,6 +6,7 @@ import { TextDecoder } from "node:util";
 import { strFromU8, unzipSync } from "fflate";
 import { validateScienceProjectFolderPath } from "./project-folder-selection";
 import { verifyScienceWorkbook } from "../../shared/science-workbook";
+import { projectScienceWorkbookTable, type ScienceWorkbookTableSelection } from "../../shared/science-workbook-table";
 import type { RuntimeSelection } from "../../shared/types";
 import {
   normalizeScienceRuntimeSelection,
@@ -11415,6 +11416,22 @@ export class ScienceStore {
     table: ScienceDatasetTablePayload;
   } {
     const run = this.getResearchRunForProject(projectId, runId);
+    if (run?.toolId === "agentlas.workbook-sheet-projection") {
+      if (run.status !== "succeeded" || run.toolVersion !== "1.0.0" || !run.parentRunId || run.outputs.length !== 1 || run.inputs.length !== 1) throw new Error("science-workbook-projection-run-invalid");
+      const parent = this.getResearchRunForProject(projectId, run.parentRunId);
+      if (!parent || parent.status !== "succeeded" || parent.toolId !== "agentlas.workbook-ingest" || parent.outputs.length !== 2) throw new Error("science-workbook-projection-parent-invalid");
+      const workbook = JSON.parse(this.readRunBlob(parent.outputs[0]).toString("utf8"));
+      const descriptor = JSON.parse(this.readRunBlob(run.inputs[0]).toString("utf8"));
+      if (descriptor.parentRunId !== parent.id || descriptor.workbookSha256 !== workbook.workbookSha256) throw new Error("science-workbook-projection-parent-invalid");
+      const table = projectScienceWorkbookTable(workbook, descriptor.selection);
+      const stored = JSON.parse(this.readRunBlob(run.outputs[0]).toString("utf8"));
+      if (sha256Json(stored) !== sha256Json(table) || (candidate !== undefined && sha256Json(candidate) !== sha256Json(table))) throw new Error("science-workbook-projection-table-mismatch");
+      const binding = this.getResearchRunSourceBindings(projectId, parent.id)[0];
+      const source = binding ? this.getSourceVersionForProject(projectId, binding.sourceId, binding.sourceVersionId) : null;
+      if (!source || source.version.contentSha256 !== table.receipts.rawSha256) throw new Error("science-workbook-projection-source-invalid");
+      this.verifiedSourceBytes(source);
+      return { run, source, table };
+    }
     if (!run || run.status !== "succeeded" || run.toolId !== "agentlas.csv-ingest" || run.toolVersion !== "1.0.0"
       || run.parentRunId !== null || run.outputs.length !== 1) throw new Error("science-table-ingestion-run-invalid");
     const output = run.outputs[0];
@@ -11769,6 +11786,40 @@ export class ScienceStore {
     })();
   }
 
+  projectWorkbookDatasetTable(input: {
+    requestId: string; projectId: string; parentRunId: string; title: string; selection: ScienceWorkbookTableSelection;
+  }): MaterializeScienceDatasetTableResult {
+    if (!input || ![input.requestId, input.projectId, input.parentRunId].every((id) => UUID_RE.test(String(id)))) throw new Error("science-workbook-projection-input-invalid");
+    const parent = this.getResearchRunForProject(input.projectId, input.parentRunId);
+    if (!parent || parent.status !== "succeeded" || parent.toolId !== "agentlas.workbook-ingest" || parent.outputs.length !== 2) throw new Error("science-workbook-projection-parent-invalid");
+    const workbook = JSON.parse(this.readRunBlob(parent.outputs[0]).toString("utf8"));
+    const table = projectScienceWorkbookTable(workbook, input.selection);
+    const title = safeText(input.title, 240, "workbook-table-title");
+    const inputHash = sha256Json({ projectId: input.projectId, parentRunId: input.parentRunId, title, selection: input.selection, tableSha256: table.receipts.tableSha256 });
+    return this.db.transaction(() => {
+      const prior = this.replay<MaterializeScienceDatasetTableResult>(input.requestId, "dataset.workbook.project", inputHash);
+      if (prior) {
+        const artifact = this.getArtifactForProject(input.projectId, prior.artifact.id);
+        if (!artifact?.sourceRunId) throw new Error("science-workbook-projection-replay-invalid");
+        this.verifiedDatasetTableForRun(input.projectId, artifact.sourceRunId);
+        return { artifact, replayed: true };
+      }
+      const inputs: ScienceResearchRunResourceInput[] = [{ role: "workbook-sheet-selection", mimeType: "application/json",
+        ...this.putRunBlob(Buffer.from(JSON.stringify(canonicalValue({ parentRunId: parent.id, workbookSha256: workbook.workbookSha256, selection: input.selection })))), artifactId: null, artifactVersion: null }];
+      const created = this.createResearchRun({ requestId: randomUUID(), projectId: input.projectId,
+        conversationId: parent.conversationId, originMessageId: parent.originMessageId, parentRunId: parent.id,
+        toolId: "agentlas.workbook-sheet-projection", toolVersion: "1.0.0", runtime: "native-sidecar",
+        inputManifestSha256: sha256Json(inputs), environmentSha256: parent.environmentSha256, inputs });
+      const outputs: ScienceResearchRunResourceInput[] = [{ role: "normalized-table", mimeType: "application/vnd.agentlas.science.table+json",
+        ...this.putRunBlob(Buffer.from(JSON.stringify(canonicalValue(table)))), artifactId: null, artifactVersion: null }];
+      this.completeResearchRun({ requestId: randomUUID(), projectId: input.projectId, runId: created.run.id,
+        status: "succeeded", outputManifestSha256: sha256Json(outputs), outputs, summary: "Workbook sheet projected using a recorded row and column selection; no imputation." });
+      const result = this.materializeDatasetTable({ requestId: randomUUID(), projectId: input.projectId, runId: created.run.id, title });
+      this.remember(input.requestId, "dataset.workbook.project", inputHash, result, new Date().toISOString());
+      return result;
+    })();
+  }
+
   materializeDatasetTable(input: MaterializeScienceDatasetTableInput): MaterializeScienceDatasetTableResult {
     if (!input || typeof input !== "object" || !UUID_RE.test(String(input.requestId ?? ""))) throw new Error("science-request-id-invalid");
     if (!UUID_RE.test(String(input.projectId ?? "")) || !UUID_RE.test(String(input.runId ?? ""))) throw new Error("science-table-ingestion-run-invalid");
@@ -11801,16 +11852,19 @@ export class ScienceStore {
         payload: verified.table as unknown as Record<string, unknown>,
         semantic: {
           title,
-          summary: `${verified.table.profile.rowCount} rows and ${verified.table.profile.columnCount} typed columns imported from the exact selected CSV source.`,
+          summary: `${verified.table.profile.rowCount} rows and ${verified.table.profile.columnCount} typed columns imported from the exact selected ${verified.run.toolId === "agentlas.workbook-sheet-projection" ? "workbook sheet" : "CSV source"}.`,
           entities: [],
           observations: [
             { label: "Rows", value: verified.table.profile.rowCount, unit: null },
             { label: "Columns", value: verified.table.profile.columnCount, unit: null },
             { label: "Missing cells", value: verified.table.profile.nullCount, unit: null },
           ],
-          warnings: verified.table.profile.formulaLikeCellCount > 0
-            ? [`${verified.table.profile.formulaLikeCellCount} formula-looking cell(s) are preserved and rendered as inert text.`]
-            : [],
+          warnings: [
+            ...(verified.table.profile.formulaLikeCellCount > 0
+              ? [`${verified.table.profile.formulaLikeCellCount} formula-looking cell(s) are preserved and rendered as inert text.`] : []),
+            ...(verified.run.toolId === "agentlas.workbook-sheet-projection"
+              ? ["Workbook formulas were not recalculated. Missing formula caches remain null; cached values and date serials require interpretation using the preserved original workbook."] : []),
+          ],
         },
         provenance: {
           sourceRunId: verified.run.id,

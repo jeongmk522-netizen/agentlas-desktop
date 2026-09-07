@@ -183,7 +183,7 @@ export function validateScienceTablePayload(value: unknown): ScienceDatasetTable
     || profile.formulaLikeCellCount !== formulaLikeCellCount) throw new Error("science-table-counts-invalid");
   const receipts = record(payload.receipts);
   if (!receipts || !exactKeys(receipts, ["parserId", "parserVersion", "rawSha256", "headerSha256", "rowsSha256", "tableSha256"])
-    || !["agentlas.csv-to-table", "agentlas.comparative-genomics-publication-table", SCIENCE_PAIRED_TABLE_ALIGNER_ID].includes(String(receipts.parserId))
+    || !["agentlas.csv-to-table", "agentlas.comparative-genomics-publication-table", SCIENCE_PAIRED_TABLE_ALIGNER_ID, "agentlas.workbook-sheet-projection"].includes(String(receipts.parserId))
     || receipts.parserVersion !== "1.0.0"
     || ![receipts.rawSha256, receipts.headerSha256, receipts.rowsSha256, receipts.tableSha256].every((entry) => typeof entry === "string" && SHA256_RE.test(entry))) throw new Error("science-table-hashes-invalid");
   if (receipts.headerSha256 !== scienceTableSha256(names) || receipts.rowsSha256 !== scienceTableSha256(rows)

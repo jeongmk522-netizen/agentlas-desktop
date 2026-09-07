@@ -1,11 +1,12 @@
 import type { IpcMain, IpcMainInvokeEvent } from "electron";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import type { ProductExtensionPermission } from "../../shared/product-extension";
 import type { ScienceStore } from "./store";
 import type { ScienceDatasetIngestionService } from "./dataset-ingestion";
 import { createScienceDatasetIngestionService } from "./lazy-services";
 import {
   discoverScienceProjectData,
+  scienceProjectDataRootIdentity,
   revalidateResolvedScienceProjectDataCandidate,
   readResolvedScienceProjectDataCandidate,
   resolveScienceProjectDataCandidate,
@@ -53,9 +54,34 @@ function sha256(value: Buffer): string {
   return createHash("sha256").update(value).digest("hex");
 }
 
-function candidateRef(input: Record<string, unknown>): { candidateId: string; relativePath: string } {
+function candidateRef(input: Record<string, unknown>): {
+  candidateId: string;
+  relativePath: string;
+  scanId?: string;
+  revision?: number;
+} {
   if (typeof input.candidateId !== "string" || typeof input.relativePath !== "string") throw new Error("science-project-data-candidate-invalid");
-  return { candidateId: input.candidateId, relativePath: input.relativePath };
+  const scanId = input.scanId === undefined ? undefined : uuid(input.scanId, "science-project-data-scan-invalid");
+  const revision = input.revision === undefined ? undefined : input.revision;
+  if (revision !== undefined && (typeof revision !== "number" || !Number.isSafeInteger(revision) || revision < 1)) throw new Error("science-project-data-revision-invalid");
+  return { candidateId: input.candidateId, relativePath: input.relativePath, ...(scanId ? { scanId } : {}), ...(revision !== undefined ? { revision } : {}) };
+}
+
+function snapshotCandidate(
+  store: ScienceStore,
+  projectId: string,
+  ref: ReturnType<typeof candidateRef>,
+): { snapshot: NonNullable<ReturnType<ScienceStore["getScienceProjectDataSnapshot"]>>; entry: NonNullable<ReturnType<ScienceStore["getScienceProjectDataSnapshot"]>>["entries"][number] } | null {
+  const snapshot = store.getScienceProjectDataSnapshot(projectId);
+  if (!snapshot) return null;
+  if ((ref.scanId && ref.scanId !== snapshot.scanId) || (ref.revision !== undefined && ref.revision !== snapshot.revision)) {
+    throw new Error("science-project-data-candidate-stale");
+  }
+  const entry = snapshot.entries.find((candidate) => candidate.relativePath === ref.relativePath && candidate.candidateId === ref.candidateId);
+  if (!entry || !entry.candidate || entry.state === "missing" || entry.state === "unreadable") {
+    throw new Error("science-project-data-candidate-stale");
+  }
+  return { snapshot, entry };
 }
 
 function candidateResult(candidate: ScienceProjectDataCandidate, contentSha256?: string): Record<string, unknown> {
@@ -64,6 +90,16 @@ function candidateResult(candidate: ScienceProjectDataCandidate, contentSha256?:
     candidate,
     ...(contentSha256 ? { contentSha256 } : {}),
   };
+}
+
+function refreshMode(value: unknown): "manual" | "automatic" {
+  if (value !== "manual" && value !== "automatic") throw new Error("science-project-data-refresh-mode-invalid");
+  return value;
+}
+
+function projectDataErrorCode(error: unknown): string {
+  if (error instanceof Error && /^science-project-data-[a-z0-9-]+$/u.test(error.message)) return error.message;
+  return "science-project-data-candidate-read-failed";
 }
 
 /** Main-owned linked-project data discovery and candidate import boundary. */
@@ -85,6 +121,56 @@ export function registerScienceProjectDataHandlers(options: {
     return discoverScienceProjectData(options.scienceStore(), projectId);
   });
 
+  options.ipcMain.handle("science:projects:refreshData", (event, envelope: unknown) => {
+    options.assertScienceSender(event, envelope, "science:artifacts");
+    const documentId = options.assertScienceProjectDocument(event, envelope);
+    const input = inputRecord(envelope);
+    const requestId = uuid(input.requestId, "science-request-id-invalid");
+    const projectId = uuid(input.projectId, "science-project-id-invalid");
+    const mode = refreshMode(input.mode);
+    const store = options.scienceStore();
+    const rootIdentity = scienceProjectDataRootIdentity(store, projectId);
+    const discovery = discoverScienceProjectData(store, projectId);
+    const observations = discovery.candidates.map((candidate) => {
+      try {
+        const resolved = resolveScienceProjectDataCandidate(store, projectId, candidate.candidateId, candidate.relativePath);
+        const bytes = readResolvedScienceProjectDataCandidate(resolved);
+        return {
+          candidate,
+          hash: { status: "verified" as const, contentSha256: sha256(bytes) },
+          identityJson: JSON.stringify(resolved.identity),
+        };
+      } catch (error) {
+        return {
+          candidate,
+          hash: { status: "unreadable" as const, reason: projectDataErrorCode(error) },
+          identityJson: null,
+        };
+      }
+    });
+    if (options.assertScienceProjectDocument(event, envelope) !== documentId) throw new Error("science-project-data-document-changed");
+    const result = store.refreshScienceProjectData({
+      requestId,
+      projectId,
+      mode,
+      rootIdentity,
+      status: discovery.truncated ? "truncated" : "complete",
+      skippedCount: discovery.skippedCount,
+      observations,
+    });
+    return { ...result.snapshot, replayed: result.replayed };
+  });
+
+  options.ipcMain.handle("science:projects:dataSnapshot", (event, envelope: unknown) => {
+    options.assertScienceSender(event, envelope, "science:artifacts");
+    options.assertScienceProjectDocument(event, envelope);
+    const input = inputRecord(envelope);
+    const projectId = uuid(input.projectId, "science-project-id-invalid");
+    const store = options.scienceStore();
+    if (!store.getProject(projectId)) throw new Error("science-project-not-found");
+    return store.getScienceProjectDataSnapshot(projectId);
+  });
+
   options.ipcMain.handle("science:datasets:readCandidate", (event, envelope: unknown) => {
     options.assertScienceSender(event, envelope, "science:artifacts");
     const documentId = options.assertScienceProjectDocument(event, envelope);
@@ -92,10 +178,17 @@ export function registerScienceProjectDataHandlers(options: {
     uuid(input.requestId, "science-request-id-invalid");
     const projectId = uuid(input.projectId, "science-project-id-invalid");
     const ref = candidateRef(input);
-    const resolved = resolveScienceProjectDataCandidate(options.scienceStore(), projectId, ref.candidateId, ref.relativePath);
+    const store = options.scienceStore();
+    const snapshotCurrent = snapshotCandidate(store, projectId, ref);
+    const resolved = resolveScienceProjectDataCandidate(store, projectId, ref.candidateId, ref.relativePath);
     if (options.assertScienceProjectDocument(event, envelope) !== documentId) throw new Error("science-project-data-document-changed");
     const bytes = readResolvedScienceProjectDataCandidate(resolved);
-    return candidateResult(resolved.candidate, sha256(bytes));
+    const contentSha256 = sha256(bytes);
+    if (snapshotCurrent?.entry.contentSha256 && snapshotCurrent.entry.contentSha256 !== contentSha256) throw new Error("science-project-data-candidate-stale");
+    return {
+      ...candidateResult(resolved.candidate, contentSha256),
+      ...(snapshotCurrent ? { scanId: snapshotCurrent.snapshot.scanId, revision: snapshotCurrent.snapshot.revision, entryId: snapshotCurrent.entry.id } : {}),
+    };
   });
 
   options.ipcMain.handle("science:datasets:importCandidate", async (event, envelope: unknown) => {
@@ -109,9 +202,14 @@ export function registerScienceProjectDataHandlers(options: {
     const ref = candidateRef(input);
     const store = options.scienceStore();
     assertOrigin(store, projectId, conversationId, originMessageId);
+    const snapshotCurrent = snapshotCandidate(store, projectId, ref);
     const resolved = resolveScienceProjectDataCandidate(store, projectId, ref.candidateId, ref.relativePath);
     if (options.assertScienceProjectDocument(event, envelope) !== documentId) throw new Error("science-project-data-document-changed");
     revalidateResolvedScienceProjectDataCandidate(resolved);
+    if (snapshotCurrent?.entry.contentSha256) {
+      const currentBytes = readResolvedScienceProjectDataCandidate(resolved);
+      if (sha256(currentBytes) !== snapshotCurrent.entry.contentSha256) throw new Error("science-project-data-candidate-stale");
+    }
     const title = optionalTitle(input.title, resolved.candidate.relativePath);
     if (resolved.candidate.extension === "csv") {
       const artifactRequestId = uuid(input.artifactRequestId, "science-artifact-request-id-invalid");
@@ -132,10 +230,20 @@ export function registerScienceProjectDataHandlers(options: {
         runId: imported.run.id,
         title,
       });
+      const association = snapshotCurrent ? store.recordScienceProjectDataEntryImport({
+        requestId: randomUUID(),
+        projectId,
+        entryId: snapshotCurrent.entry.id,
+        sourceId: imported.source.id,
+        sourceVersionId: imported.source.version.id,
+        importRunId: imported.run.id,
+        contentSha256: snapshotCurrent.entry.contentSha256 ?? sha256(readResolvedScienceProjectDataCandidate(resolved)),
+      }).association : null;
       return {
         schema: "agentlas.science-data-import/v1",
         candidate: resolved.candidate,
         format: "csv" as const,
+        ...(snapshotCurrent ? { scanId: snapshotCurrent.snapshot.scanId, revision: snapshotCurrent.snapshot.revision, entryId: snapshotCurrent.entry.id, association } : {}),
         ...imported,
         artifact: materialized.artifact,
         artifactReplayed: materialized.replayed,
@@ -145,9 +253,9 @@ export function registerScienceProjectDataHandlers(options: {
     const prepared = await prepareScienceWorkbook(resolved.absolutePath, undefined, resolved.identity);
     if (options.assertScienceProjectDocument(event, envelope) !== documentId) throw new Error("science-project-data-document-changed");
     assertOrigin(store, projectId, conversationId, originMessageId);
-    const current = resolveScienceProjectDataCandidate(store, projectId, ref.candidateId, ref.relativePath);
-    if (current.candidate.candidateId !== resolved.candidate.candidateId) throw new Error("science-project-data-candidate-stale");
-    revalidateResolvedScienceProjectDataCandidate(current);
+    const resolvedCurrent = resolveScienceProjectDataCandidate(store, projectId, ref.candidateId, ref.relativePath);
+    if (resolvedCurrent.candidate.candidateId !== resolved.candidate.candidateId) throw new Error("science-project-data-candidate-stale");
+    revalidateResolvedScienceProjectDataCandidate(resolvedCurrent);
     const imported = persistPreparedScienceWorkbook(store, resolved.absolutePath, {
       requestId,
       projectId,
@@ -155,10 +263,20 @@ export function registerScienceProjectDataHandlers(options: {
       originMessageId,
       title,
     } satisfies ScienceWorkbookImportInput, prepared);
+    const association = snapshotCurrent ? store.recordScienceProjectDataEntryImport({
+      requestId: randomUUID(),
+      projectId,
+      entryId: snapshotCurrent.entry.id,
+      sourceId: imported.source.id,
+      sourceVersionId: imported.source.version.id,
+      importRunId: imported.run.id,
+      contentSha256: snapshotCurrent.entry.contentSha256 ?? sha256(readResolvedScienceProjectDataCandidate(resolved)),
+    }).association : null;
     return {
       schema: "agentlas.science-data-import/v1",
       candidate: resolved.candidate,
       format: resolved.candidate.extension,
+      ...(snapshotCurrent ? { scanId: snapshotCurrent.snapshot.scanId, revision: snapshotCurrent.snapshot.revision, entryId: snapshotCurrent.entry.id, association } : {}),
       ...imported,
     };
   });

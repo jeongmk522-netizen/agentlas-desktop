@@ -9,6 +9,19 @@ import { verifyScienceWorkbook, SCIENCE_WORKBOOK_MAX_OUTPUT_BYTES } from "../../
 import { projectScienceWorkbookTable, type ScienceWorkbookTableSelection } from "../../shared/science-workbook-table";
 import type { RuntimeSelection } from "../../shared/types";
 import {
+  classifyScienceProjectDataRefresh,
+  scienceProjectDataRefreshFingerprintMaterial,
+  type ScienceProjectDataEntryImportAssociation,
+  type ScienceProjectDataEntryImportInput,
+  type ScienceProjectDataRefreshCandidate,
+  type ScienceProjectDataRefreshPersistInput,
+  type ScienceProjectDataRefreshPersistResult,
+  type ScienceProjectDataRefreshPreviousEntry,
+  type ScienceProjectDataSnapshot,
+  type ScienceProjectDataSnapshotEntry,
+  type ScienceProjectDataEntryImportResult,
+} from "../../shared/science-project-data-refresh";
+import {
   normalizeScienceRuntimeSelection,
   scienceRuntimeSelectionSha256,
 } from "./runtime-selection";
@@ -2139,6 +2152,54 @@ function projectFromRow(row: Record<string, unknown>, relatedDomains: ScienceDom
     version: Number(row.version),
     createdAt: String(row.created_at),
     updatedAt: String(row.updated_at),
+  };
+}
+
+function scienceProjectDataSnapshotEntryFromRow(
+  row: Record<string, unknown>,
+  importAssociation: ScienceProjectDataEntryImportAssociation | null,
+): ScienceProjectDataSnapshotEntry {
+  let candidate: ScienceProjectDataRefreshCandidate | null = null;
+  if (row.candidate_json !== null && row.candidate_json !== undefined) {
+    try { candidate = JSON.parse(String(row.candidate_json)) as ScienceProjectDataRefreshCandidate; }
+    catch { throw new Error("science-project-data-entry-candidate-json-invalid"); }
+  }
+  return {
+    id: String(row.id),
+    projectId: String(row.project_id),
+    scanId: String(row.scan_id),
+    previousEntryId: row.previous_entry_id === null || row.previous_entry_id === undefined ? null : String(row.previous_entry_id),
+    candidateId: String(row.candidate_id),
+    candidate,
+    relativePath: String(row.relative_path),
+    fingerprint: String(row.fingerprint),
+    contentSha256: row.content_sha256 === null || row.content_sha256 === undefined ? null : String(row.content_sha256),
+    state: String(row.state) as ScienceProjectDataSnapshotEntry["state"],
+    observed: Number(row.observed) === 1,
+    duplicateOfEntryId: row.duplicate_of_entry_id === null || row.duplicate_of_entry_id === undefined ? null : String(row.duplicate_of_entry_id),
+    import: importAssociation,
+  };
+}
+
+function scienceProjectDataJsonText(value: string | null, field: string, maximumBytes = 64 * 1024): string | null {
+  if (value === null) return null;
+  if (typeof value !== "string") throw new Error(`science-${field}-invalid`);
+  let parsed: unknown;
+  try { parsed = JSON.parse(value); } catch { throw new Error(`science-${field}-invalid`); }
+  const normalized = safeJsonRecord(parsed, maximumBytes, field);
+  return JSON.stringify(normalized);
+}
+
+function scienceProjectDataImportAssociationFromRow(row: Record<string, unknown>): ScienceProjectDataEntryImportAssociation {
+  return {
+    id: String(row.id),
+    projectId: String(row.project_id),
+    entryId: String(row.entry_id),
+    sourceId: String(row.source_id),
+    sourceVersionId: String(row.source_version_id),
+    importRunId: String(row.import_run_id),
+    contentSha256: String(row.content_sha256),
+    createdAt: String(row.created_at),
   };
 }
 
@@ -4421,6 +4482,77 @@ export class ScienceStore {
   }
 
   /**
+   * Durable linked-folder refresh history.  These tables are an additive
+   * extension so installed schema-58 databases can recover the snapshot head
+   * without a destructive schema-version jump.
+   */
+  private ensureProjectDataRefreshTables(): void {
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS science_project_data_scans (
+        id TEXT PRIMARY KEY,
+        project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+        schema TEXT NOT NULL CHECK (schema = 'agentlas.science-data-refresh/v1'),
+        mode TEXT NOT NULL CHECK (mode IN ('manual','automatic')),
+        root_identity_json TEXT NOT NULL CHECK (json_valid(root_identity_json)),
+        status TEXT NOT NULL CHECK (status IN ('complete','truncated','failed')),
+        scan_fingerprint TEXT NOT NULL CHECK (length(scan_fingerprint) = 64),
+        entry_count INTEGER NOT NULL CHECK (entry_count >= 0),
+        candidate_count INTEGER NOT NULL CHECK (candidate_count >= 0),
+        skipped_count INTEGER NOT NULL CHECK (skipped_count >= 0),
+        truncated INTEGER NOT NULL CHECK (truncated IN (0,1)),
+        created_at TEXT NOT NULL,
+        finished_at TEXT
+      );
+      CREATE INDEX IF NOT EXISTS idx_science_project_data_scans_fingerprint
+        ON science_project_data_scans(project_id, scan_fingerprint, created_at DESC, id DESC);
+      CREATE TABLE IF NOT EXISTS science_project_data_scan_heads (
+        project_id TEXT PRIMARY KEY REFERENCES projects(id) ON DELETE CASCADE,
+        scan_id TEXT NOT NULL REFERENCES science_project_data_scans(id) ON DELETE RESTRICT,
+        revision INTEGER NOT NULL CHECK (revision >= 1),
+        updated_at TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS science_project_data_entries (
+        id TEXT PRIMARY KEY,
+        project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+        scan_id TEXT NOT NULL REFERENCES science_project_data_scans(id) ON DELETE RESTRICT,
+        previous_entry_id TEXT REFERENCES science_project_data_entries(id) ON DELETE RESTRICT,
+        candidate_id TEXT NOT NULL,
+        candidate_json TEXT CHECK (candidate_json IS NULL OR json_valid(candidate_json)),
+        relative_path TEXT NOT NULL,
+        fingerprint TEXT NOT NULL CHECK (length(fingerprint) = 64),
+        identity_json TEXT,
+        content_sha256 TEXT CHECK (content_sha256 IS NULL OR length(content_sha256) = 64),
+        state TEXT NOT NULL CHECK (state IN ('new','unchanged','changed','missing','unreadable')),
+        observed INTEGER NOT NULL CHECK (observed IN (0,1)),
+        duplicate_of_entry_id TEXT REFERENCES science_project_data_entries(id) ON DELETE RESTRICT,
+        unreadable_reason TEXT,
+        created_at TEXT NOT NULL,
+        UNIQUE(scan_id, candidate_id),
+        UNIQUE(scan_id, relative_path),
+        CHECK ((state = 'missing' AND candidate_json IS NULL) OR (state != 'missing' AND candidate_json IS NOT NULL)),
+        CHECK (duplicate_of_entry_id IS NULL OR duplicate_of_entry_id != id)
+      );
+      CREATE INDEX IF NOT EXISTS idx_science_project_data_entries_scan_path
+        ON science_project_data_entries(scan_id, relative_path, id);
+      CREATE INDEX IF NOT EXISTS idx_science_project_data_entries_project_hash
+        ON science_project_data_entries(project_id, content_sha256, relative_path, id);
+      CREATE TABLE IF NOT EXISTS science_project_data_entry_imports (
+        id TEXT PRIMARY KEY,
+        project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+        entry_id TEXT NOT NULL REFERENCES science_project_data_entries(id) ON DELETE RESTRICT,
+        source_id TEXT NOT NULL REFERENCES sources(id) ON DELETE RESTRICT,
+        source_version_id TEXT NOT NULL REFERENCES source_versions(id) ON DELETE RESTRICT,
+        import_run_id TEXT NOT NULL REFERENCES research_runs(id) ON DELETE RESTRICT,
+        content_sha256 TEXT NOT NULL CHECK (length(content_sha256) = 64),
+        created_at TEXT NOT NULL,
+        UNIQUE(entry_id, source_version_id)
+      );
+      CREATE INDEX IF NOT EXISTS idx_science_project_data_entry_imports_project
+        ON science_project_data_entry_imports(project_id, entry_id, created_at DESC, id DESC);
+    `);
+  }
+
+  /**
    * Add the completion scope as an additive contract field.  NULL preserves
    * legacy contract hashes and keeps old fixtures bounded by their existing
    * criterion semantics; newly proposed contracts should carry an explicit
@@ -4492,6 +4624,7 @@ export class ScienceStore {
         // Optional project folders are an additive schema-57 extension; old
         // projects retain NULL and existing installations remain compatible.
         this.ensureProjectFolderColumn();
+        this.ensureProjectDataRefreshTables();
         this.ensureResearchContractCompletionScopeColumn();
         this.ensureStandingAnalysisPlanApprovals();
         // The visibility/origin extension is a backward-compatible minor
@@ -9282,6 +9415,7 @@ export class ScienceStore {
           `);
         }
         this.ensureProjectFolderColumn();
+        this.ensureProjectDataRefreshTables();
         this.ensureResearchContractCompletionScopeColumn();
         this.ensureStandingAnalysisPlanApprovals();
         this.ensureRuntimeSelectionColumns();
@@ -10310,6 +10444,270 @@ export class ScienceStore {
     if (!UUID_RE.test(id)) return null;
     const row = this.db.prepare("SELECT * FROM projects WHERE id = ?").get(id) as Record<string, unknown> | undefined;
     return row ? projectFromRow(row, this.listProjectRelatedDomains(id)) : null;
+  }
+
+  private projectDataHead(projectId: string): Record<string, unknown> | null {
+    return (this.db.prepare(`SELECT h.project_id, h.scan_id, h.revision, h.updated_at,
+      s.status, s.scan_fingerprint, s.root_identity_json, s.mode, s.created_at, s.finished_at
+      FROM science_project_data_scan_heads h
+      JOIN science_project_data_scans s ON s.id = h.scan_id
+      WHERE h.project_id = ?`).get(projectId) as Record<string, unknown> | undefined) ?? null;
+  }
+
+  private projectDataHeadEntries(projectId: string): ScienceProjectDataRefreshPreviousEntry[] {
+    const head = this.projectDataHead(projectId);
+    if (!head) return [];
+    const rows = this.db.prepare(`SELECT * FROM science_project_data_entries
+      WHERE project_id = ? AND scan_id = ? ORDER BY relative_path, id`).all(projectId, String(head.scan_id)) as Record<string, unknown>[];
+    const mapped = rows.map((row) => scienceProjectDataSnapshotEntryFromRow(row, null));
+    const byId = new Map(mapped.map((entry) => [entry.id, entry]));
+    const rowsById = new Map(rows.map((row) => [String(row.id), row]));
+    return mapped.map((entry) => ({
+      entryId: entry.id,
+      candidateId: entry.candidateId,
+      relativePath: entry.relativePath,
+      fingerprint: entry.fingerprint,
+      contentSha256: entry.contentSha256,
+      identityJson: rowsById.get(entry.id)?.identity_json === null || rowsById.get(entry.id)?.identity_json === undefined
+        ? null : String(rowsById.get(entry.id)?.identity_json),
+      candidate: entry.candidate,
+      state: entry.state,
+      observed: entry.observed,
+      duplicateOfRelativePath: entry.duplicateOfEntryId ? byId.get(entry.duplicateOfEntryId)?.relativePath ?? null : null,
+      unreadableReason: String(rows.find((row) => String(row.id) === entry.id)?.unreadable_reason ?? "") || null,
+    }));
+  }
+
+  private projectDataSnapshotForScan(projectId: string, scanId: string, revision: number): ScienceProjectDataSnapshot {
+    const scan = this.db.prepare(`SELECT * FROM science_project_data_scans WHERE id = ? AND project_id = ?`).get(scanId, projectId) as Record<string, unknown> | undefined;
+    if (!scan) throw new Error("science-project-data-scan-not-found");
+    const rows = this.db.prepare(`SELECT * FROM science_project_data_entries WHERE scan_id = ? AND project_id = ? ORDER BY relative_path, id`).all(scanId, projectId) as Record<string, unknown>[];
+    const allEntryRows = this.db.prepare(`SELECT id, previous_entry_id, content_sha256
+      FROM science_project_data_entries WHERE project_id = ?`).all(projectId) as Record<string, unknown>[];
+    const entryById = new Map(allEntryRows.map((row) => [String(row.id), row]));
+    const imports = this.db.prepare(`SELECT * FROM science_project_data_entry_imports
+      WHERE project_id = ? ORDER BY created_at DESC, id DESC`).all(projectId) as Record<string, unknown>[];
+    const importByEntry = new Map<string, ScienceProjectDataEntryImportAssociation>();
+    for (const row of imports) {
+      const entryId = String(row.entry_id);
+      if (!importByEntry.has(entryId)) importByEntry.set(entryId, scienceProjectDataImportAssociationFromRow(row));
+    }
+    const importForEntry = (row: Record<string, unknown>): ScienceProjectDataEntryImportAssociation | null => {
+      const contentSha256 = row.content_sha256 === null || row.content_sha256 === undefined ? null : String(row.content_sha256);
+      if (!contentSha256) return null;
+      const seen = new Set<string>();
+      let entryId: string | null = String(row.id);
+      while (entryId && !seen.has(entryId)) {
+        seen.add(entryId);
+        const association = importByEntry.get(entryId);
+        if (association) return association.contentSha256 === contentSha256 ? association : null;
+        const previous = entryById.get(entryId);
+        if (!previous || (previous.content_sha256 === null || previous.content_sha256 === undefined)
+          || String(previous.content_sha256) !== contentSha256) return null;
+        entryId = previous.previous_entry_id === null || previous.previous_entry_id === undefined ? null : String(previous.previous_entry_id);
+      }
+      return null;
+    };
+    const entries = rows.map((row) => scienceProjectDataSnapshotEntryFromRow(row, importForEntry(row)));
+    const changes = { new: 0, changed: 0, unchanged: 0, missing: 0, duplicate: 0, unreadable: 0 };
+    for (const entry of entries) {
+      if (!entry.observed) continue;
+      changes[entry.state] += 1;
+      if (entry.duplicateOfEntryId) changes.duplicate += 1;
+    }
+    return {
+      schema: "agentlas.science-data-refresh/v1",
+      projectId,
+      scanId,
+      revision,
+      status: String(scan.status) as ScienceProjectDataSnapshot["status"],
+      entries,
+      changes,
+    };
+  }
+
+  getScienceProjectDataSnapshot(projectId: string): ScienceProjectDataSnapshot | null {
+    if (!UUID_RE.test(projectId) || !this.getProject(projectId)) return null;
+    const head = this.projectDataHead(projectId);
+    return head ? this.projectDataSnapshotForScan(projectId, String(head.scan_id), Number(head.revision)) : null;
+  }
+
+  refreshScienceProjectData(input: ScienceProjectDataRefreshPersistInput): ScienceProjectDataRefreshPersistResult {
+    if (!input || typeof input !== "object" || !UUID_RE.test(String(input.requestId ?? ""))) throw new Error("science-request-id-invalid");
+    if (!UUID_RE.test(String(input.projectId ?? ""))) throw new Error("science-project-id-invalid");
+    if (!this.getProject(input.projectId)) throw new Error("science-project-not-found");
+    if (!['manual', 'automatic'].includes(input.mode)) throw new Error("science-project-data-refresh-mode-invalid");
+    if (!['complete', 'truncated', 'failed'].includes(input.status)) throw new Error("science-project-data-refresh-status-invalid");
+    if (!Number.isSafeInteger(input.skippedCount) || input.skippedCount < 0) throw new Error("science-project-data-refresh-skipped-count-invalid");
+    if (!Array.isArray(input.observations) || input.observations.length > 2_048) throw new Error("science-project-data-refresh-observations-invalid");
+    const rootIdentity = safeJsonRecord(input.rootIdentity, 64 * 1024, "science-project-data-root-identity");
+    const observations = input.observations.map((observation) => ({
+      ...observation,
+      identityJson: scienceProjectDataJsonText(observation.identityJson, "science-project-data-identity"),
+    }));
+    const inputSha256 = sha256Json({
+      schema: "agentlas.science-data-refresh-request/v1",
+      projectId: input.projectId,
+      mode: input.mode,
+      rootIdentity,
+      status: input.status,
+      skippedCount: input.skippedCount,
+      observations,
+    });
+    return this.db.transaction(() => {
+      const prior = this.replay<ScienceProjectDataRefreshPersistResult>(input.requestId, "project.data.refresh", inputSha256);
+      if (prior) return { ...prior, replayed: true };
+      const previousEntries = this.projectDataHeadEntries(input.projectId);
+      const classification = classifyScienceProjectDataRefresh({
+        previousEntries,
+        observations,
+        truncated: input.status !== "complete",
+      });
+      const scanFingerprint = sha256Json({
+        ...scienceProjectDataRefreshFingerprintMaterial(rootIdentity, {
+          previousEntries,
+          observations,
+          truncated: input.status !== "complete",
+        }, classification),
+        status: input.status,
+        skippedCount: input.skippedCount,
+      });
+      const currentHead = this.projectDataHead(input.projectId);
+      const sameEffectiveHead = input.status !== "failed" && currentHead?.scan_fingerprint === scanFingerprint;
+      const now = new Date().toISOString();
+      const scanId = randomUUID();
+      const effectiveEntries = input.status === "failed" ? [] : classification.entries;
+      this.db.prepare(`INSERT INTO science_project_data_scans
+        (id,project_id,schema,mode,root_identity_json,status,scan_fingerprint,entry_count,candidate_count,skipped_count,truncated,created_at,finished_at)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(
+        scanId,
+        input.projectId,
+        "agentlas.science-data-refresh/v1",
+        input.mode,
+        JSON.stringify(rootIdentity),
+        input.status,
+        scanFingerprint,
+        effectiveEntries.length,
+        effectiveEntries.filter((entry) => entry.candidate !== null).length,
+        input.skippedCount,
+        input.status === "truncated" ? 1 : 0,
+        now,
+        now,
+      );
+      const entryIdsByPath = new Map(effectiveEntries.map((entry) => [entry.relativePath, randomUUID()]));
+      const previousIds = new Set(previousEntries.map((entry) => entry.entryId));
+      const insertEntry = this.db.prepare(`INSERT INTO science_project_data_entries
+        (id,project_id,scan_id,previous_entry_id,candidate_id,candidate_json,relative_path,fingerprint,identity_json,content_sha256,state,observed,duplicate_of_entry_id,unreadable_reason,created_at)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`);
+      for (const entry of effectiveEntries) {
+        if (!entry.fingerprint || !SHA256_RE.test(entry.fingerprint)) throw new Error("science-project-data-refresh-fingerprint-invalid");
+        if (entry.previousEntryId && !previousIds.has(entry.previousEntryId)) throw new Error("science-project-data-refresh-previous-entry-not-found");
+        const duplicateOfEntryId = entry.duplicateOfRelativePath ? entryIdsByPath.get(entry.duplicateOfRelativePath) ?? null : null;
+        if (entry.duplicateOfRelativePath && !duplicateOfEntryId) throw new Error("science-project-data-refresh-duplicate-entry-not-found");
+        const candidateJson = entry.candidate ? JSON.stringify(canonicalValue(entry.candidate)) : null;
+        insertEntry.run(
+          entryIdsByPath.get(entry.relativePath),
+          input.projectId,
+          scanId,
+          entry.previousEntryId,
+          entry.candidateId,
+          candidateJson,
+          entry.relativePath,
+          entry.fingerprint,
+          entry.identityJson,
+          entry.contentSha256,
+          entry.state,
+          entry.observed ? 1 : 0,
+          duplicateOfEntryId,
+          entry.unreadableReason,
+          now,
+        );
+      }
+      let revision = Number(currentHead?.revision ?? 0);
+      if (input.status !== "failed") {
+        if (!sameEffectiveHead) revision += 1;
+        this.db.prepare(`INSERT INTO science_project_data_scan_heads (project_id,scan_id,revision,updated_at)
+          VALUES (?,?,?,?) ON CONFLICT(project_id) DO UPDATE SET scan_id=excluded.scan_id,revision=excluded.revision,updated_at=excluded.updated_at`)
+          .run(input.projectId, scanId, revision, now);
+      }
+      const snapshot = this.projectDataSnapshotForScan(input.projectId, scanId, revision);
+      const result: ScienceProjectDataRefreshPersistResult = { snapshot, replayed: false };
+      this.remember(input.requestId, "project.data.refresh", inputSha256, result, now);
+      return result;
+    })();
+  }
+
+  recordScienceProjectDataEntryImport(input: ScienceProjectDataEntryImportInput): ScienceProjectDataEntryImportResult {
+    if (!input || typeof input !== "object" || !UUID_RE.test(String(input.requestId ?? ""))) throw new Error("science-request-id-invalid");
+    if (![input.projectId, input.entryId, input.sourceId, input.sourceVersionId, input.importRunId].every((value) => UUID_RE.test(String(value ?? "")))) {
+      throw new Error("science-project-data-import-reference-invalid");
+    }
+    if (!SHA256_RE.test(input.contentSha256)) throw new Error("science-project-data-import-content-hash-invalid");
+    const inputSha256 = sha256Json({
+      schema: "agentlas.science-data-entry-import/v1",
+      projectId: input.projectId,
+      entryId: input.entryId,
+      sourceId: input.sourceId,
+      sourceVersionId: input.sourceVersionId,
+      importRunId: input.importRunId,
+      contentSha256: input.contentSha256,
+    });
+    return this.db.transaction(() => {
+      const prior = this.replay<ScienceProjectDataEntryImportResult>(input.requestId, "project.data.entry-import", inputSha256);
+      if (prior) return { ...prior, replayed: true };
+      const entry = this.db.prepare(`SELECT e.id,e.project_id,e.content_sha256 FROM science_project_data_entries e
+        WHERE e.id = ? AND e.project_id = ?`).get(input.entryId, input.projectId) as { id?: string; project_id?: string; content_sha256?: string | null } | undefined;
+      if (!entry?.id || entry.content_sha256 !== input.contentSha256) throw new Error("science-project-data-import-entry-content-conflict");
+      const source = this.db.prepare(`SELECT s.id AS source_id, s.project_id, v.id AS source_version_id, v.content_sha256
+        FROM sources s JOIN source_versions v ON v.source_id = s.id
+        WHERE s.id = ? AND s.project_id = ? AND v.id = ?`).get(input.sourceId, input.projectId, input.sourceVersionId) as { source_id?: string; project_id?: string; source_version_id?: string; content_sha256?: string } | undefined;
+      if (!source?.source_id || source.source_version_id !== input.sourceVersionId || source.content_sha256 !== input.contentSha256) throw new Error("science-project-data-import-source-content-conflict");
+      const run = this.db.prepare(`SELECT r.id, b.id AS binding_id
+        FROM research_runs r
+        JOIN research_run_source_bindings b ON b.run_id = r.id AND b.project_id = r.project_id
+        WHERE r.id = ? AND r.project_id = ? AND r.status = 'succeeded'
+          AND r.tool_id IN ('agentlas.csv-ingest','agentlas.workbook-ingest')
+          AND b.source_id = ? AND b.source_version_id = ? AND b.content_sha256 = ?
+          AND b.role IN ('raw-dataset','raw-workbook')`).get(
+        input.importRunId,
+        input.projectId,
+        input.sourceId,
+        input.sourceVersionId,
+        input.contentSha256,
+      ) as { id?: string; binding_id?: string } | undefined;
+      if (!run?.id || !run.binding_id) throw new Error("science-project-data-import-run-source-binding-not-found");
+      const existing = this.db.prepare("SELECT * FROM science_project_data_entry_imports WHERE entry_id = ? AND source_version_id = ?").get(input.entryId, input.sourceVersionId) as Record<string, unknown> | undefined;
+      if (existing) {
+        const result: ScienceProjectDataEntryImportResult = { association: scienceProjectDataImportAssociationFromRow(existing), replayed: false };
+        this.remember(input.requestId, "project.data.entry-import", inputSha256, result, new Date().toISOString());
+        return result;
+      }
+      const association = {
+        id: randomUUID(),
+        projectId: input.projectId,
+        entryId: input.entryId,
+        sourceId: input.sourceId,
+        sourceVersionId: input.sourceVersionId,
+        importRunId: input.importRunId,
+        contentSha256: input.contentSha256,
+        createdAt: new Date().toISOString(),
+      } satisfies ScienceProjectDataEntryImportAssociation;
+      this.db.prepare(`INSERT INTO science_project_data_entry_imports
+        (id,project_id,entry_id,source_id,source_version_id,import_run_id,content_sha256,created_at)
+        VALUES (?,?,?,?,?,?,?,?)`).run(
+        association.id,
+        association.projectId,
+        association.entryId,
+        association.sourceId,
+        association.sourceVersionId,
+        association.importRunId,
+        association.contentSha256,
+        association.createdAt,
+      );
+      const result: ScienceProjectDataEntryImportResult = { association, replayed: false };
+      this.remember(input.requestId, "project.data.entry-import", inputSha256, result, association.createdAt);
+      return result;
+    })();
   }
 
   listProjectRelatedDomains(projectId: string): ScienceDomain[] {

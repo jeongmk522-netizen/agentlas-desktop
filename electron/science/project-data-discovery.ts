@@ -59,6 +59,17 @@ export interface ResolvedScienceProjectDataCandidate {
   identity: ScienceProjectDataFileIdentity;
 }
 
+export interface ScienceProjectDataRootIdentity {
+  schema: "agentlas.science-data-root-identity/v1";
+  rootPath: string;
+  dataDirectoryPath: string;
+  device: number;
+  inode: number;
+  byteSize: number;
+  modifiedAtMs: number;
+  changedAtMs: number;
+}
+
 function canonicalJson(value: unknown): string {
   if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
   if (value && typeof value === "object") {
@@ -109,6 +120,23 @@ function ensureDataDirectory(root: string): { path: string; created: boolean } {
   catch { throw new Error("science-project-data-folder-unavailable"); }
   if (!isWithin(root, canonical) || canonical !== path.resolve(dataPath)) throw new Error("science-project-data-folder-escape");
   return { path: canonical, created };
+}
+
+/** Main-only identity for the persisted project data root; paths never enter the renderer snapshot. */
+export function scienceProjectDataRootIdentity(store: ScienceStore, projectId: string): ScienceProjectDataRootIdentity {
+  const { root } = scienceProject(store, projectId);
+  const dataDirectory = ensureDataDirectory(root);
+  let stat: fs.Stats;
+  try { stat = fs.lstatSync(dataDirectory.path); }
+  catch { throw new Error("science-project-data-folder-unavailable"); }
+  if (stat.isSymbolicLink() || !stat.isDirectory()) throw new Error("science-project-data-folder-unavailable");
+  const identity = identityFromStat(stat);
+  return {
+    schema: "agentlas.science-data-root-identity/v1",
+    rootPath: root,
+    dataDirectoryPath: dataDirectory.path,
+    ...identity,
+  };
 }
 
 function identityFromStat(stat: fs.Stats): ScienceProjectDataFileIdentity {

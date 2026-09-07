@@ -15,6 +15,7 @@ import {
 } from "../store/long-runs";
 import { getInvocationRunReceipt, listRunEvents } from "../store/run-events";
 import { latestDurableAssistantMessage } from "../store/chats";
+import { getDb } from "../store/db";
 
 const controllers = new Map<string, AbortController>();
 let accepting = true;
@@ -184,6 +185,28 @@ export function longRunVerifiersSettled(): boolean {
   return controllers.size === 0;
 }
 
+/**
+ * 증거가 모자라 다시 일하게 한 횟수. 같은 자리에서 끝없이 돌지 않도록 상한을 준다.
+ *
+ * 판정 실패(failed)와 달리 판정 불가(inconclusive)는 "더 해 보면 될 수도 있다"이므로,
+ * 몇 번은 다시 시도하되 그 사실이 원장에 남아야 한다 — 조용한 무한 루프는 멈춤보다 나쁘다.
+ */
+const INCONCLUSIVE_RETRY_LIMIT = 3;
+
+function countInconclusiveRetries(runId: string): number {
+  try {
+    const row = getDb().prepare(
+      `SELECT COUNT(*) AS n FROM long_run_events
+        WHERE run_id = ? AND kind = 'run.status_changed'
+          AND payload_json LIKE '%verification_inconclusive_retry%'`,
+    ).get(runId) as { n: number } | undefined;
+    return Number(row?.n ?? 0);
+  } catch {
+    // 셀 수 없으면 재시도하지 않는다 — 모르는 채로 무한히 도는 것보다 멈추는 편이 낫다.
+    return INCONCLUSIVE_RETRY_LIMIT;
+  }
+}
+
 export async function verifyGoalCompletionClaim(input: {
   goalId: string;
   outcomeText: string;
@@ -306,12 +329,34 @@ export async function verifyGoalCompletionClaim(input: {
       const current = getLongRunByGoalId(input.goalId);
       if (current && current.status === "verifying") {
         const firstUnmet = verdicts.find((verdict) => verdict.verdict !== "passed");
+        /*
+         * ★"판정 못 하겠다"는 끝이 아니라 **증거가 모자라다**는 뜻이다 (오너 지적 2026-09-08:
+         * "앱 자체를 유연하게 만들어야 안 깨지는 것 아니냐, AI 네이티브인데 보통 소프트웨어로
+         * 만들려고 한다").
+         *
+         * 예전에는 통과가 아니면 무조건 blocked 로 내려놨고, 그 자리에서 나오는 길은 사람이
+         * 손대는 것뿐이었다. 오너 실측: 기준 3·4는 통과했는데 기준 2가 inconclusive 라
+         * 목표 전체가 막혔고, 화면에는 "안 닫힘 / 진행 안 됨"으로만 보였다.
+         *
+         * 이제 둘을 가른다:
+         *   failed        = 기준을 **못 지켰다**는 판단 → blocked. 사람이 볼 자리가 맞다.
+         *   inconclusive  = **판단할 근거가 없다** → 다시 일하게 한다(running). 다음 패스가
+         *                   그 기준의 증거부터 모은다. 같은 자리에서 계속 못 하면 그때 멈춘다.
+         *
+         * 무한 반복은 재시도 상한이 막는다. 상한을 넘으면 그때는 정말 못 푸는 것이므로
+         * blocked 로 내려놓되, 몇 번 시도했는지가 원장에 남는다.
+         */
+        const hardFail = firstUnmet?.verdict === "failed";
+        const retriesSoFar = countInconclusiveRetries(current.id);
+        const canRetry = !hardFail && retriesSoFar < INCONCLUSIVE_RETRY_LIMIT;
         try {
           transitionLongRun({
             runId: current.id,
-            to: "blocked",
+            to: canRetry ? "running" : "blocked",
             actorKind: "host",
-            reason: firstUnmet?.verdict === "failed" ? "verification_failed" : "verification_inconclusive",
+            reason: canRetry
+              ? `verification_inconclusive_retry:${retriesSoFar + 1}`
+              : hardFail ? "verification_failed" : "verification_inconclusive",
           });
         } catch (error) {
           // 상태를 못 옮겨도 판정 기록은 남는다 — 조용히 삼키지 않는다.

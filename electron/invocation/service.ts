@@ -2343,8 +2343,18 @@ export class InvocationService {
           record.events.push(goalEvent);
           recordMcpInvocationEvent(runId, runReq, goalEvent);
           this.publishRunEvent(record, { runId, chatId: chat.id, event: goalEvent });
-          const remaining = Date.parse(admitted.budget.wallclockDeadline!) - Date.now();
-          record.automaticGoalDeadline = setTimeout(() => this.cancelWithReason(runId, new Error("automatic_goal_time_budget")), Math.max(1, remaining));
+          /*
+           * ★마감이 없으면(무제한) 타이머를 걸지 않는다.
+           *
+           * Date.parse(null) 은 NaN 이고 setTimeout(fn, NaN) 은 **즉시** 실행된다. 그래서
+           * 이 줄은 무제한 목표를 시작하자마자 취소해 버린다 — 상한을 푸는 변경에서 가장
+           * 조용히 반대로 도는 자리다(오너 지시 2026-09-08 주기·시간 무제한).
+           */
+          const deadline = admitted.budget.wallclockDeadline;
+          const remaining = deadline == null ? Number.NaN : Date.parse(deadline) - Date.now();
+          if (Number.isFinite(remaining)) {
+            record.automaticGoalDeadline = setTimeout(() => this.cancelWithReason(runId, new Error("automatic_goal_time_budget")), Math.max(1, remaining));
+          }
         } catch {
           tryRecordRunEvent({ runId, chatId: chat.id, kind: "automatic_goal_binding_failed", payload: { sourceMessageId } });
           // Goal enrichment failure must never swallow the original request.

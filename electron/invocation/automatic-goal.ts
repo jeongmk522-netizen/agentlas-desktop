@@ -21,8 +21,18 @@ import type { LongRunRecord } from "../store/long-runs";
  * retrying fit inside it, short enough that a request auto-admitted from a plain sentence cannot run
  * unattended forever. The explicit Goal path stays unbounded; that one the person asked for.
  */
-export const AUTOMATIC_GOAL_CYCLE_LIMIT = 64;
-export const AUTOMATIC_GOAL_TIME_LIMIT_MS = 8 * 60 * 60_000;
+/*
+ * ★오너 지시 2026-09-08: "주기 시간 무제한해라".
+ *
+ * 자동으로 승인된 목표도 사람이 멈추기 전까지 이어간다. null 은 원장이 이미 아는 표현이고
+ * (cyclesSpent/deadlinePassed 판정이 null 을 건너뛴다), 무한 반복은 예산이 아니라 진전
+ * 없음(stall)·실패 반복·사용자 정지로 멈춘다 — 그쪽이 원래 멈춤의 정본이다.
+ *
+ * 실측이 이 결정을 뒷받침한다: 오너 저장소의 자동 목표는 maxCycles=3 으로 만들어져
+ * reason:"budget" 으로 10분 만에 끝났다. 코덱스가 같은 자리에서 189턴 25.9시간을 돈다.
+ */
+export const AUTOMATIC_GOAL_CYCLE_LIMIT: number | null = null;
+export const AUTOMATIC_GOAL_TIME_LIMIT_MS: number | null = null;
 
 export async function prepareInvocationAutomaticGoal(input: {
   runId: string;
@@ -57,7 +67,9 @@ export async function prepareInvocationAutomaticGoal(input: {
       ],
       authorityRefs: [`invocation:${input.runId}:permission:${input.permission}`],
       budget: { maxCycles: AUTOMATIC_GOAL_CYCLE_LIMIT, maxCostUsd: null, maxWorkers: 2,
-        wallclockDeadline: new Date(Date.now() + AUTOMATIC_GOAL_TIME_LIMIT_MS).toISOString() },
+        wallclockDeadline: AUTOMATIC_GOAL_TIME_LIMIT_MS == null
+          ? null
+          : new Date(Date.now() + AUTOMATIC_GOAL_TIME_LIMIT_MS).toISOString() },
     });
   } catch (error) {
     tryRecordRunEvent({ runId: input.runId, chatId: input.chatId, kind: "automatic_goal_intake_unavailable", payload: {

@@ -18,12 +18,23 @@ function userSource(chatId: string, messageId: string): GoalSourceMessage {
   return { chatId, messageId, role: "user", text: row.text };
 }
 
+/*
+ * ★오너 지시 2026-09-08: 주기·시간 무제한.
+ *
+ * 예전에는 주기와 마감을 **필수**로 요구해서, 무제한(null)을 주면 곧바로 거절했다. 이제
+ * null 은 "제한 없음"이라는 뜻으로 받는다. 값이 들어오면 그 값이 말이 되는지는 그대로 본다 —
+ * 무제한을 허용하는 것과 잘못된 값을 허용하는 것은 다르다.
+ */
 function finiteBudget(budget: LongRunBudget): void {
-  if (!Number.isSafeInteger(budget.maxCycles) || budget.maxCycles! < 1 ||
-      (budget.maxCostUsd !== null && (!Number.isFinite(budget.maxCostUsd) || budget.maxCostUsd < 0)) ||
-      !Number.isSafeInteger(budget.maxWorkers) || budget.maxWorkers! < 1 ||
-      !budget.wallclockDeadline || !Number.isFinite(Date.parse(budget.wallclockDeadline)) ||
-      Date.parse(budget.wallclockDeadline) <= Date.now()) throw new Error("auto_goal_finite_budget_required");
+  const badCycles = budget.maxCycles != null
+    && (!Number.isSafeInteger(budget.maxCycles) || budget.maxCycles < 1);
+  const badCost = budget.maxCostUsd !== null
+    && (!Number.isFinite(budget.maxCostUsd) || budget.maxCostUsd < 0);
+  const badWorkers = !Number.isSafeInteger(budget.maxWorkers) || budget.maxWorkers! < 1;
+  const badDeadline = budget.wallclockDeadline != null
+    && (!Number.isFinite(Date.parse(budget.wallclockDeadline))
+      || Date.parse(budget.wallclockDeadline) <= Date.now());
+  if (badCycles || badCost || badWorkers || badDeadline) throw new Error("auto_goal_finite_budget_required");
 }
 
 export function admitJudgedAutomaticGoal(input: {
@@ -77,7 +88,14 @@ export function controlAutomaticGoal(input: {
     if (input.command === "resume") {
       if (input.expectedVersion === undefined) throw new Error("auto_goal_resume_version_required");
       finiteBudget(run.budget);
-      if (run.cycleCount >= run.budget.maxCycles! || (run.budget.maxCostUsd !== null && run.costUsedUsd >= run.budget.maxCostUsd)) throw new Error("auto_goal_budget_exhausted");
+      /*
+       * ★null 은 "무제한"이지 0 이 아니다. `run.cycleCount >= null` 은 자바스크립트에서
+       * `0 >= 0` 으로 풀려 **첫 주기부터 예산 소진**이 된다 — 무제한이 오히려 즉시 종료가
+       * 되는 자리라, 상한을 푸는 변경에서 반드시 함께 고쳐야 한다.
+       */
+      const cyclesExhausted = run.budget.maxCycles != null && run.cycleCount >= run.budget.maxCycles;
+      const costExhausted = run.budget.maxCostUsd !== null && run.costUsedUsd >= run.budget.maxCostUsd;
+      if (cyclesExhausted || costExhausted) throw new Error("auto_goal_budget_exhausted");
       // The scheduler retains a blocked contract while stopping continuation.
       // Only this explicit user resume may reactivate it, within the same CAS
       // transaction and without resetting any consumed budget.

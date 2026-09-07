@@ -18,7 +18,7 @@ import {
   startLongRunWorkerAttempt,
   transitionLongRun,
 } from "../store/long-runs";
-import { completeChatGoalContract, getChatGoalRevision } from "../store/chat-goals";
+import { armChatGoalContract, completeChatGoalContract, defineChatGoalContract, getChatGoalRevision } from "../store/chat-goals";
 import { prepareInvocationAutomaticGoal } from "./automatic-goal";
 import { DesktopLongRunInvocationProjection } from "../long-run/invocation-projection";
 import { resolveDesktopRuntimeAdapter } from "../long-run/runtime-adapters";
@@ -1606,15 +1606,42 @@ export class InvocationService {
       });
       try {
         const objective = runReq.userPrompt.replace(/\s+/g, " ").trim();
+        const acceptanceCriteria = deriveGoalAcceptanceCriteria(objective, pickLocale(runReq));
         if (!objective || !ensureGoalLedgerGoal({
           goalId: projectionGoalId,
           objective,
-          acceptanceCriteria: deriveGoalAcceptanceCriteria(objective, pickLocale(runReq)),
+          acceptanceCriteria,
           projectDir: getChatWorkingFolder(chat.id),
         })) {
           projectionGoalId = null;
         } else {
           setChatGoalBinding(chat.id, projectionGoalId);
+          /*
+           * ★대화에 목표 번호만 찍고 계약을 안 만들면, 그 목표는 영영 못 닫는다.
+           *
+           * 이 경로는 실행 원장(long_runs)만 만들고 chat_goal_contracts 는 안 만들었다.
+           * 그런데 화면의 목표 칩·완료 판정·"껐다 켜면 이어가기"는 **그 계약**을 본다.
+           * 그래서 칩은 뜨는데 닫을 대상도 이어갈 대상도 없었다.
+           *
+           * 실측(오너 설치본 v1.1.8, QA 격리 재현 둘 다 같은 모양):
+           *   goal:auto-message:…  계약 있음 · 실행 있음 → 33초 만에 completed 로 닫힘
+           *   goal:desktop:…       계약 **없음** · 실행 있음 → 영원히 안 닫힘
+           * 그 저장소에서 목표가 완료된 적은 한 번도 없었다(completed 0).
+           *
+           * 계약은 실행 원장과 같은 사실을 다른 각도로 적는 것이므로, 여기서 함께 적는다.
+           * 실패해도 실행은 계속 간다 — 계약이 없다고 실행을 죽이면 더 나쁘다.
+           */
+          try {
+            armChatGoalContract({ goalId: projectionGoalId, chatId: chat.id });
+            defineChatGoalContract({
+              goalId: projectionGoalId,
+              chatId: chat.id,
+              objective,
+              acceptanceCriteria,
+            });
+          } catch (contractError) {
+            console.warn("[long-run] goal contract not recorded:", contractError);
+          }
         }
       } catch (error) {
         projectionGoalId = null;

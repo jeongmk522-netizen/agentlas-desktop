@@ -212,6 +212,7 @@
     "test:one-bubble-width": "node scripts/local/one-bubble-fits-its-text-contract.cjs",
     "test:ask-card-label-truth": "node scripts/local/ask-card-label-tells-the-truth-contract.cjs",
     "test:gates-report-failure": "node scripts/local/electron-gates-report-failure-contract.cjs",
+    "test:goal-contract-written": "node scripts/local/goal-binding-writes-its-contract-contract.cjs",
     "test:comparable-refusal-reason": "node scripts/local/comparable-refusal-names-its-reason-contract.cjs",
     "test:agent-architecture-migration": "node scripts/agent-architecture-migration-contract.cjs",
     "test:composer-event-sync": "node scripts/composer-event-sync-contract.mjs",

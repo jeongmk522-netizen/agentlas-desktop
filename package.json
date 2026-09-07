@@ -148,6 +148,8 @@
     "test:role-write-failure": "node scripts/role-write-failure-reaches-the-screen-contract.cjs",
     "test:one-dark-bubble-surface": "node scripts/one-dark-bubble-surface-contract.cjs",
     "test:approval-chip-matches-composer": "node scripts/approval-chip-matches-composer-contract.cjs",
+    "qa:korean-coverage": "node scripts/qa-korean-coverage.cjs",
+    "qa:obstructed-ui": "node scripts/qa-obstructed-ui.cjs",
     "test:inline-mcp-authenticity": "tsc -p electron/tsconfig.json && node scripts/inline-mcp-authenticity-survives-recompression-contract.cjs",
     "probe:permission-vectors": "tsc -p electron/tsconfig.json && node scripts/probe-runtime-permission-bypass.mjs",
     "probe:permission-live": "tsc -p electron/tsconfig.json && node scripts/probe-runtime-permission-bypass.mjs --live --check",

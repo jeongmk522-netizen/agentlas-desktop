@@ -8,7 +8,7 @@ import os from "node:os";
 import fs from "node:fs/promises";
 import { rmSync } from "node:fs";
 import { randomUUID } from "node:crypto";
-import type { Runner, RunnerEvents, RunnerRequest, RunnerResult, RunnerFailure } from "./runner";
+import type { Runner, RunnerEvents, RunnerRequest, RunnerResult, RunnerFailure, RunnerFailureKind } from "./runner";
 import { detectRuntimeRefusal } from "./runtime-refusal";
 import { cumulativeSurfaceGateText, ensureChildCloseAfterExit, startCliHeartbeat, wrapSystemPrompt } from "./runner";
 import { announceToolDenied } from "./tool-approval";
@@ -387,6 +387,9 @@ export function reduceAgyLine(
      * 않아도 된다 — 재개가 실제로 기억한다는 것은 코드워드 실측으로 확인했다.
      */
     conversationId?: string;
+    /** result 이벤트의 status/error — 표식이지 문구 판별이 아니다. */
+    resultStatus?: string;
+    resultError?: string;
   },
 ): {
   delta?: string;
@@ -420,6 +423,14 @@ export function reduceAgyLine(
       conversation_id?: string;
       /** 실측 agy 1.1.27 — 이 실행에서 승인이 없어 거부된 행동. 문구가 아니라 **필드**다. */
       denied_actions?: Array<{ action?: string; display_name?: string }>;
+      /**
+       * ★런타임이 왜 못 했는지 **직접 말해 주는 칸** (실측 2026-09-07, agy 1.1.27):
+       *   {"event":"result","status":"ERROR","response":"",
+       *    "error":"Individual quota reached. Please upgrade your subscription… Resets in 25m37s."}
+       * 이 칸을 안 읽어서 사용자는 `Antigravity CLI exit 1` 만 봤다 — 언제 풀리는지도,
+       * 무엇이 문제인지도 없이. 런타임이 이유를 말했는데 우리가 버린 자리다.
+       */
+      error?: string;
     };
     step_update?: {
       conversation_id?: string;
@@ -452,6 +463,9 @@ export function reduceAgyLine(
    */
   if (ev.event === "result" && ev.result) {
     if (typeof ev.result.response === "string") state.finalResponse = ev.result.response;
+    if (typeof ev.result.status === "string") state.resultStatus = ev.result.status;
+    // 런타임이 말한 사유를 그대로 들고 간다 — 이것이 있으면 그것이 곧 실패 표식이다.
+    if (typeof ev.result.error === "string" && ev.result.error.trim()) state.resultError = ev.result.error.trim();
     /*
      * ★거부는 문구가 아니라 **필드**로 잡는다 (실측 2026-09-07, agy 1.1.27).
      *
@@ -565,6 +579,21 @@ export function buildAgyPromptBootstrap(promptFile: string): string {
   return `Read the complete Agentlas request from ${JSON.stringify(promptFile)}, follow it exactly, and do not reveal the file path.`;
 }
 
+
+/**
+ * agy 가 `result.error` 로 말한 사유를 실패 종류로 옮긴다 — **순수 함수**.
+ *
+ * 여기서 문구를 보는 것은 runtime-refusal.ts 의 휴리스틱과 다르다: 이건 "산출물인가
+ * 고지문인가"를 추측하는 것이 아니라, 런타임이 **오류 칸에 넣은 문장**을 우리 어휘로
+ * 옮기는 것뿐이다. 분류가 틀려도 사유 원문은 그대로 사용자에게 간다(정보 손실 없음).
+ */
+export function antigravityFailureKind(error: string): RunnerFailureKind {
+  const text = String(error || "");
+  if (/\bquota\b|\busage limit\b|\brate.?limit/i.test(text)) return "quota";
+  if (/\b(sign ?in|log ?in|unauthorized|forbidden|credential|token)\b/i.test(text)) return "auth";
+  if (/\btimed? ?out\b|\btimeout\b/i.test(text)) return "timeout";
+  return "refused";
+}
 
 /** Antigravity exit 0 완주의 실패 판별 — 순수 함수(게이트가 픽스처 주입). */
 export function antigravityExitFailure(
@@ -1170,6 +1199,8 @@ async function runPreparedAntigravity(
       outputTokens: number;
       deniedTools?: { tool: string; detail: string }[];
       conversationId?: string;
+      resultStatus?: string;
+      resultError?: string;
     } = { text: "", inputTokens: 0, outputTokens: 0 };
     const announcedDenials = new Set<string>();
     const reportedAgyTools = new Set<string>();
@@ -1316,7 +1347,26 @@ async function runPreparedAntigravity(
          */
         // 판정 근거는 새로 만들지 않는다 — 도구를 열었는지는 이미 agyToolsAllowed 가 안다.
         const structural = !agyToolsAllowed;
-        const failure = !trimmed && denied.length > 0
+        /*
+         * ★런타임이 이유를 말했으면 그 말이 곧 실패다 — 우리가 다시 추측하지 않는다.
+         *
+         * 실측 2026-09-07 (agy 1.1.27, 할당량 소진):
+         *   {"event":"result","status":"ERROR","response":"",
+         *    "error":"Individual quota reached. … Resets in 25m37s."}
+         * 그리고 프로세스는 exit 1 로 끝나고 stderr 는 **비어 있다.** 이 칸을 안 읽던
+         * 동안 사용자가 본 것은 `Antigravity CLI exit 1` 한 줄뿐이었다 — 무엇이
+         * 문제인지도, 25분 뒤면 풀린다는 것도 없이. 다시 눌러도 같은 줄만 나온다.
+         * 이건 marker 다(문구 판별이 아니라 런타임이 채운 필드).
+         */
+        const runtimeSaidWhy = agyState.resultError
+          ? {
+            kind: antigravityFailureKind(agyState.resultError),
+            message: agyState.resultError,
+            runtime: "antigravity" as const,
+            source: "marker" as const,
+          }
+          : undefined;
+        const failure = runtimeSaidWhy ?? (!trimmed && denied.length > 0
           ? {
             kind: "refused" as const,
             message: structural
@@ -1325,7 +1375,7 @@ async function runPreparedAntigravity(
             runtime: "antigravity",
             source: "marker" as const,
           }
-          : antigravityExitFailure(body, stderr);
+          : antigravityExitFailure(body, stderr));
         /*
          * ★대화 ID 를 저장해야 재개가 다음 턴에 실제로 걸린다. 이 한 줄이 없으면
          * `--conversation` 배선은 영원히 죽은 코드다 — 저장 없이는 되돌릴 ID 가 없다.
@@ -1344,6 +1394,24 @@ async function runPreparedAntigravity(
               observedUsage: { inputTokens: agyState.inputTokens, outputTokens: agyState.outputTokens },
             }
             : {}),
+        });
+      } else if (agyState.resultError) {
+        /*
+         * ★exit != 0 이어도 런타임이 이유를 말했으면 그 이유가 결과다.
+         *
+         * 실측(할당량 소진): exit 1 · stderr 비어 있음 · result.error 에만 사유.
+         * 예전에는 여기서 `Antigravity CLI exit 1` 로 던져 사유가 통째로 사라졌다.
+         * 실패 표식으로 돌려주면 소비자가 "왜"와 "언제 풀리는지"를 보여줄 수 있고,
+         * 재시도 판단도 종류(quota/auth/timeout)로 할 수 있다.
+         */
+        resolve({
+          text: "",
+          failure: {
+            kind: antigravityFailureKind(agyState.resultError),
+            message: agyState.resultError,
+            runtime: "antigravity",
+            source: "marker",
+          },
         });
       } else {
         reject(

@@ -20,6 +20,8 @@ under its own license:
   - electron-updater (MIT)
   - @modelcontextprotocol/sdk (MIT)
   - zod (MIT)
+  - Tabulator (MIT) — bundled in the Agentlas Science extension
+  - Vega / Vega-Lite (BSD-3-Clause) — bundled in the Agentlas Science extension
 
 Full license texts for bundled dependencies are available in their respective
 package directories under node_modules/ after running `npm install`.

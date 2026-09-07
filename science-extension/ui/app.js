@@ -1,4 +1,7 @@
 import * as THREE from "../vendor/three.module.min.js";
+// Tabulator (MIT, Oli Folkerd) — 연구 데이터는 10만 행을 넘기도 한다. 손으로 만든 표는
+// 100행씩 페이지를 넘겨야 했고 정렬도 필터도 없었다. 라이선스 전문은 vendor/TABULATOR-LICENSE.txt.
+import { TabulatorFull as Tabulator } from "../vendor/tabulator.min.js";
 import { formatScienceCell } from "./format-cell.js";
 // Generated presentation-only snapshot of shared/agent-control-blocks.ts and
 // the marker constants/stripper in electron/hephaestus/loop-engineering.ts.
@@ -9932,45 +9935,58 @@ function createComposerEventSync({
     summary.append(title, receipts);
     const viewport = document.createElement("div");
     viewport.className = "dataTableViewport";
-    const table = document.createElement("table");
-    const head = document.createElement("thead");
-    const headRow = document.createElement("tr");
-    for (const column of payload.columns) {
-      const cell = document.createElement("th");
-      const label = document.createElement("span"); label.textContent = column.label || column.name;
-      const type = document.createElement("em"); type.textContent = `${column.logicalType}${column.unit ? ` · ${column.unit}` : ""}${column.nullable ? " · nullable" : ""}`;
-      cell.append(label, type);
-      headRow.append(cell);
-    }
-    head.append(headRow);
-    const body = document.createElement("tbody");
-    for (const row of rows) {
-      const tr = document.createElement("tr");
-      for (const column of payload.columns) {
-        const td = document.createElement("td");
-        const value = row[column.name];
-        td.dataset.logicalType = column.logicalType;
-        td.textContent = value === null ? "—" : String(value);
-        if (value === null) td.dataset.null = "true";
-        if (typeof value === "string" && /^[\s]*[=+@-]/.test(value)) td.dataset.formulaLike = "true";
-        tr.append(td);
-      }
-      body.append(tr);
-    }
-    table.append(head, body);
-    viewport.append(table);
     const footer = document.createElement("footer");
-    const range = document.createElement("span"); range.textContent = `${start + 1}–${Math.min(start + rows.length, payload.rows.length)} of ${payload.rows.length}`;
-    const controls = document.createElement("div");
-    const previous = document.createElement("button"); previous.type = "button"; previous.textContent = "이전"; previous.dataset.tablePage = String(page - 1); previous.disabled = !interactive || page === 0;
-    const current = document.createElement("span"); current.textContent = `${page + 1} / ${pageCount}`;
-    const next = document.createElement("button"); next.type = "button"; next.textContent = "다음"; next.dataset.tablePage = String(page + 1); next.disabled = !interactive || page >= pageCount - 1;
-    controls.append(previous, current, next);
-    footer.append(range, controls);
+    const range = document.createElement("span");
+    range.textContent = `${payload.rows.length.toLocaleString()} rows · ${payload.columns.length.toLocaleString()} columns`;
+    const hint = document.createElement("span");
+    hint.className = "dataTableHint";
+    hint.textContent = uiCopy("머리글을 눌러 정렬하고, 그 아래 칸에 입력해 거릅니다.", "Click a header to sort; type under it to filter.");
+    footer.append(range, hint);
     surface.append(summary, viewport, footer);
     host.replaceChildren(surface);
+
+    // 값 표시는 계속 우리 것이다: 결측은 —, 수식처럼 생긴 문자열은 표식을 달아 둔다.
+    // 그리드를 바꿔도 출처·보안 표기가 사라지면 안 된다.
+    const formatCell = (cell) => {
+      const value = cell.getValue();
+      const element = cell.getElement();
+      const column = cell.getColumn().getDefinition();
+      element.dataset.logicalType = column.logicalType || "";
+      if (value === null || value === undefined) { element.dataset.null = "true"; return "—"; }
+      const text = String(value);
+      if (typeof value === "string" && /^[\s]*[=+@-]/.test(text)) element.dataset.formulaLike = "true";
+      return text;
+    };
+    const columns = payload.columns.map((column) => ({
+      title: column.label || column.name,
+      field: column.name,
+      logicalType: column.logicalType,
+      headerTooltip: `${column.logicalType}${column.unit ? ` · ${column.unit}` : ""}${column.nullable ? " · nullable" : ""}`,
+      sorter: column.logicalType === "number" || column.logicalType === "integer" ? "number"
+        : column.logicalType === "date" || column.logicalType === "datetime" ? "datetime" : "string",
+      headerFilter: interactive ? "input" : false,
+      formatter: formatCell,
+      resizable: interactive,
+      minWidth: 96,
+    }));
+    // 가상 스크롤이라 10만 행도 페이지를 넘기지 않고 그대로 본다.
+    const grid = new Tabulator(viewport, {
+      data: payload.rows,
+      columns,
+      layout: "fitDataStretch",
+      height: "100%",
+      renderVertical: "virtual",
+      placeholder: uiCopy("행이 없습니다.", "No rows."),
+      headerSortClickElement: "icon",
+      movableColumns: interactive,
+      columnDefaults: { headerHozAlign: "left", vertAlign: "middle" },
+    });
+    state.dataTableGrids = state.dataTableGrids || new Map();
+    state.dataTableGrids.get(artifactId)?.destroy?.();
+    state.dataTableGrids.set(artifactId, grid);
+    grid.on("tableBuilt", () => { host.dataset.tableReady = "true"; });
     host.dataset.tableReady = "true";
-    return { rowCount: payload.rows.length, columnCount: payload.columns.length, page, pageCount };
+    return { rowCount: payload.rows.length, columnCount: payload.columns.length, page: 0, pageCount: 1 };
   }
 
   function renderPhysicsDataset(version, host, artifactId, interactive = true) {

@@ -418,8 +418,11 @@ button { cursor: pointer; color: inherit; }
 .chatContextTokens strong { min-width: 0; overflow: hidden; color: var(--ink); font-weight: 620; text-overflow: ellipsis; white-space: nowrap; }
 .chatContextTokens em { flex: 0 0 auto; font-style: normal; }
 
-.researchView { min-height: 100%; padding: 31px 28px 72px; }
-.answerColumn { max-width: 720px; margin: 0; }
+/* 읽는 폭은 화면마다 다르면 안 된다. 같은 .researchView 인데 760(수집·실행·결과) /
+   820(개요·원고) / 860(제출·보관) 세 가지로 그려져, 화면을 바꿀 때마다 오른쪽 여백이
+   0 또는 12px 로 널뛰었다. 하나로 고정한다. 증거 그래프만 캔버스라 예외다. */
+.researchView { min-height: 100%; max-width: 760px; padding: 31px 28px 72px; }
+.answerColumn { max-width: 100%; margin: 0; }
 .researchKicker { color: var(--muted); font-size: 12px; font-weight: 700; letter-spacing: .04em; margin-bottom: 10px; }
 .answerColumn > h1 { margin: 0 0 24px; font-family: "Pretendard", Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; font-size: clamp(18px, 1.8vw, 23px); line-height: 1.3; letter-spacing: -.02em; font-weight: 680; }
 .researchContractNotice { width: 100%; min-height: 54px; display: flex; align-items: center; justify-content: space-between; gap: 16px; margin: -8px 0 18px; border: 1px solid var(--line-strong); border-radius: 11px; background: var(--surface-muted); padding: 10px 13px; text-align: left; }
@@ -458,7 +461,9 @@ button { cursor: pointer; color: inherit; }
 /* With nothing to show, the empty block owns the pane and centres on both axes.
    Anchored top-left it read as a broken page rather than as a waiting one. */
 .researchView[data-empty="true"] { display: flex; flex-direction: column; }
-.researchView[data-empty="true"] .answerColumn { width: 100%; flex: 1; margin: 0 auto; display: flex; flex-direction: column; }
+/* 빈 화면일 때만 열을 가운데로 밀어, 답이 생기는 순간 본문이 6px 왼쪽으로 튀었다.
+   같은 화면이 상태에 따라 다른 자리에 서면 안 된다 -- 항상 왼쪽 맞춤. */
+.researchView[data-empty="true"] .answerColumn { width: 100%; flex: 1; margin: 0; display: flex; flex-direction: column; }
 .researchView[data-empty="true"] .messageStream { display: none; }
 .truthfulEmpty { flex: 1; margin-top: 8px; border-top: 0; padding-top: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; }
 .truthfulEmpty strong { font-size: 15px; letter-spacing: -.01em; }
@@ -482,7 +487,7 @@ button { cursor: pointer; color: inherit; }
 .evidenceGraphHeader { min-width: 0; display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; }
 .evidenceGraphHeader > div:first-child { min-width: 0; }
 .evidenceGraphHeader > div:first-child > span { display: block; color: var(--muted); font-size: 12px; font-weight: 700; letter-spacing: .04em; margin-bottom: 10px; }
-.evidenceGraphHeader h1 { margin: 8px 0 0; overflow-wrap: anywhere; font-size: clamp(18px, 1.8vw, 25px); font-weight: 690; line-height: 1.24; letter-spacing: -.025em; }
+.evidenceGraphHeader h1 { margin: 8px 0 0; overflow-wrap: anywhere; font-size: clamp(18px, 1.8vw, 23px); font-weight: 680; line-height: 1.3; letter-spacing: -.02em; }
 .evidenceGraphHeader p { max-width: 720px; margin: 8px 0 0; color: var(--muted-deep); font-size: 11px; line-height: 1.55; }
 .evidenceGraphHeaderActions { flex: 0 0 auto; display: flex; align-items: center; gap: 9px; }
 .evidenceGraphHeaderActions > span { color: var(--muted); font-size: 11px; white-space: nowrap; }
@@ -1852,11 +1857,13 @@ button.manuscriptBinding:hover { border-color: var(--line-strong); background: v
 .labDecisionActionHint { color: var(--muted-deep) !important; font-weight: 650; }
 .labDecisionError { margin: 0; border-top: 1px solid #eed6d2; background: #fff7f6; color: var(--danger); padding: 7px 13px; font-size: 11px; line-height: 1.4; }
 
-.analysisPlanView { width: min(960px, calc(100% - 56px)); margin: 40px auto 48px; }
+/* 계획 화면만 폭이 60px 넓어 오른쪽 끝이 다른 화면과 어긋났다. .researchView 와 같은
+   모델(고정 상한 + 좌우 여백, 왼쪽 맞춤)로 맞춘다. */
+.analysisPlanView { width: 100%; max-width: 760px; margin: 40px 0 48px; padding: 0 28px; box-sizing: border-box; }
 .analysisPlanView > header { display: flex; align-items: flex-start; justify-content: space-between; gap: 24px; padding-bottom: 20px; border-bottom: 1px solid var(--line-strong); }
 .analysisPlanView > header > div:first-child { min-width: 0; }
 .analysisPlanView > header span { color: var(--muted); font-size: 12px; font-weight: 700; letter-spacing: .04em; }
-.analysisPlanView h1 { margin: 8px 0 0; font-family: "Pretendard", Inter, ui-sans-serif, -apple-system, sans-serif; font-size: 26px; font-weight: 560; }
+.analysisPlanView h1 { margin: 8px 0 0; font-family: "Pretendard", Inter, ui-sans-serif, -apple-system, sans-serif; font-size: clamp(18px, 1.8vw, 23px); font-weight: 680; line-height: 1.3; letter-spacing: -.02em; }
 .analysisPlanView > header p { max-width: 680px; margin: 10px 0 0; color: var(--muted-deep); font-size: 12px; line-height: 1.6; }
 .analysisPlanIdentity { flex: 0 0 auto; display: grid; justify-items: end; gap: 5px; }
 .analysisPlanIdentity em { border: 1px solid var(--line-strong); border-radius: 999px; padding: 4px 8px; color: var(--muted-deep); font-size: 11px; font-style: normal; font-weight: 700; }
@@ -2613,7 +2620,7 @@ button.manuscriptBinding:hover { border-color: var(--line-strong); background: v
   /* Research and source views: use a stable 24px gutter and a wider reading
      measure instead of leaving an unstructured strip beside the answer. */
   .researchView { padding: var(--science-space-6) var(--science-space-5) 80px; }
-  .answerColumn { max-width: 760px; }
+  .answerColumn { max-width: 100%; }
   .answerColumn > h1 { margin-bottom: var(--science-space-5); font-size: 25px; }
   .messageStream { gap: var(--science-space-6); }
   .answer { max-width: 740px; }
@@ -2646,7 +2653,7 @@ button.manuscriptBinding:hover { border-color: var(--line-strong); background: v
      white surfaces. This mirrors the network and analytics pins. */
   .evidenceGraphView { padding: var(--science-space-6) var(--science-space-5) 56px; }
   .evidenceGraphHeader { gap: var(--science-space-5); }
-  .evidenceGraphHeader h1 { font-size: 26px; }
+  .evidenceGraphHeader h1 { font-size: 25px; }
   .evidenceGraphHeader p { font-size: 12px; }
   .evidenceGraphWarning { margin-top: var(--science-space-4); border-radius: 10px; padding: 11px 13px; font-size: 12px; }
   .evidenceGraphMetrics { gap: var(--science-space-2); margin-top: 20px; }
@@ -2776,9 +2783,9 @@ button.manuscriptBinding:hover { border-color: var(--line-strong); background: v
   .labDecisionBody p, .labDecisionBody ol { margin-top: 8px; font-size: 11px; line-height: 1.55; }
   .labDecisionPanel > footer { min-height: 52px; padding: 8px 14px 8px 18px; }
   .labDecisionPanel > footer button { min-height: 36px; padding: 0 13px; font-size: 12px; }
-  .analysisPlanView { width: min(1024px, calc(100% - 48px)); margin: 32px auto 56px; }
+  .analysisPlanView { margin: 32px 0 56px; padding: 0 24px; }
   .analysisPlanView > header { padding-bottom: 24px; }
-  .analysisPlanView h1 { font-size: 28px; }
+  .analysisPlanView h1 { font-size: 25px; }
   .analysisPlanGrid > section { padding: 24px 22px 26px 0; }
   .analysisPlanGrid > section:nth-child(even) { padding-left: 22px; }
   .analysisPlanGrid dl > div { grid-template-columns: 128px minmax(0, 1fr); gap: 12px; padding: 7px 0; }
@@ -3827,7 +3834,7 @@ button.manuscriptBinding:hover { border-color: var(--line-strong); background: v
    ========================================================================= */
 
 .scopeView, .logbookView, .literatureView, .hypothesesView,
-.acquisitionView, .analysisRunsView, .resultsView { max-width: 760px; padding-bottom: 72px; }
+.acquisitionView, .analysisRunsView, .resultsView { padding-bottom: 72px; }
 
 /* Shared list/prose rhythm so seven destinations read as one product. */
 .scopeList { margin: 8px 0 0; padding-left: 18px; color: var(--grey-700); font-size: 13px; line-height: 1.75; }
@@ -4106,7 +4113,7 @@ button.manuscriptBinding:hover { border-color: var(--line-strong); background: v
 .resultArtifactValidation[data-result-validation="error"] strong { color: var(--notice-ink); }
 .resultArtifactFailed { border-left-color: var(--alarm); }
 .resultArtifactFailed strong { color: var(--alarm); }
-.submissionArchiveView { max-width: 860px; padding-bottom: 72px; }
+.submissionArchiveView { padding-bottom: 72px; }
 .submissionArchiveSection { margin-top: 28px; }
 .submissionArchiveSection > h2 { margin: 0 0 12px; color: var(--ink); font-size: 15px; font-weight: 680; }
 .submissionArchiveWarning { display: grid; gap: 3px; border-radius: 8px; background: var(--notice-bg); padding: 10px 12px; color: var(--notice-ink); font-size: 12px; }

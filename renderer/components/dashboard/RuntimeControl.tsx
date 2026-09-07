@@ -716,7 +716,13 @@ export function RuntimeControl() {
   } {
     const pick = pool?.picks[role];
     if (pick?.position === position && !pick.inherited) {
-      return { label: ko ? "기본 선택" : "Selected default", tone: "active" };
+      /*
+       * ★영어가 자리에 안 들어갔다 (실측 2026-09-08, 창 1180px: 98px 자리에 111px).
+       *   한국어("기본 선택")는 들어가는데 영어만 잘렸다 — 한 언어만 재면 이런 것을
+       *   원리적으로 못 본다. 뜻을 잃지 않는 선에서 줄인다("이 역할의 기본 선택"이
+       *   이 배지가 붙은 자리에서 이미 자명하다).
+       */
+      return { label: ko ? "기본 선택" : "Default", tone: "active" };
     }
     const skip = pick?.skipped.find((entry) => entry.position === position);
     if (skip) {

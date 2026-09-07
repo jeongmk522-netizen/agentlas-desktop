@@ -117,12 +117,17 @@ async function main() {
   // 한 크기만 재는 것은 "봤다"가 아니다 — 좁은 창에서만 나는 결함이 이 계열의 대부분이다.
   const SIZES = [{ width: 1440, height: 980 }, { width: 1180, height: 820 }, { width: 1024, height: 720 }];
   const report = [];
+  /*
+   * ★두 언어를 모두 잰다. 영어가 대체로 더 길다("Not now" vs "나중에", "Settings" vs "설정")
+   *   — 한 언어만 재면 긴 쪽에서만 나는 잘림을 원리적으로 못 본다.
+   */
+  for (const lang of ["ko", "en"]) {
   for (const size of SIZES) {
     for (const screen of SCREENS) {
-      const context = await browser.newContext({ viewport: size, locale: "ko-KR" });
+      const context = await browser.newContext({ viewport: size, locale: lang === "ko" ? "ko-KR" : "en-US" });
       await context.addInitScript(setupMockAgentlasBridge, mockBridgeOptions());
-      await context.addInitScript(() => {
-        window.localStorage.setItem("agentlas.locale", "ko");
+      await context.addInitScript((locale) => {
+        window.localStorage.setItem("agentlas.locale", locale);
         /*
          * ★처음 사용 안내를 닫고 잰다. 안 닫으면 그 오버레이가 대시보드 전체를 덮어
          *   "가림 212건" 이 나오는데, 그건 결함이 아니라 **모달이 하는 일**이다.
@@ -130,20 +135,21 @@ async function main() {
          *   모달 자체의 가림은 따로 재야 한다(이 도구의 남은 숙제).
          */
         window.localStorage.setItem("agentlas.work.firstRunOnboarding.v3", "1");
-      });
+      }, lang);
       const page = await context.newPage();
       try {
         await page.goto(`${baseUrl}${screen.url}`, { waitUntil: "domcontentloaded" });
         await page.waitForSelector(screen.wait, { timeout: 15000 });
         await page.waitForTimeout(800);
         const found = await page.evaluate(auditObstruction, null);
-        report.push({ screen: screen.label, size: `${size.width}x${size.height}`, ...found });
+        report.push({ screen: `${screen.label}(${lang})`, size: `${size.width}x${size.height}`, ...found });
       } catch (error) {
-        report.push({ screen: screen.label, size: `${size.width}x${size.height}`, error: String(error).split("\n")[0] });
+        report.push({ screen: `${screen.label}(${lang})`, size: `${size.width}x${size.height}`, error: String(error).split("\n")[0] });
       }
       await page.close();
       await context.close();
     }
+  }
   }
   /*
    * ★모달 회차 — QA 가 올린 실제 사고("마스코트가 'Not now' 를 덮어 'Not n' 로 보인다")는

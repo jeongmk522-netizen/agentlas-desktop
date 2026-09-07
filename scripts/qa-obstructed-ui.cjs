@@ -99,7 +99,29 @@ function auditObstruction(scopeSelector) {
       covered.push({ el: describe(el), text, by: describe(top), byText: label(top).slice(0, 40) });
     }
   }
-  return { clipped, covered };
+  /*
+   * ★"빈 자리" — 자리는 차지하는데 사람에게 보여 주는 것이 아무것도 없는 영역.
+   *   오너 2026-09-07: "아무것도 안떠서 되는지 안 되는지 알 수 없잖아".
+   *   목록이 비었을 때 **왜 비었는지** 한 줄도 없으면, 사람은 고장으로 읽는다.
+   *   글자·그림·입력요소가 하나도 없이 넓은 면적을 차지한 컨테이너만 센다.
+   */
+  const blank = [];
+  const MIN_AREA = 120 * 90;
+  for (const el of scope.querySelectorAll("main, section, aside, [role=region], [role=list], [role=listbox], [role=tabpanel]")) {
+    const style = getComputedStyle(el);
+    if (style.display === "none" || style.visibility === "hidden" || Number(style.opacity) === 0) continue;
+    const rect = el.getBoundingClientRect();
+    if (rect.width * rect.height < MIN_AREA) continue;
+    if (rect.bottom < 0 || rect.top > window.innerHeight) continue;
+    if ((el.innerText || "").trim()) continue;
+    if (el.querySelector("img, svg, canvas, video, input, textarea, select, button, webview, iframe")) continue;
+    blank.push({
+      el: describe(el),
+      w: Math.round(rect.width), h: Math.round(rect.height),
+      label: el.getAttribute("aria-label") || "",
+    });
+  }
+  return { clipped, covered, blank };
 }
 
 async function main() {
@@ -228,14 +250,18 @@ async function main() {
   server.close();
 
   console.log("=== 잘리거나 가려진 자리 ===\n");
-  let clip = 0, cover = 0;
+  let clip = 0, cover = 0, blankCount = 0;
   for (const r of report) {
     if (r.error) { console.log(`[${r.screen} ${r.size}] 열지 못함 — ${r.error}`); continue; }
-    if (!r.clipped.length && !r.covered.length) continue;
+    if (!r.clipped.length && !r.covered.length && !(r.blank || []).length) continue;
     console.log(`[${r.screen} ${r.size}]`);
     for (const c of r.clipped) {
       clip++;
       console.log(`   잘림${c.ellipsis ? "(…표시)" : "★(말없이)"}  ${JSON.stringify(c.text)}  ${c.have}px 자리에 ${c.need}px  <${c.el}>`);
+    }
+    for (const c of (r.blank || [])) {
+      blankCount++;
+      console.log(`   ★빈 자리  <${c.el}> ${c.w}x${c.h}px${c.label ? `  aria="${c.label}"` : ""} — 글자도 그림도 없다`);
     }
     for (const c of r.covered) {
       cover++;
@@ -243,7 +269,7 @@ async function main() {
     }
     console.log("");
   }
-  console.log(`잘림 ${clip}건 / 가림 ${cover}건`);
+  console.log(`잘림 ${clip}건 / 가림 ${cover}건 / 빈 자리 ${blankCount}건`);
   const outFile = path.join(root, "output", "obstructed-ui.json");
   fs.mkdirSync(path.dirname(outFile), { recursive: true });
   fs.writeFileSync(outFile, JSON.stringify(report, null, 2));

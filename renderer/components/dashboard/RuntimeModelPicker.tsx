@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useId, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
+import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import type { RuntimeBackend, RuntimeKind, RuntimeSelection, RuntimeStatus } from "@/lib/types";
 import { cliModelTagLabel, runtimeUsesEngineModelSetting } from "@shared/models";
 import { llmLogoSrc } from "@/lib/llm-logo";
@@ -183,6 +183,52 @@ export function RuntimeModelPicker({
   const optionRefs = useRef<Array<HTMLDivElement | null>>([]);
   const [open, setOpen] = useState(false);
   const [activeIndex, setActiveIndex] = useState(0);
+  /*
+   * ★목록을 뷰포트에 고정한다 — 조상 상자가 잘라내지 못하게.
+   *
+   * 오너 실사용 2026-09-07: "왜 멀티모달 드롭다운은 섹션안에 나와서 잘리냐".
+   * 목록은 `position: absolute` 였고 조상 `.dashboard-runtime-control` 에
+   * `overflow: hidden` 이 걸려 있다(globals.css). absolute 는 z-index 와 무관하게
+   * overflow 를 가진 조상에게 **잘린다.** 그리고 멀티모달은 역할 줄의 **마지막**이라
+   * 목록이 아래로 열리며 정확히 그 경계를 넘는다 — 그래서 이 줄에서만 눈에 띈다.
+   *
+   * fixed 로 띄우고 좌표를 트리거의 실제 사각형에서 계산하면 조상이 무엇을 하든
+   * 잘리지 않는다. 아래 공간이 모자라면 위로 뒤집는다(마지막 줄의 실제 상황).
+   */
+  const [popover, setPopover] = useState<{ top: number; left: number; width: number; maxHeight: number } | null>(null);
+  const placePopover = useCallback(() => {
+    const trigger = triggerRef.current;
+    if (!trigger) return;
+    const rect = trigger.getBoundingClientRect();
+    const gap = 6;
+    const margin = 12;
+    const width = Math.min(Math.max(rect.width, 250), Math.max(240, window.innerWidth - margin * 2));
+    const below = window.innerHeight - rect.bottom - gap - margin;
+    const above = rect.top - gap - margin;
+    // 아래가 좁으면 위로 뒤집는다. 둘 다 좁으면 넓은 쪽에 붙이고 높이를 그만큼만 준다.
+    const flip = below < 180 && above > below;
+    const maxHeight = Math.max(120, Math.min(320, flip ? above : below));
+    const left = Math.min(Math.max(margin, rect.left), Math.max(margin, window.innerWidth - width - margin));
+    setPopover({
+      top: flip ? Math.max(margin, rect.top - gap - maxHeight) : rect.bottom + gap,
+      left,
+      width,
+      maxHeight,
+    });
+  }, []);
+  useLayoutEffect(() => {
+    if (!open) { setPopover(null); return; }
+    placePopover();
+    // 스크롤·리사이즈로 트리거가 움직이면 목록도 따라간다. capture 로 어떤 조상이
+    // 스크롤하든 받는다 — 안 그러면 목록만 제자리에 떠 있는다.
+    const onMove = () => placePopover();
+    window.addEventListener("scroll", onMove, true);
+    window.addEventListener("resize", onMove);
+    return () => {
+      window.removeEventListener("scroll", onMove, true);
+      window.removeEventListener("resize", onMove);
+    };
+  }, [open, placePopover]);
   const instanceId = useId();
   const listId = `runtime-model-picker-${instanceId.replace(/:/g, "")}`;
   const selectedIndex = useMemo(
@@ -311,8 +357,19 @@ export function RuntimeModelPicker({
         <span className="dashboard-runtime-model-picker-chevron" aria-hidden="true">⌄</span>
       </button>
       {open && (
-        <div className="dashboard-runtime-model-picker-popover">
-          <div id={listId} role="listbox" aria-label={ariaLabel} className="dashboard-runtime-model-picker-list">
+        <div
+          className="dashboard-runtime-model-picker-popover"
+          style={popover
+            ? { position: "fixed", top: popover.top, left: popover.left, width: popover.width }
+            : { visibility: "hidden" }}
+        >
+          <div
+            id={listId}
+            role="listbox"
+            aria-label={ariaLabel}
+            className="dashboard-runtime-model-picker-list"
+            style={popover ? { maxHeight: popover.maxHeight } : undefined}
+          >
             {options.map((option, index) => {
               const provider = runtimeProviderLabel(option.runtime);
               const identity = runtimeProviderEngineLabel(option.runtime);

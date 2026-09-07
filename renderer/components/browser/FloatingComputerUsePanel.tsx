@@ -49,9 +49,16 @@ export default function FloatingComputerUsePanel() {
         return;
       }
       if (finishTimer.current !== null) window.clearTimeout(finishTimer.current);
-      // 스스로 떠오르지 않는다. 화면은 우측 레일이 기본 자리이고(RailAgentScreen),
-      // 이 카드는 사람이 "화면" 버튼을 눌러 떼어 낼 때만 열린다 — 띄워 달라고만 했는데
-      // 매번 떠다닌다는 보고가 정확히 이 자동 열기였다(2026-09-03).
+      // 스스로 떠오르지 않는다. 이 카드는 사람이 "화면" 버튼을 눌러 떼어 낼 때만 열린다 —
+      // 띄워 달라고만 했는데 매번 떠다닌다는 보고가 정확히 이 자동 열기였다(2026-09-03).
+      //
+      // ★주석 정정 2026-09-08: 여기 "화면은 우측 레일이 기본 자리이고(RailAgentScreen)"
+      //   라고 적혀 있었는데, 릴리스 1.1.5 가 Work 전용 레일을 공용 레일로 합치면서
+      //   RailAgentScreen 을 부르는 곳이 **한 곳도 없게** 됐다(부품만 남았다).
+      //   지금 브라우저의 기본 자리는 공용 레일의 **인앱 브라우저 실화면**이다
+      //   (스크린샷이 아니라 실제 페이지). 능력이 사라진 게 아니라 모양이 바뀌었다 —
+      //   실측으로 확인했다: 브라우저 도구가 돌면 레일에 "브라우저" 보기와 주소가 뜬다.
+      //   없는 부품을 가리키는 주석은 다음 세션이 그것을 믿고 딴 데를 파게 만든다.
       setActive(true);
     };
     window.addEventListener("agentlas:computer-use-activity", onActivity);

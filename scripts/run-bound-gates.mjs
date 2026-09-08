@@ -200,6 +200,27 @@ for (const gate of selected) {
    * 게이트까지 함께 넘어간다 — 실제로 그렇게 스키마 판올림이 짝 없이 나갈 뻔했다.
    * 통과로 세지 않고 무엇을 확인하지 못했는지 남긴다.
    */
+  /*
+   * 스냅샷은 git 트리만 풀고 node_modules 를 넣지 않는다. 그래서 3자 패키지를 그대로
+   * require 하는 게이트는 커밋 관문 안에서 `Cannot find module 'typescript'` 로 죽는데,
+   * 같은 게이트를 직접 돌리면 초록이다(2026-09-08 실측: verify-one-artifact-preview-ui).
+   * 계약이 깨진 것이 아니라 **전제가 없는 것**이므로, 위 Electron·TS 로더 갈래와 같은
+   * 규칙으로 통과에 세지 않고 무엇을 확인하지 못했는지 남긴다.
+   *
+   * 도피구가 되지 않도록 세 가지를 모두 만족할 때만 해당한다: 스냅샷일 것, 상대경로가
+   * 아닌 **패키지 이름**일 것, 그리고 그 패키지가 진짜 저장소 의존으로 실재할 것. 오타나
+   * 없는 패키지는 그대로 실패한다.
+   */
+  const bareMissing = snapshot && output.match(/Cannot find module '([^'./@][^']*|@[^/']+\/[^']+)'/);
+  if (bareMissing) {
+    const pkg = bareMissing[1].split("/").slice(0, bareMissing[1].startsWith("@") ? 2 : 1).join("/");
+    if (fs.existsSync(path.join(root, "node_modules", pkg))) {
+      skipped.push(gate);
+      outcomes.push({ gate, status: "SKIP", reason: `snapshot lacks node_modules/${pkg}` });
+      console.log(`skip ${gate} — 스냅샷에는 node_modules 가 없어 '${pkg}' 를 못 읽었습니다; \`node ${gate}\` 로 직접 돌려 확인하세요`);
+      continue;
+    }
+  }
   if (!snapshot && /npx canceled due to missing packages|command not found: (?:esbuild|tsc)|Cannot find package '(?:esbuild)'/.test(output)) {
     const missing = /esbuild/.test(output) ? "esbuild" : "빌드 도구";
     skipped.push(gate);

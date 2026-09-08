@@ -1,6 +1,7 @@
 // 에이전트 라이브러리 — 로스터, 큐레이팅 메모리, 승인형 자산 진화, Experience/Ontology 관리.
 "use client";
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { effortLabel, effortOptions } from "@/lib/effort-label";
 import { detailForUser } from "@/lib/invocation-failure";
 import type { CSSProperties } from "react";
 import Link from "next/link";
@@ -3267,21 +3268,14 @@ function selectionSummary(selection?: RuntimeSelection | null, locale: Locale = 
   return [base, model, selection.effort ? `effort ${selection.effort}` : ""].filter(Boolean).join(" · ");
 }
 
-function effortLabel(id: string): string {
-  const known: Record<string, string> = {
-    none: "None", minimal: "Minimal", low: "Low", medium: "Medium",
-    high: "High", xhigh: "XHigh", max: "Max", ultra: "Ultra",
-  };
-  return known[id] ?? id.charAt(0).toUpperCase() + id.slice(1);
-}
-
 function effortsForModel(
   runtime: RuntimeStatus | null,
   model: string,
 ): Array<{ id: string; label: string }> {
   const perModel = model ? runtime?.allocationModelProfiles?.[model]?.efforts : undefined;
   if (perModel && perModel.length > 0) return perModel.map((id) => ({ id, label: effortLabel(id) }));
-  return runtime?.efforts ?? [];
+  /* ★엔진이 준 영어 라벨을 그대로 올리던 자리 (실측 2026-09-08). */
+  return effortOptions(runtime?.efforts);
 }
 
 function RuntimeAssignmentPanel({

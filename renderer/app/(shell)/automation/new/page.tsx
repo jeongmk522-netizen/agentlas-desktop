@@ -5,6 +5,7 @@
 // - ?id= 가 있으면 기존 자동화를 로드해 in-place 수정(삭제-재생성 회피).
 "use client";
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { effortLabel, effortOptions } from "@/lib/effort-label";
 import { useRouter, useSearchParams } from "next/navigation";
 import { ipc } from "@/lib/ipc";
 import { visibleAgents, withCurrentTarget } from "@/lib/agent-visibility";
@@ -66,23 +67,10 @@ function automationEffortsFor(
 ): Array<{ id: string; label: string }> {
   const perModel = modelId ? runtime?.allocationModelProfiles?.[modelId]?.efforts : undefined;
   if (perModel && perModel.length > 0) {
-    return perModel.map((id) => ({ id, label: automationEffortLabel(id) }));
+    return perModel.map((id) => ({ id, label: effortLabel(id) }));
   }
-  return runtime?.efforts ?? [];
-}
-
-function automationEffortLabel(id: string): string {
-  const known: Record<string, string> = {
-    none: "None",
-    minimal: "Minimal",
-    low: "Low",
-    medium: "Medium",
-    high: "High",
-    xhigh: "XHigh",
-    max: "Max",
-    ultra: "Ultra",
-  };
-  return known[id] ?? id.charAt(0).toUpperCase() + id.slice(1);
+  /* ★엔진이 준 영어 라벨을 그대로 올리던 자리 (실측 2026-09-08). */
+  return effortOptions(runtime?.efforts);
 }
 
 export default function NewAutomationWrapper() {

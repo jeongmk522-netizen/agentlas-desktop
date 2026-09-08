@@ -4547,6 +4547,18 @@ export function I18nProvider({ children }: { children: ReactNode }) {
   // 빈 자리는 현재 테마색(var(--paper))으로 채워 라이트/다크 어느 쪽도 검게 보이지 않게 한다.
   // value 객체 리터럴이 렌더마다 새 참조면, 이 프로바이더에 상태가 하나라도 늘어나는
   // 순간 앱 전체의 useT() 소비자가 전부 리렌더된다. 지금 참조를 고정해 둔다.
+  /*
+   * ★<html lang> 이 실제 언어를 들고 있어야 한다 (실측 2026-09-08).
+   *   layout.tsx 에 "ko" 로 박혀 있고 아무도 갱신하지 않아, 영어로 쓰는 사람의 문서도
+   *   계속 ko 였다. 화면 문구는 이 값을 안 보지만 **보는 것들이 있다**:
+   *   스크린리더의 발음, :lang() 규칙, 그리고 locale 을 못 받는 자리(코드 복사 단추 등)가
+   *   언어를 판단하는 유일한 단서다.
+   */
+  useEffect(() => {
+    if (typeof document === "undefined") return;
+    document.documentElement.lang = locale;
+  }, [locale]);
+
   const contextValue = useMemo(() => ({ locale, pref, setPref, t }), [locale, pref, setPref, t]);
   return (
     <I18nContext.Provider value={contextValue}>

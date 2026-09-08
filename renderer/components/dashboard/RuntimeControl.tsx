@@ -1,5 +1,6 @@
 "use client";
 import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
+import { effortLabel, effortOptions } from "@/lib/effort-label";
 import { ipc, ipcEvents } from "@/lib/ipc";
 import { useT } from "@/lib/i18n";
 import { loadViewData, readViewData, writeViewData } from "@/lib/view-data-cache";
@@ -38,22 +39,8 @@ function effortsFor(
   if (perModel && perModel.length > 0) {
     return perModel.map((id) => ({ id, label: effortLabel(id) }));
   }
-  return runtime?.efforts ?? [];
-}
-
-/** `xhigh` → `Xhigh` 가 아니라 `XHigh` — 호스트가 준 값을 사람이 읽는 형태로만 바꾼다. */
-function effortLabel(id: string): string {
-  const known: Record<string, string> = {
-    none: "None",
-    minimal: "Minimal",
-    low: "Low",
-    medium: "Medium",
-    high: "High",
-    xhigh: "XHigh",
-    max: "Max",
-    ultra: "Ultra",
-  };
-  return known[id] ?? id.charAt(0).toUpperCase() + id.slice(1);
+  /* ★엔진이 준 영어 라벨을 그대로 올리던 자리 (실측 2026-09-08). */
+  return effortOptions(runtime?.efforts);
 }
 
 /**

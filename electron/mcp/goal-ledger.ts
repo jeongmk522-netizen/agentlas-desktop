@@ -32,6 +32,8 @@ export interface GoalLedgerSnapshot {
   runId: string;
   runStatus: string;
   pauseReason: string | null;
+  /** 막힌 이유 — 저장소에는 있는데 화면까지 오지 않던 값이다(실측 2026-09-08). */
+  blockedReason: string | null;
   version: number;
   executionLocation: "desktop-local" | "web-hosted";
 }
@@ -91,6 +93,8 @@ export async function getGoalLedgerGoal(
       runId: run.id,
       runStatus: run.status,
       pauseReason: run.pauseReason,
+      // ★막힌 이유를 함께 싣는다 — 저장소에는 있는데 화면까지 못 오던 값이다.
+      blockedReason: run.blockedReason ?? null,
       version: run.version,
       executionLocation: run.executionLocation,
     };

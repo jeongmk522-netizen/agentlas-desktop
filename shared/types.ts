@@ -1780,6 +1780,12 @@ export interface ChatGoalContext {
   runId?: string;
   runStatus?: string;
   pauseReason?: "user" | "app_closed" | "budget" | "runtime_unavailable" | "approval_required" | "crash_recovery" | null;
+  /*
+   * ★막힌 이유. 저장소에는 있는데 화면까지 오지 않던 값이다 (실측 2026-09-08).
+   *   오너의 실데이터에서 목표 하나가 `blocked` + `verification_inconclusive` 로 서 있었는데,
+   *   이 칸이 없어서 화면은 "왜 멈췄는지" 를 알 방법이 없었다.
+   */
+  blockedReason?: string | null;
   version?: number;
   executionLocation?: "desktop-local" | "web-hosted";
 }

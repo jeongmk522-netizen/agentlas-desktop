@@ -6433,6 +6433,7 @@ function ChatPage() {
           goalCriteria={goalContext?.acceptanceCriteria}
           goalRunStatus={goalContext?.runStatus}
           goalPauseReason={goalContext?.pauseReason}
+          goalBlockedReason={goalContext?.blockedReason}
           onResumeGoal={handleResumeGoal}
           onToggleContinuous={handleToggleContinuous}
           onToggleSwarm={handleToggleSwarm}

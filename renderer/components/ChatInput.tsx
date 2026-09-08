@@ -312,6 +312,7 @@ function ChatInputComponent({
   goalCriteria,
   goalRunStatus,
   goalPauseReason,
+  goalBlockedReason,
   onResumeGoal,
   onToggleContinuous,
   onToggleSwarm,
@@ -365,6 +366,7 @@ function ChatInputComponent({
   /** Durable Desktop long-run state. Paused runs require an explicit resume. */
   goalRunStatus?: string;
   goalPauseReason?: string | null;
+  goalBlockedReason?: string | null;
   onResumeGoal?: () => void;
   /** 스웜(swarmMode) 현재 상태 + 토글. */
   swarmMode?: boolean;
@@ -1464,6 +1466,7 @@ function ChatInputComponent({
           criteria={goalCriteria}
           runStatus={goalRunStatus}
           pauseReason={goalPauseReason}
+          blockedReason={goalBlockedReason}
           onResume={onResumeGoal}
           onEndGoal={() => toggleGoalMode(false)}
         />
@@ -2050,6 +2053,7 @@ function ComposerGoalBar({
   criteria,
   runStatus,
   pauseReason,
+  blockedReason,
   onResume,
   onEndGoal,
 }: {
@@ -2057,18 +2061,52 @@ function ComposerGoalBar({
   criteria?: string[];
   runStatus?: string;
   pauseReason?: string | null;
+  /** 막힌 이유 — 저장소에는 있는데 화면까지 오지 않던 값이다. */
+  blockedReason?: string | null;
   onResume?: () => void;
   onEndGoal: () => void;
 }) {
   const { locale } = useT();
+  /*
+   * ★멈춘 목표에 "이제 시작합니다" 라고 말하고 있었다 (오너 실데이터 실측 2026-09-08).
+   *
+   *   오너의 최신 목표는 `blocked` 상태로 서 있었다(막힌 이유: verification_inconclusive).
+   *   그런데 이 막대는 `paused` 만 알고 `blocked` 는 몰라서, 아래 기본 문구로 떨어졌다:
+   *   **"다음 요청으로 목표와 성공 기준을 확정합니다"** — 이미 굴러가다 막힌 목표에게
+   *   아직 시작도 안 한 것처럼 말한 것이다. "안 닫힌다, 진행도 안 된다" 가 이 모습이다.
+   *
+   *   그리고 일시정지 사유도 둘(app_closed·crash_recovery)만 알아서, 실제로 걸려 있던
+   *   `budget`(예산 소진)은 그냥 "일시정지됨" 으로만 나왔다 — 무엇을 하면 되는지가 없다.
+   *
+   *   멈춘 이유는 지어내지 않는다. 아는 사유는 사람 말로, 모르는 사유는 **원문 그대로**
+   *   보여 준다(그래야 물어볼 수 있다). 이유 자체가 없으면 없다고 말한다.
+   */
   const paused = runStatus === "paused";
-  const pausedCopy = pauseReason === "app_closed"
-    ? (locale === "ko" ? "앱이 종료되어 일시정지됨" : "Paused when the app closed")
-    : pauseReason === "crash_recovery"
-      ? (locale === "ko" ? "이전 실행 중단을 감지해 일시정지됨" : "Paused after recovering an interrupted run")
-      : (locale === "ko" ? "일시정지됨" : "Paused");
-  const title = paused
-    ? pausedCopy
+  const blocked = runStatus === "blocked" || runStatus === "failed";
+  const knownReason = (reason: string | null | undefined): string | null => {
+    if (!reason) return null;
+    if (reason === "app_closed") return locale === "ko" ? "앱이 종료되어 멈춤" : "Stopped when the app closed";
+    if (reason === "crash_recovery") return locale === "ko" ? "이전 실행 중단을 감지해 멈춤" : "Stopped after recovering an interrupted run";
+    if (reason === "budget") return locale === "ko" ? "정해 둔 예산·횟수를 다 써서 멈춤" : "Stopped after using the set budget";
+    if (reason === "runtime_unavailable") return locale === "ko" ? "실행할 엔진이 없어 멈춤" : "Stopped because no runtime was available";
+    if (reason === "approval_required") return locale === "ko" ? "승인이 필요해 멈춤" : "Stopped waiting for approval";
+    if (reason === "user") return locale === "ko" ? "직접 멈춤" : "Stopped by you";
+    if (reason === "verification_inconclusive") {
+      return locale === "ko"
+        ? "결과를 확인하지 못해 멈춤 — 완료로 볼 근거가 부족합니다"
+        : "Stopped because the result could not be verified";
+    }
+    // 모르는 사유는 지어내지 않고 그대로 보여 준다.
+    return locale === "ko" ? `멈춤 — 사유: ${reason}` : `Stopped — reason: ${reason}`;
+  };
+  const stoppedCopy = knownReason(blocked ? (blockedReason ?? pauseReason) : pauseReason)
+    ?? (blocked
+      ? (locale === "ko"
+        ? "멈췄는데 이유가 기록되지 않았습니다. 같은 내용을 다시 보내면 이어서 진행합니다."
+        : "It stopped and no reason was recorded. Send the same request again to continue.")
+      : (locale === "ko" ? "일시정지됨" : "Paused"));
+  const title = (paused || blocked)
+    ? stoppedCopy
     : label?.replace(/\s+/g, " ").trim() || (locale === "ko"
       ? "다음 요청으로 목표와 성공 기준을 확정합니다"
       : "Your next request will define the goal and its acceptance criteria");

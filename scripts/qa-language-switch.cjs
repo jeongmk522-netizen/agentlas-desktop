@@ -57,9 +57,12 @@ const SCAN = `((wanted) => {
      * ★버전 문자열·주소·모델 id 는 언어가 아니다. 이걸 안 빼면 매 실행마다 같은
      *   4건이 남아 "0건" 이 영영 안 나오고, 진짜 하나가 늘어도 눈에 안 띈다.
      */
-    if (/^[a-z0-9._-]+\s*v?[0-9]/i.test(text)) continue;
-    if (/^(wss?|https?):\/\//i.test(text)) continue;
-    if (/^[a-z0-9.-]+$/i.test(text.replace(/\s|·/g, ""))) continue;
+    /* ★이 블록은 템플릿 리터럴 안이다 — 역슬래시를 두 번 써야 정규식에 남는다.
+       한 번만 쓰면 두 번의 역슬래시-슬래시가 줄 주석으로 바뀌어 문법이 깨진다.
+       ★그리고 이 주석 안에 백틱을 쓰면 템플릿 리터럴 자체가 거기서 끝난다. */
+    if (/^[a-z0-9._-]+\\s*v?[0-9]/i.test(text)) continue;
+    if (/^(wss?|https?):\\/\\//i.test(text)) continue;
+    if (/^[a-z0-9.-]+$/i.test(text.replace(/\\s|·/g, ""))) continue;
     for (const term of ignore) text = text.split(term).join(" ");
     const hasHangul = /[가-힣]/.test(text);
     /* 이름을 지우고 남은 조각(3글자 미만 낱말들)은 언어 판정 대상이 아니다. */

@@ -51,6 +51,142 @@ function boundedJson(value: unknown, limit = 1_800): string {
   return text.length > limit ? `${text.slice(0, limit)}...[truncated]` : text;
 }
 
+/**
+ * Serialize the judge's observation so that it is ALWAYS valid JSON and so that
+ * host-observed evidence never loses its place to model prose.
+ *
+ * The previous version stringified `{receipt, durableAssistantResult, concreteEvents}`
+ * and then sliced the resulting string at the limit. Measured on a real 8-minute run:
+ * the object was 27,087 chars against a 24,000 cap, the slice landed inside the
+ * `concreteEvents` array, and the judge received malformed JSON. It answered
+ * "durable evidence shows only the assistant's completion message" for all three
+ * criteria and the run went to `blocked` with `verification_inconclusive` -- even
+ * though 44 concrete tool events and 179 written files existed on disk.
+ *
+ * Two rules follow from that:
+ *   1. Never slice serialized JSON. Drop or shrink *fields*, then re-serialize.
+ *   2. Model prose is a claim, not evidence (see the doc comment below), so it is
+ *      the first thing to shrink and the first thing to drop. Concrete events keep
+ *      their budget.
+ */
+function digestEvents(events: Array<Record<string, unknown>>): Record<string, unknown> {
+  /*
+   * A count is O(1) no matter how many events there are. A dump is not.
+   *
+   * This is the part that makes the budget stop being a guess: whether the run
+   * produced 44 tool events or 440,000, the digest below is the same size, so the
+   * judge always receives the same shape of proof and nothing has to be thrown
+   * away to make it fit.
+   */
+  const toolCounts = new Map<string, number>();
+  const errorTools = new Map<string, number>();
+  let withResult = 0;
+  for (const event of events) {
+    const payload = (event.payload ?? {}) as Record<string, unknown>;
+    const name = typeof payload.toolName === "string" && payload.toolName.trim()
+      ? payload.toolName.trim()
+      : String(event.kind ?? "unknown");
+    toolCounts.set(name, (toolCounts.get(name) ?? 0) + 1);
+    if (payload.toolIsError === true) errorTools.set(name, (errorTools.get(name) ?? 0) + 1);
+    if (payload.toolResultPreview != null) withResult += 1;
+  }
+  const top = (map: Map<string, number>, keep: number) => Object.fromEntries(
+    [...map.entries()].sort((a, b) => b[1] - a[1]).slice(0, keep),
+  );
+  return {
+    observedEvents: events.length,
+    eventsWithResult: withResult,
+    distinctTools: toolCounts.size,
+    toolCounts: top(toolCounts, 24),
+    ...(errorTools.size > 0 ? { failedToolCounts: top(errorTools, 12) } : {}),
+  };
+}
+
+function clampEvent(event: Record<string, unknown>, previewChars: number): Record<string, unknown> {
+  const payload = { ...((event.payload ?? {}) as Record<string, unknown>) };
+  for (const key of ["toolResultPreview", "toolArgs"]) {
+    const value = payload[key];
+    if (typeof value === "string" && value.length > previewChars) {
+      payload[key] = `${value.slice(0, previewChars)}…(+${value.length - previewChars})`;
+    } else if (value != null && typeof value !== "string") {
+      const text = JSON.stringify(value) ?? "";
+      payload[key] = text.length > previewChars ? `${text.slice(0, previewChars)}…(+${text.length - previewChars})` : text;
+    }
+  }
+  return { ...event, payload };
+}
+
+export function buildBoundedObservation(input: {
+  receipt: Record<string, unknown>;
+  assistant: { ref: string; createdAt: string; text: string } | null;
+  events: Array<Record<string, unknown>>;
+  limit: number;
+}): string {
+  const { receipt, limit } = input;
+  const size = (value: unknown) => JSON.stringify(value)?.length ?? 0;
+  // The digest counts EVERY observed event; only the raw sample is bounded. That
+  // split is what keeps this correct for a run with a million tool calls.
+  const digest = digestEvents(input.events);
+  const events = input.events.slice(-200);
+  const assemble = (
+    assistantText: string | null,
+    keptEvents: Array<Record<string, unknown>>,
+    omitted: number,
+  ) => ({
+    receipt,
+    // The digest is always present and always the same size. It, not the sample,
+    // is what proves scale: "179 files" survives even when no raw event fits.
+    evidenceDigest: digest,
+    durableAssistantResult: input.assistant && assistantText != null
+      ? { ref: input.assistant.ref, createdAt: input.assistant.createdAt, text: assistantText }
+      : null,
+    ...(omitted > 0 ? { omittedOlderEvents: omitted } : {}),
+    concreteEvents: keptEvents,
+  });
+
+  /*
+   * Shrink in order of how much the judge should trust the thing being shrunk.
+   * Nothing here slices serialized JSON; every step drops or clamps a *field*, so
+   * the output is valid JSON at every stage and the reader is told what is missing.
+   *
+   *   1. the model's claim (prose) — a claim, not evidence
+   *   2. per-event detail       — clamp previews, keep every event's existence
+   *   3. event count            — oldest first, and say how many were dropped
+   *   4. the digest alone       — counts still prove scale when nothing else fits
+   */
+  const proseBudgets = [8_000, 4_000, 2_000, 800, 0, null] as const;
+  for (const budget of proseBudgets) {
+    const assistantText = budget == null
+      ? null
+      : input.assistant?.text.slice(0, budget) ?? null;
+    const candidate = assemble(assistantText, events, 0);
+    if (size(candidate) <= limit) return JSON.stringify(candidate);
+  }
+  for (const previewChars of [1_200, 400, 160, 60]) {
+    const clamped = events.map((event) => clampEvent(event, previewChars));
+    const candidate = assemble(null, clamped, 0);
+    if (size(candidate) <= limit) return JSON.stringify(candidate);
+  }
+  let kept = events.map((event) => clampEvent(event, 60));
+  let omitted = 0;
+  let candidate = assemble(null, kept, omitted);
+  while (size(candidate) > limit && kept.length > 0) {
+    kept = kept.slice(1);
+    omitted += 1;
+    candidate = assemble(null, kept, omitted);
+  }
+  if (size(candidate) <= limit) return JSON.stringify(candidate);
+  // Even with zero sampled events the digest still reports how much was observed,
+  // so "no sample fit" can never be read as "nothing happened".
+  return JSON.stringify({
+    receipt,
+    evidenceDigest: digest,
+    durableAssistantResult: null,
+    omittedOlderEvents: events.length,
+    concreteEvents: [],
+  });
+}
+
 function concreteEvent(event: RunEventUi): boolean {
   if (!CONCRETE_EVENT_KINDS.has(event.kind)) return false;
   if (event.kind === "mcp_tool-use") {
@@ -143,7 +279,7 @@ export function collectDurableGoalVerificationEvidence(
   return {
     ready: true,
     refs: Array.from(new Set(refs)),
-    observation: boundedJson({
+    observation: buildBoundedObservation({
       receipt: {
         runId: receipt.runId,
         status: receipt.status,
@@ -153,15 +289,18 @@ export function collectDurableGoalVerificationEvidence(
         workingFolder: receipt.resultFolder?.trim() || null,
         executionPermission: receipt.executionPermission,
       },
-      durableAssistantResult: durableAssistantResult
+      assistant: durableAssistantResult
         ? {
             ref: `chat-message:${durableAssistantResult.id}`,
             createdAt: durableAssistantResult.createdAt,
-            text: durableAssistantResult.text.slice(0, 8_000),
+            text: durableAssistantResult.text,
           }
         : null,
-      concreteEvents: concrete.slice(-80).map(summarizeEvent),
-    }, 24_000),
+      // Every concrete event, not a pre-sliced tail: the digest must count what
+      // actually happened, and only the raw sample inside is allowed to be bounded.
+      events: concrete.map(summarizeEvent),
+      limit: 20_000,
+    }),
     reason: "durable_evidence_ready",
   };
 }
@@ -255,14 +394,42 @@ export async function verifyGoalCompletionClaim(input: {
   if (input.signal?.aborted) interrupt();
   controllers.set(attempt.attemptId, controller);
   const durableEvidence = collectDurableGoalVerificationEvidence(input.invocationRunId);
+  /*
+   * Evidence goes FIRST and the claim goes last.
+   *
+   * Measured on a real 8-minute run (2026-09-08): the prompt led with
+   * `CLAIMED OUTCOME` capped at 6,000 chars plus a 1,000-char note, and
+   * `judgeRequired` truncates its input at MAX_INPUT_CHARS = 8,000. The model's
+   * own prose therefore consumed the whole budget and the host observation --
+   * 44 concrete tool events proving the files, analyze, test and build -- was cut
+   * off before the judge ever saw it. All three criteria came back
+   * `inconclusive` ("durable evidence shows only the assistant's completion
+   * message") and the run went to `blocked`, while 179 files sat on disk.
+   *
+   * So: order by trust (host evidence, then references, then the claim), keep the
+   * claim short because it is a claim, and raise the judge's input ceiling to fit
+   * the observation the host worked to collect.
+   */
   const observation = [
-    `GOAL: ${run.objective}`,
-    `CLAIMED OUTCOME:\n${input.outcomeText.slice(0, 6_000)}`,
-    `CLAIM EVIDENCE NOTE: ${input.evidence?.slice(0, 1_000) || "none"}`,
     `DURABLE HOST EVIDENCE STATUS: ${durableEvidence.reason}`,
-    `DURABLE HOST REFERENCES: ${durableEvidence.refs.join(", ") || "none"}`,
     `DURABLE HOST OBSERVATION:\n${durableEvidence.observation}`,
+    `DURABLE HOST REFERENCES: ${durableEvidence.refs.join(", ") || "none"}`,
+    `GOAL: ${run.objective}`,
+    `CLAIMED OUTCOME (a claim, not evidence):\n${input.outcomeText.slice(0, 2_000)}`,
+    `CLAIM EVIDENCE NOTE: ${input.evidence?.slice(0, 500) || "none"}`,
   ].join("\n\n");
+  /*
+   * The judge is not pinned to one provider: callJudgmentModelDetailed picks from
+   * the detected runtimes, so this prompt can land on a wrapped CLI (claude, codex,
+   * agy) or on a local Ollama model with a much smaller window. So the ceiling is
+   * not "as big as possible" -- it is "big enough for the observation, small enough
+   * for a local judge", and the section order above guarantees that whatever a
+   * smaller model does truncate is the claim, never the host evidence.
+   *
+   * Worst case with a 20,000-char observation: observation + refs + goal + claim +
+   * criterion stays under this ceiling.
+   */
+  const judgeInputCeiling = 28_000;
   try {
     const verdicts = durableEvidence.ready
       ? await Promise.all(run.acceptanceCriteria.map(async (criterion, criterionIndex) => {
@@ -280,6 +447,9 @@ export async function verifyGoalCompletionClaim(input: {
         ].join(" "),
         signal: controller.signal,
         scanSecrets: true,
+        // judgeRequired defaults to MAX_INPUT_CHARS = 8,000 and silently slices.
+        // The claim alone used to fill that, so the host observation never arrived.
+        maxInputChars: judgeInputCeiling,
         timeoutMs: 60_000,
       });
       return {

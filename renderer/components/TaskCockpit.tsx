@@ -2025,9 +2025,23 @@ function ChatPage() {
     let cancelled = false;
     void api.chats.getGoalContext(chatId)
       .then((context) => { if (!cancelled) setGoalContext(context); })
-      .catch(() => { if (!cancelled) setGoalContext(null); });
+      .catch((cause) => {
+        if (cancelled) return;
+        /*
+         * ★"목표가 없다" 와 "목표를 못 읽었다" 는 다르다 (실측 2026-09-08).
+         *   예전에는 읽기가 실패해도 그냥 null 을 넣었다. 그러면 대화에 목표 번호가
+         *   붙어 있는데도 화면은 **목표가 없는 것처럼** 보인다 — 오너가 겪은
+         *   "goal 설정했는데 안 걸린다" 가 이 모습이다.
+         *   값은 그대로 비우되(모르는 것을 지어내지 않는다), 못 읽었다는 사실은 말한다.
+         */
+        setGoalContext(null);
+        const raw = failureMessage(cause);
+        setSessionNotice(locale === "ko"
+          ? `목표 상태를 읽지 못했습니다${raw ? `: ${raw}` : ""}. 목표는 그대로 있을 수 있습니다 — 잠시 뒤 다시 열어 확인해 주세요.`
+          : `The goal state could not be read${raw ? `: ${raw}` : ""}. The goal may still be set — reopen this chat in a moment to check.`);
+      });
     return () => { cancelled = true; };
-  }, [chat?.goalId, chat?.id]);
+  }, [chat?.goalId, chat?.id, locale]);
 
   // A Task deep link is authoritative. Resolve it through Main before loading
   // Work so a stale or mismatched chat query can never open another Task.
@@ -5548,12 +5562,36 @@ function ChatPage() {
       .then((context) => {
         if (context) setGoalContext(context);
       })
-      .catch(() => {
+      .catch((cause) => {
         // A stale version means another surface changed the run. Re-read the
         // main-owned snapshot instead of guessing whether resume succeeded.
         void ipc()?.chats.getGoalContext(chat.id).then((context) => setGoalContext(context));
+        /*
+         * ★이유를 통째로 버리고 있었다 (실측 2026-09-08).
+         *   "이어가기" 를 눌러 실패하면 화면은 상태만 다시 읽고 **아무 말도 안 했다** —
+         *   사람에게는 단추가 죽은 것으로 보인다. 오너: "goal 안 닫힌다, 진행도 안 된다".
+         *   엔진이 던지는 사유는 셋뿐이고 전부 기계 코드라, 뜻과 다음 할 일로 옮긴다.
+         */
+        const raw = failureMessage(cause);
+        const ko = locale === "ko";
+        const explained = /auto_goal_resume_chat_busy/.test(raw)
+          ? (ko
+            ? "이 대화가 아직 앞 요청을 돌리는 중입니다. 그 실행이 끝난 뒤 다시 이어가 주세요."
+            : "This chat is still running an earlier request. Resume again once it finishes.")
+          : /long_run_resume_version_conflict/.test(raw)
+            ? (ko
+              ? "다른 곳에서 이 목표가 바뀌어 최신 상태를 다시 읽었습니다. 한 번 더 눌러 주세요."
+              : "This goal changed elsewhere, so the latest state was reloaded. Press resume once more.")
+            : /long_run_resume_dispatch_rejected/.test(raw)
+              ? (ko
+                ? "이어가기 요청이 전달되지 않았습니다. 잠시 뒤 다시 시도해 주세요."
+                : "The resume request was not dispatched. Try again in a moment.")
+              : raw
+                ? (ko ? `이유: ${raw}` : `Reason: ${raw}`)
+                : (ko ? "이유가 오지 않았습니다." : "No reason came back.");
+        setSessionNotice(ko ? `목표를 이어가지 못했습니다. ${explained}` : `The goal was not resumed. ${explained}`);
       });
-  }, [chat, goalContext?.version]);
+  }, [chat, goalContext?.version, locale]);
   const handleToggleContinuous = useCallback(() => {
     if (!chat) return;
     const next = !chat.continuousMode;

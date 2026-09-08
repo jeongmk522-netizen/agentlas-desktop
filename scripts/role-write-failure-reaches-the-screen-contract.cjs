@@ -26,13 +26,29 @@ const root = path.resolve(__dirname, "..");
 const src = path.join(root, "renderer/lib/runtime-role-failure.ts");
 assert.ok(fs.existsSync(src), `판정 모듈이 없습니다: ${src}`);
 
-// 렌더러는 번들되지 않은 TS 라 여기서 직접 트랜스파일해 부른다.
-const js = ts.transpileModule(fs.readFileSync(src, "utf8"), {
-  compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020 },
-}).outputText;
-const mod = { exports: {} };
-new Function("exports", "module", "require", js)(mod.exports, mod, require);
-const { describeRoleWriteFailure } = mod.exports;
+/*
+ * 렌더러는 번들되지 않은 TS 라 여기서 직접 트랜스파일해 부른다.
+ * `@/` 별칭도 풀어 준다 — 이 판정이 IPC 포장 벗기기를 공용 모듈에 위임하게 되면서
+ * 별칭 import 가 생겼다(그 위임 자체가 게이트가 잡아낸 수리다).
+ */
+const loaded = new Map();
+function loadTs(rel) {
+  if (loaded.has(rel)) return loaded.get(rel);
+  const js = ts.transpileModule(fs.readFileSync(path.join(root, rel), "utf8"), {
+    compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020 },
+  }).outputText;
+  const mod = { exports: {} };
+  loaded.set(rel, mod.exports);
+  const localRequire = (id) => {
+    if (id.startsWith("@/")) return loadTs(`renderer/${id.slice(2)}.ts`);
+    if (id.startsWith("./") || id.startsWith("../")) return loadTs(path.join(path.dirname(rel), `${id}.ts`));
+    return require(id);
+  };
+  new Function("exports", "module", "require", js)(mod.exports, mod, localRequire);
+  loaded.set(rel, mod.exports);
+  return mod.exports;
+}
+const { describeRoleWriteFailure } = loadTs("renderer/lib/runtime-role-failure.ts");
 assert.equal(typeof describeRoleWriteFailure, "function", "describeRoleWriteFailure 를 내보내지 않습니다");
 
 let checks = 0;

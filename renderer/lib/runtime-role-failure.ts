@@ -12,10 +12,17 @@
  * 규칙: 모르는 오류는 지어내지 않는다 — 원문을 붙여서라도 보여준다. 삼키는 것이 최악이다.
  */
 
+import { failureMessage } from "@/lib/invocation-failure";
+
 export function describeRoleWriteFailure(error: unknown, ko: boolean): string {
-  const raw = error instanceof Error ? error.message : String(error ?? "");
-  // IPC 를 건너온 오류는 `Error: ` 가 여러 겹 붙어 오기도 한다.
-  const text = raw.replace(/^(Error:\s*)+/, "").trim();
+  /*
+   * ★IPC 포장까지 벗겨야 한다 (게이트가 잡았다, 2026-09-08).
+   *   여기서는 `Error: ` 접두사만 벗기고 있었는데, IPC 를 건너온 오류는
+   *   `Error invoking remote method 'runtime:setRoleMembers': Error: ...` 로 온다.
+   *   그러면 사용자에게 **remote method 이름**이 그대로 보인다.
+   *   벗기는 규칙은 한 곳(invocation-failure)에만 둔다 — 두 벌이면 갈라진다.
+   */
+  const text = failureMessage(error);
 
   if (/pool cannot be empty/i.test(text)) {
     return ko

@@ -60,9 +60,31 @@ export async function prepareInvocationAutomaticGoal(input: {
     if (decision.intent !== "execute" || decision.commitment !== "now") return null;
     return admitJudgedAutomaticGoal({
       goalId: `goal:auto-message:${source.messageId}`, chatId: source.chatId, sourceMessageId: source.messageId, decision,
+      /*
+       * A criterion the verifier cannot check is a criterion that fails forever.
+       *
+       * Measured 2026-09-08: a run built the requested Flutter app, passed
+       * `flutter test` 6/6 and `flutter analyze` with zero issues, and still ended
+       * `blocked`. Two of these three criteria came back `inconclusive` because they
+       * asked the judge about things it had no way to enumerate:
+       *   - "every deliverable requested in user message <id>" -- the judge sees the
+       *     run's evidence, not that message, so it answered "the full set of
+       *     requested deliverables ... is not enumerable from the evidence".
+       *   - "the original request's constraints, exclusions and permission
+       *     boundaries" -- it answered "not concretely verifiable ... with no
+       *     explicit constraint list to check against". When the user states no
+       *     constraints, there IS no list, so this can never be satisfied.
+       *
+       * So each criterion now names something the host actually carries into the
+       * observation: the request text itself, and the declared working folder plus
+       * granted permission from the run receipt.
+       */
       acceptanceCriteria: [
-        { id: "requested-outcome", text: `Every deliverable requested in user message ${source.messageId} is complete.` },
-        { id: "scope", text: "The original request's constraints, exclusions and permission boundaries are preserved." },
+        { id: "requested-outcome", text: "Every deliverable the user asked for is complete and present in the workspace. "
+          + `The request was: ${JSON.stringify(source.text.replace(/\s+/g, " ").trim().slice(0, 1_200))}` },
+        { id: "scope", text: "No file outside the run's declared working folder was created or modified, and the run stayed "
+          + `within its granted permission (${input.permission}). Both the folder and the permission are in the run receipt; `
+          + "if the evidence shows no out-of-folder writes, this criterion is met." },
         { id: "evidence", text: "Completion is supported by current evidence on the requested output surface; unverified work remains open." },
       ],
       authorityRefs: [`invocation:${input.runId}:permission:${input.permission}`],

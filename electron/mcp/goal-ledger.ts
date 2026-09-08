@@ -108,17 +108,26 @@ export function deriveGoalAcceptanceCriteria(objective: string, locale: "ko" | "
   const requestedOutcome = locale === "ko"
     ? `요청 결과가 실제 대상 표면에서 확인 가능하게 완성되어야 합니다: ${normalized}`
     : `The requested outcome must be complete and observable on the real target surface: ${normalized}`;
+  /*
+   * 판정자가 확인할 수 없는 기준은 영원히 통과하지 못하는 기준이다.
+   * 2026-09-08 실측: "명시된 범위·금지사항을 보존" 을 물었더니 판정자가
+   * "대조할 제약 목록이 없어 구체적으로 검증 불가"라고 답했다. 사용자가 제약을
+   * 말하지 않으면 그 목록은 존재하지 않으므로 그 기준은 절대 만족될 수 없다.
+   * 그래서 호스트가 실제로 영수증에 싣는 것(작업 폴더·권한)으로 바꾼다.
+   */
   return locale === "ko"
     ? [
         requestedOutcome,
-        "명시된 범위·금지사항·기존 사용자 데이터를 보존하고, steering은 실행 경로만 조정해야 합니다.",
+        "선언된 작업 폴더 밖의 파일을 만들거나 고치지 않고, 부여된 권한 안에서만 실행해야 합니다."
+        + " 폴더와 권한은 실행 영수증에 있으며, 폴더 밖 쓰기 증거가 없으면 이 기준은 충족입니다.",
         "변경한 경로의 관련 테스트·타입 검사·빌드가 통과하고 기존 핵심 흐름에 회귀가 없어야 합니다.",
         "완료 주장은 소스가 아니라 실제 앱·런타임·산출물 중 해당되는 최종 표면에서 검증되어야 합니다.",
         "각 성공 기준에는 재현 가능한 증거가 있어야 하며, 확인하지 못한 항목은 완료로 처리하지 않습니다.",
       ]
     : [
         requestedOutcome,
-        "Preserve stated scope, exclusions, and existing user data; steering may adjust execution but must not redefine the goal.",
+        "No file outside the run's declared working folder was created or modified, and the run stayed within its granted"
+        + " permission. Both are in the run receipt; if the evidence shows no out-of-folder writes, this criterion is met.",
         "Relevant tests, type checks, and builds for changed paths must pass without regressing the core flow.",
         "Completion must be verified on the applicable final app, runtime, or artifact surface rather than inferred from source alone.",
         "Every acceptance criterion needs reproducible evidence; unverified items must not be reported as complete.",

@@ -434,7 +434,9 @@ export function DescribeAutomation({
             {ko ? "처음부터 다시" : "Start over"}
           </button>
         ) : (
-          <button data-testid="describe-start" onClick={start} disabled={busy || !request.trim()} style={btn(true)}>
+          <button data-testid="describe-start" onClick={start} disabled={busy || !request.trim()} style={btn(true)}
+            data-disabled-reason={!busy && !request.trim() ? "empty-input" : undefined}
+            title={busy ? (ko ? "지금 정리하는 중입니다…" : "Working on it…") : undefined}>
             {busy ? <SpinnerLabel text={ko ? "정리하는 중…" : "Working…"} light /> : (ko ? "초안 잡기" : "Draft it")}
           </button>
         )}

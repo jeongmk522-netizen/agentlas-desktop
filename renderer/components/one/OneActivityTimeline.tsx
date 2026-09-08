@@ -1239,6 +1239,8 @@ function OneBrowserLiveView({ active, locale, preferredUrl, previewScopeId }: { 
       <form className={styles.browserAddressForm} onSubmit={(event) => { event.preventDefault(); void navigateFromAddress(); }}>
         <IconNetwork size={12} />
         <input
+          /* 초점 링은 감싼 주소줄(.browserAddressForm:focus-within)이 그린다. */
+          data-focus-ring="wrapper"
           value={address}
           onChange={(event) => setAddress(event.target.value)}
           aria-label={locale === "ko" ? "주소" : "Address"}

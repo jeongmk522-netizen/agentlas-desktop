@@ -53,6 +53,8 @@ export default function LibraryMcpsPage() {
   // connected" — a user checking plugin status in that window concludes the
   // app has no tools and leaves.
   const [loaded, setLoaded] = useState(false);
+  /* ★읽기 실패를 "없음" 으로 그리지 않기 위한 표식 (실측 2026-09-08). */
+  const [loadFailed, setLoadFailed] = useState(false);
   // 커스텀 MCP 추가 폼
   const [cName, setCName] = useState("");
   const [cTransport, setCTransport] = useState<"stdio" | "sse" | "http">("stdio");
@@ -114,11 +116,25 @@ export default function LibraryMcpsPage() {
   const refresh = useCallback(async () => {
     const api = ipc();
     if (!api) return;
-    const [c, i, s] = await Promise.all([
-      api.mcpTools.listCatalog(),
-      api.mcpTools.listInstalled(),
-      api.mcpTools.status(),
-    ]);
+    /*
+     * ★못 읽었는데 화면은 "아직 연결한 도구가 없습니다" 를 그렸다 (읽기 실패 실측
+     *   2026-09-08). 도구를 연결해 둔 사람에게는 거짓말이고, 다시 연결하러 가게 만든다.
+     *   실패는 사실이 아니다 — 읽지 못했다는 것을 말한다.
+     */
+    let loadedRows;
+    try {
+      loadedRows = await Promise.all([
+        api.mcpTools.listCatalog(),
+        api.mcpTools.listInstalled(),
+        api.mcpTools.status(),
+      ]);
+    } catch {
+      setLoadFailed(true);
+      setLoaded(true);
+      return;
+    }
+    const [c, i, s] = loadedRows;
+    setLoadFailed(false);
     setCatalog(c);
     setInstalled(i);
     setStatuses(Object.fromEntries(s.map((status) => [status.id, status])));
@@ -311,6 +327,10 @@ export default function LibraryMcpsPage() {
       {tab === "installed" ? (
         !loaded ? (
           <Empty text={t("mcps.installed_loading")} />
+        ) : loadFailed ? (
+          <Empty text={locale === "ko"
+            ? "도구 목록을 불러오지 못했습니다. 연결이 끊긴 것이 아니라 읽지 못한 것입니다 — 잠시 뒤 다시 열어 보세요."
+            : "The tool list could not be loaded. Nothing was disconnected — the read failed. Try again in a moment."} />
         ) : installed.length === 0 ? (
           <Empty text={t("mcps.installed_empty")} />
         ) : (

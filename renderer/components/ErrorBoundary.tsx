@@ -43,20 +43,40 @@ type Props = {
   resetKey?: unknown;
 };
 
-type State = { error: Error | null };
+type State = { error: Error | null; attempts: number };
 
 export class ErrorBoundary extends Component<Props, State> {
-  state: State = { error: null };
+  state: State = { error: null, attempts: 0 };
   private retryTimer: ReturnType<typeof setTimeout> | null = null;
 
-  static getDerivedStateFromError(error: Error): State {
+  /*
+   * ★몇 번까지 스스로 다시 그려 볼 것인가.
+   *   예전에는 상한이 없었다: 다시 그리고 또 터지면 또 2.5초 뒤에 다시 그린다.
+   *   화면에는 "곧 완료" 만 영원히 남고 **누를 것이 하나도 없었다**(빈 상태 실측
+   *   2026-09-08). 자동 복구는 두 번까지만 하고, 그 뒤에는 사실을 말하고 길을 준다.
+   */
+  static RETRY_LIMIT = 2;
+
+  /*
+   * ★여기서 attempts 를 0 으로 되돌리면 상한이 무의미해진다 — 다시 그릴 때마다
+   *   세던 횟수가 초기화돼 "곧 완료 · 1초 경과" 가 영원히 반복된다(실측으로 확인).
+   *   React 는 부분 상태를 병합하므로 error 만 준다.
+   */
+  static getDerivedStateFromError(error: Error): Partial<State> {
     return { error };
   }
 
   componentDidCatch(error: Error, info: { componentStack: string }) {
     // 콘솔에 남겨 두면 메인 프로세스 로그/DevTools에서 추적 가능.
     console.error("[ErrorBoundary]", error, info.componentStack);
-    this.retryTimer = setTimeout(this.reset, 2_500);
+    this.setState((current) => {
+      const attempts = current.attempts + 1;
+      if (attempts <= ErrorBoundary.RETRY_LIMIT) {
+        if (this.retryTimer) clearTimeout(this.retryTimer);
+        this.retryTimer = setTimeout(this.reset, 2_500);
+      }
+      return { error, attempts };
+    });
   }
 
   componentWillUnmount() {
@@ -70,11 +90,14 @@ export class ErrorBoundary extends Component<Props, State> {
     }
   }
 
-  reset = () => this.setState({ error: null });
+  reset = () => this.setState((current) => ({ error: null, attempts: current.attempts }));
+
+  retryByHand = () => this.setState({ error: null, attempts: 0 });
 
   render() {
     if (!this.state.error) return this.props.children;
     const ko = readLocale() === "ko";
+    const givenUp = this.state.attempts > ErrorBoundary.RETRY_LIMIT;
     return (
       <div
         aria-live="polite"
@@ -93,14 +116,39 @@ export class ErrorBoundary extends Component<Props, State> {
         }}
       >
         <div style={{ fontSize: 15, fontWeight: 800 }}>
-          {ko ? "화면을 다시 불러오는 중입니다" : "Reloading this view"}
+          {givenUp
+            ? (ko ? "이 화면을 다시 그리지 못했습니다" : "This view could not be restored")
+            : (ko ? "화면을 다시 불러오는 중입니다" : "Reloading this view")}
         </div>
         <p style={{ margin: 0, fontSize: 13, color: "var(--ink-soft)", maxWidth: 360, lineHeight: 1.5 }}>
-          {ko
-            ? "현재 작업은 그대로 보존됩니다. 잠시 후 이 화면에서 이어집니다."
-            : "Your current work is preserved. This view will resume shortly."}
+          {givenUp
+            ? (ko
+              ? "현재 작업은 그대로 보존됩니다. 다시 시도하거나 다른 화면으로 이동해 주세요."
+              : "Your current work is preserved. Try again, or move to another screen.")
+            : (ko
+              ? "현재 작업은 그대로 보존됩니다. 잠시 후 이 화면에서 이어집니다."
+              : "Your current work is preserved. This view will resume shortly.")}
         </p>
-        <LoadingEstimate locale={ko ? "ko" : "en"} operationKey="desktop-view-recovery" expectedSeconds={[2, 3]} />
+        {givenUp ? (
+          <div style={{ display: "flex", gap: 8 }}>
+            <button
+              type="button"
+              onClick={this.retryByHand}
+              style={{ padding: "9px 14px", borderRadius: 10, border: "1px solid var(--paper-edge)", background: "var(--paper)", color: "var(--ink)", fontSize: 13, fontWeight: 700 }}
+            >
+              {ko ? "다시 시도" : "Try again"}
+            </button>
+            <button
+              type="button"
+              onClick={() => { window.location.href = "/index.html"; }}
+              style={{ padding: "9px 14px", borderRadius: 10, border: "1px solid var(--paper-edge)", background: "var(--paper-2)", color: "var(--ink)", fontSize: 13, fontWeight: 700 }}
+            >
+              {ko ? "대시보드로" : "Go to dashboard"}
+            </button>
+          </div>
+        ) : (
+          <LoadingEstimate locale={ko ? "ko" : "en"} operationKey="desktop-view-recovery" expectedSeconds={[2, 3]} />
+        )}
       </div>
     );
   }

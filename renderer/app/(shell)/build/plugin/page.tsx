@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { humanFailure } from "@/lib/invocation-failure";
 import { useSearchParams } from "next/navigation";
 import { ipc } from "@/lib/ipc";
 import { useT } from "@/lib/i18n";
@@ -193,7 +194,7 @@ export default function PluginBuilderPage() {
         setSavedDraftCount(drafts.length);
         setLog((current) => [...current, `session ${started.id} · ${seed.kind}`]);
       } catch (cause) {
-        if (!disposed) setError(cause instanceof Error ? cause.message : String(cause));
+        if (!disposed) setError(humanFailure(cause, ko ? "이 작업을 끝내지 못했습니다. 잠시 뒤 다시 시도해 주세요." : "This step could not be completed. Try again in a moment."));
       }
     };
     void start();
@@ -216,7 +217,7 @@ export default function PluginBuilderPage() {
       setSession((current) => current ? { ...current, phase: "verify", gateReport: report } : current);
       if (!report.ok) setError(ui.blocked);
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause));
+      setError(humanFailure(cause, ko ? "이 작업을 끝내지 못했습니다. 잠시 뒤 다시 시도해 주세요." : "This step could not be completed. Try again in a moment."));
     } finally { setBusy(false); }
   };
 
@@ -232,7 +233,7 @@ export default function PluginBuilderPage() {
       setProof(proofReceipt);
       setSession((current) => current ? { ...current, phase: "prove" } : current);
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause));
+      setError(humanFailure(cause, ko ? "이 작업을 끝내지 못했습니다. 잠시 뒤 다시 시도해 주세요." : "This step could not be completed. Try again in a moment."));
     } finally { setBusy(false); }
   };
 
@@ -240,7 +241,7 @@ export default function PluginBuilderPage() {
     if (!api || !session) return;
     setBusy(true);
     try { await api.pluginBuilder.discard({ sessionId: session.id }); window.history.back(); }
-    catch (cause) { setError(cause instanceof Error ? cause.message : String(cause)); }
+    catch (cause) { setError(humanFailure(cause, ko ? "이 작업을 끝내지 못했습니다. 잠시 뒤 다시 시도해 주세요." : "This step could not be completed. Try again in a moment.")); }
     finally { setBusy(false); }
   };
 

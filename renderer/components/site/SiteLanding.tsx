@@ -302,6 +302,26 @@ export function SiteLanding({
   const [variantCount, setVariantCount] = useState(2);
   const [target, setTarget] = useState<AgentChoice | null>(null);
   const [pickerOpen, setPickerOpen] = useState(false);
+
+  /*
+   * ★에이전트 고르기 모달에 × 는 있는데 **Escape 가 없었다** (대화상자 실측 2026-09-08).
+   *   그리고 닫은 뒤 초점이 body 로 떨어져, 키보드 사용자는 문서 맨 위부터 다시
+   *   Tab 해야 했다(같은 실측에서 16회). 연 자리로 돌려준다.
+   */
+  useEffect(() => {
+    if (!pickerOpen) return;
+    const opener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const onKey = (event: globalThis.KeyboardEvent) => {
+      if (event.key !== "Escape" || event.metaKey || event.ctrlKey || event.altKey) return;
+      event.stopPropagation();
+      setPickerOpen(false);
+    };
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("keydown", onKey);
+      if (opener && opener.isConnected) opener.focus({ preventScroll: true });
+    };
+  }, [pickerOpen]);
   const [pickerTab, setPickerTab] = useState<"mine" | "multi">("mine");
   const [pickerQuery, setPickerQuery] = useState("");
   const [pickerLoading, setPickerLoading] = useState(false);
@@ -479,6 +499,19 @@ export function SiteLanding({
   };
 
   const disabled = busy || noEngine || !brief.trim() || (surface === "agent-app" && !target);
+  /*
+   * ★회색인 이유가 화면에 없었다 (실측 2026-09-08). 런타임 미연결만 아래에 한 줄
+   *   있었고, 나머지 세 사유는 아무 말도 없었다.
+   */
+  const disabledReason = !disabled
+    ? undefined
+    : busy
+      ? (ko ? "지금 만드는 중입니다…" : "Creating right now…")
+      : noEngine
+        ? (ko ? "설정에서 Claude Code 또는 Codex 를 연결해야 만들 수 있습니다." : "Connect Claude Code or Codex in Settings to create.")
+        : !brief.trim()
+          ? undefined
+          : (ko ? "먼저 함께 일할 에이전트를 고르세요." : "Choose an agent to work with first.");
   const canPublish = Boolean(selectedAgentApp && onPublishProject && selectedAgentApp.agentAppArtifact?.status === "ready");
 
   return (
@@ -576,7 +609,10 @@ export function SiteLanding({
                 <span className={styles.keyboardHint}>{ko ? "⌘ + Enter로 만들기" : "Press ⌘ + Enter to create"}</span>
               )}
             </div>
-            <button type="button" className={styles.sendButton} disabled={disabled} onClick={submit}>
+            <button type="button" className={styles.sendButton} disabled={disabled}
+              title={disabledReason}
+              data-disabled-reason={disabled && !busy && !noEngine && !brief.trim() ? "empty-input" : undefined}
+              onClick={submit}>
               <span>{generating ? (ko ? "만드는 중" : "Creating") : (ko ? "만들기" : "Create")}</span>
               <ArrowUp />
             </button>

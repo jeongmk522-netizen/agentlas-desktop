@@ -674,7 +674,24 @@ export function OneOrgChart({
         ))}
       </div>
       <div className={styles.agentActions}>
-        {onCreateAgent && <button type="button" className={styles.createAgentButton} onClick={onCreateAgent} disabled={!state || state.slots.available <= 0} aria-label={state?.slots.available ? (locale === "ko" ? "새 에이전트 만들기 또는 기존 에이전트 추가" : "Create or add an agent") : (locale === "ko" ? "슬롯이 가득 참" : "No staff slots available")}>
+        {/*
+          * ★회색일 때 사유가 마우스에는 안 보였고(aria-label 뿐), 아직 못 읽은 상태까지
+          *   "가득 참" 이라고 말하고 있었다 — 사실이 아니다(실측 2026-09-08).
+          *   사유를 갈라 말하고, 가득 찬 경우엔 **푸는 길**까지 적는다.
+          */}
+        {onCreateAgent && <button type="button" className={styles.createAgentButton} onClick={onCreateAgent} disabled={!state || state.slots.available <= 0}
+          aria-label={!state
+            ? (locale === "ko" ? "자리 상태를 읽는 중" : "Reading staff slots")
+            : state.slots.available
+              ? (locale === "ko" ? "새 에이전트 만들기 또는 기존 에이전트 추가" : "Create or add an agent")
+              : (locale === "ko" ? "슬롯이 가득 참" : "No staff slots available")}
+          title={!state
+            ? (locale === "ko" ? "자리 상태를 아직 읽지 못했습니다." : "The staff slots have not been read yet.")
+            : state.slots.available
+              ? undefined
+              : (locale === "ko"
+                ? `자리가 ${state.slots.used}/${state.slots.capacity} 로 가득 찼습니다. 아래 '설정'에서 동시 자리 수를 늘리거나 쓰지 않는 에이전트를 내보내세요.`
+                : `Slots are full (${state.slots.used}/${state.slots.capacity}). Raise the concurrent slot count under Settings below, or release an agent you are not using.`)}>
           <IconPlus size={15} />
         </button>}
       </div>

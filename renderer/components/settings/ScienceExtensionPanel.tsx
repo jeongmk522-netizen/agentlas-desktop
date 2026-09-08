@@ -163,20 +163,37 @@ export function ScienceExtensionPanel() {
         </div>
 
         <div className={styles.actions}>
+          {/*
+            * ★단추가 회색인데 **이유가 없었다** (마우스 실측 2026-09-08).
+            *   상태를 아직 못 읽었을 때도, 다른 작업이 도는 중일 때도 똑같이 회색이라
+            *   사용자는 기다려야 하는지 고장인지 구분할 수 없다.
+            */}
           {!status?.installed ? (
-            <button type="button" className={styles.button} data-testid="science-settings-review-package" data-primary="true" disabled={busy !== null || status === null} onClick={() => void install()}>
+            <button type="button" className={styles.button} data-testid="science-settings-review-package" data-primary="true" disabled={busy !== null || status === null}
+              title={busy !== null
+                ? (ko ? "다른 작업이 끝나면 누를 수 있습니다." : "Available once the current step finishes.")
+                : status === null
+                  ? (ko ? "설치 상태를 아직 읽지 못했습니다. 잠시 뒤 다시 열어 주세요." : "The install status has not been read yet. Reopen this panel in a moment.")
+                  : undefined}
+              onClick={() => void install()}>
               <IconCheck size={14} />
               {ko ? "패키지 확인" : "Review package"}
             </button>
           ) : (
             <>
-              <button type="button" className={styles.button} data-testid="science-settings-update" disabled={busy !== null} onClick={() => void update()}>
+              <button type="button" className={styles.button} data-testid="science-settings-update" disabled={busy !== null}
+                title={busy !== null ? (ko ? "다른 작업이 끝나면 누를 수 있습니다." : "Available once the current step finishes.") : undefined}
+                onClick={() => void update()}>
                 <IconCheck size={14} /> {busy === "install" ? (ko ? "업데이트 확인 중…" : "Checking for updates…") : (ko ? "업데이트 확인" : "Check for updates")}
               </button>
-              <button type="button" className={styles.button} data-primary={status.enabled ? "false" : "true"} disabled={busy !== null} onClick={() => void toggle()}>
+              <button type="button" className={styles.button} data-primary={status.enabled ? "false" : "true"} disabled={busy !== null}
+                title={busy !== null ? (ko ? "다른 작업이 끝나면 누를 수 있습니다." : "Available once the current step finishes.") : undefined}
+                onClick={() => void toggle()}>
                 <IconPower size={14} /> {status.enabled ? (ko ? "끄기" : "Disable") : (ko ? "켜기" : "Enable")}
               </button>
-              <button type="button" className={styles.button} disabled={busy !== null} onClick={() => void uninstall()}>
+              <button type="button" className={styles.button} disabled={busy !== null}
+                title={busy !== null ? (ko ? "다른 작업이 끝나면 누를 수 있습니다." : "Available once the current step finishes.") : undefined}
+                onClick={() => void uninstall()}>
                 <IconTrash size={14} /> {ko ? "프로그램 제거" : "Remove program"}
               </button>
             </>

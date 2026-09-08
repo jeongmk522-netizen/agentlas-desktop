@@ -3,6 +3,7 @@
 import { updaterCanUseOfficialInstaller } from "@shared/types";
 import { useCallback, useEffect, useState, type CSSProperties , useMemo} from "react";
 import { ipc, ipcEvents, updaterEvents } from "@/lib/ipc";
+import { detailForUser, failureMessage, humanFailure, looksLikeMachineText } from "@/lib/invocation-failure";
 import { useT, type LocalePref } from "@/lib/i18n";
 import { DARK_THEME_ENABLED, useTheme, type ThemePref } from "@/lib/theme";
 import type {
@@ -349,7 +350,7 @@ export default function SettingsPage() {
       setStatuses(updated);
       setRuntimeMessage("");
     } catch (err) {
-      setRuntimeMessage(locale === "ko" ? `Ollama 모델을 바꾸지 못했습니다. ${String(err)}` : `Ollama model did not change. ${String(err)}`);
+      setRuntimeMessage(locale === "ko" ? `Ollama 모델을 바꾸지 못했습니다. ${detailForUser(err)}` : `Ollama model did not change. ${detailForUser(err)}`);
     }
   }
 
@@ -368,7 +369,7 @@ export default function SettingsPage() {
       setStatuses(updated);
       setRuntimeMessage("");
     } catch (err) {
-      setRuntimeMessage(locale === "ko" ? `BYOK 런타임을 바꾸지 못했습니다. ${String(err)}` : `BYOK runtime did not change. ${String(err)}`);
+      setRuntimeMessage(locale === "ko" ? `BYOK 런타임을 바꾸지 못했습니다. ${detailForUser(err)}` : `BYOK runtime did not change. ${detailForUser(err)}`);
     }
   }
 
@@ -405,7 +406,7 @@ export default function SettingsPage() {
       );
       await refresh();
     } catch (err) {
-      setRuntimeMessage(locale === "ko" ? `키를 저장하지 못했습니다. 이전 값은 그대로입니다. ${String(err)}` : `Key was not saved. The previous value was kept. ${String(err)}`);
+      setRuntimeMessage(locale === "ko" ? `키를 저장하지 못했습니다. 이전 값은 그대로입니다. ${detailForUser(err)}` : `Key was not saved. The previous value was kept. ${detailForUser(err)}`);
     }
   }
 
@@ -417,7 +418,7 @@ export default function SettingsPage() {
       setRuntimeMessage(locale === "ko" ? "키를 삭제했습니다." : "Key deleted.");
       await refresh();
     } catch (err) {
-      setRuntimeMessage(locale === "ko" ? `키를 삭제하지 못했습니다. ${String(err)}` : `Key was not deleted. ${String(err)}`);
+      setRuntimeMessage(locale === "ko" ? `키를 삭제하지 못했습니다. ${detailForUser(err)}` : `Key was not deleted. ${detailForUser(err)}`);
     }
   }
 
@@ -436,7 +437,7 @@ export default function SettingsPage() {
       await refreshMultimodal();
       setRuntimeMessage("");
     } catch (err) {
-      setRuntimeMessage(locale === "ko" ? `프로바이더를 바꾸지 못했습니다. 이전 설정이 유지됩니다. ${String(err)}` : `Provider did not change. The previous setting was kept. ${String(err)}`);
+      setRuntimeMessage(locale === "ko" ? `프로바이더를 바꾸지 못했습니다. 이전 설정이 유지됩니다. ${detailForUser(err)}` : `Provider did not change. The previous setting was kept. ${detailForUser(err)}`);
     }
   }
 
@@ -450,7 +451,7 @@ export default function SettingsPage() {
       await refresh();
       setRuntimeMessage("");
     } catch (err) {
-      setRuntimeMessage(locale === "ko" ? `키를 저장하지 못했습니다. 이전 값은 그대로입니다. ${String(err)}` : `Key was not saved. The previous value was kept. ${String(err)}`);
+      setRuntimeMessage(locale === "ko" ? `키를 저장하지 못했습니다. 이전 값은 그대로입니다. ${detailForUser(err)}` : `Key was not saved. The previous value was kept. ${detailForUser(err)}`);
     }
   }
 
@@ -1073,6 +1074,22 @@ function MobileBridgePanel() {
   const [storeChoice, setStoreChoice] = useState<"android" | "ios" | null>(null);
   const [storeQrDataUrl, setStoreQrDataUrl] = useState("");
 
+  /*
+   * ★이 대화상자는 **나가는 길이 바깥 클릭 하나뿐**이었다 (대화상자 실측 2026-09-08).
+   *   화면을 통째로 덮는데 닫기 단추가 없고 Escape 도 안 먹었다 — 키보드만 쓰면
+   *   갇힌다. 모달은 어디서나 같은 방법으로 닫혀야 한다.
+   */
+  useEffect(() => {
+    if (installGate === "closed") return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key !== "Escape" || event.metaKey || event.ctrlKey || event.altKey) return;
+      event.stopPropagation();
+      setInstallGate("closed");
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [installGate]);
+
   const refresh = useCallback(async () => {
     const api = ipc();
     if (!api) return;
@@ -1083,9 +1100,20 @@ function MobileBridgePanel() {
       ]);
       setStatus(nextStatus);
       setDevices(nextDevices);
-      setLoadError(nextStatus.error ?? "");
+      /*
+       * ★엔진이 준 문구를 그대로 화면에 올리던 자리 (실측 2026-09-08).
+       *   그 문구가 사람 문장이 아니라 식별자일 수 있다 — 그러면 사용자는
+       *   무엇을 해야 할지 알 수 없다. 사람 문장을 먼저 세운다.
+       */
+      setLoadError(nextStatus.error && !looksLikeMachineText(nextStatus.error)
+        ? nextStatus.error
+        : nextStatus.error
+          ? (locale === "ko" ? "모바일 연결을 열지 못했습니다. 로그를 열어 자세한 내용을 볼 수 있습니다." : "The mobile connection is not available. Open the log for details.")
+          : "");
     } catch (error) {
-      setLoadError(error instanceof Error ? error.message : String(error));
+      setLoadError(humanFailure(error, locale === "ko"
+        ? "모바일 연결 상태를 읽지 못했습니다."
+        : "The mobile connection status could not be read."));
     }
   }, []);
 
@@ -1181,7 +1209,10 @@ function MobileBridgePanel() {
     } catch (error) {
       setPairing(null);
       setQrDataUrl("");
-      setMessage(error instanceof Error ? error.message : String(error));
+      /* ★엔진 식별자를 그대로 그리던 자리 (실측 2026-09-08). 사람 문장을 먼저 세운다. */
+      setMessage(humanFailure(error, locale === "ko"
+        ? "연결 QR을 만들지 못했습니다. 잠시 뒤 다시 시도해 주세요."
+        : "The pairing QR could not be created. Try again in a moment."));
     } finally {
       setBusy(false);
     }
@@ -1195,17 +1226,22 @@ function MobileBridgePanel() {
     try {
       const next = await api.mobileBridge.retry();
       setStatus(next);
-      setLoadError(next.error ?? "");
+      setLoadError(next.error && !looksLikeMachineText(next.error) ? next.error : "");
       setMessage(
         next.running
           ? (locale === "ko" ? "모바일 연결을 다시 열었습니다." : "The mobile connection is available again.")
-          : (next.error ?? (locale === "ko" ? "모바일 연결을 열지 못했습니다." : "Could not restart the mobile connection.")),
+          : (next.error && !looksLikeMachineText(next.error)
+            ? next.error
+            : (locale === "ko" ? "모바일 연결을 열지 못했습니다." : "Could not restart the mobile connection.")),
       );
       await refresh();
     } catch (error) {
-      const detail = error instanceof Error ? error.message : String(error);
-      setLoadError(detail);
-      setMessage(detail);
+      /* ★loadError 가 message 보다 우선 렌더된다 — 여기도 사람 문장이어야 한다. */
+      const detail = failureMessage(error);
+      setLoadError(looksLikeMachineText(detail) ? "" : detail);
+      setMessage(humanFailure(error, locale === "ko"
+        ? "모바일 연결을 다시 열지 못했습니다. 로그를 열어 자세한 내용을 볼 수 있습니다."
+        : "The mobile connection could not be restarted. Open the log for details."));
     } finally {
       setBusy(false);
     }
@@ -1252,7 +1288,9 @@ function MobileBridgePanel() {
       }
       await refresh();
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : String(error));
+      setMessage(humanFailure(error, locale === "ko"
+        ? "기기 연결을 해제하지 못했습니다. 잠시 뒤 다시 시도해 주세요."
+        : "The device could not be disconnected. Try again in a moment."));
     }
   }
 
@@ -1361,6 +1399,21 @@ function MobileBridgePanel() {
                 padding: 22,
               }}
             >
+              <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: -8 }}>
+                <button
+                  type="button"
+                  onClick={() => setInstallGate("closed")}
+                  aria-label={locale === "ko" ? "닫기" : "Close"}
+                  title={locale === "ko" ? "닫기" : "Close"}
+                  style={{
+                    width: 28, height: 28, display: "grid", placeItems: "center",
+                    border: 0, borderRadius: 8, background: "transparent",
+                    color: "var(--muted-deep)", fontSize: 16, lineHeight: 1,
+                  }}
+                >
+                  ×
+                </button>
+              </div>
               {installGate === "ask" ? (
                 <>
                   <div style={{ fontSize: 15, fontWeight: 750 }}>
@@ -3112,7 +3165,7 @@ function CliInstallPanel({
         setMsg((m) => ({ ...m, [kind]: t("settings.cli.install_failed", { cmd: r.command ?? "" }) }));
       }
     } catch (err) {
-      setMsg((m) => ({ ...m, [kind]: `${t("settings.cli.install_failed", { cmd: "" })} ${String(err)}` }));
+      setMsg((m) => ({ ...m, [kind]: `${t("settings.cli.install_failed", { cmd: "" })} ${detailForUser(err)}` }));
     } finally {
       setInstalling(null);
     }
@@ -3130,7 +3183,7 @@ function CliInstallPanel({
       await api.runtime.openCliLogin(kind as "claude-code" | "codex" | "kimi" | "grok" | "antigravity");
       setMsg((m) => ({ ...m, [kind]: t("settings.cli.login_hint") }));
     } catch (err) {
-      setMsg((m) => ({ ...m, [kind]: `${t("settings.cli.login_hint")} ${String(err)}` }));
+      setMsg((m) => ({ ...m, [kind]: `${t("settings.cli.login_hint")} ${detailForUser(err)}` }));
     }
   }
 

@@ -725,6 +725,23 @@ function CodeBlock({
   const linesCount = block.code.split("\n").length;
   const label = (key: Parameters<NonNullable<typeof t>>[0], vars?: Record<string, string | number>) =>
     t ? t(key, vars) : String(vars?.count ?? "");
+  /*
+   * ★복사 단추가 **아무 말도 하지 않았다** (실측 2026-09-08): 눌러도 표시가 없고,
+   *   실패해도 조용했다. 코드 복사는 이 제품에서 가장 자주 누르는 단추 중 하나다 —
+   *   됐는지 안 됐는지 모르면 사람은 한 번 더 누르고, 그래도 모른다.
+   */
+  const [copyState, setCopyState] = useState<"idle" | "done" | "failed">("idle");
+  /* 이 컴포넌트는 locale 을 받지 않는다 — 문서 언어를 본다(전역 i18n 이 <html lang> 을 맞춘다). */
+  const ko = typeof document !== "undefined" && (document.documentElement.lang || "").toLowerCase().startsWith("ko");
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(block.code);
+      setCopyState("done");
+    } catch {
+      setCopyState("failed");
+    }
+    window.setTimeout(() => setCopyState("idle"), 1800);
+  };
   return (
     <div
       style={{
@@ -778,21 +795,26 @@ function CodeBlock({
           </button>
         )}
         <button
-          onClick={() => void navigator.clipboard.writeText(block.code)}
+          onClick={() => void copy()}
+          aria-live="polite"
           style={{
             fontSize: 10,
             padding: "2px 8px",
             borderRadius: 5,
             background: "transparent",
-            color: "var(--ink-soft)",
+            color: copyState === "failed" ? "var(--danger)" : "var(--ink-soft)",
             border: "none",
             fontWeight: 600,
           }}
         >
-          {label("chatstream.copy")}
+          {copyState === "done"
+            ? (ko ? "복사됨" : "Copied")
+            : copyState === "failed"
+              ? (ko ? "복사 실패" : "Copy failed")
+              : label("chatstream.copy")}
         </button>
       </div>
-      <div style={{ display: "flex" }}>
+      <div style={{ display: "flex", minWidth: 0 }}>
         <div
           aria-hidden
           style={{
@@ -820,6 +842,13 @@ function CodeBlock({
             overflowX: "auto",
             whiteSpace: "pre",
             flex: 1,
+            /*
+             * ★minWidth 없이는 overflowX:auto 가 **아무 일도 하지 않는다** (실측 2026-09-08).
+             *   flex 항목의 자동 최소 크기는 min-content 라, 긴 코드 한 줄이 그대로
+             *   상자를 밀어낸다. One 에서 코드 블록이 대화 열 밖으로 1,971px 나갔고
+             *   가로 스크롤도 없어 그 뒤는 읽을 방법이 없었다.
+             */
+            minWidth: 0,
           }}
         >
           {highlightCode(block.code)}
@@ -925,6 +954,16 @@ function inline(
         regex: /^\[([^\]]+)\]\(([^)]+)\)/,
         render: (m) => renderInlineLink(key++, m[1], m[2].trim(), onOpenLinkedFile, mediaBasePaths),
       },
+      {
+        /*
+         * ★맨 주소도 눌러서 열려야 한다 (실측 2026-09-08: 대화에 http 주소를 넣어도
+         *   링크가 **하나도 안 만들어졌다**). 모델은 마크다운 링크보다 맨 주소를 훨씬
+         *   자주 쓴다 — 그때마다 사용자가 주소를 손으로 복사해야 했다.
+         *   ★끝의 문장부호는 주소에서 뺀다: "…/link." 의 마침표까지 삼키면 열리지 않는다.
+         */
+        regex: /^(https?:\/\/[^\s<>"'`)\]]+[^\s<>"'`)\].,;:!?])/i,
+        render: (m) => renderInlineLink(key++, m[1], m[1], onOpenLinkedFile, mediaBasePaths),
+      },
     ];
 
   while (remaining.length > 0) {
@@ -947,7 +986,8 @@ function inline(
      * 수식을 추가하고도 화면에 안 나왔던 이유가 이것이다: 커서가 `$` 로 점프하지 못해
      * matcher 가 시험조차 되지 않았다. 목록과 점프표는 함께 움직여야 한다.
      */
-    const next = remaining.search(/file:|[`*![\/$]|(?:^|[\s(])(?:\.{1,2}\/)?[A-Za-z0-9_. -]+(?:\/[^\s`'"<>)]*)?\.(?:png|jpe?g|gif|webp|avif|svg)/i);
+    /* ★맨 주소 matcher 를 넣었으므로 점프표에도 https? 를 함께 넣는다(같은 함정 재발 방지). */
+    const next = remaining.search(/file:|https?:\/\/|[`*![\/$]|(?:^|[\s(])(?:\.{1,2}\/)?[A-Za-z0-9_. -]+(?:\/[^\s`'"<>)]*)?\.(?:png|jpe?g|gif|webp|avif|svg)/i);
     if (next < 0) {
       out.push(remaining);
       break;

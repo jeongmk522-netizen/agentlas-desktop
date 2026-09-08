@@ -224,7 +224,7 @@ const dict = {
     "chat.status.sending": "전송 중...",
     "chat.err.unknown": "알 수 없는 오류",
     "chat.empty.title": "아직 열린 대화가 없어요",
-    "chat.empty.hint": "왼쪽 위 + 새 채팅 버튼을 눌러 첫 대화를 시작해 보세요. 에이전트에게 할 일을 적으면 바로 도와드려요.",
+    "chat.empty.hint": "왼쪽에서 프로젝트를 고르면 그 안에서 대화를 시작할 수 있어요. 아직 프로젝트가 없다면 먼저 하나 만들어 주세요.",
 
     // Onboarding
     "onb.welcome.title": "Agentlas에 오신 걸 환영해요",
@@ -2426,7 +2426,7 @@ const dict = {
     "chat.status.sending": "Sending...",
     "chat.err.unknown": "Unknown error",
     "chat.empty.title": "No conversation open yet",
-    "chat.empty.hint": "Click the + New chat button at the top left to start your first conversation. Just tell the agent what you need.",
+    "chat.empty.hint": "Pick a project on the left to start a conversation inside it. If you do not have one yet, create a project first.",
 
     // Onboarding
     "onb.welcome.title": "Welcome to Agentlas",

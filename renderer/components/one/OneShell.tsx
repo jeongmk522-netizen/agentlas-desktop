@@ -1844,6 +1844,38 @@ export function OneShell() {
   }, []);
 
   /**
+   * 대화를 처음 그릴 때 맨 아래에 **붙여 둔다**.
+   *
+   * ★한 번만 내리면 안 된다 (실측 2026-09-08): 60개짜리 대화를 열면 1180px 창에서는
+   *   내려갔는데 1440px 창에서는 그대로 맨 위였다. 첫 프레임 뒤에도 폰트·이미지·코드
+   *   블록이 자리를 잡으며 전체 높이가 계속 늘기 때문이다. 몇 번 더 따라 내려간다.
+   *   ★사람이 손을 대면 즉시 멈춘다 — 읽던 자리를 뺏는 건 안 내려가는 것보다 나쁘다.
+   */
+  const pinToLatest = useCallback(() => {
+    const scroller = scrollRef.current;
+    if (!scroller) return;
+    let stopped = false;
+    const stop = () => { stopped = true; cleanup(); };
+    const cleanup = () => {
+      for (const id of timers) window.clearTimeout(id);
+      scroller.removeEventListener("wheel", stop);
+      scroller.removeEventListener("touchstart", stop);
+      window.removeEventListener("keydown", stop);
+    };
+    const go = () => {
+      if (stopped) return;
+      const node = scrollRef.current;
+      if (!node) return;
+      node.scrollTo({ top: node.scrollHeight, behavior: "auto" });
+    };
+    const timers = [0, 80, 250, 600].map((delay) => window.setTimeout(go, delay));
+    scroller.addEventListener("wheel", stop, { passive: true });
+    scroller.addEventListener("touchstart", stop, { passive: true });
+    window.addEventListener("keydown", stop);
+    window.setTimeout(cleanup, 900);
+  }, []);
+
+  /**
    * 흘러나오는 답을 따라 내려간다 — **맨 아래를 보고 있을 때만.**
    *
    * 사람이 위로 올려 읽는 중이면 아무것도 하지 않는다. 읽던 자리를 뺏으면
@@ -2781,16 +2813,34 @@ export function OneShell() {
         subscribeRun(attachment.runId);
         for (const event of attachment.events) consumeRunEventRef.current(event, attachment.runId);
       }
+      /*
+       * ★대화를 열면 **가장 최근 말**이 보여야 한다 (실측 2026-09-08).
+       *   60개짜리 대화를 열어 재 보니 One 은 맨 위에 머물렀다(스크롤 0 / 전체 4,628px,
+       *   마지막 메시지는 화면 아래 4,364px 지점). Work 는 같은 조건에서 아래로 내려간다.
+       *   실행 중에 붙은 경우는 이미 다른 자리에서 따라 내려가므로 여기서는 첫 수화만.
+       */
+      if (!cancelled && shownThreadChatIdRef.current === chatId && !attachment) {
+        pinToLatest();
+      }
     }).catch((cause) => {
       if (!cancelled) {
         requestOneOperationalRecovery("one-refresh", cause);
         setError(null);
+        /*
+         * ★대화를 못 읽었는데 화면에는 "대화를 시작해 보세요" 빈 화면이 떴다
+         *   (실측 2026-09-08). 자기 대화가 지워진 것처럼 보인다.
+         *   복구는 뒤에서 돌더라도, 지금 보고 있는 사람에게는 사실을 말해야 한다.
+         */
+        setActionNotice(appLocale === "ko"
+          ? "이 대화를 불러오지 못했습니다. 지워진 것이 아니라 읽지 못한 것입니다 — 다시 열어 보세요."
+          : "This conversation could not be loaded. It was not deleted — the read failed. Try opening it again.");
       }
     });
     return () => {
       cancelled = true;
     };
   }, [
+    pinToLatest,
     conversation?.id,
     appLocale,
     selected?.chatId,
@@ -3322,6 +3372,12 @@ export function OneShell() {
 
   useEffect(() => {
     if (!composerMenu) return;
+    /*
+     * ★닫으면 초점이 body 로 떨어졌다 (대화상자 실측 2026-09-08: 모델·추론 강도·권한 3개).
+     *   작성창 바로 위의 메뉴라 닫은 뒤엔 원래 있던 자리로 돌아가야 한다 —
+     *   안 그러면 키보드로는 문서 맨 위부터 다시 Tab 해야 한다.
+     */
+    const opener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     const dismiss = (event: PointerEvent) => {
       const target = event.target as HTMLElement | null;
       if (target?.closest("[data-one-composer-popover], [data-one-composer-trigger]")) return;
@@ -3335,6 +3391,9 @@ export function OneShell() {
     return () => {
       document.removeEventListener("pointerdown", dismiss);
       document.removeEventListener("keydown", escape);
+      if (opener && opener.isConnected && !opener.contains(document.activeElement)) {
+        opener.focus({ preventScroll: true });
+      }
     };
   }, [composerMenu]);
   useEffect(() => {
@@ -3899,6 +3958,25 @@ export function OneShell() {
       if (options?.attachments) {
         await api.oneAttachments.discard({ ref: options.attachments.ref }).catch(() => ({ discarded: false }));
       }
+      /*
+       * ★실행이 시작되지 않았는데 **쓴 글이 사라지고 아무 말도 없었다**
+       *   (보내기 실패 실측 2026-09-08). 화면은 처음 화면으로 돌아가 있어서
+       *   사용자는 자기 글이 어디로 갔는지 알 방법이 없었다.
+       *   Work 는 같은 상황에서 글을 작성창에 되돌리고 이유를 말한다. 맞춘다.
+       */
+      setComposer((current) => (current.trim() ? current : text));
+      /*
+       * ★한 번만 되돌리면 지워진다: 실패 직후 화면이 방금 만든 대화(또는 홈)로
+       *   옮겨가고, 그 순간 초안 복원 효과가 **빈 초안**을 덮어쓴다(실측 2026-09-08:
+       *   되돌려 놓아도 입력창이 계속 비어 있었다). 자리 이동이 끝난 뒤 한 번 더 본다 —
+       *   그 사이 사용자가 새로 쓰기 시작했으면 건드리지 않는다.
+       */
+      window.setTimeout(() => {
+        setComposer((current) => (current.trim() ? current : text));
+      }, 320);
+      setActionNotice(normalizedLocale === "ko"
+        ? "작업을 시작하지 못했습니다. 쓰신 글은 작성창에 되돌려 놓았습니다 — 다시 보내 주세요."
+        : "The run did not start. Your text is back in the composer — send it again.");
       await refreshAll();
       requestOneOperationalRecovery("one-run-start", cause);
     } finally {
@@ -7403,6 +7481,8 @@ export function OneShell() {
               />
               <textarea
                 ref={composerInputRef}
+                /* 초점 링은 감싼 작성창(.composer:focus-within)이 그린다. */
+                data-focus-ring="wrapper"
                 rows={1}
                 value={composer}
                 onChange={(event) => {

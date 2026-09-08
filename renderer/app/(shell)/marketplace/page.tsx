@@ -1,5 +1,6 @@
 "use client";
 import { Suspense, useCallback, useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
+import { detailForUser } from "@/lib/invocation-failure";
 import { useRouter, useSearchParams } from "next/navigation";
 import { ipc } from "@/lib/ipc";
 import { visibleAgents } from "@/lib/agent-visibility";
@@ -235,6 +236,8 @@ function MarketplacePage() {
   // Hub 검색은 10초 이상 걸린다. 그 동안 이전 질의 결과를 그대로 두면 사용자는
   // 그것을 새 질의의 답으로 읽는다. 무엇을 기다리는 중인지 화면에 남긴다.
   const [searchingFor, setSearchingFor] = useState<string | null>(null);
+  /* ★읽기 실패를 "허브가 비었다" 로 그리지 않기 위한 표식 (실측 2026-09-08). */
+  const [searchFailed, setSearchFailed] = useState(false);
   const hepSeqRef = useRef(0);
   // IPC 검색 자체는 AbortSignal을 받지 않으므로, AbortController로 이전 요청을 폐기하고
   // generation을 함께 확인해 늦은 search/status/fallback 응답이 최신 화면을 덮지 못하게 한다.
@@ -386,6 +389,7 @@ function MarketplacePage() {
           if (!isCurrent()) return;
           results = Array.isArray(response) ? response : [];
           setListings(results);
+          setSearchFailed(false);
           // 결과가 화면에 놓인 순간 대기 표시를 거둔다. 뒤따르는 status 조회를
           // 기다리면 이미 답이 보이는데도 계속 "찾는 중"으로 남는다.
           setSearchingFor(null);
@@ -398,6 +402,12 @@ function MarketplacePage() {
           if (!isCurrent()) return;
           // 검색 실패 — 기존 목록은 유지하고 fallback 판정만 수행한다.
           setSearchingFor(null);
+          /*
+           * ★첫 조회가 실패하면 기존 목록이 아예 없어 화면이 **빈 허브**로 보였다
+           *   (읽기 실패 실측 2026-09-08: 낱말 40개가 소리 없이 사라짐).
+           *   "여기에 아무것도 없다" 와 "지금 못 읽었다" 는 완전히 다른 사실이다.
+           */
+          setSearchFailed(true);
         }
 
         if (!isCurrent()) return;
@@ -463,16 +473,17 @@ function MarketplacePage() {
     } catch (err) {
       setImportNotice({
         tone: "error",
-        text: ko ? `인재 풀에 저장하지 못했습니다. ${String(err)}` : `Could not save this candidate. ${String(err)}`,
+        text: ko ? `인재 풀에 저장하지 못했습니다. ${detailForUser(err)}` : `Could not save this candidate. ${detailForUser(err)}`,
       });
     } finally {
       setBookmarking(null);
     }
   }
 
-  async function copyHubCall(listing: MarketplaceListing) {
+  /* 호출어 복사는 slug 하나면 된다 — 목록 행에서도 같은 알림 경로를 쓰려고 인자를 좁힌다. */
+  async function copyHubCall(slug: string) {
     try {
-      await navigator.clipboard.writeText(`/hep-call ${listing.slug}`);
+      await navigator.clipboard.writeText(`/hep-call ${slug}`);
       setImportNotice({
         tone: "ok",
         text: ko
@@ -852,6 +863,15 @@ function MarketplacePage() {
           )}
 
             <section className="portal-panel hub-results-panel" id="hub-agent" data-tour-id="hub.results">
+              {searchFailed && !searchingFor && (
+                <div className="hub-searching-notice" role="alert">
+                  <span>
+                    {ko
+                      ? "허브 목록을 불러오지 못했습니다. 비어 있는 것이 아니라 읽지 못한 것입니다 — 잠시 뒤 다시 검색해 주세요."
+                      : "The Hub list could not be loaded. It is not empty — the read failed. Search again in a moment."}
+                  </span>
+                </div>
+              )}
               {searchingFor && (
                 <div className="hub-searching-notice" role="status" aria-live="polite">
                   <span className="hub-searching-spinner" aria-hidden="true" />
@@ -880,7 +900,7 @@ function MarketplacePage() {
                         && (listing.slug || "").toLowerCase() === deepLinkInstallSlug
                       }
                       onBookmark={() => void bookmarkOne(listing)}
-                      onCopyCall={() => void copyHubCall(listing)}
+                      onCopyCall={() => void copyHubCall(listing.slug)}
                       onLease={() => setLeaseDialog({
                         slug: listing.slug,
                         name: pickLocalized(listing, locale).name,
@@ -952,7 +972,8 @@ function MarketplacePage() {
                     <button
                       type="button"
                       className="btn sm"
-                      onClick={() => void navigator.clipboard.writeText(`/hep-call ${item.slug}`)}
+                      /* ★눌러도 아무 말이 없던 복사 (실측 2026-09-08) — 알림을 내는 쪽으로 통일한다. */
+                      onClick={() => void copyHubCall(item.slug)}
                     >
                       {ko ? "명령 복사" : "Copy command"}
                     </button>

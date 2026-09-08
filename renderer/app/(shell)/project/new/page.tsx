@@ -367,7 +367,12 @@ export default function NewProjectPage() {
                 ? (ko ? "프로젝트 지시" : "Instructions")
                 : (ko ? "도구" : "Tools");
           return (
-            <button key={item} type="button" data-active={step === item} disabled={unavailable} onClick={() => setStep(item)}>
+            <button key={item} type="button" data-active={step === item} disabled={unavailable}
+              /* ★앞 단계를 안 끝내서 회색인데 화면에 아무 말이 없었다 (실측 2026-09-08). */
+              title={!unavailable ? undefined : !sourceReady
+                ? (ko ? "먼저 '소스' 단계에서 폴더나 저장소를 연결하세요." : "Connect a folder or repository in the Source step first.")
+                : (ko ? "먼저 프로젝트 이름을 적으세요." : "Give the project a name first.")}
+              onClick={() => setStep(item)}>
               <span>{index + 1}</span>{label}
             </button>
           );
@@ -419,7 +424,9 @@ export default function NewProjectPage() {
               </label>
             )}
             <div className="project-create-actions">
-              <button type="button" disabled={!sourceReady} onClick={() => setStep("instructions")}>{ko ? "다음" : "Continue"}</button>
+              <button type="button" disabled={!sourceReady}
+                title={sourceReady ? undefined : (ko ? "먼저 폴더나 저장소를 연결하세요." : "Connect a folder or repository first.")}
+                onClick={() => setStep("instructions")}>{ko ? "다음" : "Continue"}</button>
             </div>
           </section>
         ) : step === "instructions" ? (
@@ -439,7 +446,9 @@ export default function NewProjectPage() {
             </label>
             <div className="project-create-actions">
               <button type="button" className="secondary" onClick={() => setStep("source")}>{ko ? "이전" : "Back"}</button>
-              <button type="button" disabled={!name.trim()} onClick={() => setStep("agents")}>{ko ? "다음" : "Continue"}</button>
+              <button type="button" disabled={!name.trim()} data-disabled-reason="empty-input"
+                title={name.trim() ? undefined : (ko ? "먼저 프로젝트 이름을 적으세요." : "Give the project a name first.")}
+                onClick={() => setStep("agents")}>{ko ? "다음" : "Continue"}</button>
             </div>
           </section>
         ) : (

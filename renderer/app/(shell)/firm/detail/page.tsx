@@ -1,6 +1,7 @@
 // 회사 상세 — 조직도, 큐레이팅 메모리, 승인형 자산 진화, Experience/Ontology 관리.
 "use client";
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { detailForUser } from "@/lib/invocation-failure";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { ipc } from "@/lib/ipc";
@@ -199,7 +200,7 @@ function FirmDetailPage() {
       setChats(cs);
       setResolvedOrg(org);
     } catch (err) {
-      setLoadMessage(locale === "ko" ? `회사 정보를 불러오지 못했습니다. 바뀐 내용은 없습니다. ${String(err)}` : `Firm details could not be loaded. Nothing changed. ${String(err)}`);
+      setLoadMessage(locale === "ko" ? `회사 정보를 불러오지 못했습니다. 바뀐 내용은 없습니다. ${detailForUser(err)}` : `Firm details could not be loaded. Nothing changed. ${detailForUser(err)}`);
     } finally {
       setLoading(false);
     }
@@ -263,7 +264,7 @@ function FirmDetailPage() {
       } catch (e) {
         // 파일 로드 실패 시에도 위에서 설정한 메타데이터 프롬프트가 남아있다.
         console.error("에이전트 파일 로드 실패:", e);
-        if (!cancelled) showToast((locale === "ko" ? "에이전트 파일을 읽지 못했습니다. 메타데이터만 표시합니다: " : "Agent files could not be read. Showing metadata only: ") + String(e));
+        if (!cancelled) showToast((locale === "ko" ? "에이전트 파일을 읽지 못했습니다. 메타데이터만 표시합니다: " : "Agent files could not be read. Showing metadata only: ") + detailForUser(e));
       }
     }
 
@@ -381,7 +382,7 @@ function FirmDetailPage() {
       showToast(locale === "ko" ? "검토 후보를 저장했습니다. 원본은 아직 유지됩니다." : "Review candidate saved. The original remains unchanged.");
       return proposal;
     } catch (e) {
-      showToast((locale === "ko" ? "진화 후보 생성 실패: " : "Failed to create evolution candidate: ") + String(e));
+      showToast((locale === "ko" ? "진화 후보 생성 실패: " : "Failed to create evolution candidate: ") + detailForUser(e));
       return undefined;
     } finally {
       setSavingFiles(false);
@@ -419,7 +420,7 @@ function FirmDetailPage() {
       showToast(locale === "ko" ? "스킬 diff 후보를 만들었습니다. 승인 전에는 주입되지 않습니다." : "Skill diff candidate created. It is not injected until approval.");
       return true;
     } catch (error) {
-      showToast((locale === "ko" ? "스킬 후보 생성 실패: " : "Failed to create skill candidate: ") + String(error));
+      showToast((locale === "ko" ? "스킬 후보 생성 실패: " : "Failed to create skill candidate: ") + detailForUser(error));
       return false;
     } finally {
       setSavingFiles(false);
@@ -441,7 +442,7 @@ function FirmDetailPage() {
       }
       showToast(locale === "ko" ? "승인 적용 및 영수증 저장 완료" : "Approved, applied, and receipted");
     } catch (e) {
-      showToast((locale === "ko" ? "승인 적용 실패: " : "Approval/apply failed: ") + String(e));
+      showToast((locale === "ko" ? "승인 적용 실패: " : "Approval/apply failed: ") + detailForUser(e));
     } finally {
       setSavingFiles(false);
     }
@@ -469,7 +470,7 @@ function FirmDetailPage() {
       }
       showToast(locale === "ko" ? "검증된 영수증으로 롤백했습니다." : "Rolled back from the verified receipt.");
     } catch (e) {
-      showToast((locale === "ko" ? "롤백 차단/실패: " : "Rollback blocked/failed: ") + String(e));
+      showToast((locale === "ko" ? "롤백 차단/실패: " : "Rollback blocked/failed: ") + detailForUser(e));
     } finally {
       setSavingFiles(false);
     }
@@ -507,7 +508,7 @@ function FirmDetailPage() {
     });
     return completion.catch((error) => {
       if (selectedMemoryAgentRef.current === agentId) {
-        showToast((locale === "ko" ? "메모리 갱신 실패: " : "Failed to update memory: ") + String(error));
+        showToast((locale === "ko" ? "메모리 갱신 실패: " : "Failed to update memory: ") + detailForUser(error));
       }
     });
   }

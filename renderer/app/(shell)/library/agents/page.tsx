@@ -1,6 +1,7 @@
 // 에이전트 라이브러리 — 로스터, 큐레이팅 메모리, 승인형 자산 진화, Experience/Ontology 관리.
 "use client";
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { detailForUser } from "@/lib/invocation-failure";
 import type { CSSProperties } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
@@ -277,7 +278,7 @@ function MemoryImportPanel({
         showToast(ko ? "가져올 메모리를 찾지 못했습니다." : "No importable memory found in that folder.");
       }
     } catch (error) {
-      showToast((ko ? "미리보기 실패: " : "Preview failed: ") + String(error));
+      showToast((ko ? "미리보기 실패: " : "Preview failed: ") + detailForUser(error));
     } finally {
       setBusy(false);
     }
@@ -297,7 +298,7 @@ function MemoryImportPanel({
           : `Imported ${applied.imported} memories (${applied.embedded} embedded).`,
       );
     } catch (error) {
-      showToast((ko ? "가져오기 실패: " : "Import failed: ") + String(error));
+      showToast((ko ? "가져오기 실패: " : "Import failed: ") + detailForUser(error));
     } finally {
       setBusy(false);
     }
@@ -398,6 +399,12 @@ function LibraryAgentsView() {
   const [teamExpanded, setTeamExpanded] = useState<Record<string, boolean>>({});
   const [teamSubs, setTeamSubs] = useState<Record<string, { name: string; role: string }[] | "loading">>({});
   const [agents, setAgents] = useState<InstalledAgent[]>([]);
+  /*
+   * ★목록을 못 읽으면 화면은 그냥 **비어 보였다** (읽기 실패 실측 2026-09-08).
+   *   에이전트 9개·프로젝트·조직이 소리 없이 사라지고 아무 말도 없었다 —
+   *   사용자에게는 "지워졌다" 와 구별되지 않는다. 실패는 사실이 아니다.
+   */
+  const [rosterLoadFailed, setRosterLoadFailed] = useState(false);
   const rosterRefreshGenerationRef = useRef(0);
   const [chats, setChats] = useState<Chat[]>([]);
   const [resolving, setResolving] = useState(false);
@@ -529,15 +536,26 @@ function LibraryAgentsView() {
     const api = ipc();
     if (!api) return;
     const generation = ++rosterRefreshGenerationRef.current;
-    const [fList, agList, runtimes, overrides, projectList, bindingList] = await Promise.all([
+    let projectsFailed = false;
+    let loaded;
+    try {
+      loaded = await Promise.all([
       api.firms.list(),
       api.team.list(),
       api.runtime.detect().catch(() => []),
       api.agentRuntime?.list ? api.agentRuntime.list().catch(() => []) : Promise.resolve([]),
-      api.projects.list().catch(() => []),
+      /* ★삼킨 실패는 "프로젝트 0개" 로 보인다 — 삼키되 말은 한다(실측 2026-09-08). */
+      api.projects.list().catch(() => { projectsFailed = true; return []; }),
       api.agents.exactBindings().catch(() => []),
-    ]);
+      ]);
+    } catch {
+      if (rosterRefreshGenerationRef.current !== generation) return;
+      setRosterLoadFailed(true);
+      return;
+    }
+    const [fList, agList, runtimes, overrides, projectList, bindingList] = loaded;
     if (rosterRefreshGenerationRef.current !== generation) return;
+    setRosterLoadFailed(projectsFailed);
     const safeFirms = Array.isArray(fList) ? fList : [];
     const safeAgents = Array.isArray(agList) ? agList : [];
     const safeRuntimes = Array.isArray(runtimes) ? runtimes : [];
@@ -663,7 +681,7 @@ function LibraryAgentsView() {
       setActiveTab("identity");
       showToast(locale === "ko" ? `${loc.name} 설치 완료` : `Installed ${loc.name}`);
     } catch (err) {
-      showToast((locale === "ko" ? "퍼블리시 에이전트 설치 실패: " : "Failed to install published agent: ") + String(err));
+      showToast((locale === "ko" ? "퍼블리시 에이전트 설치 실패: " : "Failed to install published agent: ") + detailForUser(err));
     } finally {
       setPublishedInstalling(null);
     }
@@ -725,7 +743,7 @@ function LibraryAgentsView() {
       setProjects((current) => current.map((item) => item.id === updated.id ? updated : item));
       showToast(locale === "ko" ? `${updated.name} 프로젝트의 도구함에 장착했습니다.` : `Attached to ${updated.name}.`);
     } catch (error) {
-      showToast((locale === "ko" ? "프로젝트 장착 실패: " : "Could not attach to project: ") + String(error));
+      showToast((locale === "ko" ? "프로젝트 장착 실패: " : "Could not attach to project: ") + detailForUser(error));
     }
   }
 
@@ -757,7 +775,7 @@ function LibraryAgentsView() {
       setProjects((current) => current.map((item) => item.id === updated.id ? updated : item));
       showToast(locale === "ko" ? `${updated.name} 프로젝트에 팀 도구를 장착했습니다.` : `Attached the team tool to ${updated.name}.`);
     } catch (error) {
-      showToast((locale === "ko" ? "팀 장착 실패: " : "Could not attach team: ") + String(error));
+      showToast((locale === "ko" ? "팀 장착 실패: " : "Could not attach team: ") + detailForUser(error));
     }
   }
 
@@ -791,7 +809,7 @@ function LibraryAgentsView() {
       setProjects((current) => current.map((item) => item.id === updated.id ? updated : item));
       showToast(locale === "ko" ? `${updated.name} 프로젝트에 팀 도구를 장착했습니다.` : `Attached the team tool to ${updated.name}.`);
     } catch (error) {
-      showToast((locale === "ko" ? "팀 장착 실패: " : "Could not attach team: ") + String(error));
+      showToast((locale === "ko" ? "팀 장착 실패: " : "Could not attach team: ") + detailForUser(error));
     }
   }
 
@@ -978,7 +996,7 @@ function LibraryAgentsView() {
       showToast(locale === "ko" ? "검토 후보를 저장했습니다. 원본 프롬프트는 아직 바뀌지 않았습니다." : "Review candidate saved. The original prompt is unchanged.");
       return proposal;
     } catch (e) {
-      showToast((locale === "ko" ? "진화 후보 생성 실패: " : "Failed to create evolution candidate: ") + String(e));
+      showToast((locale === "ko" ? "진화 후보 생성 실패: " : "Failed to create evolution candidate: ") + detailForUser(e));
       return undefined;
     } finally {
       setSavingFiles(false);
@@ -1008,7 +1026,7 @@ function LibraryAgentsView() {
           : (locale === "ko" ? `적용 완료 · 자산 v${receipt.versionAfter} · ${receipt.governedAssetHashAfter.slice(0, 12)}` : `Applied · asset v${receipt.versionAfter} · ${receipt.governedAssetHashAfter.slice(0, 12)}`)
         : (locale === "ko" ? "적용은 완료됐지만 영수증을 확인할 수 없습니다." : "Applied, but no receipt was returned."));
     } catch (e) {
-      showToast((locale === "ko" ? "승인 적용 실패: " : "Approval/apply failed: ") + String(e));
+      showToast((locale === "ko" ? "승인 적용 실패: " : "Approval/apply failed: ") + detailForUser(e));
     } finally {
       setSavingFiles(false);
     }
@@ -1026,7 +1044,7 @@ function LibraryAgentsView() {
       setEvolutionProposals((prev) => [proposal, ...prev.filter((item) => item.id !== proposal.id)]);
       showToast(locale === "ko" ? "후보를 거절했습니다. 파일은 변경되지 않았습니다." : "Candidate rejected. No file was changed.");
     } catch (e) {
-      showToast((locale === "ko" ? "후보 거절 실패: " : "Failed to reject candidate: ") + String(e));
+      showToast((locale === "ko" ? "후보 거절 실패: " : "Failed to reject candidate: ") + detailForUser(e));
     } finally {
       setSavingFiles(false);
     }
@@ -1052,7 +1070,7 @@ function LibraryAgentsView() {
           : (locale === "ko" ? `롤백 완료 · 자산 v${receipt.versionAfter} · ${receipt.governedAssetHashAfter.slice(0, 12)}` : `Rolled back · asset v${receipt.versionAfter} · ${receipt.governedAssetHashAfter.slice(0, 12)}`)
         : (locale === "ko" ? "롤백 완료" : "Rollback complete"));
     } catch (e) {
-      showToast((locale === "ko" ? "롤백 차단/실패: " : "Rollback blocked/failed: ") + String(e));
+      showToast((locale === "ko" ? "롤백 차단/실패: " : "Rollback blocked/failed: ") + detailForUser(e));
     } finally {
       setSavingFiles(false);
     }
@@ -1086,7 +1104,7 @@ function LibraryAgentsView() {
     });
     return completion.catch((error) => {
       if (selectedMemoryAgentRef.current === agentId) {
-        showToast((locale === "ko" ? "메모리 갱신 실패: " : "Failed to update memory: ") + String(error));
+        showToast((locale === "ko" ? "메모리 갱신 실패: " : "Failed to update memory: ") + detailForUser(error));
       }
     });
   }
@@ -1115,7 +1133,7 @@ function LibraryAgentsView() {
       setActiveTab("identity");
       showToast(locale === "ko" ? `${loc.name} 가져오기 완료` : `Imported ${loc.name}`);
     } catch (err) {
-      showToast((locale === "ko" ? "에이전트 가져오기 실패: " : "Import failed: ") + String(err));
+      showToast((locale === "ko" ? "에이전트 가져오기 실패: " : "Import failed: ") + detailForUser(err));
     } finally {
       setImportBusy(false);
     }
@@ -1172,7 +1190,7 @@ function LibraryAgentsView() {
         ? `에이전트를 삭제했습니다.${source === "local" && !removal.sourceMovedToTrash ? " 원본 폴더는 휴지통 이동에 실패했습니다." : ""}`
         : `Agent deleted.${source === "local" && !removal.sourceMovedToTrash ? " The source folder could not be moved to Trash." : ""}`);
     } catch (err) {
-      showToast((locale === "ko" ? "에이전트 제거 실패: " : "Failed to remove agent: ") + String(err));
+      showToast((locale === "ko" ? "에이전트 제거 실패: " : "Failed to remove agent: ") + detailForUser(err));
     }
   }
 
@@ -1219,7 +1237,7 @@ function LibraryAgentsView() {
         ? `팀을 삭제했습니다.${source === "local" && !removal.sourceMovedToTrash ? " 원본 폴더는 휴지통 이동에 실패했습니다." : ""}`
         : `Team deleted.${source === "local" && !removal.sourceMovedToTrash ? " The source folder could not be moved to Trash." : ""}`);
     } catch (err) {
-      showToast((locale === "ko" ? "팀 제거 실패: " : "Failed to remove team: ") + String(err));
+      showToast((locale === "ko" ? "팀 제거 실패: " : "Failed to remove team: ") + detailForUser(err));
     }
   }
 
@@ -1454,6 +1472,14 @@ function LibraryAgentsView() {
             </div>
           )}
         </header>
+
+        {!sidebarCollapsed && rosterLoadFailed && (
+          <p role="alert" style={{ margin: "0 12px 8px", padding: "8px 10px", borderRadius: 8, background: "var(--fill-1)", color: "var(--ink)", fontSize: 12, lineHeight: 1.6 }}>
+            {locale === "ko"
+              ? "목록을 불러오지 못했습니다. 지워진 것이 아니라 읽지 못한 것입니다 — 잠시 뒤 다시 열어 보세요."
+              : "The list could not be loaded. Nothing was deleted — the read failed. Try again in a moment."}
+          </p>
+        )}
 
         {!sidebarCollapsed && (
           <div className="library-roster-tabs">
@@ -3416,7 +3442,7 @@ function RuntimeAssignmentPanel({
       await refreshOverrides();
       showToast(locale === "ko" ? "런타임 모델 지정이 저장되었습니다." : "Runtime model assignment saved.");
     } catch (err) {
-      showToast((locale === "ko" ? "런타임 지정 저장 실패: " : "Failed to save runtime assignment: ") + String(err));
+      showToast((locale === "ko" ? "런타임 지정 저장 실패: " : "Failed to save runtime assignment: ") + detailForUser(err));
     } finally {
       setSaving(false);
     }

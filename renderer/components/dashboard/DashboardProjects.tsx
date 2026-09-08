@@ -17,6 +17,11 @@ export function DashboardProjects() {
   const [projects, setProjects] = useState<Project[]>(() => readViewData<Project[]>("dashboard.projects")?.value ?? []);
   const [tasks, setTasks] = useState<CanonicalTask[]>(() => readViewData<CanonicalTask[]>("dashboard.tasks.200")?.value ?? []);
   const [agents, setAgents] = useState<InstalledAgent[]>(() => readViewData<InstalledAgent[]>("dashboard.team")?.value ?? []);
+  /*
+   * ★못 읽었는데 화면은 "첫 프로젝트를 연결하세요" 를 그렸다 (실측 2026-09-08).
+   *   프로젝트가 있는 사람에게 그건 거짓말이다 — 읽기 실패를 "없음" 으로 만들지 않는다.
+   */
+  const [loadFailed, setLoadFailed] = useState(false);
   useEffect(() => {
     const api = ipc();
     if (!api) return;
@@ -30,7 +35,8 @@ export function DashboardProjects() {
       setProjects(nextProjects);
       setTasks(nextTasks);
       setAgents(nextAgents);
-    }).catch(() => undefined);
+      setLoadFailed(false);
+    }).catch(() => { if (alive) setLoadFailed(true); });
     return () => { alive = false; };
   }, []);
   const taskMap = useMemo(() => new Map(projects.map((project) => [project.id, tasks.filter((task) => task.projectId === project.id)])), [projects, tasks]);
@@ -45,6 +51,10 @@ export function DashboardProjects() {
         : 0;
       return <button type="button" key={project.id} onClick={() => navigate(`/project/detail?id=${encodeURIComponent(project.id)}`)}><span data-active={active.length > 0 ? "true" : "false"} /><div><strong>{project.name}</strong><small>{latest ? taskTitleForDisplay(latest.title, ko) : (ko ? "아직 작업 없음" : "No tasks yet")}</small></div><em>{active.length > 0 ? `${active.length}${ko ? "개 진행" : " active"}` : `${agentCount}${ko ? "명" : ` agent${agentCount === 1 ? "" : "s"}`}`}</em></button>;
     })}</div>
-    {projects.length === 0 ? <button type="button" className="dashboard-projects-empty" onClick={() => navigate("/project/new")}>{ko ? "첫 프로젝트를 연결하세요" : "Connect your first project"}</button> : null}
+    {loadFailed
+      ? <p role="alert" className="dashboard-projects-empty">{ko
+        ? "프로젝트를 불러오지 못했습니다. 지워진 것이 아니라 읽지 못한 것입니다."
+        : "Projects could not be loaded. Nothing was deleted — the read failed."}</p>
+      : projects.length === 0 ? <button type="button" className="dashboard-projects-empty" onClick={() => navigate("/project/new")}>{ko ? "첫 프로젝트를 연결하세요" : "Connect your first project"}</button> : null}
   </section>;
 }

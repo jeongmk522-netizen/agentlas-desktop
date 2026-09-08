@@ -127,6 +127,8 @@ function NewAutomationPage() {
   const [chainAfter, setChainAfter] = useState("");
   const [allAutomations, setAllAutomations] = useState<Automation[]>([]);
   const [loaded, setLoaded] = useState(!editId);
+  /* ★읽기 실패를 "고를 것이 없음" 으로 그리지 않기 위한 표식 (실측 2026-09-08). */
+  const [loadFailed, setLoadFailed] = useState(false);
   const reviewUntouchedRef = useRef(true);
   const executionAiRef = useRef<HTMLDivElement>(null);
 
@@ -165,13 +167,27 @@ function NewAutomationPage() {
       return;
     }
     void (async () => {
-      const [ag, fm, autos, hub, projectRows] = await Promise.all([
-        api.team.list(),
-        api.firms.list(),
-        api.automations.list(),
-        api.marketplace.search("").catch(() => []),
-        api.projects.list(),
-      ]);
+      /*
+       * ★못 읽으면 대상·회사·프로젝트 고르는 목록이 전부 비고 화면은 "선택하세요" 만
+       *   남았다 (읽기 실패 실측 2026-09-08). 고를 것이 없는 것과 못 읽은 것은 다르다 —
+       *   앞의 경우 사용자는 만들 수 없다고 결론 내리고 떠난다.
+       */
+      let rows;
+      try {
+        rows = await Promise.all([
+          api.team.list(),
+          api.firms.list(),
+          api.automations.list(),
+          api.marketplace.search("").catch(() => []),
+          api.projects.list(),
+        ]);
+      } catch {
+        setLoadFailed(true);
+        setLoaded(true);
+        return;
+      }
+      setLoadFailed(false);
+      const [ag, fm, autos, hub, projectRows] = rows;
       const visible = visibleAgents(ag);
       // ★이 자동화가 이미 쓰고 있는 대상은 자기 편집기에서 빼지 않는다 — 빼면
       //   "유효한 대상이 없다"로 자기 자신을 저장 불가로 만든다(agent-visibility 주석 참조).
@@ -499,6 +515,14 @@ function NewAutomationPage() {
         onChangeCapture={() => { reviewUntouchedRef.current = false; }}
         onClickCapture={() => { reviewUntouchedRef.current = false; }}
       >
+        {loadFailed && (
+          <p role="alert" style={{ margin: "0 0 12px", padding: "9px 11px", borderRadius: 9, background: "var(--fill-1)", color: "var(--ink)", fontSize: 12, lineHeight: 1.6 }}>
+            {locale === "ko"
+              ? "에이전트·회사·프로젝트 목록을 불러오지 못했습니다. 없는 것이 아니라 읽지 못한 것입니다 — 잠시 뒤 다시 열어 보세요."
+              : "The agent, company, and project lists could not be loaded. They are not missing — the read failed. Try again in a moment."}
+          </p>
+        )}
+
         <OneSuggestionReviewHandoffBanner surface="automation" locale={locale} onReviewSeed={applyOneReviewSeed} />
 
         <Field label={t("auto.field.name")}>

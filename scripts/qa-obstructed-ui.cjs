@@ -383,6 +383,22 @@ async function main() {
          */
         window.localStorage.setItem("agentlas.work.firstRunOnboarding.v3", "1");
       }, lang);
+      /*
+       * ★어두운 화면을 재고 싶으면 UI_QA_FORCE_THEME=dark.
+       *   지금 제품의 다크 테마는 오너 지시로 꺼져 있다(renderer/lib/theme.tsx:
+       *   DARK_THEME_ENABLED=false — 색을 직접 박아 쓴 자리가 많아 글자와 상자가
+       *   같은 색이 되는 곳이 있다). 그 자리를 실제로 세려면 강제로 켜서 재야 한다.
+       *   앱이 계속 light 로 되돌리므로 되돌릴 때마다 다시 건다.
+       */
+      if (process.env.UI_QA_FORCE_THEME) {
+        await context.addInitScript((theme) => {
+          const force = () => { document.documentElement.dataset.theme = theme; };
+          force();
+          new MutationObserver(() => {
+            if (document.documentElement.dataset.theme !== theme) force();
+          }).observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
+        }, process.env.UI_QA_FORCE_THEME);
+      }
       const page = await context.newPage();
       try {
         await page.goto(`${baseUrl}${screen.url}`, { waitUntil: "domcontentloaded" });

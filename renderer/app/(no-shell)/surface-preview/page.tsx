@@ -1,5 +1,12 @@
 "use client";
 import { Suspense, useCallback, useEffect, useMemo, useState, type CSSProperties } from "react";
+
+/* 이 화면은 locale 을 받지 않는다 — 문서 언어를 본다(전역 i18n 이 <html lang> 을 맞춘다). */
+function previewIsKorean(): boolean {
+  if (typeof document === "undefined") return false;
+  return (document.documentElement.lang || "").toLowerCase().startsWith("ko");
+}
+
 import { notFound, useSearchParams } from "next/navigation";
 import { ipc } from "@/lib/ipc";
 import type { AgentlasSurfaceAction, AgentlasSurfaceManifest, JsonObject } from "@/lib/types";
@@ -258,8 +265,13 @@ function SurfacePreviewInner() {
       return;
     }
     if (action.type === "copy") {
-      void navigator.clipboard.writeText(action.prompt || JSON.stringify(activeSurface.manifest, null, 2));
-      setMessage("Copied action payload.");
+      /*
+       * ★복사가 끝나기도 전에 "Copied" 라고 말하고 있었다 (실측 2026-09-08) —
+       *   실패해도 성공이라고 말한다. 그리고 영어로만 말했다.
+       */
+      void navigator.clipboard.writeText(action.prompt || JSON.stringify(activeSurface.manifest, null, 2))
+        .then(() => setMessage(previewIsKorean() ? "클립보드에 복사했습니다." : "Copied to the clipboard."))
+        .catch(() => setMessage(previewIsKorean() ? "클립보드에 복사하지 못했습니다." : "Could not copy to the clipboard."));
       return;
     }
     setLastAction(`${action.label} (${action.type})`);

@@ -862,6 +862,8 @@ export default function BuildPage() {
                       void startBuild(active ? { kind: active.kind, backend: active.backend, source: active.source, model: active.model ?? undefined, longContext: active.longContextEnabled, effort: active.effort ?? undefined } : undefined);
                     }}
                     disabled={Boolean(startBlocker)}
+                    /* 막는 사유 문장이 아래에 있는데 단추에는 없었다 — 같은 문장을 붙인다. */
+                    title={startBlocker || undefined}
                     className="build-primary-button titlebar-nodrag"
                   >
                     <IconWand size={15} /> {ko ? "딥인터뷰로 빌드 시작" : "Start build (deep interview)"}

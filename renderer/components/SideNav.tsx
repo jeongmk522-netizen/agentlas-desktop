@@ -311,6 +311,8 @@ export function SideNav({
         >
           <IconSearch size={14} />
           <input
+            /* 초점 링은 감싼 상자(.sidenav-search:focus-within)가 그린다. */
+            data-focus-ring="wrapper"
             value={query}
             onChange={(e) => {
               setQuery(e.target.value);

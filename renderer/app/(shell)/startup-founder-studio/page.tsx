@@ -1,6 +1,7 @@
 "use client";
 // Startup opens the real Hub cloud package GUI. The renderer only hosts the launcher URL.
 import { useEffect, useRef, useState } from "react";
+import { detailForUser, looksLikeMachineText } from "@/lib/invocation-failure";
 import type { CSSProperties } from "react";
 import Link from "next/link";
 import { IconChevronRight, IconRefresh } from "@/components/Icon";
@@ -51,7 +52,13 @@ export default function StartupFounderStudioPage() {
         timeout,
       ]);
     } catch (e) {
-      res = { ok: false, reason: (e as Error).message };
+      /* ★엔진 문구가 식별자면 화면에 올리지 않는다 (실측 2026-09-08). */
+      res = {
+        ok: false,
+        reason: detailForUser(e) || (locale === "ko"
+          ? "스튜디오 서버를 시작하지 못했습니다."
+          : "The studio server could not be started."),
+      };
     }
 
     if (res?.ok && res.url) {
@@ -65,7 +72,9 @@ export default function StartupFounderStudioPage() {
       return;
     }
 
-    setReason(res?.reason ?? (locale === "ko" ? "스튜디오를 시작할 수 없습니다." : "Unable to start the studio."));
+    const fallbackReason = locale === "ko" ? "스튜디오를 시작할 수 없습니다." : "Unable to start the studio.";
+    const shownReason = res?.reason ?? fallbackReason;
+    setReason(looksLikeMachineText(shownReason) ? fallbackReason : shownReason);
     setPhase("error");
   };
 

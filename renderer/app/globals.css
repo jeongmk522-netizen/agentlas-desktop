@@ -673,6 +673,47 @@ a:hover {
   border-radius: 4px;
 }
 
+/*
+ * ★그런데 위 규칙은 **인라인 style 을 못 이긴다** (키보드 실측 2026-09-08).
+ *   이 앱의 입력칸 상당수가 style={{ outline: "none" }} 로 쓰여 있고, 인라인은
+ *   어떤 선택자보다 세다 — 그래서 전역 초점 링이 17자리에서 조용히 죽어 있었다.
+ *   문서 스튜디오의 제목·본문·도표 메모, 자동화 만들기의 입력칸들이 그랬다.
+ *   키보드 초점일 때만 !important 로 되살린다(마우스 클릭에는 영향 없음).
+ *
+ *   감싼 상자가 대신 표시를 내는 곳(작성창 등)은 data-focus-ring="wrapper" 로
+ *   빠진다 — 거기는 이미 보이고, 안쪽에 링을 더 그리면 지저분해진다.
+ */
+:where(input, textarea, select):focus-visible:not([data-focus-ring="wrapper"]) {
+  outline: 2px solid var(--accent) !important;
+  outline-offset: 1px;
+}
+
+/*
+ * ★마우스를 올려도 **아무 반응이 없는 단추**가 화면마다 수십 개였다
+ *   (실제로 hover 시켜 재 봄, 2026-09-08: One 8 / Work 11 / 대시보드 11 / 설정 12).
+ *   전역 button 리셋이 네이티브 hover 를 없앴는데, 그 뒤로 각 화면이 자기 hover 를
+ *   따로 쓰지 않으면 그 단추는 그냥 죽은 글자로 보인다. 초점 링과 같은 계열의 구멍이다.
+ *
+ * 규칙 하나로 바닥값을 깐다:
+ *   - currentColor 9% 를 **덧칠**한다(background-image). 배경색을 갈아엎지 않으므로
+ *     흰 바탕 단추도, 강조색으로 꽉 찬 단추도 각자 자연스럽게 어두워/밝아진다.
+ *   - 인라인 style 의 `background` 축약형이 background-image 를 꺼 버리므로 !important
+ *     가 필요하다. hover 에만 걸리므로 평상시 모습은 건드리지 않는다.
+ *   - 자기 hover 를 이미 가진 곳은 그 규칙이 그대로 이긴다(색·테두리·그림자).
+ *     덧칠까지 싫으면 data-hover="own" 을 붙여 뺀다.
+ */
+:where(button, [role="button"], [role="tab"], [role="menuitem"], [role="option"], summary, a[href]):hover:not(:disabled):not([aria-disabled="true"]):not([data-hover="own"]) {
+  background-image: linear-gradient(
+    color-mix(in srgb, currentColor 9%, transparent),
+    color-mix(in srgb, currentColor 9%, transparent)
+  ) !important;
+}
+
+/* 누를 수 있으면 손가락 커서가 뜬다 — 이것도 화면마다 빠져 있었다. */
+:where(button, [role="button"], [role="tab"], [role="menuitem"], [role="option"], summary):not(:disabled):not([aria-disabled="true"]) {
+  cursor: pointer;
+}
+
 .agentlas-tour-backdrop {
   position: fixed;
   inset: 0;
@@ -1516,6 +1557,15 @@ a:hover {
   color: rgba(255, 255, 255, 0.68);
 }
 
+/* ★키보드로 들어와도 표시가 없던 자리 (실측 2026-09-08) — 사이드바 검색과 같은 규칙. */
+.dashboard-org-search {
+  transition: border-color 140ms ease, box-shadow 140ms ease;
+}
+.dashboard-org-search:focus-within {
+  border-color: color-mix(in srgb, var(--accent) 48%, var(--paper-edge));
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 9%, transparent);
+}
+
 .dashboard-org-search input {
   min-width: 0;
   width: 100%;
@@ -2190,6 +2240,26 @@ button[data-dashboard-import="true"]:disabled {
   gap: 9px;
 }
 
+/*
+ * ★못 지우는 이유 문구는 **자기 줄**을 갖는다 (2026-09-08 재측정).
+ *   행은 5칸 격자인데 이 문구가 붙으면 항목이 6개가 된다(fieldset 이 display:contents 라
+ *   그 안의 label 두 개가 각각 한 칸이다). 그래서 문구가 42px 칸으로 밀리고 × 는 격자
+ *   밖으로 나갔다. 칸을 하나 더 열어 봤더니 좁은 창(1180px)에서 그 칸이 8px 로 찌그러져
+ *   문구가 다시 안 보였다 — 자리를 다투게 두면 어느 폭에선가는 진다.
+ *   문구는 아래 줄 전체를 쓰고, 조작 단추는 첫 줄 마지막 칸에 못박는다.
+ */
+.dashboard-runtime-pool-list li[data-has-note="true"] .dashboard-runtime-pool-actions {
+  grid-column: 5;
+  grid-row: 1;
+}
+
+.dashboard-runtime-pool-list li[data-has-note="true"] .dashboard-runtime-pool-note {
+  grid-column: 1 / -1;
+  grid-row: 2;
+  text-align: left;
+  padding-left: 61px;
+}
+
 .dashboard-runtime-pool-columns {
   padding: 8px 10px;
   border: 1px solid var(--dash-line);
@@ -2579,8 +2649,13 @@ button[data-dashboard-import="true"]:disabled {
   /* ★이 문구가 행을 두 줄로 접어 × 를 아래로 내렸다 (QA 실측 2026-09-08, 창 1240px).
      이유를 보여 주려다 조작 단추를 밀어내면 고친 것이 아니다.
      줄어들 수 있게 하고(min-width:0), 좁으면 말줄임 — 전문은 title 이 말한다. */
+  /* ★2026-09-08 재측정: min-width:0 만으로는 부족했다. margin-left:auto 가 이 칸을
+     **내용 크기로 굳혀** 격자 칸보다 124px 로 커졌고, 모듈 오른쪽으로 54px 삐져나가
+     말줄임이 아예 걸리지 않았다(넘침이 hidden 이라 스크롤도 안 된다).
+     칸에 꽉 채우고 글자만 오른쪽으로 붙인다 — 그래야 좁아지면 말줄임이 걸린다. */
   min-width: 0;
-  margin-left: auto;
+  max-width: 100%;
+  text-align: right;
   padding-right: 8px;
   overflow: hidden;
   color: var(--muted-deep);
@@ -4643,6 +4718,18 @@ button[data-toggle-state="off"] {
     grid-template-columns: 32px minmax(0, 1fr);
   }
 
+  /* 2칸 격자에서는 위에서 못박은 칸 번호가 없다 — 흐름대로 둔다. */
+  .dashboard-runtime-pool-list li[data-has-note="true"] .dashboard-runtime-pool-actions,
+  .dashboard-runtime-pool-list li[data-has-note="true"] .dashboard-runtime-pool-note {
+    grid-column: auto;
+    grid-row: auto;
+  }
+
+  .dashboard-runtime-pool-list li[data-has-note="true"] .dashboard-runtime-pool-note {
+    grid-column: 1 / -1;
+    padding-left: 0;
+  }
+
   .dashboard-runtime-pool-fields {
     grid-column: 2;
     display: grid;
@@ -4719,6 +4806,31 @@ button[data-toggle-state="off"] {
 
 /* Web design.md alignment: keep portal body on Agentlas paper/.rd tokens.
    Pinterest refs only inform layout density, not palette. */
+/*
+ * ★대시보드 토큰(--dash-*)이 .dashboard-root 안에서만 정의돼 있었다 (실측 2026-09-08).
+ *   그런데 그 토큰을 쓰는 부품(모델 고르기 단추 등)은 **다른 화면에서도 쓰인다.**
+ *   자동화 새로 만들기 화면에서 재 보니 `border: 1px solid var(--dash-line)` 전체가
+ *   무효가 돼 **테두리 굵기 0** — 누를 수 있는 단추가 그냥 글자 한 줄로 보였고,
+ *   초점 링(box-shadow)도 같은 이유로 사라져 키보드로 어디 있는지 알 수 없었다.
+ *   기본값을 뿌리에 둔다. .dashboard-root 는 그대로 덮어쓴다.
+ */
+:root {
+  --dash-bg: var(--white);
+  --dash-surface: var(--rd-surface);
+  --dash-surface-2: var(--rd-surface-2);
+  --dash-ink: var(--rd-ink);
+  --dash-ink-soft: var(--rd-ink-2);
+  --dash-muted: var(--rd-ink-3);
+  --dash-line: var(--rd-hair);
+  --dash-line-strong: var(--rd-hair-2);
+  --dash-teal: var(--rd-accent);
+  --dash-teal-2: var(--rd-accent);
+  --dash-teal-3: var(--rd-accent-text);
+  --dash-amber: var(--rd-accent-2);
+  --dash-red: var(--rd-err);
+  --dash-shadow: var(--rd-shadow-1);
+}
+
 .dashboard-root {
   --dash-bg: var(--white);
   --dash-surface: var(--rd-surface);
@@ -9458,6 +9570,19 @@ button[data-toggle-state="on"] {
   border-radius: 9px;
   background: var(--paper-2, var(--fill-1));
   color: var(--muted-deep);
+}
+/*
+ * ★Tab 으로 여기 들어와도 **아무 표시가 안 났다** (키보드 실측 2026-09-08).
+ *   input 이 outline:none 이고 감싼 상자에는 :focus-within 이 없었다 — 깜빡이는
+ *   커서 말고는 초점이 어디 있는지 알 길이 없다. 채팅 작성창(.chat-input-shell)과
+ *   Hub 검색(.hub-borrow-search)은 이미 같은 규칙을 갖고 있다. 모양을 맞춘다.
+ */
+.sidenav-search {
+  transition: border-color 140ms ease, box-shadow 140ms ease;
+}
+.sidenav-search:focus-within {
+  border-color: color-mix(in srgb, var(--accent) 48%, var(--paper-edge));
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 9%, transparent);
 }
 .sidenav-search input {
   flex: 1;

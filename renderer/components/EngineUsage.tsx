@@ -265,6 +265,8 @@ export function EngineUsage() {
     }
   }, []);
 
+  const [connectionsLoadError, setConnectionsLoadError] = useState(false);
+
   const loadConnections = useCallback(async () => {
     const api = ipc();
     if (!api) return;
@@ -275,8 +277,14 @@ export function EngineUsage() {
       ]);
       setRuntimes(rt);
       setEnvKeys(new Set(env.filter((e: EnvVarMeta) => e.hasValue).map((e) => e.key)));
+      setConnectionsLoadError(false);
     } catch {
-      // ignore
+      /*
+       * ★조용히 삼키면 연결 목록이 통째로 사라진 채 아무 말이 없다
+       *   (읽기 실패 실측 2026-09-08: 대시보드에서 "1/7 · 지휘" 가 소리 없이 없어졌다).
+       *   연결이 없는 것과 못 읽은 것은 사용자에게 완전히 다른 사실이다.
+       */
+      setConnectionsLoadError(true);
     }
   }, []);
 
@@ -696,6 +704,13 @@ export function EngineUsage() {
         <button onClick={() => void loadUsage(true)} className="titlebar-nodrag dashboard-refresh-button" title={ko ? "새로고침" : "Refresh"}>↻</button>
       </div>
 
+      {connectionsLoadError && (
+        <div className="dashboard-usage-load-error" role="alert">
+          {ko
+            ? "연결 목록을 불러오지 못했습니다. 연결이 없는 것이 아니라 읽지 못한 것입니다."
+            : "The connection list could not be loaded. Nothing was disconnected — the read failed."}
+        </div>
+      )}
       {usageLoadError && (
         <div className="dashboard-usage-load-error" role="alert">
           <span>{ko ? "사용량 상태를 읽지 못함" : "Could not load usage status"}</span>

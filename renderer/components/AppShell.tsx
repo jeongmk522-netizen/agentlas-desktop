@@ -693,6 +693,20 @@ function BugReportModal({ open, onClose }: { open: boolean; onClose: () => void 
     { key: "high", label: ko ? "심각함" : "High" },
   ];
 
+  /*
+   * ★모달인데 나가는 길이 **바깥 클릭 하나뿐**이었다 (대화상자 실측 2026-09-08).
+   *   키보드만 쓰면 갇힌다 — 모달은 어디서나 Escape 로 닫혀야 한다.
+   */
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key !== "Escape" || event.metaKey || event.ctrlKey || event.altKey) return;
+      event.stopPropagation();
+      onClose();
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
   return (
     <div
       className="titlebar-nodrag"

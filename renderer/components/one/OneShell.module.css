@@ -1363,6 +1363,9 @@
 }
 
 .messageBody {
+  /* ★격자 항목의 자동 최소 크기(min-content)가 max-width 를 이긴다 — 긴 코드 한 줄이
+     말풍선을 2,681px 로 부풀려 대화 열 밖으로 나갔다(실측 2026-09-08). 0 으로 못박는다. */
+  min-width: 0;
   max-width: min(790px, 88%);
   color: var(--ink);
   font-size: 14px;

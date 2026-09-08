@@ -561,10 +561,22 @@ function ChatInputComponent({
 
   // busy는 제외 — 실행 중에도 Enter/전송 버튼으로 steering 메시지를 보낼 수 있다. 부모가
   // 큐에 쌓아 현재 턴 뒤에 전달한다. 중지 요청 뒤에만 새 지시를 잠시 막아 의도를 충돌시키지 않는다.
-  const submitDisabled =
-    (!input.trim() && images.length === 0 && fileGrants.length === 0 && pastedTexts.length === 0) ||
-    disabled ||
-    (busy && (stopRequested || stagedSteering !== null));
+  const nothingToSend =
+    !input.trim() && images.length === 0 && fileGrants.length === 0 && pastedTexts.length === 0;
+  const submitDisabled = nothingToSend || disabled || (busy && (stopRequested || stagedSteering !== null));
+  /*
+   * ★보내기가 회색인데 **왜인지 알 길이 없었다** (마우스 실측 2026-09-08).
+   *   "아무것도 안 썼다" 는 보면 알지만, 나머지 세 사유는 화면에 아무 말도 없다:
+   *   작성창이 잠긴 상태, 중지 요청 중, 이미 보낼 지시가 대기 중.
+   *   회색 단추는 그 자체로 막다른 길이라 사유를 붙인다.
+   */
+  const submitDisabledReason = !submitDisabled || nothingToSend
+    ? null
+    : disabled
+      ? (locale === "ko" ? "지금은 이 대화에 보낼 수 없습니다." : "This conversation cannot accept messages right now.")
+      : stopRequested
+        ? (locale === "ko" ? "중지를 요청했습니다. 멈춘 뒤에 보낼 수 있습니다." : "Stop was requested. You can send once it has stopped.")
+        : (locale === "ko" ? "보낼 지시가 이미 대기 중입니다. 그 지시가 전달된 뒤에 보낼 수 있습니다." : "An instruction is already queued. You can send again once it is delivered.");
   const hepHint = [...hepToggles]
     .map((id) => {
       const toggle = HEP_TOGGLES.find((t) => t.id === id);
@@ -1710,6 +1722,8 @@ function ChatInputComponent({
           }
           rows={1}
           disabled={disabled}
+          /* 초점 링은 감싼 작성창(.chat-input-shell:focus-within)이 그린다. */
+          data-focus-ring="wrapper"
           style={{
             width: "100%",
             border: "none",
@@ -2015,12 +2029,14 @@ function ChatInputComponent({
                     data-chat-steering-send={busy ? "true" : undefined}
                     onClick={submit}
                     disabled={submitDisabled}
+                    /* 아무것도 안 썼을 때 회색인 것은 사유를 적을 필요가 없다(보면 안다). */
+                    data-disabled-reason={submitDisabled && nothingToSend ? "empty-input" : undefined}
                     aria-label={busy
                       ? (locale === "ko" ? "모델 중단 없이 제출" : "Submit without stopping the model")
                       : t("chatinput.send")}
-                    title={busy
+                    title={submitDisabledReason ?? (busy
                       ? (locale === "ko" ? "현재 작업을 중단하지 않고 다음 지시를 보냅니다" : "Sends the next instruction without stopping the model")
-                      : undefined}
+                      : undefined)}
                     style={{
                       width: 38,
                       height: 38,

@@ -304,6 +304,9 @@ export default function CloudAgentPublishPage() {
               busyLabel={ko ? "안전 검사 후 저장 중..." : "Checking and saving..."}
               busy={running === "private-link"}
               disabled={Boolean(running) || (!rootGrant && !selectedRegistered)}
+              disabledReason={running
+                ? (ko ? "다른 올리기가 끝나면 누를 수 있습니다." : "Available once the current upload finishes.")
+                : (ko ? "먼저 위에서 올릴 폴더를 고르거나 등록된 에이전트를 선택하세요." : "Choose a folder above, or pick a registered agent, first.")}
               primary
               onClick={() => void upload("private-link")}
             />
@@ -316,6 +319,9 @@ export default function CloudAgentPublishPage() {
               busyLabel={ko ? "공개 검사 후 발행 중..." : "Reviewing and publishing..."}
               busy={running === "marketplace"}
               disabled={Boolean(running) || (!rootGrant && !selectedRegistered)}
+              disabledReason={running
+                ? (ko ? "다른 올리기가 끝나면 누를 수 있습니다." : "Available once the current upload finishes.")
+                : (ko ? "먼저 위에서 올릴 폴더를 고르거나 등록된 에이전트를 선택하세요." : "Choose a folder above, or pick a registered agent, first.")}
               onClick={() => void upload("marketplace")}
             />
           </div>
@@ -628,6 +634,7 @@ function CloudAction({
   busyLabel,
   busy,
   disabled,
+  disabledReason,
   primary = false,
   onClick,
 }: {
@@ -637,6 +644,8 @@ function CloudAction({
   busyLabel: string;
   busy: boolean;
   disabled: boolean;
+  /* 회색 단추는 그 자체로 막다른 길이다 — 사유 없이 끄지 않는다. */
+  disabledReason?: string;
   primary?: boolean;
   onClick: () => void;
 }) {
@@ -651,6 +660,7 @@ function CloudAction({
       <button
         type="button"
         disabled={disabled}
+        title={disabled ? disabledReason : undefined}
         onClick={onClick}
         style={{
           ...actionButton,

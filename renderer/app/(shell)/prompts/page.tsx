@@ -683,6 +683,8 @@ function PromptDetailDialog({
     | null
   >(null);
   const [copied, setCopied] = useState(false);
+  /* ★복사가 실패해도 아무 말이 없던 자리 (실측 2026-09-08). */
+  const [copyFailed, setCopyFailed] = useState(false);
   const [copyError, setCopyError] = useState(false);
   const [detailLoadError, setDetailLoadError] = useState(false);
   const [startBusy, setStartBusy] = useState(false);
@@ -902,6 +904,9 @@ function PromptDetailDialog({
       setCopied(true);
       setTimeout(() => setCopied(false), 1500);
     } catch {
+      /* ★실패해도 아무 말이 없었다 (실측 2026-09-08) — 복사됨 표시만 안 뜨고 끝이었다. */
+      setCopyFailed(true);
+      setTimeout(() => setCopyFailed(false), 1800);
       setCopied(false);
       setCopyError(true);
     }
@@ -1038,7 +1043,11 @@ function PromptDetailDialog({
             )}
             <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, flexWrap: "wrap" }}>
               <button type="button" className="btn sm" onClick={() => void copyBody()}>
-                {copied ? (ko ? "복사됨" : "Copied") : ko ? "복사" : "Copy"}
+                {copied
+                  ? (ko ? "복사됨" : "Copied")
+                  : copyFailed
+                    ? (ko ? "복사 실패" : "Copy failed")
+                    : ko ? "복사" : "Copy"}
               </button>
               <button
                 type="button"

@@ -38,3 +38,45 @@ export function isChatBusyFailure(error: unknown): boolean {
   const message = failureMessage(error);
   return CHAT_BUSY_FRAGMENTS.some((fragment) => message.includes(fragment));
 }
+
+/**
+ * 엔진 문구가 **사람 문장인지** 본다.
+ *
+ * ★왜 (실측 2026-09-08): 엔진의 실패 문구 상당수가 문장이 아니라 식별자다 —
+ *   `untrusted-site-publish-ipc-sender`, `goal_contract_not_created`,
+ *   `native-publish-approval-contract-invalid`. 설정의 모바일 연결 패널이 그것을
+ *   **그대로** 화면에 그리고 있었다(단추 7개에서 재현). 사용자는 그걸 읽고
+ *   무엇을 해야 할지 알 수 없다.
+ */
+export function looksLikeMachineText(text: string): boolean {
+  const value = text.trim();
+  if (!value) return true;
+  // 공백 없는 kebab/snake 식별자
+  if (/^[a-z0-9]+([-_][a-z0-9]+)+$/i.test(value)) return true;
+  // 한 낱말짜리 영문 토큰
+  if (!/\s/.test(value) && /^[A-Za-z0-9_.:-]+$/.test(value)) return true;
+  return false;
+}
+
+/**
+ * 사람 문장 + (사람이 읽을 만한 경우에만) 엔진이 말한 이유.
+ * 기계 식별자는 화면에 올리지 않는다 — 대신 준비된 문장만 보여 준다.
+ */
+export function humanFailure(error: unknown, human: string): string {
+  const detail = failureMessage(error);
+  if (!detail || looksLikeMachineText(detail)) return human;
+  return `${human}\n\n${detail}`;
+}
+
+/**
+ * 사람 문장 뒤에 **덧붙여도 되는** 상세 문구만 돌려준다.
+ *
+ * ★`${String(err)}` 로 붙이던 자리가 화면에 그대로 식별자를 그렸다
+ *   (실측 2026-09-08: 에이전트 가져오기 실패 뒤에 `Error: machine-token...`).
+ *   String(err) 는 "Error: " 접두사까지 그대로 남긴다.
+ *   기계 문자열이면 빈 문자열을 준다 — 붙일 것이 없다는 뜻이다.
+ */
+export function detailForUser(error: unknown): string {
+  const detail = failureMessage(error);
+  return !detail || looksLikeMachineText(detail) ? "" : detail;
+}

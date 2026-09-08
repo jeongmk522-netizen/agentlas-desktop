@@ -636,9 +636,13 @@ function Shell({
       <label className="dashboard-org-search">
         <IconSearch size={14} />
         <input
+          /* 초점 링은 감싼 상자(.dashboard-org-search:focus-within)가 그린다. */
+          data-focus-ring="wrapper"
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           placeholder={t("org.search.placeholder")}
+          /* 감싼 label 에 글자가 없어(돋보기 아이콘뿐) 이름이 비어 있었다 — 실측 2026-09-08. */
+          aria-label={t("org.search.placeholder")}
         />
       </label>
       <button

@@ -2,7 +2,7 @@
 "use client";
 
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type DragEvent, type PointerEvent as ReactPointerEvent } from "react";
-import { failureMessage } from "@/lib/invocation-failure";
+import { detailForUser, failureMessage } from "@/lib/invocation-failure";
 import { taskTitleForDisplay } from "@/lib/task-title";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
@@ -463,7 +463,7 @@ function ProjectPage() {
       if (!project) return;
       setExternalSessions(await api.externalCliSessions.list({ projectId: project.id, limit: 80 }));
     } catch (error) {
-      setExternalSessionsError(locale === "ko" ? `세션을 읽지 못했습니다: ${String(error)}` : `Could not read sessions: ${String(error)}`);
+      setExternalSessionsError(locale === "ko" ? `세션을 읽지 못했습니다: ${detailForUser(error)}` : `Could not read sessions: ${detailForUser(error)}`);
     } finally {
       setExternalSessionsLoading(false);
     }
@@ -488,7 +488,7 @@ function ProjectPage() {
       window.dispatchEvent(new Event("agentlas:tasks-changed"));
       navigate(`/workspace/task?id=${encodeURIComponent(target.chatId)}&task=${encodeURIComponent(target.taskId)}&projectId=${encodeURIComponent(project.id)}`);
     } catch (error) {
-      setExternalSessionsError(locale === "ko" ? `가져오지 못했습니다: ${String(error)}` : `Could not import this session: ${String(error)}`);
+      setExternalSessionsError(locale === "ko" ? `가져오지 못했습니다: ${detailForUser(error)}` : `Could not import this session: ${detailForUser(error)}`);
       setExternalSessionImporting(null);
     }
   }

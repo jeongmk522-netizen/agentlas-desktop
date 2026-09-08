@@ -1,6 +1,7 @@
 // 자동화 상세 — 메타데이터 + 토글 + 삭제.
 "use client";
 import { Suspense, useEffect, useState } from "react";
+import { navigate } from "@/lib/navigation";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { ipc } from "@/lib/ipc";
@@ -113,6 +114,19 @@ function AutomationDetailPage() {
               ? locale === "en" ? "Loading automation…" : "자동화를 불러오는 중입니다…"
               : error || (locale === "en" ? "Automation could not be opened." : "자동화를 열 수 없습니다.")}</span>
             {loading && <LoadingEstimate locale={locale} operationKey="desktop-automation-detail" expectedSeconds={[1, 20]} />}
+            {/*
+              * ★열지 못했을 때 화면에 **누를 것이 하나도 없었다** (빈 상태 실측 2026-09-08).
+              *   문장 하나만 남아 사용자는 돌아갈 길조차 없다. 나가는 길을 준다.
+              */}
+            {!loading && (
+              <button
+                type="button"
+                onClick={() => navigate("/automation")}
+                style={{ justifySelf: "start", marginTop: 4, padding: "7px 12px", borderRadius: 9, border: "1px solid var(--paper-edge)", background: "var(--paper)", color: "var(--ink)", fontSize: 12.5, fontWeight: 700 }}
+              >
+                {locale === "en" ? "Back to automations" : "자동화 목록으로"}
+              </button>
+            )}
           </div>
         </section>
       </div>

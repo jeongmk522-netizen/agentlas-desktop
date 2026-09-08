@@ -60,10 +60,18 @@ const AGENT_FIRST_ACTIONS = new Set([
   "generate",
 ]);
 
+/*
+ * ★이 앱에서 가장 되돌리기 어려운 물음 — **결제·전체 권한 승인** — 이 영어로만 떠 있었다
+ *   (실측 2026-09-08). 화면 문구 훑기는 이 자리를 못 본다: 네이티브 대화상자라
+ *   DOM 에 없고, 문구가 화면 파일이 아니라 계산 함수 안에 있다.
+ *   locale 은 기본값 없이 **받도록** 한다 — 빠뜨리면 타입에서 잡힌다.
+ */
 export function surfaceApprovalRequirement(
   surface: SurfaceApprovalSubject,
   action: AgentlasSurfaceAction,
+  locale: "ko" | "en",
 ): SurfaceApprovalRequirement | null {
+  const ko = locale === "ko";
   const guarded = MUTATING_ACTIONS.has(action.type) || DELEGATED_ACTIONS.has(action.type);
   if (!guarded) return null;
 
@@ -153,36 +161,58 @@ export function surfaceApprovalRequirement(
         : null,
   };
 
-  const lines = [
-    `${action.label} needs Agentlas OS approval.`,
-    "",
-    capabilities.length
-      ? `Declared capabilities: ${capabilities.map((capability) => `${capability.type}:${capability.id}`).join(", ")}`
-      : "Declared capabilities: none",
-    budget
-      ? `Budget: ${currency} ${spent}${limit !== undefined ? `/${limit}` : ""}${
-          jobEstimate ? `, queued estimate ${jobEstimate}` : ""
-        }`
-      : "Budget: not declared",
+  const capabilityList = capabilities.map((capability) => `${capability.type}:${capability.id}`).join(", ");
+  const budgetLine = budget
+    ? `${currency} ${spent}${limit !== undefined ? `/${limit}` : ""}${
+        jobEstimate ? (ko ? `, 대기 중 예상 ${jobEstimate}` : `, queued estimate ${jobEstimate}`) : ""
+      }`
+    : "";
+  const paymentLine =
     payment && action.type === "request-payment-approval"
-      ? `Payment: ${stringValue(payment.merchant) || "merchant not declared"}, ${
+      ? `${stringValue(payment.merchant) || (ko ? "판매자 미표기" : "merchant not declared")}, ${
           payment.quoteRequired === true
-            ? "quoted at checkout"
-            : `${stringValue(payment.currency) || "currency"} ${stringValue(payment.amount) || "amount"}`
-        }, ${stringValue(payment.recurrence) || "unknown recurrence"}`
-      : "",
-    fullPermission && !fullWithoutCapabilities
-      ? "Warning: this action asks for full permission. Review the target, tools, and next step before approving."
-      : "",
-    fullWithoutCapabilities
-      ? "Warning: this action asks for full permission but the manifest declares no capability scope."
-      : "",
-    delegatedWithoutCapabilities
-      ? "Warning: this delegated action has no declared capability scope."
-      : "",
-    "",
-    "Approve to continue?",
-  ].filter(Boolean);
+            ? (ko ? "결제 화면에서 금액 확정" : "quoted at checkout")
+            : `${stringValue(payment.currency) || (ko ? "통화" : "currency")} ${stringValue(payment.amount) || (ko ? "금액" : "amount")}`
+        }, ${stringValue(payment.recurrence) || (ko ? "반복 여부 미상" : "unknown recurrence")}`
+      : "";
+
+  const lines = ko
+    ? [
+        `${action.label} — 승인이 필요합니다.`,
+        "",
+        capabilities.length ? `허용 범위: ${capabilityList}` : "허용 범위: 선언된 것 없음",
+        budgetLine ? `예산: ${budgetLine}` : "예산: 선언되지 않음",
+        paymentLine ? `결제: ${paymentLine}` : "",
+        fullPermission && !fullWithoutCapabilities
+          ? "주의: 이 작업은 전체 권한을 요청합니다. 승인하기 전에 대상·사용할 도구·다음 단계를 확인하세요."
+          : "",
+        fullWithoutCapabilities
+          ? "주의: 전체 권한을 요청하면서 허용 범위는 하나도 선언하지 않았습니다."
+          : "",
+        delegatedWithoutCapabilities
+          ? "주의: 대신 처리하는 작업인데 허용 범위가 선언되어 있지 않습니다."
+          : "",
+        "",
+        "승인하고 계속할까요?",
+      ].filter(Boolean)
+    : [
+        `${action.label} needs Agentlas OS approval.`,
+        "",
+        capabilities.length ? `Declared capabilities: ${capabilityList}` : "Declared capabilities: none",
+        budgetLine ? `Budget: ${budgetLine}` : "Budget: not declared",
+        paymentLine ? `Payment: ${paymentLine}` : "",
+        fullPermission && !fullWithoutCapabilities
+          ? "Warning: this action asks for full permission. Review the target, tools, and next step before approving."
+          : "",
+        fullWithoutCapabilities
+          ? "Warning: this action asks for full permission but the manifest declares no capability scope."
+          : "",
+        delegatedWithoutCapabilities
+          ? "Warning: this delegated action has no declared capability scope."
+          : "",
+        "",
+        "Approve to continue?",
+      ].filter(Boolean);
 
   const persist =
     capabilities.length > 0 &&

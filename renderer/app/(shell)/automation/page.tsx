@@ -255,6 +255,9 @@ export default function AutomationListPage() {
           <button
             onClick={() => void installFromHub()}
             disabled={installing || !hubSlug.trim()}
+            /* 회색인 이유를 말한다 — 주소를 아직 안 쓴 것은 보면 안다. */
+            data-disabled-reason={!installing && !hubSlug.trim() ? "empty-input" : undefined}
+            title={installing ? (locale === "en" ? "Fetching the automation…" : "자동화를 받는 중입니다…") : undefined}
             style={{
               padding: "9px 14px", borderRadius: "var(--radius-md)", border: "1px solid var(--paper-edge)",
               background: "var(--paper)", color: "var(--ink)", fontSize: 13,

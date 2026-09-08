@@ -802,6 +802,13 @@ export function RuntimeControl() {
                   data-runtime-pool-index={index}
                   key={`${member.position}:${selectionKey(selection)}`}
                   data-pool-position={member.position}
+                  /*
+                   * ★행은 5칸짜리 격자인데, 못 지우는 이유 문구가 붙으면 항목이 6개가 된다
+                   *   (fieldset 이 display:contents 라 그 안의 label 두 개가 각각 한 칸이다).
+                   *   그래서 문구가 42px 짜리 마지막 칸으로 밀리고 × 는 격자 밖으로 나갔다.
+                   *   문구가 있는 행만 칸을 하나 더 연다.
+                   */
+                  data-has-note={role === "orchestrator" && members.length === 1 ? "true" : undefined}
                   data-primary={index === 0 ? "true" : "false"}
                   data-dragging={
                     dragState?.role === role && dragState.from === index

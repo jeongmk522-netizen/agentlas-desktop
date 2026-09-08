@@ -2,8 +2,10 @@
 "use client";
 
 import { filePreviewEmptyMessage } from "@/lib/file-preview-reason";
+import { LoadingEstimate } from "@/components/LoadingEstimate";
+import { navigate } from "@/lib/navigation";
 import { isPlaceholderTaskTitle, taskTitleForDisplay } from "@/lib/task-title";
-import { failureMessage, isChatBusyFailure } from "@/lib/invocation-failure";
+import { detailForUser, failureMessage, isChatBusyFailure, looksLikeMachineText } from "@/lib/invocation-failure";
 import { Suspense, useCallback, useEffect, useRef, useState, useMemo, type CSSProperties, type Dispatch, type SetStateAction } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { grantForPastedImage, ipc, ipcEvents } from "@/lib/ipc";
@@ -128,7 +130,12 @@ function uid(): string {
  *   "무엇을 하면 되는지"까지 담아 보낸다).
  */
 function startFailureText(cause: unknown, locale: string, hadImages: boolean): string {
-  const raw = failureMessage(cause);
+  /*
+   * ★엔진 문구가 **식별자**일 수 있다 — 그러면 "이유: chat_invocation_not_started" 가
+   *   그대로 뜬다(실측 2026-09-08, 실제로 화면에 나왔다). 읽어도 할 일을 알 수 없다.
+   *   사람 문장일 때만 붙인다.
+   */
+  const raw = detailForUser(cause);
   const ko = locale === "ko";
   const restored = ko
     ? `입력은 작성창에 되돌려 놓았습니다${hadImages ? " (사진은 다시 첨부해 주세요)" : ""}.`
@@ -580,8 +587,16 @@ async function ensureSurfaceApproval(
       summary: approval.summary,
       metadata: approval.metadata,
     });
-  } catch {
-    window.alert(locale === "ko" ? "승인을 적용하지 못했습니다." : "The approval was not applied.");
+  } catch (cause) {
+    /*
+     * ★"승인을 적용하지 못했습니다"만 뜨고 **왜인지는 없었다** (실측 2026-09-08).
+     *   막다른 문장이다 — 사용자가 다시 시도할지 다른 걸 할지 고를 근거가 없다.
+     *   엔진이 말한 이유를 그대로 붙인다.
+     */
+    const reason = detailForUser(cause);
+    window.alert(locale === "ko"
+      ? `승인을 적용하지 못했습니다.${reason ? `\n\n이유: ${reason}` : ""}`
+      : `The approval was not applied.${reason ? `\n\nReason: ${reason}` : ""}`);
     return false;
   }
   return true;
@@ -2035,7 +2050,7 @@ function ChatPage() {
          *   값은 그대로 비우되(모르는 것을 지어내지 않는다), 못 읽었다는 사실은 말한다.
          */
         setGoalContext(null);
-        const raw = failureMessage(cause);
+        const raw = detailForUser(cause);
         setSessionNotice(locale === "ko"
           ? `목표 상태를 읽지 못했습니다${raw ? `: ${raw}` : ""}. 목표는 그대로 있을 수 있습니다 — 잠시 뒤 다시 열어 확인해 주세요.`
           : `The goal state could not be read${raw ? `: ${raw}` : ""}. The goal may still be set — reopen this chat in a moment to check.`);
@@ -3263,12 +3278,19 @@ function ChatPage() {
         const wasSteeringCancel = !wasUserCancel
           && failureCode.toLowerCase() === "cancelled"
           && steerQueueRef.current.length > 0;
-        const failureMessage = ev.error?.message?.trim()
-          || (locale === "ko" ? "실행이 완료되지 않았습니다." : "The run did not complete.");
+        /*
+         * ★사유가 식별자면 화면에 올리지 않는다. 대괄호 안의 코드도 마찬가지다 —
+         *   사용자에게 `[runtime_error]` 는 아무 정보가 아니다(실측 2026-09-08).
+         *   코드는 진단에 필요하니 title 로 남긴다.
+         */
+        const rawFailure = ev.error?.message?.trim() ?? "";
+        const failureMessage = rawFailure && !looksLikeMachineText(rawFailure)
+          ? rawFailure
+          : (locale === "ko" ? "실행이 완료되지 않았습니다." : "The run did not complete.");
         const failureId = `run-error:${placeholderId}`;
         const failureText = locale === "ko"
-          ? `⚠️ 작업이 완료되지 않았습니다.\n사유: ${failureMessage} [${failureCode}]`
-          : `⚠️ The work did not complete.\nReason: ${failureMessage} [${failureCode}]`;
+          ? `⚠️ 작업이 완료되지 않았습니다.\n사유: ${failureMessage}`
+          : `⚠️ The work did not complete.\nReason: ${failureMessage}`;
         const keepPlaceholder = (m: StreamMessage[]) =>
           m.flatMap((msg) => {
             if (msg.id !== placeholderId) return [msg];
@@ -3641,13 +3663,21 @@ function ChatPage() {
           });
         }).catch(() => {
           if (!cancelled) setHydratedChatId(chatId);
-          if (!cancelled && requestedFocusMessageId) {
-            setSessionNotice(
-              locale === "ko"
-                ? "이 작업 기록의 원문 위치를 확인하지 못했습니다. 세션의 현재 위치를 열었습니다."
-                : "The original position could not be verified. The current session is open.",
-            );
-          }
+          if (cancelled) return;
+          /*
+           * ★대화를 못 읽었는데 화면이 **아무 말도 안 했다** (실측 2026-09-08).
+           *   그러면 빈 대화와 구별되지 않아 사용자는 자기 기록이 사라진 줄 안다.
+           *   읽기 실패는 사실이 아니다 — 사실인 척하지 않는다.
+           */
+          setSessionNotice(
+            requestedFocusMessageId
+              ? (locale === "ko"
+                ? "이 작업 기록을 불러오지 못했습니다. 아래에 보이는 것이 전부가 아닐 수 있습니다. 다시 열어 보세요."
+                : "This conversation could not be loaded. What you see may not be everything. Try opening it again.")
+              : (locale === "ko"
+                ? "이 대화를 불러오지 못했습니다. 지워진 것이 아니라 읽지 못한 것입니다 — 다시 열어 보세요."
+                : "This conversation could not be loaded. It was not deleted — the read failed. Try opening it again."),
+          );
         });
       // 역할 기본값 또는 이 채팅의 exact pin — 헤더 칩 표시용.
       void api.runtime.detect().then((list) => {
@@ -4850,7 +4880,10 @@ function ChatPage() {
         return;
       }
       if (action.type === "copy") {
-        void navigator.clipboard.writeText(action.prompt || JSON.stringify(manifest, null, 2));
+        /* ★눌러도 아무 말이 없고 실패해도 조용했다 (실측 2026-09-08). */
+        void navigator.clipboard.writeText(action.prompt || JSON.stringify(manifest, null, 2))
+          .then(() => setSessionNotice(locale === "ko" ? "클립보드에 복사했습니다." : "Copied to the clipboard."))
+          .catch(() => setSessionNotice(locale === "ko" ? "클립보드에 복사하지 못했습니다." : "Could not copy to the clipboard."));
         return;
       }
       if (
@@ -4866,7 +4899,7 @@ function ChatPage() {
         action.type === "materialize-asset-pack"
       ) {
         if (!api) return;
-        const approval = surfaceApprovalRequirement(activeSurface, action);
+        const approval = surfaceApprovalRequirement(activeSurface, action, locale === "ko" ? "ko" : "en");
         if (approval && !(await ensureSurfaceApproval(api, activeSurface.id, action, approval, locale))) return;
         const pendingId = uid();
         const label = manifest.app?.name || manifest.title;
@@ -5135,7 +5168,7 @@ function ChatPage() {
           "Turn this into the next concrete product artifact: screens, connectors, files, tests, and launch proof.",
         ].join("\n");
 
-      const approval = api ? surfaceApprovalRequirement(activeSurface, action) : null;
+      const approval = api ? surfaceApprovalRequirement(activeSurface, action, locale === "ko" ? "ko" : "en") : null;
       if (api && approval && !(await ensureSurfaceApproval(api, activeSurface.id, action, approval, locale))) return;
 
       const launched = await send(launchPrompt, {
@@ -5963,12 +5996,42 @@ function ChatPage() {
     return null;
   }
   if (!chat) {
-    if (chatId) return null; // 특정 Task/채팅 로딩 중
+    if (chatId) {
+      /*
+       * ★대화를 여는 동안 화면이 **완전히 비어 있었다** (느린 브리지 실측 2026-09-08:
+       *   글자 0개). 저장소가 느린 기계에서는 그 하얀 화면이 몇 초씩 간다 — 사용자에게는
+       *   "고장" 과 구별되지 않는다. 기다리는 중이라는 것을 말한다.
+       */
+      return (
+        <div style={{ display: "flex", flex: 1, height: "100%", width: "100%", alignItems: "center", justifyContent: "center", padding: 24 }}>
+          <div role="status" style={{ textAlign: "center", maxWidth: 420, display: "grid", gap: 10, justifyItems: "center" }}>
+            <div style={{ fontSize: 14, fontWeight: 700, color: "var(--ink)" }}>
+              {locale === "ko" ? "대화를 여는 중입니다" : "Opening this conversation"}
+            </div>
+            <LoadingEstimate locale={locale === "ko" ? "ko" : "en"} operationKey="desktop-chat-open" expectedSeconds={[1, 8]} />
+          </div>
+        </div>
+      );
+    }
     return (
       <div style={{ display: "flex", flex: 1, height: "100%", width: "100%", alignItems: "center", justifyContent: "center", padding: 24 }}>
         <div style={{ textAlign: "center", maxWidth: 440 }}>
           <div style={{ fontSize: 17, fontWeight: 700, color: "var(--ink)", marginBottom: 8 }}>{t("chat.empty.title")}</div>
+          {/*
+            * ★안내가 **없는 단추**를 가리키고 있었다 (빈 상태 실측 2026-09-08):
+            *   "왼쪽 위 + 새 채팅 버튼" 이라고 했는데 이 상태의 화면에는 그 단추가 없다
+            *   (있는 것은 '대시보드로 돌아가기'와 '새 프로젝트' 둘뿐). 없는 것을 누르라고
+            *   하면 사용자는 자기가 못 찾는 줄 안다. 문구를 사실에 맞추고, 다음 걸음을
+            *   여기서 바로 누를 수 있게 둔다.
+            */}
           <div style={{ fontSize: 14, lineHeight: 1.6, color: "var(--ink-soft)" }}>{t("chat.empty.hint")}</div>
+          <button
+            type="button"
+            onClick={() => navigate("/project/new")}
+            style={{ marginTop: 14, padding: "9px 14px", borderRadius: 10, border: "1px solid var(--paper-edge)", background: "var(--paper)", color: "var(--ink)", fontSize: 13, fontWeight: 700 }}
+          >
+            {locale === "ko" ? "프로젝트 만들기" : "Create a project"}
+          </button>
         </div>
       </div>
     );

@@ -91,6 +91,8 @@ export function WorkbenchPanel({
   onSurfaceStatePatch?: SurfaceStatePatchHandler;
   embedded?: boolean;
 }) {
+  /* ★머리말의 복사 단추가 아무 말도 하지 않았다 (실측 2026-09-08). */
+  const [headerCopy, setHeaderCopy] = useState<"idle" | "done" | "failed">("idle");
   /*
    * ★대화상자는 Escape 로 닫혀야 한다 (실측 2026-09-08).
    *   이 패널에는 Escape 처리가 없어 나가는 길이 마우스뿐이었다.
@@ -172,14 +174,20 @@ export function WorkbenchPanel({
             </div>
             {subtitle && <span style={chip}>{subtitle}</span>}
             <button
-              onClick={() =>
+              onClick={() => {
+                /* ★눌러도 아무 말이 없던 복사 (실측 2026-09-08) — 아래 chip 과 같은 알림을 쓴다. */
                 void navigator.clipboard.writeText(
                   surface ? JSON.stringify(surface.manifest, null, 2) : artifact?.code ?? "",
-                )
-              }
+                ).then(() => setHeaderCopy("done")).catch(() => setHeaderCopy("failed"));
+                window.setTimeout(() => setHeaderCopy("idle"), 1800);
+              }}
               style={ghostButton}
             >
-              {t("chatstream.copy")}
+              {headerCopy === "done"
+                ? t("chatstream.copied")
+                : headerCopy === "failed"
+                  ? (t("chatstream.copy_failed") || "복사 실패")
+                  : t("chatstream.copy")}
             </button>
             {onClose && (
               <button onClick={onClose} aria-label={t("chatstream.close_panel")} title={t("chatstream.close")} style={iconButton}>
@@ -1156,6 +1164,8 @@ function DelegationPanel({
   surface: WorkbenchSurface;
   onAction?: SurfaceActionHandler;
 }) {
+  const { locale } = useT();
+  const ko = locale === "ko";
   const plan = useMemo(() => buildSurfaceDelegationPlan(surface.manifest), [surface.manifest]);
   const [draftSecrets, setDraftSecrets] = useState<Record<string, string>>({});
   const [saveStatus, setSaveStatus] = useState<Record<string, string>>({});
@@ -1199,7 +1209,14 @@ function DelegationPanel({
 
   const approvePayment = async (request: AgentlasSurfacePaymentRequest) => {
     const summary = paymentSummary(request);
-    const ok = window.confirm(`Approve payment step?\n\n${summary}\n\nCard details stay in provider checkout or secure UI.`);
+    /*
+     * ★돈을 승인하는 물음이 **영어로만** 떠 있었다 (실측 2026-09-08).
+     *   한국어로 쓰는 사람에게 결제 승인을 영어로 묻는 자리다. 그리고 이 물음은
+     *   네이티브 대화상자라 화면 훑기에 안 잡힌다 — 한국어 훑기가 0건이었던 이유다.
+     */
+    const ok = window.confirm(ko
+      ? `결제 단계를 승인할까요?\n\n${summary}\n\n카드 정보는 결제사 화면이나 보안 입력창에만 남고 여기에는 저장되지 않습니다.`
+      : `Approve payment step?\n\n${summary}\n\nCard details stay in provider checkout or secure UI.`);
     if (!ok) return;
     const action = (surface.manifest.actions ?? []).find((item) => item.type === "request-payment-approval");
     if (typeof window !== "undefined" && window.agentlas?.surfaces && !isPreviewSurfaceId(surface.id)) {

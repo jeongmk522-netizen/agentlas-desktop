@@ -6,6 +6,7 @@
 // React Flow는 client-only이고 이 앱은 Next.js static export(file://)이므로 "use client" 필수.
 "use client";
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { navigate } from "@/lib/navigation";
 import { humanSchedule } from "@shared/graph-blueprint";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
@@ -1735,6 +1736,16 @@ function AutomationFlowPage() {
               ? locale === "en" ? "Loading automation…" : "자동화를 불러오는 중입니다…"
               : error || (locale === "en" ? "Automation could not be opened." : "자동화를 열 수 없습니다.")}</span>
             {loading && <LoadingEstimate locale={locale} operationKey="desktop-automation-flow" expectedSeconds={[1, 25]} />}
+            {/* ★열지 못했을 때 누를 것이 하나도 없었다 (빈 상태 실측 2026-09-08). 나가는 길을 준다. */}
+            {!loading && (
+              <button
+                type="button"
+                onClick={() => navigate("/automation")}
+                style={{ justifySelf: "start", marginTop: 4, padding: "7px 12px", borderRadius: 9, border: "1px solid var(--paper-edge)", background: "var(--paper)", color: "var(--ink)", fontSize: 12.5, fontWeight: 700 }}
+              >
+                {locale === "en" ? "Back to automations" : "자동화 목록으로"}
+              </button>
+            )}
           </div>
         </section>
       </div>

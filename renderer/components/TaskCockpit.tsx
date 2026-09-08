@@ -2095,8 +2095,6 @@ function ChatPage() {
   }, []);
   // 활성 런타임/모델 — 헤더 칩 표시 + BYOK 인라인 모델 변경. 진행 중 실행의 runId(취소용).
   const [activeRuntime, setActiveRuntime] = useState<RuntimeStatus | null>(null);
-  // 활성 런타임의 모델 목록 — 실시간 조회(BYOK는 provider API, ollama 동적, CLI 카탈로그).
-  const [modelOptions, setModelOptions] = useState<ModelOption[]>([]);
   const runIdRef = useRef<string | null>(null);
   // Whether this chat was in the last activeChats broadcast. Lets the view see
   // an active -> inactive transition for runs it did not start itself.
@@ -4041,30 +4039,18 @@ function ChatPage() {
     };
   }, [busy, chatId, locale]);
 
-  // 활성 런타임이 바뀌면 모델 목록을 실시간 조회 (BYOK provider API / ollama / CLI 카탈로그).
-  useEffect(() => {
-    const api = ipc();
-    if (!api || !activeRuntime) {
-      setModelOptions([]);
-      return;
-    }
-    let cancelled = false;
-    void api.runtime
-      .listModels({
-        kind: activeRuntime.kind,
-        backend: activeRuntime.backend,
-        availableModels: activeRuntime.availableModels,
-      })
-      .then((opts) => {
-        if (!cancelled) setModelOptions(opts);
-      })
-      .catch(() => {
-        if (!cancelled) setModelOptions([]);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [activeRuntime]);
+  /*
+   * ★런타임이 바뀔 때마다 모델 목록을 실시간 조회해 **버리고 있었다** (실측 2026-09-08).
+   *
+   *   `modelOptions` 를 읽는 곳이 이 파일에 **한 곳도 없다**(선언 한 줄이 전부였다).
+   *   그런데 이 효과는 활성 런타임이 바뀔 때마다 `runtime.listModels` 를 부른다 —
+   *   BYOK 면 **제공자 API 를 네트워크로** 치고, ollama 면 로컬 서버를 친다.
+   *   보여 줄 화면이 없는데 매번 값을 치르고 있었다(요금·요청 한도까지).
+   *
+   *   조회를 지운다. 헤더에서 모델을 바꾸는 화면이 다시 필요해지면 그때 **그 화면과 함께**
+   *   되살리는 것이 맞다 — 반쪽만 살아 있는 배선은 비용만 내고 아무도 못 쓴다.
+   *   (되살릴 때 필요한 호출 모양은 이 커밋의 이력에 그대로 남는다.)
+   */
 
   const requestRunCancellation = useCallback((runId: string) => {
     const api = ipc();

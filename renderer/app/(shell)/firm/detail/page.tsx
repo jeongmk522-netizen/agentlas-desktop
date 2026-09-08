@@ -602,6 +602,20 @@ function FirmDetailPage() {
               </button>
             </div>
           )}
+          {/*
+            * ★결과를 만들어 놓고 아무도 안 보여 주고 있었다 (실측 2026-09-08).
+            *   resolveOrg() 는 성공 문구도 실패 사유도 setResolveMsg 로 담는데,
+            *   그 값을 **읽는 곳이 한 곳도 없었다.** 그래서 "분석"을 눌러도 되든 안 되든
+            *   화면은 아무 말이 없다 — 눌린 건지조차 알 수 없다.
+            */}
+          {resolveMsg && !sidebarCollapsed && (
+            <div
+              role="status"
+              style={{ padding: "6px 12px 2px", color: "var(--muted-deep)", fontSize: 11, lineHeight: 1.45 }}
+            >
+              {resolveMsg}
+            </div>
+          )}
         </header>
 
         {/* 조직도 목록 */}

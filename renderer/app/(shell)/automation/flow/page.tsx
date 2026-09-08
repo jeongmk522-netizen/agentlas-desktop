@@ -2592,6 +2592,17 @@ return (
                     style={{ display: "none" }}
                     onChange={(event) => { if (event.target.files) addArchitectFiles(event.target.files); }}
                   />
+                  {/*
+                    * ★조용히 버리고 있었다 (실측 2026-09-08). 첨부가 8개를 넘으면
+                    *   앞 8개만 남기고 나머지를 버리면서 "파일은 최대 8개까지" 라는 문구를
+                    *   만들어 두는데, 그 값을 **읽는 곳이 한 곳도 없었다.**
+                    *   사용자는 12개를 붙였는데 8개만 남은 이유를 알 방법이 없다.
+                    */}
+                  {architectAttachmentError && (
+                    <div role="alert" style={{ color: "var(--danger)", fontSize: 11, lineHeight: 1.45, padding: "2px 0" }}>
+                      {architectAttachmentError}
+                    </div>
+                  )}
                   {architectAttachments.length > 0 ? (
                     <div className="automation-architect-attachments" aria-label={locale === "en" ? "Selected attachments" : "선택한 첨부 파일"}>
                       {architectAttachments.map((file, index) => (

@@ -221,6 +221,22 @@ export function WorkFirstRunOnboarding({ onVisibilityChange }: { onVisibilityCha
     setOpen(false);
   }, []);
 
+  /*
+   * ★전체 화면 안내는 Escape 로도 닫혀야 한다 (실측 2026-09-08).
+   *   × 는 고쳤지만 키보드로 나가는 길은 여전히 없었다. dismiss() 와 같은 뜻이다 —
+   *   닫되 완료로 표시하지 않으므로 나중에 다시 볼 수 있다.
+   */
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key !== "Escape" || event.metaKey || event.ctrlKey || event.altKey) return;
+      event.stopPropagation();
+      dismiss();
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [open, dismiss]);
+
   const chooseExperience = (next: Experience) => {
     setExperience(next);
     setStep(next === "beginner" ? 2 : 5);

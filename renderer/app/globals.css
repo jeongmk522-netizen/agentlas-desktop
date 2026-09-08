@@ -2576,11 +2576,17 @@ button[data-dashboard-import="true"]:disabled {
 
 /* 지울 수 없는 이유를 행에 적는 자리 — 비활성 단추의 title 은 아무에게도 닿지 않았다. */
 .dashboard-runtime-pool-note {
+  /* ★이 문구가 행을 두 줄로 접어 × 를 아래로 내렸다 (QA 실측 2026-09-08, 창 1240px).
+     이유를 보여 주려다 조작 단추를 밀어내면 고친 것이 아니다.
+     줄어들 수 있게 하고(min-width:0), 좁으면 말줄임 — 전문은 title 이 말한다. */
+  min-width: 0;
   margin-left: auto;
   padding-right: 8px;
+  overflow: hidden;
   color: var(--muted-deep);
   font-size: 11px;
   white-space: nowrap;
+  text-overflow: ellipsis;
 }
 
 .dashboard-runtime-pool-actions {

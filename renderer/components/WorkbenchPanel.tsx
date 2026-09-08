@@ -91,6 +91,22 @@ export function WorkbenchPanel({
   onSurfaceStatePatch?: SurfaceStatePatchHandler;
   embedded?: boolean;
 }) {
+  /*
+   * ★대화상자는 Escape 로 닫혀야 한다 (실측 2026-09-08).
+   *   이 패널에는 Escape 처리가 없어 나가는 길이 마우스뿐이었다.
+   *   embedded(레일 안)일 때는 닫을 대상이 아니므로 onClose 가 있을 때만 건다.
+   */
+  useEffect(() => {
+    if (!onClose || embedded) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key !== "Escape" || event.metaKey || event.ctrlKey || event.altKey) return;
+      event.stopPropagation();
+      onClose();
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [onClose, embedded]);
+
   const { t } = useT();
   if (!artifact && !surface) return null;
 

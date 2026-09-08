@@ -157,6 +157,7 @@ export function ImportAgentsModal({
     <div
       role="dialog"
       aria-modal
+      aria-label={locale === "ko" ? "에이전트 가져오기" : "Import agents"}
       style={{
         position: "fixed",
         inset: 0,

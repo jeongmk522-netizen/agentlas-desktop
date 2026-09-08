@@ -58,6 +58,20 @@ export function McpBuildInterviewCard(props: {
 }) {
   const { plan, ko } = props;
 
+  /*
+   * ★대화상자는 Escape 로 닫혀야 한다 (실측 2026-09-08).
+   *   이 카드에는 Escape 처리가 없어 나가는 길이 "취소" 단추뿐이었다.
+   */
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key !== "Escape" || event.metaKey || event.ctrlKey || event.altKey) return;
+      event.stopPropagation();
+      props.onCancel();
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [props.onCancel]);
+
   const { autoIncludedIds, steps, incompatibleCount } = useMemo(() => {
     const readyByGroup = new Map<string, McpBuildCandidate>();
     for (const c of plan.candidates) {

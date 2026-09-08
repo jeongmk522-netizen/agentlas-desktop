@@ -95,6 +95,7 @@ export function ConnectionsDialog({ automationId, locale, onClose }: {
       data-testid="connections-dialog"
       role="dialog"
       aria-modal="true"
+      aria-label={locale === "ko" ? "연결 설정" : "Connections"}
       onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
       style={{
         position: "fixed", inset: 0, zIndex: 400, display: "flex",

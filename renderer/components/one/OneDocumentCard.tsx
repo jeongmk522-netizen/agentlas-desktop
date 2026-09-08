@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Markdown } from "@/components/Markdown";
 import { IconClose, IconExpand, IconFileUp } from "@/components/Icon";
 import { ipc } from "@/lib/ipc";
@@ -26,6 +26,21 @@ export function OneDocumentCard({
   const ko = locale === "ko";
   const [expanded, setExpanded] = useState(false);
   const [reading, setReading] = useState(false);
+
+  /*
+   * ★읽기 오버레이는 Escape 로 닫혀야 한다 (실측 2026-09-08).
+   *   나가는 길이 뒷배경 클릭과 닫기 단추뿐이라 키보드만 쓰는 사람은 갇힌다.
+   */
+  useEffect(() => {
+    if (!reading) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key !== "Escape" || event.metaKey || event.ctrlKey || event.altKey) return;
+      event.stopPropagation();
+      setReading(false);
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [reading]);
   const [menuOpen, setMenuOpen] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);

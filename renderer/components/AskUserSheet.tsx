@@ -119,6 +119,7 @@ export function AskUserSheet() {
   };
 
   const dismiss = () => {
+
     // Closing stays available even while an acknowledgement is in flight.
     // Never send a competing decline for an already-submitted answer.
     if (!attemptsRef.current.has(req.requestId)) void answer(null);
@@ -128,6 +129,21 @@ export function AskUserSheet() {
     setDraftValue("");
     setQueue((current) => current.filter((item) => item.requestId !== req.requestId));
   };
+
+  /*
+   * ★대화상자는 Escape 로 닫혀야 한다 (실측 2026-09-08).
+   *   이 화면에는 Escape 처리가 없어 나가는 길이 마우스뿐이었다.
+   *   모달은 어디서나 같은 방법으로 닫혀야 한다.
+   */
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key !== "Escape" || event.metaKey || event.ctrlKey || event.altKey) return;
+      event.stopPropagation();
+      dismiss();
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [dismiss]);
   const currentSubmission = submission?.requestId === req.requestId ? submission : null;
   const updateDraft = (value: string) => {
     setDraftValue(value);
@@ -141,7 +157,7 @@ export function AskUserSheet() {
    * 규격은 docs/DESIGN-ASK-CARD.md.
    */
   return (
-    <div className={`aus ${oneRoute ? "aus-one" : ""}`} role="dialog" aria-modal="false">
+    <div className={`aus ${oneRoute ? "aus-one" : ""}`} role="dialog" aria-modal="false" aria-label={ko ? "확인이 필요합니다" : "Your input is needed"}>
       <div className="aus-card">
         <AskCard
           key={req.requestId}

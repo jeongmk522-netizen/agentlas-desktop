@@ -925,8 +925,13 @@ export function RuntimeControl() {
                      * 포커스를 못 받아 툴팁도 스크린리더도 거기 닿지 않는다. QA 는 다섯 번
                      * 누르고도 아무 설명을 못 봤다 — 화면이 "고장"과 구별되지 않았다.
                      */
-                    <span className="dashboard-runtime-pool-note">
-                      {ko ? "마지막 후보라 지울 수 없습니다" : "The last candidate cannot be removed"}
+                    <span
+                      className="dashboard-runtime-pool-note"
+                      title={ko
+                        ? "오케스트레이터 후보는 최소 하나가 있어야 합니다. 다른 후보를 먼저 추가한 뒤 이 행을 지우세요."
+                        : "At least one orchestrator candidate must remain. Add another candidate first, then remove this row."}
+                    >
+                      {ko ? "마지막 후보라 지울 수 없음" : "Last candidate — cannot remove"}
                     </span>
                   )}
                   <span className="dashboard-runtime-pool-actions">

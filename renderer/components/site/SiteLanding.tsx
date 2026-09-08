@@ -319,7 +319,20 @@ export function SiteLanding({
     document.addEventListener("keydown", onKey);
     return () => {
       document.removeEventListener("keydown", onKey);
-      if (opener && opener.isConnected) opener.focus({ preventScroll: true });
+      /*
+       * ★연 단추가 사라졌으면(다시 그려지면 흔히 그렇다) 되돌릴 곳이 없어 초점이
+       *   body 로 떨어진다 — 1920/1440/1180 세 크기에서 그대로 재현됐다(2026-09-08).
+       *   그때는 본문으로 보낸다: 적어도 문서 맨 위부터 다시 Tab 하지는 않는다.
+       */
+      if (opener && opener.isConnected) {
+        opener.focus({ preventScroll: true });
+        return;
+      }
+      const main = document.querySelector("main");
+      if (main instanceof HTMLElement) {
+        if (!main.hasAttribute("tabindex")) main.setAttribute("tabindex", "-1");
+        main.focus({ preventScroll: true });
+      }
     };
   }, [pickerOpen]);
   const [pickerTab, setPickerTab] = useState<"mine" | "multi">("mine");

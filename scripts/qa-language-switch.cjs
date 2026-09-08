@@ -29,10 +29,22 @@ const IGNORE = [
   "Agentlas", "One", "Work", "Hub", "Cloud", "Science", "QA Project", "QA Chat",
   "CEO", "Codex", "Claude", "GPT", "OpenAI", "Ollama", "MCP", "CLI", "API", "URL",
   "Founder HQ", "Google Play", "App Store", "Android", "iOS", "Desktop", "Mobile",
+  /*
+   * ★공급자·제품 이름은 번역 대상이 아니다. 그리고 언어 단추 자신은 **반대 언어로
+   *   쓰여 있는 게 맞다**("English" 는 한국어 화면에서도 English 여야 누른다).
+   */
+  "Antigravity", "xAI", "Grok", "Kimi", "Cursor", "GitHub", "Copilot", "DeepSeek",
+  "Zhipu", "GLM", "Gemini", "Anthropic", "한국어", "English",
+  /* mock 픽스처가 넣는 문구 — 제품 문자열이 아니다. */
+  "Callable Hub team", "Callable Hub agent",
 ];
 
 const SCAN = `((wanted) => {
-  const ignore = ${JSON.stringify(IGNORE)};
+  /*
+   * ★긴 이름부터 지운다. "Hub" 를 먼저 지우면 "Callable Hub team" 이 "Callable  team" 이
+   *   되어 그 뒤의 전체 문구 제외가 안 걸린다 — 첫 판의 남은 7건이 전부 그 자국이었다.
+   */
+  const ignore = ${JSON.stringify(IGNORE)}.slice().sort((a, b) => b.length - a.length);
   const out = [];
   const root = document.querySelector("main") || document.body;
   for (const el of root.querySelectorAll("*")) {
@@ -41,9 +53,17 @@ const SCAN = `((wanted) => {
     if (cs.display === "none" || cs.visibility === "hidden") continue;
     let text = (el.textContent || "").trim();
     if (!text || text.length < 2) continue;
+    /*
+     * ★버전 문자열·주소·모델 id 는 언어가 아니다. 이걸 안 빼면 매 실행마다 같은
+     *   4건이 남아 "0건" 이 영영 안 나오고, 진짜 하나가 늘어도 눈에 안 띈다.
+     */
+    if (/^[a-z0-9._-]+\s*v?[0-9]/i.test(text)) continue;
+    if (/^(wss?|https?):\/\//i.test(text)) continue;
+    if (/^[a-z0-9.-]+$/i.test(text.replace(/\s|·/g, ""))) continue;
     for (const term of ignore) text = text.split(term).join(" ");
     const hasHangul = /[가-힣]/.test(text);
-    const hasLatinWord = /[A-Za-z]{3,}/.test(text);
+    /* 이름을 지우고 남은 조각(3글자 미만 낱말들)은 언어 판정 대상이 아니다. */
+    const hasLatinWord = /[A-Za-z]{4,}/.test(text);
     if (wanted === "en" && hasHangul) out.push(text.slice(0, 40));
     if (wanted === "ko" && !hasHangul && hasLatinWord) out.push(text.slice(0, 40));
   }

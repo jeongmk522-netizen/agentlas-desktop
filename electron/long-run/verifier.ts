@@ -93,24 +93,72 @@ function digestEvents(events: Array<Record<string, unknown>>): Record<string, un
   const top = (map: Map<string, number>, keep: number) => Object.fromEntries(
     [...map.entries()].sort((a, b) => b[1] - a[1]).slice(0, keep),
   );
+  /*
+   * The last thing each command said, at a FIXED cost.
+   *
+   * Measured 2026-09-08: with only counts plus a shared preview budget, a run with
+   * 300 events leaves ~60 chars per event, so `All tests passed!` and
+   * `No issues found!` -- the lines that actually settle "did it work" -- cannot
+   * fit no matter how the budget is split. The judge said exactly that:
+   * "result previews are truncated without observable pass/no-issues output".
+   *
+   * So the closing lines get their own reserved, bounded slot instead of competing
+   * with 300 other events. Cost is constant (<= 6 * 240 chars) whether the run
+   * produced 10 events or a million.
+   */
+  const outcomes: Array<Record<string, string>> = [];
+  for (let i = events.length - 1; i >= 0 && outcomes.length < 6; i -= 1) {
+    const payload = (events[i].payload ?? {}) as Record<string, unknown>;
+    const preview = payload.toolResultPreview;
+    if (typeof preview !== "string" || !preview.trim()) continue;
+    const name = typeof payload.toolName === "string" && payload.toolName.trim()
+      ? payload.toolName.trim()
+      : String(events[i].kind ?? "unknown");
+    outcomes.push({ tool: name, closingLines: preview.trimEnd().slice(-240) });
+  }
   return {
     observedEvents: events.length,
     eventsWithResult: withResult,
     distinctTools: toolCounts.size,
     toolCounts: top(toolCounts, 24),
     ...(errorTools.size > 0 ? { failedToolCounts: top(errorTools, 12) } : {}),
+    ...(outcomes.length > 0 ? { latestToolOutcomes: outcomes.reverse() } : {}),
   };
+}
+
+/**
+ * Keep BOTH ends of a long value, not just the head.
+ *
+ * Measured on the 2026-09-08 re-run: with head-only clamping the judge saw the
+ * tool events but still answered `inconclusive` on one criterion --
+ * "result previews are truncated without observable pass/no-issues output".
+ * A command proves itself at its TAIL: `All tests passed!` and `No issues found!`
+ * are the last lines of `flutter test && flutter analyze`, and head-only clamping
+ * throws away exactly the part that settles the question while keeping the banner.
+ *
+ * So split the budget: enough head to identify what ran, and the tail that says
+ * how it ended. The omitted middle is stated, so a reader is never misled into
+ * thinking the value was short.
+ */
+function clampText(value: string, previewChars: number): string {
+  if (value.length <= previewChars) return value;
+  // Below ~40 chars a two-sided window degenerates into noise; keep the tail,
+  // because the verdict lives there.
+  if (previewChars < 40) return `…(+${value.length - previewChars})${value.slice(-previewChars)}`;
+  const tail = Math.max(Math.floor(previewChars * 0.4), 20);
+  const head = previewChars - tail;
+  const omitted = value.length - head - tail;
+  return `${value.slice(0, head)}…(중략 ${omitted}자)…${value.slice(-tail)}`;
 }
 
 function clampEvent(event: Record<string, unknown>, previewChars: number): Record<string, unknown> {
   const payload = { ...((event.payload ?? {}) as Record<string, unknown>) };
   for (const key of ["toolResultPreview", "toolArgs"]) {
     const value = payload[key];
-    if (typeof value === "string" && value.length > previewChars) {
-      payload[key] = `${value.slice(0, previewChars)}…(+${value.length - previewChars})`;
-    } else if (value != null && typeof value !== "string") {
-      const text = JSON.stringify(value) ?? "";
-      payload[key] = text.length > previewChars ? `${text.slice(0, previewChars)}…(+${text.length - previewChars})` : text;
+    if (typeof value === "string") {
+      payload[key] = clampText(value, previewChars);
+    } else if (value != null) {
+      payload[key] = clampText(JSON.stringify(value) ?? "", previewChars);
     }
   }
   return { ...event, payload };

@@ -151,6 +151,55 @@ function clampText(value: string, previewChars: number): string {
   return `${value.slice(0, head)}…(중략 ${omitted}자)…${value.slice(-tail)}`;
 }
 
+/**
+ * 폴더 경계를 **호스트가 사실로 적는다.** 판정자가 추론하게 두지 않는다.
+ *
+ * 2026-09-08 3회차 실측: 경계 기준이 `inconclusive` 로 남았고 사유가 정확했다 —
+ * *"an FS allowlist limited to that folder, but ... no durable audit of write targets
+ * (git status failed; only a directory listing) proves no out-of-folder writes occurred."*
+ * 실제로는 폴더 밖 변경이 0건이었다(같은 시각 파일시스템 실측). 즉 사실은 맞는데
+ * **그 사실을 아무도 적어 주지 않아서** 판정자가 확인할 수 없었다.
+ *
+ * 없음을 증명하라고 모델에게 시키면 언제나 inconclusive 가 나온다. 호스트는 도구
+ * 인자를 전부 갖고 있으니, 폴더 밖을 가리키는 인자가 몇 건인지 **세어서 적는다.**
+ * 0 이면 "감사했고 0건" 이라는 확인 가능한 진술이 되고, 0 이 아니면 어디인지 보여 준다.
+ */
+function auditWriteBoundary(
+  events: Array<Record<string, unknown>>,
+  workingFolder: string | null,
+): Record<string, unknown> | null {
+  if (!workingFolder) return null;
+  const root = workingFolder.replace(/\/+$/, "");
+  // 인자에 실린 절대 경로만 본다. 상대 경로는 어느 폴더 기준인지 알 수 없으므로
+  // "밖"이라고 단정하지 않는다 — 모르는 것을 아는 척하지 않는다.
+  const absolutePath = /(?:^|[\s"'`=(])(\/(?:[^\s"'`)]|\\ )+)/g;
+  const outside = new Set<string>();
+  let checked = 0;
+  for (const event of events) {
+    const payload = (event.payload ?? {}) as Record<string, unknown>;
+    const args = payload.toolArgs;
+    if (args == null) continue;
+    checked += 1;
+    const text = typeof args === "string" ? args : (JSON.stringify(args) ?? "");
+    for (const match of text.matchAll(absolutePath)) {
+      const candidate = match[1].replace(/\\+$/, "");
+      if (candidate === root || candidate.startsWith(`${root}/`)) continue;
+      // 시스템 도구 경로는 작업 산출물이 아니다.
+      if (/^\/(usr|bin|sbin|opt|etc|System|Library|private\/var|var|tmp|dev|Applications)\//.test(candidate)) continue;
+      outside.add(candidate.slice(0, 200));
+    }
+  }
+  return {
+    declaredWorkingFolder: root,
+    toolCallsWithArgumentsChecked: checked,
+    pathsOutsideWorkingFolder: outside.size,
+    ...(outside.size > 0 ? { examplesOutside: [...outside].slice(0, 8) } : {}),
+    note: outside.size === 0
+      ? "The host audited every recorded tool argument: no path outside the declared working folder appeared."
+      : "The host found tool arguments referencing paths outside the declared working folder; reading a path is not writing it.",
+  };
+}
+
 function clampEvent(event: Record<string, unknown>, previewChars: number): Record<string, unknown> {
   const payload = { ...((event.payload ?? {}) as Record<string, unknown>) };
   for (const key of ["toolResultPreview", "toolArgs"]) {
@@ -169,12 +218,15 @@ export function buildBoundedObservation(input: {
   assistant: { ref: string; createdAt: string; text: string } | null;
   events: Array<Record<string, unknown>>;
   limit: number;
+  workingFolder?: string | null;
 }): string {
   const { receipt, limit } = input;
   const size = (value: unknown) => JSON.stringify(value)?.length ?? 0;
   // The digest counts EVERY observed event; only the raw sample is bounded. That
   // split is what keeps this correct for a run with a million tool calls.
   const digest = digestEvents(input.events);
+  // 경계 감사도 집계와 같은 성질이다 — 이벤트 수와 무관하게 크기가 일정하고 항상 실린다.
+  const boundary = auditWriteBoundary(input.events, input.workingFolder ?? null);
   const events = input.events.slice(-200);
   const assemble = (
     assistantText: string | null,
@@ -185,6 +237,7 @@ export function buildBoundedObservation(input: {
     // The digest is always present and always the same size. It, not the sample,
     // is what proves scale: "179 files" survives even when no raw event fits.
     evidenceDigest: digest,
+    ...(boundary ? { writeBoundaryAudit: boundary } : {}),
     durableAssistantResult: input.assistant && assistantText != null
       ? { ref: input.assistant.ref, createdAt: input.assistant.createdAt, text: assistantText }
       : null,
@@ -229,6 +282,7 @@ export function buildBoundedObservation(input: {
   return JSON.stringify({
     receipt,
     evidenceDigest: digest,
+    ...(boundary ? { writeBoundaryAudit: boundary } : {}),
     durableAssistantResult: null,
     omittedOlderEvents: events.length,
     concreteEvents: [],
@@ -348,6 +402,7 @@ export function collectDurableGoalVerificationEvidence(
       // actually happened, and only the raw sample inside is allowed to be bounded.
       events: concrete.map(summarizeEvent),
       limit: 20_000,
+      workingFolder: receipt.resultFolder?.trim() || null,
     }),
     reason: "durable_evidence_ready",
   };

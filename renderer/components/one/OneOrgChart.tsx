@@ -633,7 +633,21 @@ export function OneOrgChart({
             <span className={styles.source}>{activityTimeLabel(member, locale)}</span>
             {member.creditState === "insufficient" && <span className={styles.creditBadge}><IconShield size={11} />{locale === "ko" ? "크레딧 부족" : "Credits needed"}</span>}
             {member.unreadCount > 0 && <span className={styles.unreadDot} aria-hidden="true" title={locale === "ko" ? `읽지 않은 결과 ${member.unreadCount}개` : `${member.unreadCount} unread result${member.unreadCount === 1 ? "" : "s"}`} />}
-            {member.statusKind === "failed" && member.unreadCount === 0 && <span className={styles.failureDot} aria-hidden="true" title={locale === "ko" ? "실행 실패 — 대화를 열어 상세 확인" : "Run failed — open the conversation for details"} />}
+            {member.statusKind === "failed" && member.unreadCount === 0 && (
+              /*
+                * ★이 점의 툴팁은 "대화를 열어 상세 확인" 이라고 말하는데 **누를 수 없었다**
+                *   (실측 2026-09-08). 부모는 실패한 실행의 대화를 여는 onFailure 를 내려보내고
+                *   있었고 그 핸들러도 완성돼 있었는데, 이 조직도가 그 prop 을 한 번도 안 썼다.
+                *   말한 대로 하게 만든다 — 점을 누르면 그 실패한 대화가 열린다.
+                */
+              <button
+                type="button"
+                className={styles.failureDot}
+                aria-label={locale === "ko" ? "실행 실패 — 대화를 열어 상세 확인" : "Run failed — open the conversation for details"}
+                title={locale === "ko" ? "실행 실패 — 대화를 열어 상세 확인" : "Run failed — open the conversation for details"}
+                onClick={(event) => { event.stopPropagation(); onFailure?.(member); }}
+              />
+            )}
             <div className={styles.rowActions}>
               <button
                 type="button"

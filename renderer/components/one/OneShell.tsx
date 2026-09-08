@@ -8419,6 +8419,18 @@ function DecisionCard({ confirmation, taskId, locale, disabled, compact = false,
               {option.label}
             </button>
           ))}
+          {/*
+            * ★단추만 없는 완성된 기능이었다 (실측 2026-09-08).
+            *   `clarifyConfirmation` 은 One 에게 "무엇이 빠졌는지 물어보고 선택지를 다시
+            *   정리해 달라"고 실제로 실행을 거는 완성된 경로이고, 라벨
+            *   `one.shell.decision.change_scope` 도 두 언어로 이미 있었다. 부모는 그 핸들러를
+            *   `onClarify` 로 내려보내고 있었다. **그런데 이 카드가 그 prop 을 한 번도 안
+            *   썼다** — 부르는 단추가 없어서 사람은 "왜 이걸 묻는지" 되물을 길이 없었다.
+            *   핸들러·라벨·배선이 다 살아 있는데 마지막 칸만 비어 있던 자리다.
+            */}
+          <button type="button" className={styles.decisionButton} disabled={disabled} onClick={() => onClarify(confirmation)}>
+            {tFor(locale, "one.shell.decision.change_scope")}
+          </button>
           <button type="button" className={styles.decisionButton} disabled={disabled} onClick={() => onSnooze(confirmation)}>
             {tFor(locale, "one.shell.decision.remind_24h")}
           </button>

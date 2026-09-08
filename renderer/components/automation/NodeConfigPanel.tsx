@@ -726,12 +726,21 @@ function dedupeRuntimes(runtimes: RuntimeStatus[]): string[] {
   return Array.from(set);
 }
 
+/*
+ * ★보이는 이름과 **읽히는 이름**은 다르다 (실측 2026-09-08).
+ *   이 묶음은 이름을 `<div>` 로 그렸다 — 눈에는 보이지만 그 아래 입력칸과 **연결돼 있지
+ *   않아서** 화면 낭독기에는 이름 없는 칸으로 읽힌다. 여기 한 곳만 고치면 이 패널의
+ *   입력칸 12개가 한꺼번에 이름을 얻는다.
+ *
+ *   `<label>` 로 감싸면 id 를 만들지 않아도 브라우저가 둘을 묶는다(암시적 연결).
+ *   `<div>` 를 `<label>` 로 바꾸기만 하면 보이는 모양은 그대로다.
+ */
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
-    <div>
-      <div style={{ fontSize: 11, fontWeight: 600, color: "var(--ink-soft)", marginBottom: 5 }}>{label}</div>
+    <label style={{ display: "block" }}>
+      <span style={{ display: "block", fontSize: 11, fontWeight: 600, color: "var(--ink-soft)", marginBottom: 5 }}>{label}</span>
       {children}
-    </div>
+    </label>
   );
 }
 

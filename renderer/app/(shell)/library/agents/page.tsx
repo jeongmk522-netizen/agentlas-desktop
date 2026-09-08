@@ -4284,7 +4284,7 @@ function ExperiencePanel({
                 <span style={{ fontSize: 11, color: "var(--muted-deep)" }}>{ko ? `저장 ${candidates.length} · 검토 완료 ${receipts.length}` : `${candidates.length} saved · ${receipts.length} reviewed`}</span>
               </div>
               <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) auto", gap: 8, marginBottom: 12 }}>
-                <select value={memoryId} onChange={(event) => setMemoryId(event.target.value)} style={{ border: "1px solid var(--paper-edge)", borderRadius: 8, padding: 8, background: "var(--paper-2)", color: "var(--ink)" }}>
+                <select aria-label={locale === "ko" ? "기억 고르기" : "Choose a memory"} value={memoryId} onChange={(event) => setMemoryId(event.target.value)} style={{ border: "1px solid var(--paper-edge)", borderRadius: 8, padding: 8, background: "var(--paper-2)", color: "var(--ink)" }}>
                   <option value="">{ko ? "같은 프로젝트의 큐레이팅된 Memory 선택" : "Choose curated Memory from this project"}</option>
                   {eligibleMemory.map((entry) => <option key={entry.id} value={entry.id}>{entry.content.slice(0, 90)}</option>)}
                 </select>

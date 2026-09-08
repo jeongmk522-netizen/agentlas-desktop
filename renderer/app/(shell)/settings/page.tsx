@@ -615,6 +615,7 @@ export default function SettingsPage() {
               <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
                 <input
                   type="range"
+                  aria-label={locale === "ko" ? "동시 실행 수" : "Concurrent runs"}
                   min={1}
                   max={concurrency.hardMax}
                   value={concurrencyDraft ?? concurrency.current}

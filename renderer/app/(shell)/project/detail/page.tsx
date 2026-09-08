@@ -951,6 +951,7 @@ function ProjectPage() {
               <>
                 <textarea
                   value={noteDraft}
+                  aria-label={locale === "ko" ? "프로젝트 메모" : "Project note"}
                   onChange={(event) => setNoteDraft(event.target.value)}
                   rows={4}
                   style={{

@@ -1037,6 +1037,7 @@ export default function SiteStudioPage() {
                     {renamingId === s.id ? (
                       <input
                         autoFocus
+                        aria-label={ko ? "새 이름" : "New name"}
                         value={renameDraft}
                         disabled={siteBusy}
                         onChange={(e) => setRenameDraft(e.target.value)}

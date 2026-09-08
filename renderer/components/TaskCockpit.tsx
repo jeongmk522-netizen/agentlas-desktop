@@ -6011,6 +6011,7 @@ function ChatPage() {
           {editingTitle ? (
             <input
               autoFocus
+              aria-label={locale === "ko" ? "작업 제목" : "Task title"}
               value={titleDraft}
               onChange={(e) => setTitleDraft(e.target.value)}
               onBlur={() => void saveTitle()}

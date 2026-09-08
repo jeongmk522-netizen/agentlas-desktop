@@ -167,7 +167,7 @@ export function AgentScreenFooter({ screen, ko }: { screen: AgentScreenState; ko
   return (
     <footer>
       {computerFrame.sources.length > 1 && (
-        <select value={sourceId ?? ""} onChange={(event) => setSourceId(event.target.value || undefined)}>
+        <select aria-label={ko ? "보여 줄 화면 고르기" : "Choose which screen to show"} value={sourceId ?? ""} onChange={(event) => setSourceId(event.target.value || undefined)}>
           {computerFrame.sources.map((source) => <option key={source.id} value={source.id}>{source.name}</option>)}
         </select>
       )}

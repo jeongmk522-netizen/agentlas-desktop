@@ -21,7 +21,7 @@ export function AgentFilesPanel({
   width?: number;
   onWidthChange?: (w: number) => void;
 }) {
-  const { t } = useT();
+  const { t, locale } = useT();
   const [files, setFiles] = useState<WorkspaceNode[]>([]);
   const [activePath, setActivePath] = useState<string | null>(null);
   const [preview, setPreview] = useState<TextFilePreview | null>(null);
@@ -300,6 +300,7 @@ export function AgentFilesPanel({
                 )}
                 <textarea
                   value={draft}
+                  aria-label={locale === "ko" ? "파일 내용" : "File contents"}
                   onChange={(e) => {
                     setDraft(e.target.value);
                     setDirty(true);

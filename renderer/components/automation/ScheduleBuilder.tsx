@@ -372,12 +372,21 @@ function Chip({ active, onClick, label }: { active: boolean; onClick: () => void
   );
 }
 
+/*
+ * ★보이는 이름과 **읽히는 이름**은 다르다 (실측 2026-09-08).
+ *   이름을 <div> 로 그리면 눈에는 보여도 그 아래 입력칸과 연결되지 않아, 화면 낭독기에는
+ *   이름 없는 칸으로 읽힌다. <label> 로 감싸면 id 없이도 브라우저가 둘을 묶는다.
+ *   여기 한 곳으로 이 화면의 입력칸 4개가 한꺼번에 이름을 얻는다. 보이는 모양은 그대로다.
+ *
+ *   다만 요일 고르기처럼 **여러 단추**를 담는 줄도 있으므로 label 이 아니라 group 으로
+ *   그려야 하는 경우가 있다 — children 이 단일 입력이 아닐 때를 위해 role="group" 을 함께 준다.
+ */
 function Row({ label, children }: { label: string; children: React.ReactNode }) {
   return (
-    <div>
-      <div style={{ fontSize: 11, fontWeight: 600, color: "var(--ink-soft)", marginBottom: 5 }}>{label}</div>
+    <label style={{ display: "block" }}>
+      <span style={{ display: "block", fontSize: 11, fontWeight: 600, color: "var(--ink-soft)", marginBottom: 5 }}>{label}</span>
       {children}
-    </div>
+    </label>
   );
 }
 

@@ -2257,6 +2257,51 @@ app.whenReady().then(async () => {
     });
     return { ...imported, artifact: materialized.artifact, artifactReplayed: materialized.replayed };
   });
+  // A typed-path fallback for CSV import. Native `dialog.showOpenDialog` can be launched but never
+  // become interactive in some hosting environments (the same class of problem the project-folder
+  // picker hit -- see science:projects:specifyFolder), leaving "Import CSV" stuck on "Validating..."
+  // forever with no way to cancel or retry. This mirrors specifyFolder's boundary: a typed path must
+  // resolve to a real, existing file inside the user's home directory, not hidden, not inside this
+  // app's own storage, so a compromised or careless caller cannot read arbitrary files on the disk.
+  ipcMain.handle("science:datasets:importCsvFromPath", async (event, envelope: unknown) => {
+    assertScienceSender(event, envelope, "science:artifacts");
+    const input = envelope && typeof envelope === "object" && "input" in envelope ? (envelope as { input?: unknown }).input : null;
+    if (!input || typeof input !== "object" || Array.isArray(input)) throw new Error("science-dataset-input-invalid");
+    const record = input as Record<string, unknown>;
+    const rawPath = record.filePath;
+    if (typeof rawPath !== "string" || !rawPath.trim()) throw new Error("science-dataset-path-invalid");
+    let resolved = rawPath.trim();
+    if (resolved.startsWith("~/")) resolved = path.join(os.homedir(), resolved.slice(2));
+    else if (resolved === "~") resolved = os.homedir();
+    resolved = path.resolve(resolved);
+    const home = path.resolve(os.homedir());
+    const inside = (root: string, target: string) => target === root || target.startsWith(`${root}${path.sep}`);
+    const relativeToHome = path.relative(home, resolved);
+    if (!inside(home, resolved) || relativeToHome.startsWith("..") || path.isAbsolute(relativeToHome)) {
+      throw new Error("science-dataset-path-outside-home");
+    }
+    if (relativeToHome.split(path.sep).some((segment) => segment.startsWith("."))) throw new Error("science-dataset-path-hidden");
+    if (inside(path.resolve(app.getPath("userData")), resolved)) throw new Error("science-dataset-path-reserved");
+    if (path.extname(resolved).toLowerCase() !== ".csv") throw new Error("science-dataset-path-not-csv");
+    let stat: fs.Stats;
+    try { stat = fs.lstatSync(resolved); } catch { throw new Error("science-dataset-path-not-found"); }
+    if (stat.isSymbolicLink() || !stat.isFile()) throw new Error("science-dataset-path-not-a-file");
+    const store = scienceStore();
+    const imported = await createScienceDatasetIngestionService(store).importFile(resolved, {
+      requestId: String(record.requestId ?? ""),
+      projectId: String(record.projectId ?? ""),
+      conversationId: String(record.conversationId ?? ""),
+      originMessageId: String(record.originMessageId ?? ""),
+      title: typeof record.title === "string" ? record.title : undefined,
+    });
+    const materialized = store.materializeDatasetTable({
+      requestId: String(record.artifactRequestId ?? ""),
+      projectId: String(record.projectId ?? ""),
+      runId: imported.run.id,
+      title: typeof record.title === "string" ? record.title : undefined,
+    });
+    return { ...imported, artifact: materialized.artifact, artifactReplayed: materialized.replayed };
+  });
   ipcMain.handle("science:sourceFigures:list", (event, input: unknown) => {
     assertScienceSender(event, input);
     const projectId = input && typeof input === "object" && "projectId" in input ? String((input as { projectId?: unknown }).projectId ?? "") : "";

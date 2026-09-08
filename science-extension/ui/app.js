@@ -415,7 +415,7 @@ function createComposerEventSync({
     scopeLoading: false, scopeError: "",
     logbookRevisions: [], logbookLoading: false, logbookError: "",
     submissionArchiveProfiles: [], submissionArchiveExports: [], submissionArchiveLoading: false, submissionArchiveError: "",
-    datasetImportBusy: false, datasetImportError: "", workbookImportBusy: false, workbookImportError: "", workbookProjectionBusy: false, workbookProjectionError: "", workbookReadback: null, workbookSelectedSheetOrdinal: null, workbookFirstRow: 1, workbookLastRow: 1, workbookColumnMapping: {}, projectDataImportBusy: false, projectDataImportCandidateId: "", projectDataImportError: "", tablePageByArtifact: new Map(), statisticsViewByArtifact: new Map(), paleontologyViewByArtifact: new Map(), visualViewportByArtifact: new Map(),
+    datasetImportBusy: false, datasetImportError: "", datasetImportPathDraft: "", datasetImportPathBusy: false, datasetImportPathError: "", workbookImportBusy: false, workbookImportError: "", workbookProjectionBusy: false, workbookProjectionError: "", workbookReadback: null, workbookSelectedSheetOrdinal: null, workbookFirstRow: 1, workbookLastRow: 1, workbookColumnMapping: {}, projectDataImportBusy: false, projectDataImportCandidateId: "", projectDataImportError: "", tablePageByArtifact: new Map(), statisticsViewByArtifact: new Map(), paleontologyViewByArtifact: new Map(), visualViewportByArtifact: new Map(),
     spatialViewByArtifact: new Map(), materialsStructureIndexByArtifact: new Map(),
     statisticsLaunchSourceArtifactId: null, statisticsLaunchTimeColumn: "", statisticsLaunchEventColumn: "", statisticsLaunchBusy: false, statisticsLaunchError: "", statisticsLaunchOpen: false,
     // The launch screen used to offer one analysis, because one analysis was written into it. These
@@ -3174,44 +3174,44 @@ function createComposerEventSync({
     const policy = state.approvalPolicy && state.approvalPolicy.projectId === state.selectedId ? state.approvalPolicy : null;
     if (!policy) return "";
     const scopeLabels = {
-      "research-contract": "연구 계약 승인",
-      hypothesis: "가설 승인·기각",
-      "journal-identity": "저널 신원 확인",
-      "analysis-plan": "분석 계획 검증·확정",
-      "submission-attestation": "제출 최종 확인 (연구자 이름으로 출판사에 나가는 진술)",
+      "research-contract": uiCopy("연구 계약 승인", "Research contract approval"),
+      hypothesis: uiCopy("가설 승인·기각", "Hypothesis approval and rejection"),
+      "journal-identity": uiCopy("저널 신원 확인", "Journal identity confirmation"),
+      "analysis-plan": uiCopy("분석 계획 검증·확정", "Analysis plan review & confirmation"),
+      "submission-attestation": uiCopy("제출 최종 확인 (연구자 이름으로 출판사에 나가는 진술)", "Final submission confirmation (a statement sent to the publisher under your name)"),
     };
     // Each row delegates a different decision. One shared sentence made four
     // checkboxes read as one switch, which is how a blanket grant gets clicked.
     const scopeGranted = {
-      "research-contract": "목표와 중단 기준을 연구자 확인 없이 확정합니다",
-      hypothesis: "제안된 가설을 스스로 채택하거나 기각합니다",
-      "journal-identity": "투고할 저널의 요건을 스스로 확정합니다",
-      "analysis-plan": "허용된 범위에서 완전한 계획 버전을 고정합니다",
-      "submission-attestation": "제출 진술을 연구자 확인 없이 확정합니다",
+      "research-contract": uiCopy("목표와 중단 기준을 연구자 확인 없이 확정합니다", "Confirms the objective and stop criteria without asking you."),
+      hypothesis: uiCopy("제안된 가설을 스스로 채택하거나 기각합니다", "Adopts or rejects proposed hypotheses on its own."),
+      "journal-identity": uiCopy("투고할 저널의 요건을 스스로 확정합니다", "Confirms the target journal's requirements on its own."),
+      "analysis-plan": uiCopy("허용된 범위에서 완전한 계획 버전을 고정합니다", "Locks a completed plan version within the approved scope."),
+      "submission-attestation": uiCopy("제출 진술을 연구자 확인 없이 확정합니다", "Confirms the submission statement without asking you."),
     };
     const scopeAsked = {
-      "research-contract": "계약을 확정하기 전에 묻습니다",
-      hypothesis: "가설을 채택·기각하기 전에 묻습니다",
-      "journal-identity": "저널 요건을 확정하기 전에 묻습니다",
-      "analysis-plan": "계획 버전을 확정하기 전에 검토를 요청합니다",
-      "submission-attestation": "제출 진술을 확정하기 전에 묻습니다",
+      "research-contract": uiCopy("계약을 확정하기 전에 묻습니다", "Asks before confirming the contract."),
+      hypothesis: uiCopy("가설을 채택·기각하기 전에 묻습니다", "Asks before adopting or rejecting a hypothesis."),
+      "journal-identity": uiCopy("저널 요건을 확정하기 전에 묻습니다", "Asks before confirming journal requirements."),
+      "analysis-plan": uiCopy("계획 버전을 확정하기 전에 검토를 요청합니다", "Asks for review before confirming a plan version."),
+      "submission-attestation": uiCopy("제출 진술을 확정하기 전에 묻습니다", "Asks before confirming the submission statement."),
     };
     const rows = Object.entries(scopeLabels).map(([scope, label]) => {
       const standing = policy.mode === "autonomous" && policy.scopes.includes(scope);
       return `<li class="approvalScope" data-approval-scope="${escapeHtml(scope)}" data-approval-standing="${standing ? "yes" : "no"}">
         <label><input type="checkbox" data-action="toggle-approval-scope" data-scope="${escapeHtml(scope)}" ${standing ? "checked" : ""}>
         ${escapeHtml(label)}</label>
-        ${standing ? "" : `<span class="approvalScopeBadge">기본에서 제외</span>`}
+        ${standing ? "" : `<span class="approvalScopeBadge">${uiCopy("기본에서 제외", "Excluded by default")}</span>`}
         <span class="approvalScopeState">${escapeHtml(standing ? scopeGranted[scope] : scopeAsked[scope])}</span>
       </li>`;
     }).join("");
     return `<section class="approvalPolicyPanel" aria-busy="${approvalPolicyWrites.has(state.selectedId)}">
-      <h2>승인 방식</h2>
-      <p class="approvalPolicyNote">체크한 항목은 연구가 멈추지 않고 진행하며, 누가 언제 허용했는지는 그대로 기록됩니다. 해제하면 그 지점에서 묻습니다.</p>
+      <h2>${uiCopy("승인 방식", "Approval mode")}</h2>
+      <p class="approvalPolicyNote">${uiCopy("체크한 항목은 연구가 멈추지 않고 진행하며, 누가 언제 허용했는지는 그대로 기록됩니다. 해제하면 그 지점에서 묻습니다.", "Checked items let research continue without stopping; who approved it and when is still recorded. Uncheck one to be asked at that point instead.")}</p>
       ${state.approvalPolicyError ? `<div class="errorCopy" role="alert">${escapeHtml(state.approvalPolicyError)}</div>` : ""}
       <ul class="approvalScopes">${rows}</ul>
       <p data-approval-save-status role="status">${approvalPolicyWrites.has(state.selectedId) ? uiCopy("승인 설정 저장 중…", "Saving approval settings…") : ""}</p>
-      <p class="approvalPolicyProvenance">현재 정책 r${escapeHtml(String(policy.revision))} · ${escapeHtml(policy.grantedBy)}</p>
+      <p class="approvalPolicyProvenance">${uiCopy(`현재 정책 r${escapeHtml(String(policy.revision))} · ${escapeHtml(policy.grantedBy)}`, `Current policy r${escapeHtml(String(policy.revision))} · ${escapeHtml(policy.grantedBy)}`)}</p>
     </section>`;
   }
 
@@ -6358,6 +6358,79 @@ function createComposerEventSync({
     }
   }
 
+  function datasetImportPathErrorMessage(error) {
+    const message = error instanceof Error ? error.message : String(error || "");
+    if (message.includes("path-invalid")) return uiCopy("파일 경로를 입력해 주세요.", "Enter a file path.");
+    if (message.includes("outside-home")) {
+      return uiCopy(
+        "내 사용자 폴더 안의 CSV 파일만 쓸 수 있습니다. 예: ~/Science/내연구/data.csv — 아니면 'CSV 가져오기'로 직접 고르세요.",
+        "Choose a CSV file inside your home directory, for example ~/Science/my-study/data.csv — or use Import CSV to pick one.",
+      );
+    }
+    if (message.includes("path-hidden")) {
+      return uiCopy("이름이 점(.)으로 시작하는 숨김 폴더 안의 파일은 쓸 수 없습니다.", "A file inside a hidden folder (one whose name starts with a dot) cannot be used.");
+    }
+    if (message.includes("path-reserved")) {
+      return uiCopy("이 위치는 앱이 쓰는 곳이라 가져올 수 없습니다. 연구 폴더 안의 경로를 입력하세요.", "This location belongs to the app itself, so it cannot be imported. Enter a path inside your research folder.");
+    }
+    if (message.includes("not-csv")) return uiCopy("CSV(.csv) 파일 경로만 입력할 수 있습니다.", "Only a path ending in .csv can be entered here.");
+    if (message.includes("not-found")) return uiCopy("그 경로에서 파일을 찾지 못했습니다. 정확한 경로인지 확인하세요.", "No file was found at that path. Check that it's exact.");
+    if (message.includes("not-a-file")) return uiCopy("그 경로는 파일이 아니라 폴더이거나 바로가기입니다.", "That path is a folder or a link, not a file.");
+    return uiCopy(
+      "이 경로를 가져올 수 없습니다. 경로를 다시 확인하거나 'CSV 가져오기'로 직접 선택해 주세요.",
+      "This path could not be imported. Double-check it, or use Import CSV to pick the file directly.",
+    );
+  }
+
+  async function importCsvDatasetFromPath() {
+    if (state.datasetImportPathBusy || state.datasetImportBusy || !state.selectedId) return;
+    const filePath = state.datasetImportPathDraft.trim();
+    if (!filePath) return;
+    const conversation = selectedConversation();
+    const originMessage = [...state.messages].reverse().find((message) => message.role === "user");
+    if (!conversation || !originMessage || !science.datasets?.importCsvFromPath) {
+      state.datasetImportPathError = uiCopy("현재 연구 대화와 연결된 CSV 가져오기 런타임을 찾지 못했습니다.", "The CSV intake runtime is unavailable for this research conversation.");
+      render();
+      return;
+    }
+    state.datasetImportPathBusy = true;
+    state.datasetImportPathError = "";
+    render();
+    try {
+      const result = await science.datasets.importCsvFromPath({
+        requestId: crypto.randomUUID(),
+        artifactRequestId: crypto.randomUUID(),
+        projectId: state.selectedId,
+        conversationId: conversation.id,
+        originMessageId: originMessage.id,
+        filePath,
+      });
+      if (!result?.artifact?.id || result.artifact.version?.rendererId !== "agentlas.table") throw new Error("CSV는 저장됐지만 검증된 Data Table 아티팩트를 만들지 못했습니다.");
+      const projectId = state.selectedId;
+      state.datasetImportPathBusy = false;
+      state.datasetImportPathDraft = "";
+      await selectProject(projectId, { preserveWorkspace: true });
+      await openLab("data-table", result.artifact.id, null, originMessage.id, result.artifact.currentVersion);
+    } catch (error) {
+      state.datasetImportPathBusy = false;
+      state.datasetImportPathError = datasetImportPathErrorMessage(error);
+      render();
+    }
+  }
+
+  /**
+   * The native file dialog behind "Import CSV" can be launched but never become interactive in
+   * some hosting environments, leaving the button stuck on "Validating..." with no way to cancel
+   * or retry. This is the same failure class the project-folder picker hit (see #1/#2): the fix
+   * there was a typed-path fallback alongside the native browse button, so a researcher who already
+   * knows the exact path (for example, a path the research loop just told her it wrote to) is never
+   * blocked on a dialog that will not open.
+   */
+  function csvImportPathFieldMarkup() {
+    const busy = state.datasetImportPathBusy;
+    return `<div class="csvImportPathField"><label class="field"><span>${uiCopy("또는 CSV 파일 경로를 직접 입력", "Or enter the CSV file path directly")}</span><input type="text" data-csv-import-path value="${escapeHtml(state.datasetImportPathDraft)}" placeholder="${uiCopy("~/Science/내연구/data.csv", "~/Science/my-study/data.csv")}" autocomplete="off" spellcheck="false" ${busy ? "disabled" : ""} /></label><button class="secondaryButton" type="button" data-action="import-csv-dataset-from-path" ${busy ? "disabled" : ""}>${busy ? uiCopy("가져오는 중…", "Importing…") : uiCopy("경로로 가져오기", "Import from path")}</button>${state.datasetImportPathError ? `<p class="labStartError" role="alert">${escapeHtml(state.datasetImportPathError)}</p>` : ""}</div>`;
+  }
+
   /** Whether this lab already holds analyses -- if it does, the launch card needs a way back. */
   function labHasStatisticsArtifacts() {
     return (state.labContextsById.get("statistics-analysis") || []).length > 0;
@@ -7646,7 +7719,7 @@ function createComposerEventSync({
     if (!labArtifacts.length) {
       if (state.selectedLabId === "data-table") {
         if (state.workbookReadback) return labDecisionEmptyMarkup(`${projectDataStatus}<section class="emptyView labStartView" data-empty-source="science.sqlite"><div class="labStartCard">${workbookIntakeMarkup()}</div></section>`);
-        return labDecisionEmptyMarkup(`${projectDataStatus}<section class="emptyView labStartView" data-empty-source="science.sqlite"><div class="labStartCard"><span class="researchKicker">Data & Statistics · ${escapeHtml(lifecycleLabel())}</span><strong>${uiCopy("CSV 또는 Excel 파일을 표로 가져오세요.", "Import a CSV or Excel workbook as a table.")}</strong><p class="workbookPickerBoundary">${uiCopy("원본은 보존됩니다. CSV·Excel 또는 연결 폴더 파일을 선택하세요.", "The original is preserved. Choose a CSV, Excel, or a file from the linked folder.")}</p><div class="workbookIntakeActions"><button class="primaryButton importDatasetButton" data-action="import-csv-dataset" ${state.datasetImportBusy || state.workbookImportBusy ? "disabled" : ""}>${state.datasetImportBusy ? uiCopy("검증하며 가져오는 중…", "Validating…") : uiCopy("CSV 가져오기", "Import CSV")}</button><button class="secondaryButton importDatasetButton" data-action="import-workbook-dataset" ${state.datasetImportBusy || state.workbookImportBusy ? "disabled" : ""}>${state.workbookImportBusy ? uiCopy("Excel을 읽는 중…", "Reading workbook…") : uiCopy("Excel 선택 (.xlsx/.xls)", "Choose Excel (.xlsx/.xls)")}</button></div>${state.datasetImportError ? `<p class="labStartError" role="alert">${escapeHtml(state.datasetImportError)}</p>` : ""}${state.workbookImportError ? `<p class="labStartError" role="alert">${escapeHtml(state.workbookImportError)}</p>` : ""}</div></section>`);
+        return labDecisionEmptyMarkup(`${projectDataStatus}<section class="emptyView labStartView" data-empty-source="science.sqlite"><div class="labStartCard"><span class="researchKicker">Data & Statistics · ${escapeHtml(lifecycleLabel())}</span><strong>${uiCopy("CSV 또는 Excel 파일을 표로 가져오세요.", "Import a CSV or Excel workbook as a table.")}</strong><p class="workbookPickerBoundary">${uiCopy("원본은 보존됩니다. CSV·Excel 또는 연결 폴더 파일을 선택하세요.", "The original is preserved. Choose a CSV, Excel, or a file from the linked folder.")}</p><div class="workbookIntakeActions"><button class="primaryButton importDatasetButton" data-action="import-csv-dataset" ${state.datasetImportBusy || state.workbookImportBusy ? "disabled" : ""}>${state.datasetImportBusy ? uiCopy("검증하며 가져오는 중…", "Validating…") : uiCopy("CSV 가져오기", "Import CSV")}</button><button class="secondaryButton importDatasetButton" data-action="import-workbook-dataset" ${state.datasetImportBusy || state.workbookImportBusy ? "disabled" : ""}>${state.workbookImportBusy ? uiCopy("Excel을 읽는 중…", "Reading workbook…") : uiCopy("Excel 선택 (.xlsx/.xls)", "Choose Excel (.xlsx/.xls)")}</button></div>${csvImportPathFieldMarkup()}${state.datasetImportError ? `<p class="labStartError" role="alert">${escapeHtml(state.datasetImportError)}</p>` : ""}${state.workbookImportError ? `<p class="labStartError" role="alert">${escapeHtml(state.workbookImportError)}</p>` : ""}</div></section>`);
       }
       if (state.selectedLabId === "statistics-analysis") return labDecisionEmptyMarkup(statisticsLaunchCard());
       if (state.selectedLabId === "data-visualization") return labDecisionEmptyMarkup(publicationFigureStartMarkup());
@@ -7805,7 +7878,7 @@ function createComposerEventSync({
     const decisionPanel = labDecisionPanelMarkup();
     const chartPriority = Boolean(economicPayload && !inspectingHistory);
     const dataTableIntakeAction = state.selectedLabId === "data-table"
-      ? `<section class="workbookReimportBar" aria-label="${escapeHtml(uiCopy("표 데이터 추가", "Add table data"))}"><div><strong>${escapeHtml(uiCopy("표 데이터를 더 추가하시겠어요?", "Add another table source"))}</strong><span>${escapeHtml(uiCopy("원본을 보존한 채 CSV 또는 Excel 파일을 선택할 수 있습니다.", "Choose another CSV or Excel file while preserving the original."))}</span></div><div class="workbookIntakeActions"><button class="secondaryButton" type="button" data-action="import-csv-dataset" ${state.datasetImportBusy || state.workbookImportBusy ? "disabled" : ""}>${state.datasetImportBusy ? uiCopy("가져오는 중…", "Importing…") : uiCopy("CSV 추가", "Add CSV")}</button><button class="secondaryButton" type="button" data-action="import-workbook-dataset" ${state.datasetImportBusy || state.workbookImportBusy ? "disabled" : ""}>${state.workbookImportBusy ? uiCopy("Excel을 읽는 중…", "Reading workbook…") : uiCopy("Excel 선택", "Choose Excel")}</button></div>${state.datasetImportError ? `<p class="labStartError" role="alert">${escapeHtml(state.datasetImportError)}</p>` : ""}${state.workbookImportError ? `<p class="labStartError" role="alert">${escapeHtml(state.workbookImportError)}</p>` : ""}</section>`
+      ? `<section class="workbookReimportBar" aria-label="${escapeHtml(uiCopy("표 데이터 추가", "Add table data"))}"><div><strong>${escapeHtml(uiCopy("표 데이터를 더 추가하시겠어요?", "Add another table source"))}</strong><span>${escapeHtml(uiCopy("원본을 보존한 채 CSV 또는 Excel 파일을 선택할 수 있습니다.", "Choose another CSV or Excel file while preserving the original."))}</span></div><div class="workbookIntakeActions"><button class="secondaryButton" type="button" data-action="import-csv-dataset" ${state.datasetImportBusy || state.workbookImportBusy ? "disabled" : ""}>${state.datasetImportBusy ? uiCopy("가져오는 중…", "Importing…") : uiCopy("CSV 추가", "Add CSV")}</button><button class="secondaryButton" type="button" data-action="import-workbook-dataset" ${state.datasetImportBusy || state.workbookImportBusy ? "disabled" : ""}>${state.workbookImportBusy ? uiCopy("Excel을 읽는 중…", "Reading workbook…") : uiCopy("Excel 선택", "Choose Excel")}</button></div>${csvImportPathFieldMarkup()}${state.datasetImportError ? `<p class="labStartError" role="alert">${escapeHtml(state.datasetImportError)}</p>` : ""}${state.workbookImportError ? `<p class="labStartError" role="alert">${escapeHtml(state.workbookImportError)}</p>` : ""}</section>`
       : "";
     return `<section class="artifactWorkspace ${state.historyOpen ? "historyOpen" : ""} ${state.artifactComparison ? "compareOpen" : ""} ${spatialArtifact ? "spatialArtifact" : ""} ${spatial3dOpen ? "spatial3dOpen" : ""}" data-chart-priority="${chartPriority}"><header class="labWorkspaceHeader visuallyHidden"><span>${escapeHtml(labCapabilityLabel(state.selectedLabId))}</span><strong>아티팩트 보관소 · 작업공간</strong><span class="originVersion">${capability}</span><button data-action="back-session">${state.returnMessageId ? "대화의 아티팩트로" : "세션으로 돌아가기"}</button></header>${dataTableIntakeAction}${projectDataStatus}${tabs ? `<nav class="artifactTabs" data-count="${escapeHtml(labArtifacts.length)}" aria-label="Lab 아티팩트">${tabs}</nav>` : ""}${originStrip}${statisticsLineage}${paleontologyLineage}<div class="labWorkGrid"><div class="figureColumn">
       ${canvas}
@@ -8251,7 +8324,8 @@ function createComposerEventSync({
             : !state.runtimeSelection && !state.runtimeSelectionLoading
               ? uiCopy("모델을 선택해 주세요.", "Choose a model to begin.")
         : needsInitialRun ? "저장된 첫 질문을 실행할 수 있습니다" : "");
-    return `<footer class="composer${docked ? " dockedComposer" : ""}"><div class="composerBox"><textarea data-composer-input ${disabled || running || needsInitialRun ? "disabled" : ""} rows="2" aria-label="후속 질문" placeholder="후속 질문, 분석 또는 실험 요청">${escapeHtml(state.composerDraft)}</textarea><div class="composerBar"><div class="composerTools">${scienceRuntimePickerMarkup()}${scienceResearchLoopControlsMarkup()}${status ? `<span class="composerStatus">${escapeHtml(status)}</span>` : ""}</div><button class="sendButton" data-action="${running ? "cancel-turn" : "send-turn"}" ${sendDisabled ? "disabled" : ""} aria-label="${running ? "중단" : needsInitialRun ? "첫 질문 실행" : "보내기"}">${running ? "■" : "↑"}</button></div></div></footer>`;
+    const sendButtonLabel = running ? uiCopy("중단", "Stop") : needsInitialRun ? uiCopy("첫 질문 실행", "Run first question") : uiCopy("보내기", "Send");
+    return `<footer class="composer${docked ? " dockedComposer" : ""}"><div class="composerBox"><textarea data-composer-input ${disabled || running || needsInitialRun ? "disabled" : ""} rows="2" aria-label="${escapeHtml(uiCopy("후속 질문", "Follow-up question"))}" placeholder="${escapeHtml(uiCopy("후속 질문, 분석 또는 실험 요청", "Ask a follow-up, analysis, or experiment"))}">${escapeHtml(state.composerDraft)}</textarea><div class="composerBar"><div class="composerTools">${scienceRuntimePickerMarkup()}${scienceResearchLoopControlsMarkup()}${status ? `<span class="composerStatus">${escapeHtml(status)}</span>` : ""}</div><button class="sendButton" data-action="${running ? "cancel-turn" : "send-turn"}" ${sendDisabled ? "disabled" : ""} aria-label="${escapeHtml(sendButtonLabel)}"><span aria-hidden="true">${running ? "■" : "↑"}</span><span class="visuallyHidden">${escapeHtml(sendButtonLabel)}</span></button></div></div></footer>`;
   }
 
   function chatContextTokensMarkup() {
@@ -12232,6 +12306,7 @@ function createComposerEventSync({
     if (target.dataset.action === "import-project-data-candidate") { void importProjectDataCandidate(target); return; }
     if (target.dataset.action === "open-project-data-candidate") { void openProjectDataCandidate(target); return; }
     if (target.dataset.action === "import-csv-dataset") { void importCsvDataset(); return; }
+    if (target.dataset.action === "import-csv-dataset-from-path") { void importCsvDatasetFromPath(); return; }
     if (target.dataset.action === "import-workbook-dataset") { void importWorkbookDataset(); return; }
     if (target.dataset.action === "clear-workbook-intake") {
       if (state.workbookProjectionBusy) return;
@@ -12689,6 +12764,11 @@ function createComposerEventSync({
       if (!event.isComposing && !scienceModelSearchComposing) scheduleScienceModelSearchRender(modelSearch);
       return;
     }
+    const csvImportPath = event.target.closest("[data-csv-import-path]");
+    if (csvImportPath) {
+      state.datasetImportPathDraft = csvImportPath.value;
+      return;
+    }
     const projectSearch = event.target.closest("[data-project-search]");
     if (projectSearch) {
       state.librarySearch = projectSearch.value;
@@ -12941,7 +13021,12 @@ function createComposerEventSync({
       return;
     }
     const target = event.target.closest(".composer textarea[data-composer-input]");
-    if (!target || event.key !== "Enter" || (!event.metaKey && !event.ctrlKey)) return;
+    // Plain Enter sends, matching the convention of every other chat composer; Shift+Enter still
+    // inserts a newline by falling through to the textarea's own default behavior. Meta/Ctrl+Enter
+    // keeps working too, since it also matches "Enter without Shift." IME composition (Korean,
+    // Japanese, Chinese input) uses Enter to confirm a candidate, not to submit, so a composing
+    // keystroke must never be treated as send.
+    if (!target || event.key !== "Enter" || event.shiftKey || event.isComposing || event.keyCode === 229) return;
     event.preventDefault();
     void startComposerTurn();
   });

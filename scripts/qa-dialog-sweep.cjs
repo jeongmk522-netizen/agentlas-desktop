@@ -193,7 +193,9 @@ async function main() {
   const SIZES = process.env.DLG_QA_SIZES === "grid"
     ? [{ width: 1920, height: 1055 }, { width: 1440, height: 980 }, { width: 1180, height: 820 }]
     : [{ width: 1440, height: 980 }];
-  const screens = process.env.DLG_QA_ALL ? builtScreens(distDir) : [
+  const screens = process.env.DLG_QA_ONE
+    ? [{ label: process.env.DLG_QA_ONE, url: `/${process.env.DLG_QA_ONE}.html`, wait: "body" }]
+    : process.env.DLG_QA_ALL ? builtScreens(distDir) : [
     { label: "one", url: "/one.html", wait: "main" },
     { label: "workspace/task", url: "/workspace/task.html?id=chat-1", wait: '[data-chat-input="true"]' },
     { label: "index", url: "/index.html", wait: "main" },

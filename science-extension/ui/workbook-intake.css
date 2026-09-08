@@ -21,7 +21,7 @@
 .workbookPreviewEmpty { margin: 0; color: var(--muted); font-size: 12px; }
 .workbookIntakeActions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
 .workbookIntakeActions button { min-height: 38px; }
-.workbookReimportBar { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 0 0 14px; padding: 12px 14px; border: 1px solid var(--line); border-radius: var(--science-radius-control); background: var(--surface-subtle); }
+.workbookReimportBar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; margin: 0 0 14px; padding: 12px 14px; border: 1px solid var(--line); border-radius: var(--science-radius-control); background: var(--surface-subtle); }
 .workbookReimportBar > div:first-child { display: grid; gap: 3px; min-width: 0; }
 .workbookReimportBar strong { color: var(--ink); font-size: 12px; }
 .workbookReimportBar span { color: var(--muted); font-size: 11px; line-height: 1.45; }
@@ -29,6 +29,11 @@
 .workbookReimportBar .workbookIntakeActions button { min-height: 32px; }
 .workbookPickerBoundary { display: grid; gap: 3px; border-left: 2px solid var(--line-strong); padding: 2px 0 2px 10px; color: var(--muted); font-size: 11px; line-height: 1.5; }
 .workbookPickerBoundary strong { color: var(--ink); font-size: 11px; }
+.csvImportPathField { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 8px; margin-top: 10px; padding-top: 10px; border-top: 1px dashed var(--line); }
+.csvImportPathField .field { flex: 1 1 220px; margin-top: 0; min-width: 0; }
+.csvImportPathField button { flex: 0 0 auto; min-height: 38px; }
+.csvImportPathField .labStartError { flex: 1 1 100%; margin: 0; }
+.workbookReimportBar .csvImportPathField { flex: 1 1 100%; border-top: none; margin-top: 6px; padding-top: 0; }
 @media (max-width: 640px) {
   .workbookIntakeHeader { align-items: stretch; flex-direction: column; }
   .workbookIntakeHeader .secondaryButton { width: 100%; }

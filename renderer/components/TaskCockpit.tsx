@@ -4593,11 +4593,18 @@ function ChatPage() {
         longContextEnabled: selection.longContext,
       });
       setSessionNotice(null);
-    } catch {
+    } catch (cause) {
+      /*
+       * ★"연결을 확인하라"는 **모르는 원인을 지어낸 것**이었다 (2026-09-08).
+       *   저장이 거절되는 이유는 연결 말고도 여럿이고(권한·잠긴 대화·잘못된 값),
+       *   엉뚱한 곳을 확인하게 만들면 사람은 고칠 수 없는 것을 고치러 간다.
+       *   이유가 오면 그대로 전한다. 안 오면 "안 왔다"고 말한다.
+       */
+      const raw = failureMessage(cause);
       setSessionNotice(
         locale === "ko"
-          ? "이 작업의 모델 선택을 저장하지 못했습니다. 기존 선택은 유지됩니다. 연결을 확인한 뒤 다시 시도해 주세요."
-          : "The model selection was not saved for this task, so the previous selection remains. Check the connection and try again.",
+          ? `이 작업의 모델 선택을 저장하지 못했습니다. 기존 선택은 그대로입니다.${raw ? ` 이유: ${raw}` : " 이유가 오지 않았습니다."}`
+          : `The model selection was not saved for this task, so the previous selection remains.${raw ? ` Reason: ${raw}` : " No reason came back."}`,
       );
     }
   }
@@ -5428,10 +5435,21 @@ function ChatPage() {
       setMessages([]);
       dropChatViewSnapshot(removedId);
       router.replace("/");
-    } catch {
+    } catch (cause) {
+      /*
+       * ★이유를 **짐작해서** 말하고 있었다 (2026-09-08). "아직 실행 중이거나" 는 흔한
+       *   원인 하나일 뿐인데, 다른 이유로 실패해도 같은 문장이 나갔다. 사람은 실행을
+       *   멈추러 갔다가 여전히 안 되는 것을 보게 된다.
+       *   엔진이 이유를 주면 그것을 그대로 전하고, 없을 때만 흔한 원인을 안내한다.
+       */
+      const raw = failureMessage(cause);
       setSessionNotice(locale === "ko"
-        ? "작업이 아직 실행 중이거나 삭제할 수 없는 상태입니다. 실행을 멈춘 뒤 다시 시도해 주세요."
-        : "This task is still running or cannot be deleted. Stop the run and try again.");
+        ? (raw
+          ? `작업을 삭제하지 못했습니다: ${raw}`
+          : "작업을 삭제하지 못했고 이유가 오지 않았습니다. 실행 중이면 멈춘 뒤 다시 시도해 주세요.")
+        : (raw
+          ? `The task was not deleted: ${raw}`
+          : "The task was not deleted and no reason came back. If a run is active, stop it and try again."));
     }
   }
 

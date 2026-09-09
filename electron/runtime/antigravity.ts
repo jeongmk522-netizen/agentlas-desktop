@@ -1,12 +1,14 @@
 // Antigravity CLI (agy) — 감지 + 실호출.
 // Google 계정의 Antigravity 구독 런타임만 지원한다.
 import path from "node:path";
+import { acquireAgyMcpLease } from "./agy-mcp-lease";
+import { preparedMcpBindings, preparedMcpTransport } from "../mcp-tools/prepared-transport";
 import { RuntimeJudgmentRefusal } from "./judgment-refusal";
 import { pathToFileURL } from "node:url";
 import { StringDecoder } from "node:string_decoder";
 import os from "node:os";
 import fs from "node:fs/promises";
-import { rmSync } from "node:fs";
+import { lstatSync, rmSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import type { Runner, RunnerEvents, RunnerRequest, RunnerResult, RunnerFailure, RunnerFailureKind } from "./runner";
 import { detectRuntimeRefusal } from "./runtime-refusal";
@@ -367,6 +369,21 @@ export function buildAntigravitySpawnArgs(
 }
 
 
+/** Metadata is only a freshness preflight; Main still owns scope and byte sealing. */
+export function freshAgyArtifactPaths(paths: readonly string[], invocationStartedAtMs: number): string[] {
+  if (!Number.isFinite(invocationStartedAtMs)) return [];
+  return paths.filter((candidate) => {
+    if (!path.isAbsolute(candidate) || /[\u0000\r\n]/u.test(candidate)) return false;
+    try {
+      const stat = lstatSync(candidate);
+      return stat.isFile() && !stat.isSymbolicLink() && stat.size > 0
+        && stat.mtimeMs >= invocationStartedAtMs;
+    } catch {
+      return false;
+    }
+  });
+}
+
 /**
  * agy stream-json 한 줄을 읽는다 — 순수 함수(게이트가 픽스처 주입).
  * agent_response의 text_delta를 본문으로 누적하고, DONE의 usage를 집계한다.
@@ -390,6 +407,8 @@ export function reduceAgyLine(
     /** result 이벤트의 status/error — 표식이지 문구 판별이 아니다. */
     resultStatus?: string;
     resultError?: string;
+    resultErrorCode?: string;
+    resultRetryAfterHint?: string;
   },
 ): {
   delta?: string;
@@ -412,6 +431,8 @@ export function reduceAgyLine(
     /** `tool_info.output` — DONE 스텝에만 온다. */
     result?: string;
     done: boolean;
+    /** Exact output argument from a successful, known write operation; never prose. */
+    artifactPaths?: string[];
   };
 } {
   let ev: {
@@ -430,7 +451,19 @@ export function reduceAgyLine(
        * 이 칸을 안 읽어서 사용자는 `Antigravity CLI exit 1` 만 봤다 — 언제 풀리는지도,
        * 무엇이 문제인지도 없이. 런타임이 이유를 말했는데 우리가 버린 자리다.
        */
-      error?: string;
+      error?: string | {
+        message?: unknown;
+        code?: unknown;
+        error_code?: unknown;
+        errorCode?: unknown;
+        retry_after?: unknown;
+        retryAfter?: unknown;
+      };
+      /** Optional provider-owned machine fields. Unknown or malformed values are ignored. */
+      error_code?: unknown;
+      errorCode?: unknown;
+      retry_after?: unknown;
+      retryAfter?: unknown;
     };
     step_update?: {
       conversation_id?: string;
@@ -464,8 +497,22 @@ export function reduceAgyLine(
   if (ev.event === "result" && ev.result) {
     if (typeof ev.result.response === "string") state.finalResponse = ev.result.response;
     if (typeof ev.result.status === "string") state.resultStatus = ev.result.status;
+    const structuredError = ev.result.error && typeof ev.result.error === "object" && !Array.isArray(ev.result.error)
+      ? ev.result.error
+      : undefined;
     // 런타임이 말한 사유를 그대로 들고 간다 — 이것이 있으면 그것이 곧 실패 표식이다.
-    if (typeof ev.result.error === "string" && ev.result.error.trim()) state.resultError = ev.result.error.trim();
+    const errorMessage = typeof ev.result.error === "string" ? ev.result.error : structuredError?.message;
+    if (typeof errorMessage === "string" && errorMessage.trim()) state.resultError = errorMessage.trim();
+    const errorCode = normalizeAntigravityFailureCode(
+      ev.result.error_code ?? ev.result.errorCode
+      ?? structuredError?.code ?? structuredError?.error_code ?? structuredError?.errorCode,
+    );
+    const retryAfterHint = normalizeAntigravityRetryAfter(
+      ev.result.retry_after ?? ev.result.retryAfter
+      ?? structuredError?.retry_after ?? structuredError?.retryAfter,
+    );
+    if (errorCode) state.resultErrorCode = errorCode;
+    if (retryAfterHint) state.resultRetryAfterHint = retryAfterHint;
     /*
      * ★거부는 문구가 아니라 **필드**로 잡는다 (실측 2026-09-07, agy 1.1.27).
      *
@@ -530,8 +577,43 @@ export function reduceAgyLine(
        * ACTIVE에 parameters, DONE에 parameters+output을 준다. 같은 도구 호출의 ACTIVE→DONE은
        * step_index로 이어진다(같은 id로 갱신되게 index를 id에 넣는다).
        */
-      const params = step.tool_info?.parameters;
+      let params = step.tool_info?.parameters;
+      let displayName = name;
+      let envelope: unknown = params;
+      if (name === "call_mcp_tool" && typeof params === "string") {
+        try { envelope = JSON.parse(params); } catch { /* Preserve malformed provider data verbatim. */ }
+      }
+      if (name === "call_mcp_tool" && envelope && typeof envelope === "object" && !Array.isArray(envelope)) {
+        const call = envelope as { ServerName?: unknown; ToolName?: unknown; Arguments?: unknown };
+        if (typeof call.ServerName === "string" && /^[a-zA-Z0-9_-]+$/u.test(call.ServerName)
+          && typeof call.ToolName === "string" && /^[a-zA-Z0-9_-]+$/u.test(call.ToolName)
+          && call.Arguments && typeof call.Arguments === "object" && !Array.isArray(call.Arguments)) {
+          displayName = `mcp__${call.ServerName}__${call.ToolName}`;
+          params = call.Arguments;
+        }
+      }
       const output = step.tool_info?.output;
+      let structuredOutput: unknown = output;
+      if (typeof output === "string") {
+        try { structuredOutput = JSON.parse(output); } catch { /* Plain MCP result text remains display-only. */ }
+      }
+      const outputRecord = (name === "call_mcp_tool" || name.startsWith("mcp__"))
+        && structuredOutput && typeof structuredOutput === "object" && !Array.isArray(structuredOutput)
+        ? structuredOutput as Record<string, unknown> : null;
+      const failed = step.state === "ERROR" || step.tool_info?.error != null
+        || outputRecord?.isError === true || outputRecord?.is_error === true
+        || (outputRecord?.error != null && outputRecord.error !== false);
+      const validErrorFlags = !outputRecord || ["isError", "is_error"].every((key) =>
+        !(key in outputRecord) || typeof outputRecord[key] === "boolean");
+      // A completed screenshot writes its exact filename. Do not promote read,
+      // shell, unknown-server, or arbitrary result-link paths into output evidence.
+      const filename = params && typeof params === "object" && !Array.isArray(params)
+        ? (params as Record<string, unknown>).filename : undefined;
+      const artifactPaths = step.state === "DONE" && !failed && validErrorFlags
+        && displayName === "mcp__agentlas-browser__browser_take_screenshot"
+        && typeof filename === "string" && path.isAbsolute(filename)
+        && !/[\u0000\r\n]/u.test(filename) && /\.(?:png|jpe?g)$/iu.test(filename)
+        ? [filename] : [];
       const stringify = (value: unknown): string | undefined => {
         if (value === undefined || value === null) return undefined;
         if (typeof value === "string") return value;
@@ -546,12 +628,13 @@ export function reduceAgyLine(
       return {
         activity: `tool:${name}`,
         tool: {
-          name,
+          name: displayName,
           id: `agy-tool:${name}:${typeof stepIndex === "number" ? stepIndex : (step.state ?? "")}`,
-          failed: step.state === "ERROR",
+          failed,
           args: stringify(params),
           result: done ? (stringify(output) ?? (step.state === "ERROR" ? (step.tool_info?.error?.message ?? "error") : "")) : undefined,
           done,
+          ...(artifactPaths.length > 0 ? { artifactPaths } : {}),
         },
       };
     }
@@ -581,18 +664,59 @@ export function buildAgyPromptBootstrap(promptFile: string): string {
 
 
 /**
- * agy 가 `result.error` 로 말한 사유를 실패 종류로 옮긴다 — **순수 함수**.
- *
- * 여기서 문구를 보는 것은 runtime-refusal.ts 의 휴리스틱과 다르다: 이건 "산출물인가
- * 고지문인가"를 추측하는 것이 아니라, 런타임이 **오류 칸에 넣은 문장**을 우리 어휘로
- * 옮기는 것뿐이다. 분류가 틀려도 사유 원문은 그대로 사용자에게 간다(정보 손실 없음).
+ * agy 의 구조화된 provider code를 실패 종류로 옮긴다 — **순수 함수**.
+ * `result.error`는 사용자가 읽을 사유로만 보존하며 분류 근거로 쓰지 않는다.
  */
-export function antigravityFailureKind(error: string): RunnerFailureKind {
-  const text = String(error || "");
-  if (/\bquota\b|\busage limit\b|\brate.?limit/i.test(text)) return "quota";
-  if (/\b(sign ?in|log ?in|unauthorized|forbidden|credential|token)\b/i.test(text)) return "auth";
-  if (/\btimed? ?out\b|\btimeout\b/i.test(text)) return "timeout";
-  return "refused";
+const AGY_MACHINE_CODE_RE = /^(?:[A-Z][A-Z0-9_.:-]{0,63}|[1-9][0-9]{2})$/u;
+
+/** Preserve only bounded provider-owned codes; never promote an error sentence into a code. */
+export function normalizeAntigravityFailureCode(value: unknown): string | undefined {
+  if (typeof value !== "string" && typeof value !== "number") return undefined;
+  const code = String(value).trim().toUpperCase();
+  return AGY_MACHINE_CODE_RE.test(code) ? code : undefined;
+}
+
+/** Keep an ISO or compact relative retry hint only when it arrived in its own provider field. */
+export function normalizeAntigravityRetryAfter(value: unknown): string | undefined {
+  if (typeof value === "number" && Number.isSafeInteger(value) && value > 0 && value <= 86_400) {
+    return `in ${value}s`;
+  }
+  if (typeof value !== "string") return undefined;
+  const hint = value.trim();
+  if (!hint || hint.length > 80 || /[\r\n\u0000]/u.test(hint)) return undefined;
+  if (/^(?:in\s+)?(?:(?:\d{1,2})h)?(?:(?:\d{1,3})m)?(?:(?:\d{1,5})s)?$/iu.test(hint)
+    && /\d/u.test(hint)) {
+    return hint.startsWith("in ") ? hint : `in ${hint}`;
+  }
+  const parsed = Date.parse(hint);
+  return Number.isFinite(parsed) && /T/u.test(hint) ? new Date(parsed).toISOString() : undefined;
+}
+
+/** Classify only exact machine codes. A provider error field without one remains refused. */
+export function antigravityFailureKind(_error: string, providerCode?: string): RunnerFailureKind {
+  switch (normalizeAntigravityFailureCode(providerCode)) {
+    case "429":
+    case "RESOURCE_EXHAUSTED":
+    case "QUOTA_EXCEEDED":
+    case "RATE_LIMITED":
+    case "RATE_LIMIT_EXCEEDED":
+      return "quota";
+    case "401":
+    case "UNAUTHENTICATED":
+    case "AUTHENTICATION_REQUIRED":
+    case "INVALID_CREDENTIALS":
+      return "auth";
+    case "408":
+    case "DEADLINE_EXCEEDED":
+    case "TIMEOUT":
+    case "TIMED_OUT":
+      return "timeout";
+    case "UNIMPLEMENTED":
+    case "UNSUPPORTED_CLIENT":
+      return "unsupported";
+    default:
+      return "refused";
+  }
 }
 
 /** Antigravity exit 0 완주의 실패 판별 — 순수 함수(게이트가 픽스처 주입). */
@@ -624,14 +748,28 @@ export function antigravityExitFailure(
  * 도구 목록에도 call_mcp_tool · list_resources · read_resource 가 실재한다.
  */
 /**
- * 우리가 전역 설정에 넣은 MCP 서버 키 → 지금 그 서버를 쓰고 있는 실행 수.
+ * 우리가 전역 설정에 넣은 MCP 서버 키 → 지금 그 정확한 transport를 쓰는 실행 수.
  *
  * agy 는 설정 파일이 하나뿐이라 동시 실행이 같은 파일을 공유한다. 계수 없이 정리하면
  * 먼저 끝난 실행이 아직 도는 실행의 도구를 지운다 — 그래프에서 노드 둘이 병렬로 도는
  * 흔한 경우가 정확히 그 모양이다. 모든 실행이 같은 메인 프로세스 안에 있으므로
- * 프로세스 안 계수로 충분하다.
+ * 프로세스 안 계수는 동일 Main 공유만 담당하고, 별도 lifetime lease가 설치 간 충돌을 막는다.
  */
 const AGY_MCP_REFCOUNT = new Map<string, number>();
+const AGY_MCP_ACTIVE_ENTRIES = new Map<string, AgyMcpServerEntry>();
+let agyMcpMutationTail: Promise<void> = Promise.resolve();
+
+async function withAgyMcpMutationLock<T>(action: () => Promise<T>): Promise<T> {
+  let release!: () => void;
+  const previous = agyMcpMutationTail;
+  agyMcpMutationTail = new Promise<void>((resolve) => { release = resolve; });
+  await previous;
+  try {
+    return await action();
+  } finally {
+    release();
+  }
+}
 
 export function agyMcpConfigPath(home = os.homedir()): string {
   return path.join(home, ".gemini", "config", "mcp_config.json");
@@ -659,6 +797,27 @@ const AGY_MCP_REPLACEMENTS = new Map<string, AgyMcpReplacement>();
 
 function isAgyMcpEntryEqual(left: AgyMcpServerEntry | undefined, right: AgyMcpServerEntry | undefined): boolean {
   return Boolean(left && right && JSON.stringify(left) === JSON.stringify(right));
+}
+
+function requestedAgyMcpEntry(server: {
+  command?: string;
+  args?: string[];
+  env?: Record<string, string>;
+  url?: string;
+  headers?: Record<string, string>;
+}): AgyMcpServerEntry | null {
+  return server.command
+    ? {
+      command: server.command,
+      ...(server.args?.length ? { args: server.args } : {}),
+      ...(server.env && Object.keys(server.env).length ? { env: server.env } : {}),
+    }
+    : server.url
+      ? {
+        serverUrl: server.url,
+        ...(server.headers && Object.keys(server.headers).length ? { headers: server.headers } : {}),
+      }
+      : null;
 }
 
 /**
@@ -778,36 +937,193 @@ export function isStaleAgentlasPlaywrightProxyEntry(entry: AgyMcpServerEntry): b
  *   cleanup은 우리가 넣거나 교체한 값이 아직 그대로일 때만 수행한다.
  * - 전역 파일이 깨진 JSON 이면 **덮어쓰지 않는다** — 사용자 설정을 지키는 쪽이
  *   이 실행에 도구를 주는 것보다 우선이고, 그 사실을 상태줄로 말한다(정직한 강등).
- * - 동시 agy 실행 둘이 같은 키를 원하는 짧은 경합은 grok 리컨실과 동일하게 남는다.
+ * - 동시 실행은 exact transport entry만 공유한다. 같은 키에 다른 승인 채널을 요청하면
+ *   뒤 실행을 모델 spawn 전에 typed conflict로 끝낸다.
  */
+/** AGY does not expand shell-style aliases in MCP env overrides. Keep vault
+ * values in the child process environment, never in its shared config file. */
+export function inheritAgyMcpSecretAliases(
+  env: Record<string, string> | undefined,
+  runtimeEnv: NodeJS.ProcessEnv,
+): Record<string, string> | undefined {
+  if (!env) return env;
+  const result = { ...env };
+  for (const [key, value] of Object.entries(result)) {
+    if (!/^AGENTLAS_MCP_SECRET_[A-F0-9]{32}$/.test(key)) continue;
+    if (value !== `\${${key}}` || !runtimeEnv[key] || runtimeEnv[key] === value) {
+      throw new Error("agy_mcp_secret_binding_unavailable");
+    }
+    delete result[key];
+  }
+  if (result.AGENTLAS_MCP_PROXY_TARGET) {
+    const target = JSON.parse(result.AGENTLAS_MCP_PROXY_TARGET);
+    if (!target || typeof target !== "object" || Array.isArray(target)) {
+      throw new Error("agy_mcp_proxy_target_invalid");
+    }
+    result.AGENTLAS_MCP_PROXY_TARGET = JSON.stringify({ ...target,
+      env: inheritAgyMcpSecretAliases(target.env, runtimeEnv) });
+  }
+  return result;
+}
+
 async function reconcileAgyMcpServers(
   mcpConfigPath: string | undefined,
   onStatus: (message: string) => void,
-): Promise<{ cleanup: () => Promise<void> }> {
+  runtimeEnv: NodeJS.ProcessEnv = {},
+): Promise<{ cleanup: () => Promise<void>; assertReady?: () => Promise<void>; failure?: RunnerFailure }> {
+  const noop = { cleanup: async () => {} };
+  let lease: Awaited<ReturnType<typeof acquireAgyMcpLease>>;
+  try { lease = await acquireAgyMcpLease(agyMcpConfigPath()); }
+  catch { return { ...noop, failure: { kind: "refused", source: "marker", runtime: "antigravity",
+    providerCode: "agy_mcp_scope_conflict", message: "Antigravity MCP configuration is leased by another run or its owner could not be verified." } }; }
+  try {
+    const global = JSON.parse(await fs.readFile(agyMcpConfigPath(), "utf8").catch((error) => {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return "{}";
+      throw error;
+    }));
+    const requested = mcpConfigPath ? JSON.parse(await fs.readFile(mcpConfigPath, "utf8")) : {};
+    const browser = global.mcpServers?.["agentlas-browser"];
+    if (browser && isAgentlasOwnedBrowserMcpEntry(browser)) {
+      if (!requested.mcpServers?.["agentlas-browser"]) throw new Error("agy_mcp_browser_binding_missing");
+      const previousControl = browser.env?.[MCP_PROXY_CONTROL_FILE_ENV];
+      const nextControl = requested.mcpServers["agentlas-browser"].env?.[MCP_PROXY_CONTROL_FILE_ENV];
+      // A foreign extant channel is not proven stale. Old Desktop versions do
+      // not know about this lease, so never overwrite their live/unknown grant.
+      if (previousControl !== nextControl && typeof previousControl === "string") {
+        try { await fs.stat(previousControl); throw new Error("agy_mcp_foreign_owner_unverified"); }
+        catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
+      }
+    }
+    const bound = await reconcileAgyMcpServersUnderLease(mcpConfigPath, onStatus, runtimeEnv, lease.generation);
+    if (bound.failure) { await lease.release(); return bound; }
+    const stagedConfig = JSON.parse(await fs.readFile(agyMcpConfigPath(), "utf8").catch(() => "{}"));
+    const guardedKeys = Object.keys(stagedConfig.mcpServers ?? {}).filter((key) => stagedConfig.mcpServers[key]?.env?.AGENTLAS_AGY_MCP_GENERATION === lease.generation);
+    const assertReady = async () => {
+      await lease.assertOwned();
+      const current = JSON.parse(await fs.readFile(agyMcpConfigPath(), "utf8").catch(() => "{}"));
+      for (const key of guardedKeys) {
+        const entry = current.mcpServers?.[key];
+        if (!isAgyMcpEntryEqual(entry, stagedConfig.mcpServers[key])) {
+          throw new Error("agy_mcp_configuration_drift");
+        }
+      }
+      onStatus(`[agy-mcp-scope] phase=load generation=${lease.generation}`);
+    };
+    onStatus(`[agy-mcp-scope] phase=staged generation=${lease.generation}`);
+    return { assertReady, cleanup: async () => { try { await bound.cleanup(); } finally { await lease.release(); } } };
+  } catch (error) {
+    await lease.release().catch(() => {});
+    const code = error instanceof Error && /^agy_mcp_[a-z_]+$/.test(error.message) ? error.message : "agy_mcp_config_unavailable";
+    return { ...noop, failure: { kind: "refused", source: "marker", runtime: "antigravity",
+      providerCode: code, message: "Antigravity MCP configuration could not be bound to this authorized run." } };
+  }
+}
+
+async function reconcileAgyMcpServersUnderLease(
+  mcpConfigPath: string | undefined,
+  onStatus: (message: string) => void,
+  runtimeEnv: NodeJS.ProcessEnv = {},
+  generation?: string,
+): Promise<{ cleanup: () => Promise<void>; failure?: RunnerFailure }> {
   const noop = { cleanup: async () => {} };
   if (!mcpConfigPath) return noop;
   let requested: { mcpServers?: Record<string, { command?: string; args?: string[]; env?: Record<string, string>; url?: string; headers?: Record<string, string> }> };
   try {
+    if (runtimeEnv.AGENTLAS_NATIVE_BROWSER_SCOPE === "task") {
+      const rows = preparedMcpBindings(mcpConfigPath);
+      if (!rows.some((row) => row.configKey === "agentlas-browser" && row.server.catalogId === "agentlas-browser")) {
+        throw new Error("native_browser_mcp_binding_required");
+      }
+      for (const row of rows) preparedMcpTransport(row, row.server);
+    }
     requested = JSON.parse(await fs.readFile(mcpConfigPath, "utf8"));
+    for (const server of Object.values(requested.mcpServers ?? {})) {
+      const aliases = Object.keys(server.env ?? {}).filter((key) => /^AGENTLAS_MCP_SECRET_[A-F0-9]{32}$/.test(key)).sort();
+      server.env = inheritAgyMcpSecretAliases(server.env, runtimeEnv);
+      if (generation) server.env = { ...server.env, AGENTLAS_AGY_MCP_CONFIG: agyMcpConfigPath(),
+        AGENTLAS_AGY_MCP_GENERATION: generation, AGENTLAS_AGY_MCP_SERVER_KEY: Object.entries(requested.mcpServers ?? {}).find(([, value]) => value === server)?.[0] ?? "" };
+      if (aliases.length) {
+        // Removing overlays must not make different live grants appear equal
+        // to the global-config concurrency guard. Only a digest is persisted.
+        server.env = { ...server.env, AGENTLAS_MCP_RUN_BINDING: createHash("sha256")
+          .update(JSON.stringify(aliases.map((key) => [key, runtimeEnv[key]]))).digest("hex") };
+      }
+      if (generation) {
+        const canonical = (value: unknown): unknown => Array.isArray(value) ? value.map(canonical)
+          : value && typeof value === "object" ? Object.fromEntries(Object.entries(value as Record<string, unknown>).sort(([a], [b]) => a.localeCompare(b)).map(([key, item]) => [key, canonical(item)])) : value;
+        server.env = { ...server.env, AGENTLAS_AGY_MCP_ENTRY_INTEGRITY: createHash("sha256")
+          .update(JSON.stringify(canonical(requestedAgyMcpEntry(server)))).digest("hex") };
+      }
+    }
   } catch {
-    return noop;
+    return {
+      cleanup: async () => {},
+      failure: {
+        kind: "refused",
+        message: "Antigravity MCP transport could not read its authorized run configuration.",
+        runtime: "antigravity",
+        source: "marker",
+        providerCode: "agy_mcp_config_unavailable",
+      },
+    };
   }
   const entries = Object.entries(requested.mcpServers ?? {});
   if (entries.length === 0) return noop;
 
-  const globalPath = agyMcpConfigPath();
-  let parsed: { mcpServers?: Record<string, AgyMcpServerEntry>; [key: string]: unknown };
-  try {
-    parsed = JSON.parse(await fs.readFile(globalPath, "utf8"));
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException)?.code === "ENOENT") {
-      parsed = { mcpServers: {} };
-    } else {
-      onStatus("antigravity: existing mcp_config.json is unreadable — running without MCP tools to protect it");
-      return noop;
+  return withAgyMcpMutationLock(async () => {
+
+    const globalPath = agyMcpConfigPath();
+    let parsed: { mcpServers?: Record<string, AgyMcpServerEntry>; [key: string]: unknown };
+    try {
+      parsed = JSON.parse(await fs.readFile(globalPath, "utf8"));
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException)?.code === "ENOENT") {
+        parsed = { mcpServers: {} };
+      } else {
+        onStatus("antigravity: existing mcp_config.json is unreadable — run stopped before model execution");
+        return {
+          cleanup: async () => {},
+          failure: {
+            kind: "refused",
+            message: "Antigravity MCP transport could not safely reconcile its global configuration.",
+            runtime: "antigravity",
+            source: "marker",
+            providerCode: "agy_mcp_global_config_unavailable",
+          },
+        };
+      }
     }
-  }
-  if (!parsed.mcpServers || typeof parsed.mcpServers !== "object") parsed.mcpServers = {};
+    if (!parsed.mcpServers || typeof parsed.mcpServers !== "object") parsed.mcpServers = {};
+
+  // An agy process reads one global MCP file. Sharing is safe only when the
+  // exact transport entry is already active; a matching key alone can point
+  // at another chat's approval proxy. Refuse the later run before spawning
+  // instead of lending it the first run's authority.
+    for (const [key, server] of entries) {
+    const live = AGY_MCP_REFCOUNT.get(key);
+    const requestedEntry = requestedAgyMcpEntry(server);
+    if (live === undefined) {
+      if (key === "agentlas-browser" && isAgentlasOwnedBrowserMcpEntry(parsed.mcpServers[key] ?? {})) continue;
+      if (!parsed.mcpServers[key] || isAgyMcpEntryEqual(parsed.mcpServers[key], requestedEntry ?? undefined)) continue;
+      // Preserve user entries without borrowing their different scope. This
+      // preflight must precede any process refcount or global-file mutation.
+      return { cleanup: async () => {}, failure: { kind: "refused", source: "marker", runtime: "antigravity",
+        providerCode: "agy_mcp_scope_conflict", message: "An existing MCP key belongs to a different transport scope." } };
+    }
+    const activeEntry = AGY_MCP_ACTIVE_ENTRIES.get(key);
+    if (requestedEntry && isAgyMcpEntryEqual(activeEntry, requestedEntry)
+      && isAgyMcpEntryEqual(parsed.mcpServers[key], activeEntry)) continue;
+    return {
+      cleanup: async () => {},
+      failure: {
+        kind: "refused",
+        message: "Antigravity MCP transport is already in use by a different authorized run.",
+        runtime: "antigravity",
+        source: "marker",
+        providerCode: "agy_mcp_scope_conflict",
+      },
+    };
+    }
 
   const writeGlobal = async (value: typeof parsed): Promise<void> => {
     // 임시 파일 + rename — 시작 중인 다른 agy 가 반쯤 쓰인 파일을 읽지 않게 한다.
@@ -831,6 +1147,15 @@ async function reconcileAgyMcpServers(
 
   const added: string[] = [];
   const stagedEntries = new Map<string, AgyMcpServerEntry>();
+  const previousRefcounts = new Map<string, number | undefined>();
+  const previousActiveEntries = new Map<string, AgyMcpServerEntry | undefined>();
+  const previousReplacements = new Map<string, AgyMcpReplacement | undefined>();
+  const rememberProcessState = (key: string) => {
+    if (previousRefcounts.has(key)) return;
+    previousRefcounts.set(key, AGY_MCP_REFCOUNT.get(key));
+    previousActiveEntries.set(key, AGY_MCP_ACTIVE_ENTRIES.get(key));
+    previousReplacements.set(key, AGY_MCP_REPLACEMENTS.get(key));
+  };
   for (const [key, server] of entries) {
     if (parsed.mcpServers[key]) {
       /*
@@ -850,6 +1175,7 @@ async function reconcileAgyMcpServers(
         && !AGY_MCP_REFCOUNT.has(key)
         && isAgentlasOwnedBrowserMcpEntry(parsed.mcpServers[key])
       ) {
+        rememberProcessState(key);
         const staged: AgyMcpServerEntry = {
           command: server.command,
           ...(server.args?.length ? { args: server.args } : {}),
@@ -863,51 +1189,73 @@ async function reconcileAgyMcpServers(
         stagedEntries.set(key, staged);
         added.push(key);
         AGY_MCP_REFCOUNT.set(key, 1);
+        AGY_MCP_ACTIVE_ENTRIES.set(key, staged);
         globalDirty = true;
         continue;
       }
       const live = AGY_MCP_REFCOUNT.get(key);
       if (live !== undefined) {
+        rememberProcessState(key);
         AGY_MCP_REFCOUNT.set(key, live + 1);
+        AGY_MCP_ACTIVE_ENTRIES.set(key, parsed.mcpServers[key]);
         stagedEntries.set(key, parsed.mcpServers[key]);
         added.push(key);
       }
       continue;
     }
-    const staged: AgyMcpServerEntry | null = server.command
-      ? {
-        command: server.command,
-        ...(server.args?.length ? { args: server.args } : {}),
-        ...(server.env && Object.keys(server.env).length ? { env: server.env } : {}),
-      }
-      : server.url
-        ? {
-        serverUrl: server.url,
-        ...(server.headers && Object.keys(server.headers).length ? { headers: server.headers } : {}),
-        }
-        : null;
+    const staged = requestedAgyMcpEntry(server);
     if (!staged) {
       continue;
     }
+    rememberProcessState(key);
     parsed.mcpServers[key] = staged;
     stagedEntries.set(key, staged);
     added.push(key);
     AGY_MCP_REFCOUNT.set(key, (AGY_MCP_REFCOUNT.get(key) ?? 0) + 1);
+    AGY_MCP_ACTIVE_ENTRIES.set(key, staged);
   }
   if (added.length === 0 && !globalDirty) return noop;
   try {
     await writeGlobal(parsed);
   } catch (error) {
-    onStatus(`antigravity: could not stage MCP servers (${error instanceof Error ? error.message : String(error)}) — running without MCP tools`);
-    return noop;
+    for (const key of previousRefcounts.keys()) {
+      const previousRefcount = previousRefcounts.get(key);
+      const previousActive = previousActiveEntries.get(key);
+      const previousReplacement = previousReplacements.get(key);
+      if (previousRefcount === undefined) AGY_MCP_REFCOUNT.delete(key);
+      else AGY_MCP_REFCOUNT.set(key, previousRefcount);
+      if (previousActive === undefined) AGY_MCP_ACTIVE_ENTRIES.delete(key);
+      else AGY_MCP_ACTIVE_ENTRIES.set(key, previousActive);
+      if (previousReplacement === undefined) AGY_MCP_REPLACEMENTS.delete(key);
+      else AGY_MCP_REPLACEMENTS.set(key, previousReplacement);
+    }
+    onStatus(`antigravity: could not stage MCP servers (${error instanceof Error ? error.message : String(error)}) — run stopped before model execution`);
+    return {
+      cleanup: async () => {},
+      failure: {
+        kind: "refused",
+        message: "Antigravity MCP transport could not stage its authorized run configuration.",
+        runtime: "antigravity",
+        source: "marker",
+        providerCode: "agy_mcp_stage_failed",
+      },
+    };
   }
   if (added.length === 0) return noop;
+  let cleaned = false;
   return {
-    cleanup: async () => {
+    cleanup: async () => withAgyMcpMutationLock(async () => {
+      if (cleaned) return;
+      cleaned = true;
+      let current: typeof parsed | null = null;
       try {
         // 실행 중 남이 고쳤을 수 있으니 다시 읽고, 우리가 더한 키만 걷어낸다.
-        const current = JSON.parse(await fs.readFile(globalPath, "utf8")) as typeof parsed;
-        if (!current.mcpServers || typeof current.mcpServers !== "object") return;
+        current = JSON.parse(await fs.readFile(globalPath, "utf8")) as typeof parsed;
+        if (!current.mcpServers || typeof current.mcpServers !== "object") current = null;
+      } catch (error) {
+        console.error("[antigravity] mcp cleanup read failed:", error);
+      }
+      try {
         let dirty = false;
         for (const key of added) {
           const live = (AGY_MCP_REFCOUNT.get(key) ?? 1) - 1;
@@ -917,29 +1265,31 @@ async function reconcileAgyMcpServers(
             continue;
           }
           AGY_MCP_REFCOUNT.delete(key);
+          AGY_MCP_ACTIVE_ENTRIES.delete(key);
           const staged = stagedEntries.get(key);
           const replacement = AGY_MCP_REPLACEMENTS.get(key);
-          if (!isAgyMcpEntryEqual(current.mcpServers[key], staged)) {
+          if (!current || !isAgyMcpEntryEqual(current.mcpServers![key], staged)) {
             // Another Desktop instance changed the key after us. Never remove
             // or restore a value that this run can no longer identify.
             if (replacement) AGY_MCP_REPLACEMENTS.delete(key);
             continue;
           }
           if (replacement) {
-            current.mcpServers[key] = replacement.previous;
+            current.mcpServers![key] = replacement.previous;
             AGY_MCP_REPLACEMENTS.delete(key);
             dirty = true;
-          } else if (current.mcpServers[key]) {
-            delete current.mcpServers[key];
+          } else if (current.mcpServers![key]) {
+            delete current.mcpServers![key];
             dirty = true;
           }
         }
-        if (dirty) await writeGlobal(current);
+        if (dirty && current) await writeGlobal(current);
       } catch (error) {
         console.error("[antigravity] mcp cleanup failed:", error);
       }
-    },
+    }),
   };
+  });
 }
 
 /**
@@ -1138,9 +1488,19 @@ async function runPreparedAntigravity(
    * 호출을 자동 거부하므로, 서버를 붙여 봐야 "가진 척"만 된다(거짓 표시 금지).
    */
   const mcpReconcile = agyToolsAllowed
-    ? await reconcileAgyMcpServers(req.mcpConfigPath, events.onStatus)
+    ? await reconcileAgyMcpServers(req.mcpConfigPath, events.onStatus, req.env ?? process.env)
     : { cleanup: async () => {} };
+  if (mcpReconcile.failure) return { text: "", failure: mcpReconcile.failure };
   try {
+    if (req.env?.AGENTLAS_NATIVE_BROWSER_SCOPE === "task") {
+      if (!req.mcpConfigPath) throw new Error("native_browser_mcp_config_required");
+      for (const row of preparedMcpBindings(req.mcpConfigPath)) preparedMcpTransport(row, row.server);
+    }
+    if ("assertReady" in mcpReconcile) {
+      try { await mcpReconcile.assertReady?.(); }
+      catch { return { text: "", failure: { kind: "refused", source: "marker", runtime: "antigravity",
+        providerCode: "agy_mcp_configuration_drift", message: "Antigravity MCP scope changed before model execution." } }; }
+    }
     return await runAgyProcess();
   } finally {
     await mcpReconcile.cleanup();
@@ -1148,6 +1508,7 @@ async function runPreparedAntigravity(
 
   function runAgyProcess(): Promise<RunnerResult> {
   return new Promise<RunnerResult>((resolve, reject) => {
+    const invocationStartedAtMs = Date.now();
     // Antigravity는 빈 prompt를 거부하므로 긴 요청만 private 파일 bootstrap으로 우회한다.
     const env: NodeJS.ProcessEnv = { ...(req.env ?? process.env), GEMINI_CLI_TRUST_WORKSPACE: "true" };
     if (!env.TERM || env.TERM === "dumb") env.TERM = "xterm-256color";
@@ -1200,6 +1561,8 @@ async function runPreparedAntigravity(
       conversationId?: string;
       resultStatus?: string;
       resultError?: string;
+      resultErrorCode?: string;
+      resultRetryAfterHint?: string;
     } = { text: "", inputTokens: 0, outputTokens: 0 };
     const announcedDenials = new Set<string>();
     const reportedAgyTools = new Set<string>();
@@ -1222,7 +1585,8 @@ async function runPreparedAntigravity(
         const key = `${step.tool.id}:${step.tool.done ? "done" : "active"}`;
         if (!reportedAgyTools.has(key)) {
           reportedAgyTools.add(key);
-          events.onTool?.(step.tool.name, step.tool.args, step.tool.result, step.tool.id, step.tool.failed);
+          const artifactPaths = freshAgyArtifactPaths(step.tool.artifactPaths ?? [], invocationStartedAtMs);
+          events.onTool?.(step.tool.name, step.tool.args, step.tool.result, step.tool.id, step.tool.failed, artifactPaths);
         }
       }
       /*
@@ -1347,7 +1711,7 @@ async function runPreparedAntigravity(
         // 판정 근거는 새로 만들지 않는다 — 도구를 열었는지는 이미 agyToolsAllowed 가 안다.
         const structural = !agyToolsAllowed;
         /*
-         * ★런타임이 이유를 말했으면 그 말이 곧 실패다 — 우리가 다시 추측하지 않는다.
+         * ★런타임이 오류 필드를 보냈으면 실패다. 종류는 별도 machine code로만 고른다.
          *
          * 실측 2026-09-07 (agy 1.1.27, 할당량 소진):
          *   {"event":"result","status":"ERROR","response":"",
@@ -1355,14 +1719,22 @@ async function runPreparedAntigravity(
          * 그리고 프로세스는 exit 1 로 끝나고 stderr 는 **비어 있다.** 이 칸을 안 읽던
          * 동안 사용자가 본 것은 `Antigravity CLI exit 1` 한 줄뿐이었다 — 무엇이
          * 문제인지도, 25분 뒤면 풀린다는 것도 없이. 다시 눌러도 같은 줄만 나온다.
-         * 이건 marker 다(문구 판별이 아니라 런타임이 채운 필드).
+         * 오류 필드 자체는 marker다. code가 없으면 사유 문구를 추측하지 않고 refused로 남긴다.
          */
-        const runtimeSaidWhy = agyState.resultError
+        const hasRuntimeFailureMarker = Boolean(
+          agyState.resultError
+          || agyState.resultErrorCode
+          || (agyState.resultRetryAfterHint && agyState.resultStatus?.toUpperCase() === "ERROR"),
+        );
+        const runtimeSaidWhy = hasRuntimeFailureMarker
           ? {
-            kind: antigravityFailureKind(agyState.resultError),
-            message: agyState.resultError,
+            kind: antigravityFailureKind(agyState.resultError ?? "", agyState.resultErrorCode),
+            message: agyState.resultError ?? "Antigravity reported a structured provider failure.",
             runtime: "antigravity" as const,
             source: "marker" as const,
+            ...(agyState.resultErrorCode ? { providerCode: agyState.resultErrorCode } : {}),
+            ...(agyState.resultRetryAfterHint ? { retryAfterHint: agyState.resultRetryAfterHint } : {}),
+            exitCode: 0,
           }
           : undefined;
         const failure = runtimeSaidWhy ?? (!trimmed && denied.length > 0
@@ -1417,35 +1789,56 @@ async function runPreparedAntigravity(
             }
             : {}),
         });
-      } else if (agyState.resultError) {
+      } else if (agyState.resultError || agyState.resultErrorCode
+        || (agyState.resultRetryAfterHint && agyState.resultStatus?.toUpperCase() === "ERROR")) {
         /*
          * ★exit != 0 이어도 런타임이 이유를 말했으면 그 이유가 결과다.
          *
          * 실측(할당량 소진): exit 1 · stderr 비어 있음 · result.error 에만 사유.
          * 예전에는 여기서 `Antigravity CLI exit 1` 로 던져 사유가 통째로 사라졌다.
-         * 실패 표식으로 돌려주면 소비자가 "왜"와 "언제 풀리는지"를 보여줄 수 있고,
-         * 재시도 판단도 종류(quota/auth/timeout)로 할 수 있다.
+         * 실패 표식으로 돌려주되, 재시도 종류는 별도 provider code가 있을 때만 구체화한다.
          */
         resolve({
           text: "",
           failure: {
-            kind: antigravityFailureKind(agyState.resultError),
-            message: agyState.resultError,
+            kind: antigravityFailureKind(agyState.resultError ?? "", agyState.resultErrorCode),
+            message: agyState.resultError ?? "Antigravity reported a structured provider failure.",
             runtime: "antigravity",
             source: "marker",
+            ...(agyState.resultErrorCode ? { providerCode: agyState.resultErrorCode } : {}),
+            ...(agyState.resultRetryAfterHint ? { retryAfterHint: agyState.resultRetryAfterHint } : {}),
+            ...(typeof code === "number" ? { exitCode: code } : {}),
           },
         });
       } else {
-        reject(
-          new Error(
-            `Antigravity CLI exit ${code}${stderr ? `\n${stderr.slice(0, 500)}` : ""}`,
-          ),
-        );
+        resolve({
+          text: "",
+          failure: {
+            kind: "exit",
+            message: "Antigravity exited without a structured provider failure.",
+            runtime: "antigravity",
+            source: "exit",
+            ...(typeof code === "number" ? { exitCode: code } : {}),
+          },
+        });
       }
     });
   });
   }
 };
+
+/** A configured tool surface must not silently become an answer-only read run. */
+export function antigravityReadToolFailure(req: RunnerRequest): RunnerFailure | undefined {
+  if (req.permission !== "read" || req.browserOnly
+    || (!req.mcpConfigPath && !req.mcpAllowedTools?.length)) return undefined;
+  return {
+    kind: "refused", runtime: "antigravity", source: "marker",
+    providerCode: "agy_read_tools_unsupported",
+    message: req.locale === "ko"
+      ? "Antigravity의 현재 헤드리스 실행은 읽기 권한을 유지하며 선택된 도구를 사용할 수 없습니다. 같은 읽기 권한을 지원하는 허용된 런타임이 필요합니다."
+      : "Antigravity cannot use the configured tools while preserving read permission in this headless runtime. Use an allowed runtime supporting the same read scope.",
+  };
+}
 
 export const runAntigravity: Runner = async (
   req: RunnerRequest,
@@ -1469,6 +1862,8 @@ export const runAntigravity: Runner = async (
       "Antigravity is not enabled for restricted read-only execution because its host filesystem boundary is not release-verified.",
     );
   }
+  const readToolFailure = antigravityReadToolFailure(req);
+  if (readToolFailure) return { text: "", failure: readToolFailure };
   const bin = await getBin({ source: req.runtimeSource });
   if (!bin) throw new Error(tStatus(req.locale, "errCliMissingAntigravity"));
   const executableIdentity = observeCliExecutableIdentity({

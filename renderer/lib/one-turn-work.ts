@@ -45,6 +45,10 @@ interface CellBase {
    * One's own orchestrator steps.
    */
   agent?: string;
+  agentId?: string;
+  model?: string;
+  observedModel?: string;
+  updatedAt?: string;
 }
 
 export type OneWorkCell =
@@ -54,9 +58,9 @@ export type OneWorkCell =
   | (CellBase & { kind: "edit"; files: OneWorkEditFile[]; diff?: string })
   | (CellBase & { kind: "web_search"; query: string })
   | (CellBase & { kind: "fetch"; url: string; statusCode?: number })
-  | (CellBase & { kind: "call"; label: string; detail?: string; args?: string; result?: string; failureCode?: ToolFailureCode })
-  | (CellBase & { kind: "agent"; name: string; role?: string; phase?: OneActivityItem["phase"] })
-  | (CellBase & { kind: "notice"; level: "info" | "success" | "warning" | "error"; message: string; details?: string })
+  | (CellBase & { kind: "call"; label: string; toolName?: string; detail?: string; args?: string; result?: string; failureCode?: ToolFailureCode })
+  | (CellBase & { kind: "agent"; name: string; role?: string; phase?: OneActivityItem["phase"]; terminalObserved?: boolean })
+  | (CellBase & { kind: "notice"; level: "info" | "success" | "warning" | "error"; message: string; details?: string; activityCode?: OneActivityItem["activityCode"] })
   /** Only when a turn had no thought and no tool: the one thing that happened was writing the answer. */
   | (CellBase & { kind: "answer"; chars?: number });
 
@@ -267,12 +271,71 @@ function classifyTool(item: OneActivityItem, workspacePath: string | null): Clas
   }
 }
 
+/** Identity is scoped to this single invocation projection. Names never join workers. */
+function cellAttribution(item: OneActivityItem): Pick<CellBase, "agent" | "agentId" | "model" | "observedModel" | "updatedAt"> {
+  return {
+    ...(item.agentName?.trim() ? { agent: item.agentName.trim() } : {}),
+    ...(item.agentId ? { agentId: item.agentId } : {}),
+    ...(item.model ? { model: item.model } : {}),
+    ...(item.observedModel ? { observedModel: item.observedModel } : {}),
+    updatedAt: item.updatedAt ?? item.completedAt ?? item.observedAt,
+  };
+}
+
+function sameCellActor(cell: OneWorkCell, item: OneActivityItem): boolean {
+  if (cell.agentId || item.agentId) return Boolean(cell.agentId && cell.agentId === item.agentId);
+  // Unattributed owner rows can fold; named workers without identity cannot.
+  return !cell.agent && !item.agentName;
+}
+
+export interface OneWorkerWorkGroup {
+  agentId: string;
+  name?: string;
+  model?: string;
+  cells: OneWorkCell[];
+  latest: OneWorkCell;
+  lifecycle?: Extract<OneWorkCell, { kind: "agent" }>;
+}
+
+/** A completed observation belongs to history until the current worker call settles. */
+export function workerModelLabel(group: OneWorkerWorkGroup, active: boolean, locale: "ko" | "en"): string {
+  const running = active && group.lifecycle?.status === "running" && !group.lifecycle.terminalObserved;
+  const unknown = locale === "ko" ? "실제 미확인" : "execution unconfirmed";
+  if (running) return group.lifecycle?.model
+    ? `${locale === "ko" ? "요청" : "Requested"}: ${group.lifecycle.model} · ${unknown}`
+    : unknown;
+  return group.model || (locale === "ko" ? "실행 모델 미확인" : "Execution model unconfirmed");
+}
+
+export function groupOneWorkerWork(cells: readonly OneWorkCell[]): OneWorkerWorkGroup[] {
+  const groups = new Map<string, OneWorkerWorkGroup>();
+  const modelTimes = new Map<string, number>();
+  for (const cell of cells) {
+    if (!cell.agentId) continue;
+    let group = groups.get(cell.agentId);
+    if (!group) {
+      group = { agentId: cell.agentId, cells: [], latest: cell };
+      groups.set(cell.agentId, group);
+    }
+    group.cells.push(cell);
+    if (cell.agent) group.name = cell.agent;
+    const observed = Date.parse(cell.updatedAt ?? cell.startedAt);
+    if (cell.observedModel && (!modelTimes.has(cell.agentId) || observed >= modelTimes.get(cell.agentId)!)) {
+      group.model = cell.observedModel;
+      modelTimes.set(cell.agentId, observed);
+    }
+    if (Date.parse(cell.updatedAt ?? cell.startedAt) >= Date.parse(group.latest.updatedAt ?? group.latest.startedAt)) group.latest = cell;
+    if (cell.kind === "agent" && (!group.lifecycle || Date.parse(cell.updatedAt ?? cell.startedAt) >= Date.parse(group.lifecycle.updatedAt ?? group.lifecycle.startedAt))) group.lifecycle = cell;
+  }
+  return [...groups.values()];
+}
+
 function pushExplore(cells: OneWorkCell[], item: OneActivityItem, entries: OneWorkExploreEntry[]) {
   const status = itemStatus(item);
   const last = cells.at(-1);
   // Never coalesce steps performed by different teammates into one row — the
   // row's attribution (G-4) must stay truthful.
-  if (last && last.kind === "explore" && (last.agent ?? "") === (item.agentName?.trim() ?? "")) {
+  if (last && last.kind === "explore" && sameCellActor(last, item)) {
     // Codex coalesces consecutive reads ("Read a, b") and keeps list/search lines in order.
     for (const entry of entries) {
       const tail = last.entries.at(-1);
@@ -284,6 +347,7 @@ function pushExplore(cells: OneWorkCell[], item: OneActivityItem, entries: OneWo
       }
     }
     last.status = mergeStatus(last.status, status);
+    last.updatedAt = item.updatedAt ?? item.completedAt ?? item.observedAt;
     return;
   }
   cells.push({
@@ -292,14 +356,14 @@ function pushExplore(cells: OneWorkCell[], item: OneActivityItem, entries: OneWo
     status,
     startedAt: item.observedAt,
     entries: [...entries],
-    ...(item.agentName?.trim() ? { agent: item.agentName.trim() } : {}),
+    ...cellAttribution(item),
   });
 }
 
 function pushEdit(cells: OneWorkCell[], item: OneActivityItem, file: OneWorkEditFile, diff?: string) {
   const status = itemStatus(item);
   const last = cells.at(-1);
-  if (last && last.kind === "edit" && (last.agent ?? "") === (item.agentName?.trim() ?? "")) {
+  if (last && last.kind === "edit" && sameCellActor(last, item)) {
     const existing = last.files.find((candidate) => candidate.path === file.path);
     if (existing) {
       existing.op = file.op === "write" ? existing.op : "edit";
@@ -310,6 +374,7 @@ function pushEdit(cells: OneWorkCell[], item: OneActivityItem, file: OneWorkEdit
     }
     if (diff) last.diff = last.diff ? `${last.diff}\n${diff}` : diff;
     last.status = mergeStatus(last.status, status);
+    last.updatedAt = item.updatedAt ?? item.completedAt ?? item.observedAt;
     return;
   }
   cells.push({
@@ -319,7 +384,7 @@ function pushEdit(cells: OneWorkCell[], item: OneActivityItem, file: OneWorkEdit
     startedAt: item.observedAt,
     files: [{ ...file }],
     ...(diff ? { diff } : {}),
-    ...(item.agentName?.trim() ? { agent: item.agentName.trim() } : {}),
+    ...cellAttribution(item),
   });
 }
 
@@ -365,6 +430,7 @@ export function buildOneWorkPresentation(
           id: item.id,
           status: itemStatus(item),
           startedAt: item.observedAt,
+          ...cellAttribution(item),
           ...(headline ? { headline } : {}),
           ...(item.text?.trim() ? { body: item.text.trim() } : {}),
           ...(item.durationMs != null ? { durationMs: item.durationMs } : {}),
@@ -377,9 +443,11 @@ export function buildOneWorkPresentation(
           id: item.id,
           status: itemStatus(item),
           startedAt: item.observedAt,
-          name: item.agentName?.trim() || (locale === "ko" ? "에이전트" : "Agent"),
-          ...(item.role?.trim() ? { role: item.role.trim() } : {}),
+          ...cellAttribution(item),
+          name: [item.agentName?.trim() || (locale === "ko" ? "에이전트" : "Agent"), item.model].filter(Boolean).join(" · "),
+          ...(item.role?.trim() && item.role.trim() !== item.agentName?.trim() ? { role: item.role.trim() } : {}),
           ...(item.phase ? { phase: item.phase } : {}),
+          terminalObserved: item.agentTerminalObserved === true,
         });
         break;
       }
@@ -400,8 +468,10 @@ export function buildOneWorkPresentation(
           id: item.id,
           status: level === "error" ? "failed" : "completed",
           startedAt: item.observedAt,
+          ...cellAttribution(item),
           level,
           message: message || activityCodeCopy(item.activityCode, locale),
+          ...(item.activityCode ? { activityCode: item.activityCode } : {}),
           ...(item.detail?.trim() ? { details: item.detail.trim() } : {}),
         });
         break;
@@ -423,6 +493,7 @@ export function buildOneWorkPresentation(
               id: item.id,
               status: itemStatus(item),
               startedAt: item.observedAt,
+              ...cellAttribution(item),
               command: classified.command,
               ...(classified.output ? { output: classified.output } : {}),
               ...(classified.exitCode !== undefined ? { exitCode: classified.exitCode } : {}),
@@ -430,7 +501,7 @@ export function buildOneWorkPresentation(
             });
             break;
           case "web_search":
-            cells.push({ kind: "web_search", id: item.id, status: itemStatus(item), startedAt: item.observedAt, query: classified.query, ...(agent ? { agent } : {}) });
+            cells.push({ kind: "web_search", id: item.id, status: itemStatus(item), startedAt: item.observedAt, ...cellAttribution(item), query: classified.query, ...(agent ? { agent } : {}) });
             break;
           case "fetch":
             cells.push({
@@ -438,6 +509,7 @@ export function buildOneWorkPresentation(
               id: item.id,
               status: itemStatus(item),
               startedAt: item.observedAt,
+              ...cellAttribution(item),
               url: classified.url,
               ...(classified.statusCode !== undefined ? { statusCode: classified.statusCode } : {}),
               ...(agent ? { agent } : {}),
@@ -450,7 +522,9 @@ export function buildOneWorkPresentation(
               id: item.id,
               status: itemStatus(item),
               startedAt: item.observedAt,
+              ...cellAttribution(item),
               label: classified.label,
+              toolName: item.tool.name,
               ...(classified.detail ? { detail: classified.detail } : {}),
               ...(item.tool.args ? { args: item.tool.args } : {}),
               ...(item.tool.result ? { result: item.tool.result } : {}),
@@ -523,7 +597,18 @@ export function cellVerb(cell: OneWorkCell, locale: "ko" | "en"): string {
     case "call":
       return running ? (ko ? "호출하는 중" : "Calling") : (ko ? "호출함" : "Called");
     case "agent":
-      return running ? (ko ? "위임 진행 중" : "Delegating") : (ko ? "위임함" : "Delegated");
+      // A whole-run final closes pending display rows too. Only the worker's
+      // own typed terminal receipt can say that this agent finished.
+      if (!running && !cell.terminalObserved) {
+        if (cell.phase === "plan") return ko ? "계획 기록" : "Planning activity";
+        if (cell.phase === "synthesize") return ko ? "종합 기록" : "Synthesis activity";
+        return ko ? "작업자 실행 기록" : "Worker activity";
+      }
+      if (cell.status === "failed") return ko ? "단계 실패" : "Step failed";
+      if (cell.status === "cancelled") return ko ? "단계 취소" : "Step cancelled";
+      if (cell.phase === "plan") return running ? (ko ? "계획 중" : "Planning") : (ko ? "계획 완료" : "Planned");
+      if (cell.phase === "synthesize") return running ? (ko ? "결과 종합 중" : "Synthesizing") : (ko ? "결과 종합 완료" : "Synthesized");
+      return running ? (ko ? "작업자 실행 중" : "Worker running") : (ko ? "이번 실행 종료" : "Run ended");
     case "answer":
       return running ? (ko ? "답변 작성 중" : "Writing") : (ko ? "답변 작성함" : "Wrote the answer");
     case "notice":
@@ -534,7 +619,7 @@ export function cellVerb(cell: OneWorkCell, locale: "ko" | "en"): string {
 }
 
 /** Short object of a cell for the running headline ("Running npm test"). */
-function cellObject(cell: OneWorkCell): string {
+export function cellObject(cell: OneWorkCell): string {
   switch (cell.kind) {
     case "explore":
       return cell.entries.at(-1)?.label ?? "";

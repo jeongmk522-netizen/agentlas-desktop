@@ -1,12 +1,16 @@
-// ProjectTask cockpit — 프로젝트 소유 작업의 대화, 실행, inspector.
 "use client";
+import { mergeGoalResults, type GoalResultPresentation } from "../../shared/goal-result";
+import type { ChatHostNotice } from "../../shared/types";
+import { normalizeChatHostNotice } from "../../shared/chat-host-notice";
+// ProjectTask cockpit — 프로젝트 소유 작업의 대화, 실행, inspector.
 
 import { filePreviewEmptyMessage } from "@/lib/file-preview-reason";
+import { InactiveToolNotice } from "@/components/InactiveToolNotice";
 import { LoadingEstimate } from "@/components/LoadingEstimate";
 import { navigate } from "@/lib/navigation";
 import { isPlaceholderTaskTitle, taskTitleForDisplay } from "@/lib/task-title";
 import { detailForUser, failureMessage, isChatBusyFailure, looksLikeMachineText } from "@/lib/invocation-failure";
-import { Suspense, useCallback, useEffect, useRef, useState, useMemo, type CSSProperties, type Dispatch, type SetStateAction } from "react";
+import { Suspense, useCallback, useEffect, useLayoutEffect, useRef, useState, useMemo, type CSSProperties, type Dispatch, type SetStateAction } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { grantForPastedImage, ipc, ipcEvents } from "@/lib/ipc";
 import type {
@@ -95,8 +99,10 @@ import { KeyStatusBanner } from "@/components/KeyStatusBanner";
 import { hubBookmarkIdentityKey, onHubBookmarkChange } from "@/lib/hub-bookmark-events";
 import { onAgentRosterChange } from "@/lib/agent-roster-events";
 import { OneSuggestionReviewHandoffBanner } from "@/components/one/OneSuggestionReviewHandoff";
-import { OneActivityArtifactRail, taskBrowserUrl, type OneLiveAppPreview } from "@/components/one/OneActivityTimeline";
-import oneActivityStyles from "@/components/one/OneActivityTimeline.module.css";
+import { isBrowserDocumentUrl, TaskSidePanel, taskBrowserUrl, type OneLiveAppPreview } from "@/components/workspace/TaskSidePanel";
+import type { OneWorkerWorkGroup } from "@/lib/one-turn-work";
+import type { OneWorkerPanelSelection, OneWorkerPanelRun } from "@/lib/one-worker-panel";
+import oneActivityStyles from "@/components/workspace/TaskSidePanel.module.css";
 import {
   initialOneActivityState,
   projectOneActivityFromLedger,
@@ -105,8 +111,8 @@ import {
 } from "@/lib/one-activity";
 import { CodeIdeViewer, isCodeArtifactName } from "@/components/CodeIdeViewer";
 import { LiveOutputViewer, type LiveOutputKind } from "@/components/LiveOutputViewer";
-import { NativeLiveWebView } from "@/components/NativeLiveWebView";
 import { agentScreenModeForTool } from "@/lib/agent-screen-mode";
+import { bindAgentScreenScope } from "@/lib/agent-screen-scope";
 import {
   appendChatFileMarker,
   chatFileItem,
@@ -766,7 +772,27 @@ function WorkRailResult({
   onSelectExternalWindow?: (sourceId: string) => void;
   externalCaptureState?: ExternalCaptureState;
 }) {
-  if (artifact || surface) {
+  const liveSurfaceUrl = surface?.manifest.app?.deployment?.previewUrl;
+  const hasLiveSurface = Boolean(
+    surface?.liveAppId
+      || (typeof liveSurfaceUrl === "string" && liveSurfaceUrl.trim()),
+  );
+  if (hasLiveSurface) {
+    // A generated app is a Browser target. Keep a co-produced static artifact
+    // in Result, but never mount the localhost app there.
+    if (artifact) {
+      return (
+        <WorkbenchPanel
+          embedded
+          artifact={artifact}
+          surface={null}
+          onSurfaceAction={onSurfaceAction}
+          onSurfaceStatePatch={onSurfaceStatePatch}
+          onClose={onClose}
+        />
+      );
+    }
+  } else if (artifact || surface) {
     return (
       <WorkbenchPanel
         embedded
@@ -798,7 +824,10 @@ function WorkRailResult({
     );
   }
   if (preview.viewerKind === "browser") {
-    return <NativeLiveWebView url={preview.browserUrl || preview.fileUrl} title={preview.name} runtimeLabel={preview.live ? "watched" : "web"} />;
+    // HTTP(S) pages belong in the shared Browser tab. A local file is still a
+    // file result and falls through to the explicit unsupported-file surface.
+    const target = preview.browserUrl || preview.fileUrl;
+    if (isBrowserDocumentUrl(target)) return null;
   }
   if (isCodeArtifactName(preview.name) && preview.content) {
     return <CodeIdeViewer path={preview.path} name={preview.name} locale={locale} initialContent={preview.content} fill />;
@@ -1231,6 +1260,8 @@ function completePipeline(stages: PipelineStage[] | undefined): PipelineStage[] 
 }
 
 function historyEntryToStreamMessage(entry: {
+  goalResult?: GoalResultPresentation;
+  hostNotice?: ChatHostNotice;
   id: string;
   role: string;
   text: string;
@@ -1242,6 +1273,8 @@ function historyEntryToStreamMessage(entry: {
   const role: StreamMessage["role"] =
     entry.role === "assistant" ? "agent" : entry.role === "user" ? "user" : "system";
   const durableIdentity = {
+    ...(entry.goalResult ? { goalResult: entry.goalResult } : {}),
+    hostNotice: normalizeChatHostNotice(entry.role, entry.hostNotice),
     ...(entry.createdAt ? { createdAt: entry.createdAt } : {}),
     ...(entry.durableMessageId ? { durableMessageId: entry.durableMessageId } : {}),
   };
@@ -1249,7 +1282,7 @@ function historyEntryToStreamMessage(entry: {
     return {
       id: entry.id,
       role,
-      text: parsedFiles.visibleText,
+      text: normalizeChatHostNotice(entry.role, entry.hostNotice) ? entry.text : parsedFiles.visibleText,
       ...durableIdentity,
       imageDataUrls: entry.imageDataUrls,
       chatFileGroupIds: parsedFiles.groupIds,
@@ -1262,6 +1295,9 @@ function historyEntryToStreamMessage(entry: {
     role,
     text: setup.text,
     ...durableIdentity,
+    // History's row id and the live final's durableMessageId identify the
+    // same assistant answer, even if the two reads arrive in either order.
+    durableMessageId: entry.durableMessageId ?? entry.id,
     imageDataUrls: entry.imageDataUrls,
     chatFileGroupIds: parsedFiles.groupIds,
     questions: parsed.questions.length > 0 ? parsed.questions : undefined,
@@ -1303,6 +1339,7 @@ function mergeStreamMessageDuplicate(existing: StreamMessage, candidate: StreamM
     ...preferred,
     id: existing.id,
     text: preferred.text.trim() ? preferred.text : existing.text || candidate.text,
+    goalResult: mergeGoalResults(existing.goalResult, candidate.goalResult),
     ...(preferred.durableMessageId || existing.durableMessageId || candidate.durableMessageId
       ? { durableMessageId: preferred.durableMessageId ?? existing.durableMessageId ?? candidate.durableMessageId }
       : {}),
@@ -1323,6 +1360,27 @@ function mergeStreamMessageDuplicate(existing: StreamMessage, candidate: StreamM
       : {}),
     unboundRun: existing.unboundRun === true && candidate.unboundRun === true ? true : undefined,
   };
+}
+
+/** Reattach a Main-owned live run to its existing ledger row. Keep the new
+ * placeholder id because the stream subscription writes to it, and retain
+ * ledger evidence that may be older than the bounded live replay buffer. */
+function attachLiveWorkPlaceholder(current: StreamMessage[], live: StreamMessage): StreamMessage[] {
+  if (!live.runId) return [...current, live];
+  const matches = (message: StreamMessage) => message.role === "agent"
+    && message.unboundRun === true && message.runId === live.runId;
+  const first = current.findIndex(matches);
+  if (first < 0) return [...current, live];
+  let merged = live;
+  for (const prior of current.filter(matches)) {
+    merged = { ...mergeStreamMessageDuplicate(prior, merged), id: live.id,
+      busy: live.busy, streaming: live.streaming, finishedAt: live.finishedAt, unboundRun: undefined };
+  }
+  const latestState = merged.activityRuns?.find((run) => run.runId === live.runId)?.state;
+  if (latestState && latestState.lastSequence >= (merged.activityState?.lastSequence ?? -1)) {
+    merged = { ...merged, activityState: latestState };
+  }
+  return current.flatMap((message, index) => index === first ? [merged] : matches(message) ? [] : [message]);
 }
 
 function dedupeStreamMessages(messages: StreamMessage[]): StreamMessage[] {
@@ -1670,7 +1728,7 @@ function workActivitiesByMessageFromTimeline(
   for (const run of runs) {
     // 복원은 자르지 않는다. 창은 원장 조회(eventsPerRun)가 이미 정한다 —
     // 여기서 한 번 더 자르면 그만큼이 산출물에서 사라진다.
-    const state = projectOneActivityFromLedger(run.events);
+    const state = projectOneActivityFromLedger(run.events, run.receipt);
     const steps = mcpStepsFromLedger(run.events, 0);
     if (!hasOneActivityEvidence(state) && steps.length === 0) continue;
     const durableAssistantId = durableAssistantMessageIdFromRun(run.events);
@@ -1937,6 +1995,7 @@ function ChatPage() {
       : null
     : "";
   const chatId = requestedTaskId ? (validatedTaskChatId ?? "") : queryChatId;
+  useLayoutEffect(() => bindAgentScreenScope(chatId || null), [chatId]);
   const surfaceParam = searchParams.get("surface") ?? "";
   // 홈 composer가 ?prompt=...로 첫 메시지를 실어서 보내면 자동 전송 (한 번만)
   const seedPrompt = searchParams.get("prompt") ?? "";
@@ -2038,10 +2097,18 @@ function ChatPage() {
     setGoalContext(null);
     if (!api || !chatId || !goalId || goalId === "pending") return;
     let cancelled = false;
-    void api.chats.getGoalContext(chatId)
-      .then((context) => { if (!cancelled) setGoalContext(context); })
+    let readVersion = 0;
+    let observedRunId: string | undefined;
+    const refreshGoal = () => {
+      const version = ++readVersion;
+      void api.chats.getGoalContext(chatId)
+      .then((context) => {
+        if (cancelled || version !== readVersion) return;
+        observedRunId = context?.runId;
+        setGoalContext(context);
+      })
       .catch((cause) => {
-        if (cancelled) return;
+        if (cancelled || version !== readVersion) return;
         /*
          * ★"목표가 없다" 와 "목표를 못 읽었다" 는 다르다 (실측 2026-09-08).
          *   예전에는 읽기가 실패해도 그냥 null 을 넣었다. 그러면 대화에 목표 번호가
@@ -2055,7 +2122,14 @@ function ChatPage() {
           ? `목표 상태를 읽지 못했습니다${raw ? `: ${raw}` : ""}. 목표는 그대로 있을 수 있습니다 — 잠시 뒤 다시 열어 확인해 주세요.`
           : `The goal state could not be read${raw ? `: ${raw}` : ""}. The goal may still be set — reopen this chat in a moment to check.`);
       });
-    return () => { cancelled = true; };
+    };
+    // Verification settles after the model's final message. The goal ID can
+    // stay the same while its run becomes blocked or starts a successor.
+    const unsubscribe = ipcEvents()?.onStoreChanged?.((change) => {
+      if (change.entity === "long-run" && change.id === observedRunId) refreshGoal();
+    });
+    refreshGoal();
+    return () => { cancelled = true; unsubscribe?.(); };
   }, [chat?.goalId, chat?.id, locale]);
 
   // A Task deep link is authoritative. Resolve it through Main before loading
@@ -2129,6 +2203,7 @@ function ChatPage() {
   // an active -> inactive transition for runs it did not start itself.
   const activeChatSeenRef = useRef(false);
   const lastRunIdRef = useRef<string | null>(null);
+  const lastFinalRunIdRef = useRef<string | null>(null);
   // 프롬프트 저장소 seedOnly 프리필 — 자동 전송 없이 입력창에만 채울 텍스트.
   const [composerPrefill, setComposerPrefill] = useState<string | null>(null);
   // 델타 partial 누적 버퍼 — main이 증분만 보내므로 여기서 전문을 재조립한다.
@@ -2258,6 +2333,23 @@ function ChatPage() {
   }, [allGeneratedApps, scaffoldedApps, surface]);
   // 우측 패널 — file / agent / panel 탭을 하나의 rail 안에서 전환한다.
   const [rightPanelOpen, setRightPanelOpen] = useState(false);
+  const [workerSelection, setWorkerSelection] = useState<OneWorkerPanelSelection | null>(null);
+  const inspectWorkerPanel = useCallback((runId: string, group: OneWorkerWorkGroup) => {
+    if (!chatId || hydratedChatId !== chatId || !isCurrentChat() || !runId || !group.agentId) return;
+    setWorkerSelection({ chatId, runId, agentId: group.agentId, name: group.name });
+    setRightPanelOpen(true);
+  }, [chatId, hydratedChatId, isCurrentChat]);
+  const workerRun = useMemo<OneWorkerPanelRun | null>(() => {
+    if (!rightPanelOpen || hydratedChatId !== chatId || !workerSelection || workerSelection.chatId !== chatId) return null;
+    for (let index = messages.length - 1; index >= 0; index -= 1) {
+      const message = messages[index];
+      const exact = message.activityRuns?.find((run) => run.runId === workerSelection.runId);
+      if (exact) return { chatId, runId: exact.runId, state: exact.state };
+      if (!message.activityRuns?.length && message.runId === workerSelection.runId) return { chatId, runId: message.runId, state: workActivityStateFromMessage(message) };
+    }
+    return null;
+  }, [chatId, hydratedChatId, messages, rightPanelOpen, workerSelection]);
+  useEffect(() => { setWorkerSelection(null); }, [chatId]);
   const [rightPanelTab, setRightPanelTab] = useState<ChatRightPanelTab>("agent");
   const [rightPanelWidth, setRightPanelWidth] = useState(() => readRightPanelWidth());
   const rightPanelPreferredWidthRef = useRef(rightPanelWidth);
@@ -2633,6 +2725,10 @@ function ChatPage() {
           ...message,
           ...(sourceRunId ? { runId: sourceRunId } : {}),
           activityState: next,
+          // Hydration adds activityRuns, which ChatStream renders before the
+          // compatibility activityState. Advance that same run on live events.
+          ...(message.activityRuns?.length ? { activityRuns: message.activityRuns.map((run) =>
+            run.runId === (sourceRunId ?? message.runId) ? { ...run, state: next } : run) } : {}),
         };
       }));
       // Main persists terminal answers before publishing `final`, but a
@@ -3118,6 +3214,7 @@ function ChatPage() {
                   return {
                     ...msg,
                     text: resyncSetup.text,
+                    ...(snap?.goalResult ? { goalResult: snap.goalResult } : {}),
                     streaming: true,
                     questions: resync.questions.length > 0 ? resync.questions : msg.questions,
                     needsMultimodalSetup: resyncSetup.needsSetup || msg.needsMultimodalSetup,
@@ -3144,6 +3241,7 @@ function ChatPage() {
             return {
               ...msg,
               text: setup.text,
+              ...(ev.goalResult ? { goalResult: ev.goalResult } : {}),
               streaming: true,
               // 새 텍스트 활동 — 직전 "N초 동안 생각함" 잔류 표시는 걷는다.
               thinking:
@@ -3156,10 +3254,13 @@ function ChatPage() {
           }),
         );
       } else if (ev.kind === "final") {
-        pushWorkflow("status", locale === "ko" ? "완료" : "Done", { tokens: ev.tokens });
+        lastFinalRunIdRef.current = sourceRunId ?? runIdRef.current;
+        pushWorkflow("status", ev.goalResult && ev.goalResult.status !== "verified"
+          ? locale === "ko" ? "보고서 작성됨 · 검증 대기" : "Report ready · verification pending"
+          : locale === "ko" ? "완료" : "Done", { tokens: ev.tokens });
         transcriptRevisionRef.current += 1;
         setMessages((m) =>
-          m.map((msg) => {
+          dedupeStreamMessages(m.map((msg) => {
             if (msg.id !== placeholderId) return msg;
             const raw = ev.text ?? "";
             const parsed = extractQuestions(raw, msg.id);
@@ -3174,6 +3275,7 @@ function ChatPage() {
             return {
               ...msg,
               text: setup.text,
+              ...(ev.goalResult ? { goalResult: ev.goalResult } : {}),
               ...(ev.durableMessageId ? { durableMessageId: ev.durableMessageId } : {}),
               imageDataUrls: ev.imageDataUrls ?? msg.imageDataUrls,
               busy: false,
@@ -3204,7 +3306,7 @@ function ChatPage() {
               pendingContinuationRunId: undefined,
               pendingContinuationAutoResume: undefined,
             };
-          }),
+          })),
         );
         setBusy(false);
         setCancelPending(false);
@@ -3430,6 +3532,7 @@ function ChatPage() {
     setCancelPending(false);
     runIdRef.current = null;
     lastRunIdRef.current = null;
+    lastFinalRunIdRef.current = null;
     partialTextRef.current = "";
     processedTextLenRef.current = 0;
     runServerUrlsRef.current = [];
@@ -3471,6 +3574,7 @@ function ChatPage() {
     const events = ipcEvents();
     if (!api || !events?.onStoreChanged || !chatId) return;
     let generation = 0;
+    let disposed = false;
     const refresh = () => {
       const requestGeneration = ++generation;
       void api.runtime.detect().then((list) => {
@@ -3501,7 +3605,7 @@ function ChatPage() {
         );
       }).catch(() => undefined);
     };
-    return events.onStoreChanged((change) => {
+    const unsubscribe = events.onStoreChanged((change) => {
       if (change.entity === "runtime") { refresh(); return; }
       /*
        * ★목표가 닫혀도 화면이 그 사실을 못 받던 자리 (QA 실측 2026-09-08).
@@ -3516,9 +3620,18 @@ function ChatPage() {
        * 소유한 값은 이 경로로만 화면에 도착한다.
        */
       if (change.entity === "chat" && change.id === chatId) {
+        void api.invoke.history(chatId).then((history) => {
+          if (disposed) return;
+          const states = new Map(history.filter((entry) => entry.goalResult).map((entry) => [entry.durableMessageId ?? entry.id, entry.goalResult]));
+          setMessages((current) => current.map((message) => {
+            const result = states.get(message.durableMessageId ?? message.id);
+            return result ? { ...message, goalResult: mergeGoalResults(message.goalResult, result) } : message;
+          }));
+        }).catch(() => undefined);
         void api.chats.get(chatId).then((next) => { if (next) setChat(next); }).catch(() => undefined);
       }
     });
+    return () => { disposed = true; unsubscribe(); };
   }, [chat?.runtimeSelection, chatId]);
 
   // The transcript is durable, so the Agent work panel must be durable too.
@@ -3771,7 +3884,7 @@ function ChatPage() {
       // 진행 중 실행 재접속 — 이 채팅이 백그라운드로 돌고 있으면(다른 채팅 갔다 옴) 스트림·정지버튼 복구.
       // 버퍼된 이벤트를 리플레이해 진행 중 버블을 재구성하고, runId 채널을 구독해 이후 스트림을 받는다.
       const attached = await api.invoke.attach(chatId);
-      if (!cancelled && attached) {
+      if (!cancelled && attached && !runIdRef.current && attached.runId !== lastFinalRunIdRef.current) {
         const placeholderId = uid();
         // 원 실행 시작 시각을 우선 — 재진입 시 상태줄 경과가 0s부터 다시 세지 않게.
         const attachedStartedAt = attached.startedAt ? Date.parse(attached.startedAt) : NaN;
@@ -3779,9 +3892,7 @@ function ChatPage() {
         const reconnectAgent = agents.find((a) => a.id === c.agentId);
         const reconnectAgentName = reconnectAgent ? pickLocalized(reconnectAgent, locale).name : t("chat.assistant_fallback");
         transcriptRevisionRef.current += 1;
-        setMessages((m) => [
-          ...m,
-          {
+        setMessages((m) => attachLiveWorkPlaceholder(m, {
             id: placeholderId,
             role: "agent",
             text: "",
@@ -3798,15 +3909,14 @@ function ChatPage() {
                 createdAt: startedAt,
               },
             ],
-          },
-        ]);
+          }));
         setBusy(true);
         setCancelPending(false);
         runIdRef.current = attached.runId;
         lastRunIdRef.current = attached.runId;
         const lastStatusRef = { text: "" };
         for (const ev of attached.events) consumeEventRef.current(ev, placeholderId, lastStatusRef, attached.runId);
-        subscribeRun(attached.runId, placeholderId, lastStatusRef);
+        if (runIdRef.current === attached.runId) subscribeRun(attached.runId, placeholderId, lastStatusRef);
       }
     })().catch((error) => {
       if (cancelled) return;
@@ -3917,15 +4027,16 @@ function ChatPage() {
         // re-enters the chat.
         if (runIdRef.current) return;
         void api.invoke.attach(chatId).then((attached) => {
-          if (!attached || runIdRef.current) return;
+          // Goal verification keeps the completed run attachable. Replaying
+          // its final into a new placeholder would display the answer twice.
+          // A successor continuation has a different run id and still attaches.
+          if (!attached || runIdRef.current || attached.runId === lastFinalRunIdRef.current) return;
           const placeholderId = uid();
           const attachedStartedAt = attached.startedAt ? Date.parse(attached.startedAt) : NaN;
           const startedAt = Number.isFinite(attachedStartedAt) ? attachedStartedAt : Date.now();
           const reconnectAgentName = agent ? pickLocalized(agent, locale).name : t("chat.assistant_fallback");
           transcriptRevisionRef.current += 1;
-          setMessages((current) => [
-            ...current,
-            {
+          setMessages((current) => attachLiveWorkPlaceholder(current, {
               id: placeholderId,
               role: "agent",
               text: "",
@@ -3940,8 +4051,7 @@ function ChatPage() {
                 activity: "start",
                 createdAt: startedAt,
               }],
-            },
-          ]);
+            }));
           steerQueueRef.current.shift();
           setQueuedSteers(steerQueueRef.current.map((item) => item.text));
           setBusy(true);
@@ -3952,7 +4062,7 @@ function ChatPage() {
           processedTextLenRef.current = 0;
           const lastStatusRef = { text: "" };
           for (const event of attached.events) consumeEventRef.current(event, placeholderId, lastStatusRef, attached.runId);
-          subscribeRun(attached.runId, placeholderId, lastStatusRef);
+          if (runIdRef.current === attached.runId) subscribeRun(attached.runId, placeholderId, lastStatusRef);
         }).catch(() => undefined);
         return;
       }
@@ -5594,7 +5704,17 @@ function ChatPage() {
   }, [submitOrQueue]);
   const handleToggleGoal = useCallback(() => {
     if (!chat) return;
-    const next = !chat.goalId;
+    if (chat.goalId) {
+      void ipc()?.chats.deleteGoal(chat.id, chat.goalId).then((updated) => {
+        if (updated) setChat(updated);
+        setGoalContext(null);
+      }).catch((cause) => {
+        void ipc()?.chats.getGoalContext(chat.id).then(setGoalContext);
+        setSessionNotice(failureMessage(cause));
+      });
+      return;
+    }
+    const next = true;
     const previous = chat;
     setGoalContext(null);
     setChat({ ...chat, goalId: next ? "pending" : null, continuousMode: next ? true : chat.continuousMode });
@@ -5606,10 +5726,19 @@ function ChatPage() {
       })
       .catch(() => setChat(previous));
   }, [chat]);
+  const handlePauseGoal = useCallback(() => {
+    if (!chat?.goalId) return;
+    void ipc()?.chats.pauseGoal(chat.id, chat.goalId)
+      .then((context) => setGoalContext(context))
+      .catch((cause) => {
+        void ipc()?.chats.getGoalContext(chat.id).then(setGoalContext);
+        setSessionNotice(failureMessage(cause));
+      });
+  }, [chat]);
   const handleResumeGoal = useCallback(() => {
     if (!chat || !goalContext?.version) return;
     const expectedVersion = goalContext.version;
-    void ipc()?.chats.resumeGoal(chat.id, expectedVersion)
+    void ipc()?.chats.resumeGoal(chat.id, expectedVersion, goalContext.goalId)
       .then((context) => {
         if (context) setGoalContext(context);
       })
@@ -5625,7 +5754,9 @@ function ChatPage() {
          */
         const raw = failureMessage(cause);
         const ko = locale === "ko";
-        const explained = /auto_goal_resume_chat_busy/.test(raw)
+        const explained = /auto_goal_resume_attempt_unsettled/.test(raw)
+          ? (ko ? "중단된 작업의 결과를 먼저 확인해야 합니다. 목표와 작업 기록은 보존되어 있습니다." : "The interrupted action's outcome needs confirmation first. Your goal and work history are preserved.")
+          : /auto_goal_resume_chat_busy/.test(raw)
           ? (ko
             ? "이 대화가 아직 앞 요청을 돌리는 중입니다. 그 실행이 끝난 뒤 다시 이어가 주세요."
             : "This chat is still running an earlier request. Resume again once it finishes.")
@@ -6333,59 +6464,26 @@ function ChatPage() {
         </div>
       )}
 
-      {/* Hub-approval cards render above the shell content, outside the .rd theme
-          scope where --rd-* vars and .btn styling live — without this wrapper the
-          켜기/나중에 buttons fall back to unstyled plain text. */}
-      <div className="rd">
       {pendingHubApprovals.filter((row) => !dismissedHubApprovals.has(row.serverId)).map((row) => (
-        <div key={row.serverId} className="hub-approval-card">
-          <div className="hub-approval-card-title">
-            {`"${row.slug}" 도구가 붙어 있지만 아직 켜지지 않았습니다`}
-          </div>
-          <div className="hub-approval-card-body">
-            이 명령이 이 Mac에서 실행됩니다 — 켜면 다음 대화부터 사용됩니다.
-          </div>
-          <code className="hub-approval-card-command">
-            {[row.command, ...row.args].filter(Boolean).join(" ")}
-          </code>
-          {row.envKeys.length > 0 ? (
-            <div className="hub-approval-card-body">
-              {`켠 뒤 키 입력이 필요합니다: ${row.envKeys.join(", ")}`}
-            </div>
-          ) : null}
-          <div className="hub-approval-card-actions">
-            <button
-              type="button"
-              className="btn sm primary"
-              onClick={() => {
-                const approvalApi = ipc();
-                if (!approvalApi) return;
-                void approvalApi.mcpTools
-                  .setEnabled(row.serverId, true)
-                  .then(() => {
-                    setPendingHubApprovals((rows) => rows.filter((r) => r.serverId !== row.serverId));
-                    void approvalApi.mcpTools.listInstalled().then(setInstalledPlugins).catch(() => undefined);
-                  })
-                  .catch(() => undefined);
-              }}
-            >
-              켜기
-            </button>
-            <button
-              type="button"
-              className="btn sm"
-              onClick={() => setDismissedHubApprovals((prev) => new Set(prev).add(row.serverId))}
-            >
-              나중에
-            </button>
-          </div>
-        </div>
+        <InactiveToolNotice key={row.serverId} name={row.slug} locale={locale}
+          command={[row.command, ...row.args].filter(Boolean).join(" ")} envKeys={row.envKeys}
+          onEnable={() => {
+            const approvalApi = ipc();
+            if (!approvalApi) return;
+            void approvalApi.mcpTools.setEnabled(row.serverId, true).then(() => {
+              setPendingHubApprovals((rows) => rows.filter((r) => r.serverId !== row.serverId));
+              void approvalApi.mcpTools.listInstalled().then(setInstalledPlugins).catch(() => undefined);
+            }).catch(() => undefined);
+          }}
+          onDismiss={() => setDismissedHubApprovals((prev) => new Set(prev).add(row.serverId))}
+        />
       ))}
-      </div>
 
       <div data-tour-id="workspace.chat" style={{ minHeight: 0, minWidth: 0, width: "100%", flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
         <ChatStream
+          artifactChatId={chatId || undefined}
           messages={messages}
+          onInspectWorker={inspectWorkerPanel}
           agentName="Agentlas"
           agentTone={displayAgent?.tone ?? "blue"}
           emptyDirectory={chatEmptyDirectory}
@@ -6498,17 +6596,22 @@ function ChatPage() {
           goalPauseReason={goalContext?.pauseReason}
           goalBlockedReason={goalContext?.blockedReason}
           onResumeGoal={handleResumeGoal}
+          onPauseGoal={handlePauseGoal}
           onToggleContinuous={handleToggleContinuous}
           onToggleSwarm={handleToggleSwarm}
         />
       </div>
       </div>
-      <OneActivityArtifactRail
+      <TaskSidePanel
         key={chatId || "new-task"}
         items={workActivity.artifacts}
+        onRequestOpen={() => openPanelTab("panel")}
         activity={workActivity}
         locale={locale === "ko" ? "ko" : "en"}
         visible={rightPanelOpen}
+        workerSelection={workerSelection}
+        workerRun={workerRun}
+        onCloseWorker={() => setWorkerSelection(null)}
         onClose={closeRightPanel}
         width={rightPanelWidth}
         onResize={resizeRightPanel}
@@ -6517,8 +6620,11 @@ function ChatPage() {
         minWidth={RIGHT_PANEL_MIN_WIDTH}
         maxWidth={clampRightPanelWidth(RIGHT_PANEL_MAX_WIDTH)}
         defaultWidth={RIGHT_PANEL_DEFAULT_WIDTH}
+        screenChatId={chat.id}
         browserScopeKey={chatId || undefined}
         browserHistoryUrl={workBrowserHistoryUrl}
+        browserPreviewUrl={mediaPreview?.viewerKind === "browser" ? mediaPreview.browserUrl : undefined}
+        onBrowserObserved={() => openPanelTab("panel")}
         result={(
           <WorkRailResult
             artifact={artifact}

@@ -35,7 +35,7 @@ import { agentActivityKey, registerAgentResidency, touchAgentResidency } from ".
 import { acpOrLegacyRunner, acpSessionKind, createAcpRunner } from "./acp";
 import { resolveAcpAgentSpec } from "./acp-agents";
 import { acquireLocalInferenceSlot } from "./local-inference-run-slots";
-import type { Runner, RunnerFailure } from "./runner";
+import { withNativeBrowserGuidance, type Runner, type RunnerFailure } from "./runner";
 import { peekProviderUsedPercent } from "../usage";
 import { listModelRoleMembers } from "../store/model-roles";
 
@@ -208,6 +208,11 @@ export function effortForSelectedModel(
 }
 
 export function pickRunner(active: RuntimeStatus): { runner: Runner; label: string } | null {
+  const selected = pickRunnerWithoutHostGuidance(active);
+  return selected ? { ...selected, runner: withNativeBrowserGuidance(selected.runner) } : null;
+}
+
+function pickRunnerWithoutHostGuidance(active: RuntimeStatus): { runner: Runner; label: string } | null {
   if (isRuntimeCredentialUnavailable(active)) {
     return {
       label: `BYOK · ${active.backend}`,
@@ -379,7 +384,9 @@ function runtimeMatchesOverride(runtime: RuntimeStatus, override: AgentRuntimeOv
   return true;
 }
 
-const QUOTA_FALLBACK_PERCENT = 90;
+// A near-limit warning still leaves usable quota. Only an exhausted snapshot
+// excludes a candidate; actual provider quota/auth failures retain their cooldown.
+const QUOTA_EXHAUSTED_PERCENT = 100;
 const LOCAL_AUTHORITATIVE_MODEL_KINDS = new Set<RuntimeStatus["kind"]>(["ollama", "lmstudio", "mlx"]);
 
 function runtimeModelUnavailable(runtime: RuntimeStatus, selectedModel: string | null | undefined): boolean {
@@ -405,7 +412,7 @@ function runtimeSelectionUnavailableReason(
   if (isRuntimeCredentialUnavailable(runtime)) return null;
   if (runtimeModelUnavailable(runtime, selection.model)) return "model-unavailable";
   const used = peekProviderUsedPercent(selection.kind);
-  if (used !== null && used >= QUOTA_FALLBACK_PERCENT) return "quota-exceeded";
+  if (used !== null && used >= QUOTA_EXHAUSTED_PERCENT) return "quota-exceeded";
   return null;
 }
 

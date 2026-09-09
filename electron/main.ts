@@ -37,7 +37,8 @@ import {
 } from "./install-identity";
 import { registerIpcHandlers } from "./ipc";
 import { configureDevelopmentEffectPolicy, developmentEffectPolicyRequested, developmentEffectsSuppressed, developmentIpcBoundary, developmentRendererRequestAllowed } from "./development-effect-policy";
-import { ScienceProjectFolderSelections, validateScienceProjectFolderPath } from "./science/project-folder-selection";
+import { ScienceProjectFolderSelections, validateScienceProjectFolderPath } from "agentlas-science";
+import { installDesktopScienceHost } from "./science-host";
 import { listPendingAskUserRequests, submitAskUserAnswer } from "./confirm/ask-user";
 import { buildAppMenu } from "./menu";
 import { closeStore, initStore, runPostContinuityStoreRepairs } from "./store/db";
@@ -83,7 +84,7 @@ import { materializeAllAgents } from "./agents/files";
 import { backfillEntityKinds } from "./mcp/registry";
 import { backfillLegacyLocalRouteDefinitionHashes } from "./agents/routes";
 import { dedupeLocalInstalledAgents } from "./store/agent-dedupe";
-import { reconcileExistingCuratedMemoryCandidates } from "./experience/store";
+import { reconcileExistingCuratedMemoryCandidatesAtStartup } from "./experience/store";
 import { migrateRegisteredAgents } from "./architecture/agent-migrations";
 import { seedBuiltinAgents } from "./architecture/seed";
 import { repairAllRootChatSurfaceControllers } from "./store/chats";
@@ -118,7 +119,7 @@ import {
   startAgentlasMobileBridge,
   stopAgentlasMobileBridge,
 } from "./mobile-bridge/runtime";
-import { userDataDir } from "./runtime-paths";
+import { userDataDir, userDataPath } from "./runtime-paths";
 import { runHostShutdownHooks } from "./host-lifecycle";
 import {
   initializeAppRuntimeCoordinator,
@@ -184,29 +185,29 @@ import {
   shutdownScienceRuntimeForAppClose,
   configureScienceServiceAvailability, retryFailedScienceServiceLoad,
   scienceStatisticsMethodCatalogue, createScienceDatasetIngestionService, scienceSchemaVersion,
-} from "./science/lazy-services";
+} from "agentlas-science";
 import type {
   MaterializeScienceEvidenceGraphInferenceInput,
   ProposeScienceEvidenceGraphInferenceInput,
   RefreshScienceEvidenceGraphInput,
   ReviewScienceEvidenceGraphInferenceInput,
-} from "../shared/science-evidence-graph";
-import { scienceLabDecisionProjectionsForProject } from "./science/lazy-services";
-import { registerScienceWorkbookIntakeHandlers } from "./science/workbook-intake-ipc";
-import { registerScienceProjectDataHandlers } from "./science/project-data-ipc";
-import { inspectScienceEpisodeResultReview, recordScienceEpisodeResultReview } from "./science/lazy-services";
-import { commitScienceVegaEdit, parseScienceVegaEditInput } from "./science/lazy-services";
+} from "agentlas-science/dist/contracts/science-evidence-graph";
+import { scienceLabDecisionProjectionsForProject } from "agentlas-science";
+import { registerScienceWorkbookIntakeHandlers } from "./science-host/workbook-intake-ipc";
+import { registerScienceProjectDataHandlers } from "./science-host/project-data-ipc";
+import { inspectScienceEpisodeResultReview, recordScienceEpisodeResultReview } from "agentlas-science";
+import { commitScienceVegaEdit, parseScienceVegaEditInput } from "agentlas-science";
 import {
   renderScienceStatisticsFigurePdf,
   renderScienceStatisticsFigurePng,
   renderScienceStatisticsFigureSvg,
   renderScienceStatisticsFigureSvgPreviewPng,
   renderScienceStatisticsFigureTiff,
-} from "./science/lazy-services";
-import { validateScienceNumericSurfacePngBytes } from "./science/lazy-services";
-import { validateScienceResidueInteraction } from "./science/lazy-services";
-import { draftManuscript } from "./science/lazy-services";
-import { inspectScienceManuscriptDepth } from "./science/lazy-services";
+} from "agentlas-science";
+import { validateScienceNumericSurfacePngBytes } from "agentlas-science";
+import { validateScienceResidueInteraction } from "agentlas-science";
+import { draftManuscript } from "agentlas-science";
+import { inspectScienceManuscriptDepth } from "agentlas-science";
 import type {
   ReviseScienceHypothesisInput,
   ScienceManuscriptBinding,
@@ -240,9 +241,9 @@ import type {
   PresentScienceDecisionInput,
   ReviewScienceAnalysisPlanInput,
   ScienceDecisionRequest,
-} from "../shared/science-contract";
+} from "agentlas-science/dist/contracts/science-contract";
 import type { ProductExtensionPermission } from "../shared/product-extension";
-import type { ScienceComposerStartInput } from "./science/conversation-service";
+import type { ScienceComposerStartInput } from "agentlas-science";
 
 const activeScienceChemistryCommits = new Set<string>();
 configureScienceServiceAvailability(() => {
@@ -259,7 +260,7 @@ import {
   type MountScienceRendererInput,
   type ScienceChemistryCommitInput,
   type ScienceMolstarCommitInput,
-} from "../shared/science-renderer-runtime";
+} from "agentlas-science/dist/contracts/science-renderer-runtime";
 
 export { currentUiLocale } from "./ui-locale";
 
@@ -1100,6 +1101,9 @@ app.on("activate", () => {
 let quitCleanupDone = false;
 let quitCleanupPromise: Promise<void> | null = null;
 let quitServicesStopPromise: Promise<void> | null = null;
+let legacyLearningTimer: NodeJS.Timeout | null = null;
+let legacyLearningController: AbortController | null = null;
+let legacyLearningJob: Promise<void> | null = null;
 let systemShutdownInProgress = false;
 let systemShutdownResetTimer: NodeJS.Timeout | null = null;
 let daemonMobileBridgeClaimed = false;
@@ -1142,6 +1146,9 @@ async function stopDesktopOwnedMobileBridge(): Promise<void> {
 function stopQuitServices(): Promise<void> {
   if (quitServicesStopPromise) return quitServicesStopPromise;
   shellReadyForWindows = false;
+  if (legacyLearningTimer) clearTimeout(legacyLearningTimer);
+  legacyLearningTimer = null;
+  legacyLearningController?.abort(new Error("legacy_learning_shutdown"));
   try { stopAutomationScheduler(); } catch {}
   try { stopOneBriefingScheduler(); } catch {}
   try { stopBrowserOrphanSweep(); } catch {}
@@ -1159,6 +1166,7 @@ function stopQuitServices(): Promise<void> {
   disposeMobileBridgeStateChange = null;
 
   quitServicesStopPromise = Promise.all([
+    legacyLearningJob?.catch(() => {}),
     import("./triggers/manager").then((module) => { module.stopTriggerManager(); }).catch(() => {}),
     import("./telegram/connect").then((module) => { module.stopTelegramWorkers(); }).catch(() => {}),
     import("./agents/hephaestus-sync").then((module) => { module.stopHephaestusSync(); }).catch(() => {}),
@@ -1495,6 +1503,12 @@ app.whenReady().then(async () => {
   }
   startupStage = "store-ready";
   traceStartup("store-ready");
+  /*
+   * 사이언스는 자기 저장소(agentlas-science)에 살고, 이 앱에게 필요한 것을 host 경계로
+   * 요구한다. 저장소가 열린 직후 한 벌 넣어 준다 — 그 뒤 사이언스를 처음 부르는 자리가
+   * 어디든 이미 준비돼 있다.
+   */
+  installDesktopScienceHost();
   // A native update target must reconcile its durable install journal before
   // optional keychain/session restoration. On a locked or headless machine
   // that restoration can be slow, while the update handoff is already
@@ -1868,7 +1882,7 @@ app.whenReady().then(async () => {
     const segments = relativeToHome ? relativeToHome.split(path.sep) : [];
     if (segments.some((segment) => segment.startsWith("."))) throw new Error("science-project-folder-hidden-path");
     if (segments[0] === "Library") throw new Error("science-project-folder-reserved-path");
-    if (inside(path.resolve(app.getPath("userData")), resolved)) throw new Error("science-project-folder-reserved-path");
+    if (inside(path.resolve(userDataPath()), resolved)) throw new Error("science-project-folder-reserved-path");
     const existing = fs.existsSync(resolved) ? fs.lstatSync(resolved) : null;
     if (existing && (existing.isSymbolicLink() || !existing.isDirectory())) {
       throw new Error("science-project-folder-not-a-directory");
@@ -2005,7 +2019,7 @@ app.whenReady().then(async () => {
     const input = envelope && typeof envelope === "object" && "input" in envelope ? (envelope as { input?: unknown }).input : null;
     if (!input || typeof input !== "object" || Array.isArray(input)) throw new Error("science-loop-input-invalid");
     const record = input as StartScienceLoopSessionInput;
-    const { resolveScienceRuntimeSelection } = await import("./science/runtime-preferences");
+    const { resolveScienceRuntimeSelection } = await import("agentlas-science");
     assertScienceSender(event, envelope, "science:agent-runtime");
     const runtimeSelection = await resolveScienceRuntimeSelection(scienceStore(), record);
     if (!runtimeSelection?.model) throw new Error("science-runtime-selection-required");
@@ -2095,14 +2109,14 @@ app.whenReady().then(async () => {
   ipcMain.handle("science:runtime:inspect", async (event, envelope: unknown) => {
     assertScienceSender(event, envelope, "science:agent-runtime");
     const input = scienceRuntimeInput(envelope);
-    const { inspectScienceRuntime } = await import("./science/runtime-preferences");
+    const { inspectScienceRuntime } = await import("agentlas-science");
     assertScienceSender(event, envelope, "science:agent-runtime");
     return inspectScienceRuntime(scienceStore(), input);
   });
   ipcMain.handle("science:runtime:select", async (event, envelope: unknown) => {
     assertScienceSender(event, envelope, "science:agent-runtime");
     const input = scienceRuntimeInput(envelope);
-    const { selectScienceRuntime } = await import("./science/runtime-preferences");
+    const { selectScienceRuntime } = await import("agentlas-science");
     assertScienceSender(event, envelope, "science:agent-runtime");
     return selectScienceRuntime(scienceStore(), input);
   });
@@ -2113,8 +2127,8 @@ app.whenReady().then(async () => {
     const record = input as Record<string, unknown>;
     const projectId = String(record.projectId ?? "");
     const conversationId = String(record.conversationId ?? "");
-    const { normalizeScienceRuntimeSelection } = await import("./science/runtime-selection");
-    const { resolveScienceRuntimeSelection } = await import("./science/runtime-preferences");
+    const { normalizeScienceRuntimeSelection } = await import("agentlas-science");
+    const { resolveScienceRuntimeSelection } = await import("agentlas-science");
     assertScienceSender(event, envelope, "science:agent-runtime");
     const runtimeSelection = normalizeScienceRuntimeSelection(record.runtimeSelection ?? await resolveScienceRuntimeSelection(scienceStore(), { projectId, conversationId }));
     if (!runtimeSelection?.model) throw new Error("science-runtime-selection-required");
@@ -2281,7 +2295,7 @@ app.whenReady().then(async () => {
       throw new Error("science-dataset-path-outside-home");
     }
     if (relativeToHome.split(path.sep).some((segment) => segment.startsWith("."))) throw new Error("science-dataset-path-hidden");
-    if (inside(path.resolve(app.getPath("userData")), resolved)) throw new Error("science-dataset-path-reserved");
+    if (inside(path.resolve(userDataPath()), resolved)) throw new Error("science-dataset-path-reserved");
     if (path.extname(resolved).toLowerCase() !== ".csv") throw new Error("science-dataset-path-not-csv");
     let stat: fs.Stats;
     try { stat = fs.lstatSync(resolved); } catch { throw new Error("science-dataset-path-not-found"); }
@@ -2352,7 +2366,7 @@ app.whenReady().then(async () => {
     const record = raw && typeof raw === "object" && !Array.isArray(raw) ? raw as Record<string, unknown> : null;
     const allowed = new Set(["requestId", "projectId", "statisticsArtifactId", "statisticsArtifactVersion", "statisticsArtifactContentSha256", "visualizationIndex", "title"]);
     if (!record || Object.keys(record).some((key) => !allowed.has(key))) throw new Error("science-statistics-figure-input-invalid");
-    const result = scienceStore().materializeStatisticsFigure(record as unknown as import("../shared/science-contract").MaterializeScienceStatisticsFigureInput);
+    const result = scienceStore().materializeStatisticsFigure(record as unknown as import("agentlas-science/dist/contracts/science-contract").MaterializeScienceStatisticsFigureInput);
     notifyScienceArtifactChanged(String(record.projectId ?? ""), result.artifact);
     return result;
   });
@@ -2364,7 +2378,7 @@ app.whenReady().then(async () => {
     const allowed = new Set(["requestId", "projectId", "statisticsArtifactId", "statisticsArtifactVersion", "statisticsArtifactContentSha256", "sourceArtifactIndex"]);
     if (!record || Object.keys(record).some((key) => !allowed.has(key))) throw new Error("science-statistics-numeric-surface-input-invalid");
     const result = scienceStore().materializeStatisticsNumericSurface(
-      record as unknown as import("../shared/science-contract").MaterializeScienceStatisticsNumericSurfaceInput,
+      record as unknown as import("agentlas-science/dist/contracts/science-contract").MaterializeScienceStatisticsNumericSurfaceInput,
     );
     notifyScienceArtifactChanged(String(record.projectId ?? ""), result.artifact);
     return result;
@@ -2393,7 +2407,7 @@ app.whenReady().then(async () => {
       throw new Error("science-numeric-surface-view-state-input-invalid");
     }
     return scienceStore().persistNumericSurfaceViewState(
-      record as unknown as import("../shared/science-numeric-3d").PersistScienceNumericSurfaceViewStateInput,
+      record as unknown as import("agentlas-science/dist/contracts/science-numeric-3d").PersistScienceNumericSurfaceViewStateInput,
     );
   });
   ipcMain.handle("science:artifacts:exportNumericSurfacePng", async (event, envelope: unknown) => {
@@ -2731,7 +2745,7 @@ app.whenReady().then(async () => {
   });
   ipcMain.handle("science:labs:catalog", async (event, input: unknown) => {
     assertScienceSender(event, input, "science:artifacts");
-    const { activeScienceLabCapabilityCatalog } = await import("./science/tool-control-server");
+    const { activeScienceLabCapabilityCatalog } = await import("agentlas-science");
     return activeScienceLabCapabilityCatalog();
   });
   ipcMain.handle("science:labs:decisionProjections", async (event, input: unknown) => {
@@ -2739,7 +2753,7 @@ app.whenReady().then(async () => {
     const projectId = input && typeof input === "object" && "projectId" in input
       ? String((input as { projectId?: unknown }).projectId ?? "")
       : "";
-    const { activeScienceLabCapabilityCatalog } = await import("./science/tool-control-server");
+    const { activeScienceLabCapabilityCatalog } = await import("agentlas-science");
     const catalog = await activeScienceLabCapabilityCatalog();
     return scienceLabDecisionProjectionsForProject(scienceStore(), projectId, catalog);
   });
@@ -2749,7 +2763,7 @@ app.whenReady().then(async () => {
     const input = envelope && typeof envelope === "object" && "input" in envelope
       ? (envelope as { input?: unknown }).input
       : null;
-    const { activeScienceLabCapabilityCatalog } = await import("./science/tool-control-server");
+    const { activeScienceLabCapabilityCatalog } = await import("agentlas-science");
     return inspectScienceEpisodeResultReview(
       scienceStore(),
       await activeScienceLabCapabilityCatalog(),
@@ -2765,7 +2779,7 @@ app.whenReady().then(async () => {
     const input = envelope && typeof envelope === "object" && "input" in envelope
       ? (envelope as { input?: unknown }).input
       : null;
-    const { activeScienceLabCapabilityCatalog } = await import("./science/tool-control-server");
+    const { activeScienceLabCapabilityCatalog } = await import("agentlas-science");
     return recordScienceEpisodeResultReview(
       scienceStore(),
       await activeScienceLabCapabilityCatalog(),
@@ -2778,7 +2792,7 @@ app.whenReady().then(async () => {
     const input = envelope && typeof envelope === "object" && "input" in envelope ? (envelope as { input?: unknown }).input : null;
     const record = input && typeof input === "object" && !Array.isArray(input) ? input as Record<string, unknown> : null;
     if (!record) throw new Error("science-project-lab-binding-input-invalid");
-    const { activeScienceLabCapabilityCatalog } = await import("./science/tool-control-server");
+    const { activeScienceLabCapabilityCatalog } = await import("agentlas-science");
     const catalog = await activeScienceLabCapabilityCatalog();
     if (!catalog.labs.some((lab) => lab.id === String(record.labId ?? ""))) throw new Error("science-project-lab-definition-not-found");
     return scienceStore().upsertProjectLabBinding(input as UpsertScienceProjectLabBindingInput);
@@ -3449,25 +3463,27 @@ app.whenReady().then(async () => {
   // 유지보수다. 창 생성 앞에서 콜드 스타트를 수 초 늘리고 있었으므로 창이 뜬 뒤로
   // 미룬다(runDeferredLegacyLearningReconciliation). 멱등이라 이번 실행에서
   // 못 돌면 다음 실행이 이어받는다.
-  const runDeferredLegacyLearningReconciliation = () => {
+  const runDeferredLegacyLearningReconciliation = async (signal: AbortSignal) => {
     // ★ 단계마다 따로 감싼다. 예전에는 전부 한 try 안이었고 catch 가 삼켰다 — 앞 단계
     //   하나가 던지면 그 뒤가 통째로 안 돌았다. 특히 `migrateRegisteredAgents` 는 업데이트가
     //   등록된 모든 에이전트에 도달하는 유일한 통로라, 조용히 죽으면 새 아키텍처가 영영
     //   닿지 않는다(실측 2026-08-26). 한 단계의 실패가 나머지를 막지 않아야 한다.
-    const step = <T,>(name: string, run: () => T): T | null => {
+    const step = async <T,>(name: string, run: () => T | Promise<T>): Promise<T | null> => {
+      signal.throwIfAborted();
       try {
-        return run();
+        return await run();
       } catch (err) {
+        if (signal.aborted) throw err;
         console.error(`[experience] ${name} 단계 실패 (나머지는 계속 진행):`, err);
         return null;
       }
     };
     try {
-      const definitions = step("route-definition-backfill", backfillLegacyLocalRouteDefinitionHashes)
+      const definitions = await step("route-definition-backfill", backfillLegacyLocalRouteDefinitionHashes)
         ?? { updated: 0, failed: 0 };
-      const duplicates = step("dedupe-local-agents", dedupeLocalInstalledAgents)
+      const duplicates = await step("dedupe-local-agents", dedupeLocalInstalledAgents)
         ?? { groups: 0, merged: 0 };
-      const experience = step("experience-reconcile", () => reconcileExistingCuratedMemoryCandidates())
+      const experience = await step("experience-reconcile", () => reconcileExistingCuratedMemoryCandidatesAtStartup(2_000, { signal }))
         ?? { scanned: 0, candidateCreated: 0, blocked: 0, skipped: 0, deferred: 0 };
       /*
        * 등록된 모든 에이전트를 현재 아키텍처로 올린다.
@@ -3476,7 +3492,7 @@ app.whenReady().then(async () => {
        * 오래 쓴 에이전트일수록 새 기능이 비어 있었다(실측: 913회 실행에 경험 칩 0). 원장이
        * (에이전트 × 단계)라 새 단계는 설치 시점과 무관하게 전원에게 한 번씩 돈다.
        */
-      const migrated = step("architecture-migrations", migrateRegisteredAgents) ?? { stepsRun: 0 };
+      const migrated = await step("architecture-migrations", migrateRegisteredAgents) ?? { stepsRun: 0 };
       if (migrated.stepsRun > 0) {
         console.log("[architecture] migrated registered agents", migrated);
       }
@@ -3494,6 +3510,7 @@ app.whenReady().then(async () => {
         });
       }
     } catch (err) {
+      if (signal.aborted) return;
       console.error("[experience] legacy learning reconciliation failed:", err);
     }
   };
@@ -3527,7 +3544,13 @@ app.whenReady().then(async () => {
   // 누가 어떤 버전을 쓰는지 서버가 알게 한다(1.0.31·32 크래시 때 영향 범위를 셀 수 없었다).
   startInstallBeacon(installIdentity.channel);
   // 창이 뜨고 초기 렌더러 IPC가 가라앉은 뒤에 레거시 정합을 돌린다.
-  setTimeout(runDeferredLegacyLearningReconciliation, 3_000);
+  legacyLearningController = new AbortController();
+  legacyLearningTimer = setTimeout(() => {
+    legacyLearningTimer = null;
+    const controller = legacyLearningController;
+    if (!controller || controller.signal.aborted || quitServicesStopPromise) return;
+    legacyLearningJob = runDeferredLegacyLearningReconciliation(controller.signal);
+  }, 3_000);
   startOneBriefingScheduler();
   startOneTeamNotificationBridge();
   startRunAlertBridge();
@@ -3663,6 +3686,15 @@ app.whenReady().then(async () => {
     if (recoveredSteers > 0) console.info(`[invocation] recovered ${recoveredSteers} queued steer(s)`);
   } catch (error) {
     console.error("[invocation] queued steer recovery failed", error);
+  }
+  if (!developmentEffectsSuppressed()) {
+    try {
+      const { resumeSettledGoalCheckpoints } = await import("./long-run/startup-checkpoints");
+      const resumed = resumeSettledGoalCheckpoints(invocationService);
+      if (resumed.length) console.info("[long-run] checkpoint startup reconciliation", resumed);
+    } catch (error) {
+      console.error("[long-run] checkpoint startup reconciliation failed", error);
+    }
   }
   try {
     const scienceStatus = scienceExtensionStatus();

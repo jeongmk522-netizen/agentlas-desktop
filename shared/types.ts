@@ -1853,13 +1853,22 @@ export interface AgentConcurrencyInfo {
   userSet: boolean;
 }
 
+/** Main-authored display metadata. It grants no execution authority. */
+export interface ChatHostNotice {
+  purpose: "goal-continuation";
+  runId: string;
+}
+
 export interface ChatHistoryEntry {
+  goalResult?: import("./goal-result").GoalResultPresentation;
   id: string;
   /** Opaque Main-issued durable chat-message identity; never derived from copy or timestamps. */
   durableMessageId?: string;
   role: "user" | "assistant" | "system";
   text: string;
   createdAt: string;
+  /** Exact Main-issued purpose of a system turn; absent on legacy history. */
+  hostNotice?: ChatHostNotice;
   /** 사용자 또는 호스트가 생성해 영구화한 이미지 첨부 URL. */
   imageDataUrls?: string[];
 }
@@ -2330,6 +2339,37 @@ export interface BrowserActionLog {
   approval: string | null;
 }
 export type BrowserLiveViewport = "desktop" | "phone";
+export type BrowserCdpHostFailureStage =
+  | "profile"
+  | "existing-host"
+  | "launcher"
+  | "initialize"
+  | "browser-call"
+  | "port-check"
+  | "ownership"
+  | "guardian"
+  | "unknown";
+export type BrowserCdpHostFailureCode =
+  | "profile-unavailable"
+  | "ownership-unverified"
+  | "guardian-unavailable"
+  | "launcher-unavailable"
+  | "launcher-materialize-failed"
+  | "launcher-spawn-failed"
+  | "launcher-exited"
+  | "launcher-timeout"
+  | "launcher-stdin-closed"
+  | "launcher-initialize-failed"
+  | "launcher-browser-call-failed"
+  | "host-not-ready"
+  | "unknown";
+export interface BrowserCdpHostFailureDiagnostic {
+  stage: BrowserCdpHostFailureStage;
+  code: BrowserCdpHostFailureCode;
+  /** Bounded byte count only; stderr content is never retained or exposed. */
+  stderrBytes?: number;
+  stderrTruncated?: boolean;
+}
 export interface BrowserLiveFrame {
   available: boolean;
   dataUrl: string | null;
@@ -2342,7 +2382,9 @@ export interface BrowserLiveFrame {
   /** The real CDP viewport used for this capture. */
   viewport: BrowserLiveViewport;
   capturedAt: string;
-  error: "browser-offline" | "no-page" | "capture-failed" | null;
+  error: "browser-offline" | "no-page" | "capture-failed" | "task-scope-missing" | "browser-session-unlinked" | null;
+  /** Machine-readable browser-host failure without raw stderr, argv, or URLs. */
+  hostFailure?: BrowserCdpHostFailureDiagnostic | null;
 }
 /** A frame pushed by the task-scoped CDP screencast. */
 export interface BrowserLiveStreamFrame extends BrowserLiveFrame {
@@ -3736,9 +3778,63 @@ export interface WorkLiveViewBounds {
 
 export type WorkLiveViewState = "opening" | "loading" | "ready" | "error" | "closed";
 
+export type WorkLiveViewInput =
+  | { kind: "pointer"; phase: "move" | "down" | "up"; x: number; y: number; button?: "left" | "middle" | "right" }
+  | { kind: "key"; phase: "down" | "up"; key: string }
+  | { kind: "text"; text: string };
+
+type NativeBrowserCookieImportFailureCode =
+  | "authorization-required"
+  | "migration-requires-connect"
+  | "source-host-unavailable"
+  | "source-ownership-unverified"
+  | "source-reservation-failed"
+  | "source-protocol-unavailable"
+  | "source-cookie-read-failed"
+  | "source-empty"
+  | "no-transferable-cookies"
+  | "destination-write-failed";
+
+export type NativeBrowserCookieImportCode = "imported" | "already-migrated" | "partial" | NativeBrowserCookieImportFailureCode;
+
+export interface NativeBrowserCookieImportResult {
+  ok: boolean;
+  code: NativeBrowserCookieImportCode;
+  /** This transfer intentionally excludes DOM storage, IndexedDB, cache, and service-worker state. */
+  scope: "cookies-only";
+  destinationPartition: "persist:agentlas-browser-default";
+  observed: number;
+  imported: number;
+  /** Existing native cookies retained by Connect migration, never overwritten. */
+  preserved?: number;
+  skipped: {
+    expired: number;
+    partitioned: number;
+    invalid: number;
+    writeFailed: number;
+  };
+  /** Present only for the bounded machine-readable browser-host failure contract. */
+  hostFailure?: BrowserCdpHostFailureDiagnostic;
+}
+
+
+export interface WorkLiveBrowserTab extends WorkLiveViewStatus {
+  /** True only for the currently shown, ready guest. */
+  visible?: boolean;
+  taskScopeId: string;
+  url: string;
+}
+
 export interface WorkLiveViewStatus {
+  /** Main-issued foreground AI action; navigation status alone is not presentation authority. */
+  presentation?: { id: string; runId: string };
+  /** Cookie transfer receipt for this URL only; unrelated sites remain in Main. */
+  nativeSession?: NativeBrowserCookieImportResult;
   viewId: string;
+  taskScopeId?: string;
   state: WorkLiveViewState;
+  canGoBack?: boolean;
+  canGoForward?: boolean;
   url?: string;
   title?: string;
   error?: string;
@@ -4484,7 +4580,9 @@ export interface AgentMessageEvent {
    * prose or exposing execution identifiers in the room.
    */
   replyToMessageId?: string;
-  /** Bounded, user-visible brief/result excerpt. The full worker result stays internal. */
+  /** Exact Main-owned report is loaded only when its worker panel opens. */
+  reportAvailable?: boolean;
+  /** Bounded, user-visible brief/result excerpt. */
   text: string;
   /** Host-enforced typed-handoff facts. Depth is 1..3; a pair may round-trip at most 4 times. */
   handoffDepth?: number;
@@ -4552,6 +4650,7 @@ export interface McpInvocationEvent {
   observedAt?: string;
   /** Opaque durable assistant-message identity, present only after Main commits the transcript row. */
   durableMessageId?: string;
+  goalResult?: import("./goal-result").GoalResultPresentation;
   /** Main-owned run boundary. Unlike status prose, this is an authoritative lifecycle fact. */
   lifecycle?: {
     phase: "start" | "cancel_requested";
@@ -4688,6 +4787,8 @@ export interface McpInvocationEvent {
   done?: boolean;
   /** 이 노드가 실행 중인 모델/런타임 라벨(예: "grok-4.3", "claude", "gpt-5") — 트리에 "모델 사용 중" 표시. */
   model?: string;
+  /** Model reported by a completed runner call; never filled from a requested fallback selection. */
+  observedModel?: string;
   /** Main-confirmed runtime selection actually used for this invocation. */
   runtimeSelection?: RuntimeSelection;
   /** Explicit orchestrator/worker envelope; separate from ordinary status prose. */
@@ -7323,6 +7424,8 @@ export interface AgentlasIpc {
     listLogs: (limit?: number) => Promise<BrowserActionLog[]>;
     /** Capture the current task's already-open page when supplied; never navigates. */
     captureLiveFrame: (preferredUrl?: string, viewport?: BrowserLiveViewport) => Promise<BrowserLiveFrame>;
+    /** Main resolves this task's observed browser source from durable tool receipts. */
+    captureTaskFrame: (chatId: string) => Promise<BrowserLiveFrame>;
     /** Start a persistent, task-scoped CDP screencast. It never selects an unrelated tab. */
     startLiveView: (preferredUrl: string, viewport?: BrowserLiveViewport) => Promise<BrowserLiveSessionResult>;
     stopLiveView: (sessionId: string) => Promise<{ ok: boolean }>;
@@ -7425,8 +7528,12 @@ export interface AgentlasIpc {
     getGoalContext: (id: string) => Promise<ChatGoalContext | null>;
     /** 첫 Goal 요청으로만 goal 계약을 정의한다. 활성 goal은 후속 채팅/steering으로 덮어쓰지 않는다. */
     defineGoal: (id: string, objective: string, locale?: "ko" | "en") => Promise<ChatGoalContext | null>;
-    /** Explicit manual resume. App-close/crash recovery never dispatches on startup. */
-    resumeGoal: (id: string, expectedVersion: number) => Promise<ChatGoalContext | null>;
+    /** Stop execution and automatic continuation while retaining this exact goal. */
+    pauseGoal: (id: string, goalId: string) => Promise<ChatGoalContext | null>;
+    /** Detach this exact goal; retain chat, files and audit history. */
+    deleteGoal: (id: string, goalId: string) => Promise<Chat>;
+    /** Explicit resume; uncertain interrupted effects remain blocked. */
+    resumeGoal: (id: string, expectedVersion: number, expectedGoalId: string) => Promise<ChatGoalContext | null>;
     /** 스웜 모드 on/off — 여러 워커가 목표를 분해해 병렬 협업. */
     setSwarmMode: (id: string, enabled: boolean) => Promise<Chat>;
     /** Set or clear this chat's exact orchestrator runtime without changing role defaults. */
@@ -7902,8 +8009,13 @@ export interface AgentlasIpc {
    * preload, Node API, or Desktop IPC to the loaded page.
    */
   workLiveView: {
+    /** Explicit user action; source and destination are fixed by Main. */
+    importBrowserCookies: () => Promise<NativeBrowserCookieImportResult>;
+    listTabs: (input: { taskScopeId: string }) => Promise<{ ok: boolean; tabs: WorkLiveBrowserTab[]; reason?: string }>;
+    createTab: (input: { taskScopeId: string; url?: string }) => Promise<{ ok: boolean; tab?: WorkLiveBrowserTab; reason?: string }>;
     open: (input: {
       viewId: string;
+      taskScopeId?: string;
       url: string;
       bounds: WorkLiveViewBounds;
       visible?: boolean;
@@ -7911,14 +8023,17 @@ export interface AgentlasIpc {
     }) => Promise<{ ok: boolean; viewId: string; url?: string; reason?: string }>;
     setBounds: (input: {
       viewId: string;
+      taskScopeId?: string;
       bounds: WorkLiveViewBounds;
       visible?: boolean;
     }) => Promise<{ ok: boolean }>;
-    reload: (viewId: string) => Promise<{ ok: boolean }>;
-    navigate: (input: { viewId: string; url: string }) => Promise<{ ok: boolean; url?: string; reason?: string }>;
-    goBack: (viewId: string) => Promise<{ ok: boolean }>;
-    goForward: (viewId: string) => Promise<{ ok: boolean }>;
-    close: (viewId: string) => Promise<{ ok: true }>;
+    reload: (viewId: string, taskScopeId?: string) => Promise<{ ok: boolean }>;
+    navigate: (input: { viewId: string; url: string; taskScopeId?: string }) => Promise<{ ok: boolean; url?: string; reason?: string }>;
+    goBack: (viewId: string, taskScopeId?: string) => Promise<{ ok: boolean }>;
+    goForward: (viewId: string, taskScopeId?: string) => Promise<{ ok: boolean }>;
+    close: (viewId: string, taskScopeId?: string) => Promise<{ ok: boolean }>;
+    capture: (viewId: string, taskScopeId?: string) => Promise<{ ok: boolean; dataUrl?: string; reason?: string }>;
+    dispatchInput: (input: { viewId: string; input: WorkLiveViewInput; taskScopeId?: string }) => Promise<{ ok: boolean; reason?: string }>;
     onStatus: (handler: (status: WorkLiveViewStatus) => void) => () => void;
   };
   /** Local meta-agent factory that materializes domain teams for Agentlas OS. */
@@ -7980,7 +8095,7 @@ export interface AgentlasIpc {
     /** 현재 실행 중인 chatId 목록 — 사이드바 "실행 중" 인디케이터 초기 시드용. */
     activeChats: () => Promise<string[]>;
     /** 채팅 진입 시 진행 중 실행에 재접속 — 그 chat의 runId + 지금까지 버퍼된 이벤트 + 시작 시각. 없으면 null. */
-    attach: (chatId: string) => Promise<{
+    attach: (chatId: string, options?: { includeEvents?: boolean }) => Promise<{
       runId: string;
       events: McpInvocationEvent[];
       startedAt?: string;
@@ -7990,6 +8105,7 @@ export interface AgentlasIpc {
     receipt: (runId: string) => Promise<InvocationRunReceipt | null>;
     /** 채팅의 가장 최근 실행 receipt — 결과 폴더/실패 진단 복원용. */
     latestReceipt: (chatId: string) => Promise<InvocationRunReceipt | null>;
+    workerReport: (scope: import("./worker-report").WorkerReportScope) => Promise<import("./worker-report").WorkerReport | null>;
     /** Exact Main-projected surface for one canonical Task/run binding. */
     latestOneSurface: (input: {
       runId: string;

@@ -17,7 +17,7 @@
 // Hub first: the Hub routing plugin already resolves capabilities and tool-calls correctly,
 // so its entries are offered first and win ties against a local catalog entry.
 
-import { judgeSubset, type JudgeHint } from "../system-agents/judgment";
+import { judgeSubset, type JudgeHint, type SubsetVerdict } from "../system-agents/judgment";
 
 export interface McpNeedCandidate {
   /** Catalog id or hub slug. */
@@ -40,6 +40,21 @@ export interface ResolvedMcpNeeds {
   reason: string;
   /** Candidates dropped by the cap, so a truncated inventory is never read as "all of it". */
   omitted: string[];
+  failureKind?: SubsetVerdict<string>["failureKind"];
+  decisionFailure?: SubsetVerdict<string>["decisionFailure"];
+  attempts?: SubsetVerdict<string>["attempts"];
+}
+
+export interface McpGoalNeedContext {
+  objective: string;
+  acceptanceCriteria: readonly string[];
+}
+
+export interface McpRuntimeCapabilities {
+  /** Host-proven native browser access for this exact invocation. */
+  nativeBrowser: "available" | "unavailable" | "unknown";
+  /** Runtime-provided web search (for example Codex web_search or Claude WebSearch). */
+  nativeWebSearch?: "available" | "unavailable" | "unknown";
 }
 
 /** Inventory ceiling for one judgment call. Hub entries are offered first, so a cut
@@ -62,10 +77,54 @@ export const MCP_NEED_JUDGMENT_GUIDANCE = [
   "Name a tool ONLY when the task cannot be completed without it.",
   "Mentioning a topic is not a need: a task that says 'research'/'조사'/'검색' while posting to a site does not need a web-search tool, and a task that mentions an issue or a commit does not need the GitHub tool.",
   "Prefer a 'hub' entry over a 'local' one when both cover the same capability.",
-  "If the task can be done with what the agent already has (its own browser, files, or runtime), return an empty list.",
+  "Judge the whole Goal objective and every acceptance criterion when a Goal contract is supplied; the latest task text may only be one implementation step.",
+  "Treat a native browser as available only when the runtime capability context explicitly says available. Unknown or unavailable means you must not assume the runtime has its own browser, UI capture, or interaction channel.",
+  "Even an available native browser satisfies a criterion only when it can produce the required evidence on the same target surface; availability alone does not prove Desktop can observe that surface.",
+  "When a criterion requires rendered UI, interaction, screenshots, or browser-visible evidence and no explicit runtime capability supplies it, select the appropriate offered browser or computer-use tool.",
+  "When nativeWebSearch=available, use the runtime's built-in web search and do not select a credentialed Brave Search MCP unless the user explicitly requested that exact service.",
+  "Do not select a browser merely because the task mentions an app, Flutter, frontend, or a website. Source-only implementation, build, or test criteria may need no browser.",
+  "Return an empty list only when every capability required for the complete Goal is either explicitly available in the runtime context or needs none of the offered tools.",
   "An entry marked 'needs credential' costs the user a blocking API-key prompt before the run starts, so name it only when the task is impossible without it.",
   "Err toward returning fewer tools.",
 ].join(" ");
+
+const MAX_GOAL_OBJECTIVE_CHARS = 2_000;
+const MAX_GOAL_CRITERIA_CHARS = 6_000;
+const MAX_TASK_CHARS = 3_000;
+
+function boundedText(value: string, limit: number): string {
+  const text = value.trim();
+  if (text.length <= limit) return text;
+  return `${text.slice(0, Math.max(0, limit - 12)).trimEnd()} [truncated]`;
+}
+
+/** Keep every criterion represented when a large contract must be bounded. */
+export function renderMcpGoalNeedContext(goal?: McpGoalNeedContext): string {
+  if (!goal) return "GOAL CONTRACT:\nnone";
+  const criteria = goal.acceptanceCriteria.slice(0, 32);
+  const perCriterionBudget = criteria.length > 0
+    ? Math.max(80, Math.floor(MAX_GOAL_CRITERIA_CHARS / criteria.length) - 8)
+    : MAX_GOAL_CRITERIA_CHARS;
+  const renderedCriteria = criteria.map((criterion, index) =>
+    `${index + 1}. ${boundedText(criterion, perCriterionBudget)}`);
+  if (goal.acceptanceCriteria.length > criteria.length) {
+    renderedCriteria.push(`[${goal.acceptanceCriteria.length - criteria.length} further criteria omitted]`);
+  }
+  return [
+    "GOAL CONTRACT (host-owned, judge the complete contract):",
+    `Objective: ${boundedText(goal.objective, MAX_GOAL_OBJECTIVE_CHARS) || "unspecified"}`,
+    "Acceptance criteria:",
+    renderedCriteria.join("\n") || "none supplied",
+  ].join("\n");
+}
+
+function renderMcpRuntimeCapabilities(capabilities?: McpRuntimeCapabilities): string {
+  return [
+    "RUNTIME CAPABILITIES (host-proven for this invocation):",
+    `nativeBrowser=${capabilities?.nativeBrowser ?? "unknown"}`,
+    `nativeWebSearch=${capabilities?.nativeWebSearch ?? "unknown"}`,
+  ].join("\n");
+}
 
 /**
  * Ask the connected model which of the available tools the task really needs.
@@ -74,6 +133,8 @@ export const MCP_NEED_JUDGMENT_GUIDANCE = [
 export async function resolveMcpNeeds(input: {
   task: string;
   candidates: McpNeedCandidate[];
+  goal?: McpGoalNeedContext;
+  runtimeCapabilities?: McpRuntimeCapabilities;
   signal?: AbortSignal;
   timeoutMs?: number;
   /** Injectable judge (tests). Defaults to the resident judgment service. */
@@ -97,7 +158,12 @@ export async function resolveMcpNeeds(input: {
     kind: MCP_NEED_JUDGMENT_KIND,
     question: MCP_NEED_JUDGMENT_QUESTION,
     labels: candidates.map((candidate) => candidate.id),
-    input: `TASK:\n${input.task.slice(0, 4000)}\n\nAVAILABLE TOOLS:\n${inventory}`,
+    input: [
+      renderMcpGoalNeedContext(input.goal),
+      renderMcpRuntimeCapabilities(input.runtimeCapabilities),
+      `CURRENT TASK:\n${boundedText(input.task, MAX_TASK_CHARS)}`,
+      `AVAILABLE TOOLS:\n${inventory}`,
+    ].join("\n\n"),
     guidance: MCP_NEED_JUDGMENT_GUIDANCE,
     maxInputChars: MAX_INPUT_CHARS,
     signal: input.signal,
@@ -105,7 +171,10 @@ export async function resolveMcpNeeds(input: {
   });
 
   if (verdict.source !== "llm") {
-    return { needed: [], decided: false, reason: "no connected model answered", omitted };
+    return { needed: [], decided: false, reason: "no connected model answered", omitted,
+      ...(verdict.failureKind ? { failureKind: verdict.failureKind } : {}),
+      ...(verdict.decisionFailure ? { decisionFailure: verdict.decisionFailure } : {}),
+      ...(verdict.attempts ? { attempts: verdict.attempts } : {}) };
   }
   return {
     needed: verdict.selected,

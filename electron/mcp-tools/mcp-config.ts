@@ -7,6 +7,7 @@
 //
 // 이게 없으면 카탈로그의 Playwright(브라우저) 서버가 "설치"만 되고 채팅 중 호출되지 않았다.
 // 이제 에이전트가 실제로 브라우저를 띄워 회원가입/로그인/키 발급을 대신 해줄 수 있다.
+import { registerPreparedMcpConfig, mcpServerConfigurationDigest } from "./prepared-transport";
 import path from "node:path";
 import os from "node:os";
 import fs from "node:fs";
@@ -25,6 +26,9 @@ import {
 import type { InstalledMcpServer } from "../../shared/types";
 import { isAuthenticSystemTimeMcpLaunch, isCanonicalSystemTimeMcpServer } from "./system-time-server";
 import { BROWSER_APPROVAL_FILE_ENV, browserApprovalInfoPath } from "../browser/approval-channel";
+import { WORKSPACE_PREVIEW_CONTROL_ENV, type WorkspacePreviewOwnerGrant } from "../workspace-preview/channel";
+import { createWorkspacePreviewCapability, removeWorkspacePreviewCapabilityForConfig } from "../workspace-preview/control-server";
+import { isAuthenticWorkspacePreviewMcpLaunch } from "../workspace-preview/mcp-server";
 import {
   isAuthenticComputerUseMcpLaunch,
   isCanonicalComputerUseMcpServer,
@@ -41,7 +45,54 @@ import {
 } from "./proxy-channel";
 import { mcpProxyApprovalPort } from "./proxy-server";
 import { userDataPath } from "../runtime-paths";
-import { BROWSER_CDP_LAUNCHER_BASENAME } from "./browser-cdp-launcher";
+import {
+  BROWSER_CDP_LAUNCHER_BASENAME,
+  BROWSER_CDP_LAUNCHER_PATH_ENV,
+  browserCdpLauncherPath,
+  browserCdpPort,
+  browserCdpProfilePath,
+  ensureBrowserCdpLauncherReady,
+} from "./browser-cdp-launcher";
+
+export interface AgentlasBrowserCdpRuntimeContract {
+  command: string;
+  args: [string];
+  env: {
+    ELECTRON_RUN_AS_NODE: "1";
+    AGENTLAS_CDP_PROFILE: string;
+    AGENTLAS_CDP_PORT: string;
+  };
+}
+
+/** One source of truth for the host bootstrap and every model MCP child. */
+export function agentlasBrowserCdpRuntimeContract(scope?: string): AgentlasBrowserCdpRuntimeContract {
+  const launcher = ensureBrowserCdpLauncherReady(scope);
+  return {
+    command: process.execPath,
+    args: [launcher],
+    env: {
+      ELECTRON_RUN_AS_NODE: "1",
+      AGENTLAS_CDP_PROFILE: browserCdpProfilePath(),
+      AGENTLAS_CDP_PORT: String(browserCdpPort()),
+    },
+  };
+}
+
+function isCanonicalAgentlasBrowserLauncher(server: InstalledMcpServer): boolean {
+  return Boolean(
+    server.catalogId === "agentlas-browser"
+    && server.transport === "stdio"
+    && server.command === process.execPath
+    && server.envKeys.length === 0
+    && server.configurationValid !== false
+    && server.args.length === 1
+    && expandHome(server.args[0]) === path.join(os.homedir(), ".agentlas", BROWSER_CDP_LAUNCHER_BASENAME),
+  );
+}
+
+export function shouldApplyAgentlasBrowserCdpOverride(server: InstalledMcpServer): boolean {
+  return Boolean(process.env[BROWSER_CDP_LAUNCHER_PATH_ENV]?.trim() && isCanonicalAgentlasBrowserLauncher(server));
+}
 
 function expandHome(arg: string): string {
   if (arg === "~") return os.homedir();
@@ -79,6 +130,8 @@ function pushCodexConfig(args: string[], key: string, prop: string, value: strin
 }
 
 export interface McpConfigResult {
+  /** True only after exact canonical native browser credentials were bound. */
+  nativeBrowserBound?: true;
   configPath: string;
   /** ["mcp__playwright", ...] — write/full 권한에서 --allowedTools 자동 승인용. */
   allowedTools: string[];
@@ -90,9 +143,15 @@ export interface McpConfigResult {
   includedServerIds: string[];
   /** Value-free runtime attribution map used only for one-server startup recovery. */
   includedServers?: Array<{ serverId: string; catalogId: string | null; configKey: string }>;
+  /** Remove this run's Main capability file and revoke its in-memory binding. */
+  workspacePreviewCapabilityCleanup?: () => void;
 }
 
 export interface McpConfigBuildOptions {
+  /** Exact Main-authorized workspace, including runs without a tool-gate proxy. */
+  workingFolder?: string;
+  /** Main-only, run-scoped native guest grant; token remains in runtime secret aliases. */
+  nativeBrowser?: { endpoint: string; token: string };
   /** Playwright MCP persistent profile key. Used by automations to avoid sharing the interactive browser profile lock. */
   browserProfileKey?: string;
   /** When present, serialize only these selected catalog ids for the current run. */
@@ -105,6 +164,8 @@ export interface McpConfigBuildOptions {
   skipDefaultSeed?: boolean;
   /** Per-run file key. Prevents concurrent Build plans from racing on one shared config. */
   configKey?: string;
+  /** Main-minted owner-full evidence for a worker's bounded preview tool. */
+  workspacePreviewOwnerGrant?: WorkspacePreviewOwnerGrant;
   /**
    * 이 실행의 도구 관문 정보. 있으면 stdio MCP 서버가 **우리 프록시를 거쳐** 실행되고,
    * 모든 tools/call 이 중재자를 지난다. 없으면 예전처럼 서버를 직접 넘긴다.
@@ -143,13 +204,20 @@ function mcpProxySpec(
   if (mcpProxyApprovalPort() <= 0) return null;
   const childPath = path.join(__dirname, "proxy-child.cjs");
   if (!fs.existsSync(childPath)) return null;
+  // The proxy inherits resolved aliases from its own environment. Repeating
+  // ${ALIAS} inside this serialized JSON lets provider string interpolation
+  // corrupt the JSON when a vault value contains quotes or backslashes.
+  // Keep only exact self-references out of the nested overlay; the outer env
+  // and the wrapper's validated target-key mapping retain the same binding.
+  const targetEnv = Object.fromEntries(Object.entries(actual.env).filter(([key, value]) =>
+    !(/^AGENTLAS_MCP_SECRET_[A-F0-9]{32}$/.test(key) && value === envReference(key))));
   return {
     command: process.execPath,
     args: [childPath],
     env: {
       ELECTRON_RUN_AS_NODE: "1",
       [MCP_PROXY_CONTROL_FILE_ENV]: mcpProxyControlInfoPath(),
-      [MCP_PROXY_TARGET_ENV]: JSON.stringify(actual),
+      [MCP_PROXY_TARGET_ENV]: JSON.stringify({ ...actual, env: targetEnv }),
       [MCP_PROXY_SERVER_KEY_ENV]: serverKey,
       [MCP_PROXY_SESSION_ENV]: JSON.stringify({ ...gate, catalogId }),
       ...(gate.planPath ? { [MCP_PROXY_PLAN_ENV]: gate.planPath } : {}),
@@ -213,6 +281,7 @@ const OPERATIONAL_KEYS = [
   "NPM_CONFIG_CACHE", "SSL_CERT_FILE", "SSL_CERT_DIR", "NODE_EXTRA_CA_CERTS",
   "DISPLAY", "WAYLAND_DISPLAY", "XAUTHORITY", "DBUS_SESSION_BUS_ADDRESS", "NO_COLOR",
   "AGENTLAS_BROWSER_APPROVAL_FILE", "AGENTLAS_CDP_AUTO_STOP", "AGENTLAS_CDP_HEADLESS",
+  "AGENTLAS_CDP_PROFILE", "AGENTLAS_CDP_PORT", "AGENTLAS_NATIVE_BROWSER_ENDPOINT",
   "AGENTLAS_COMPUTER_USE_CONTROL_FILE"
 ];
 const PROXY_KEYS = ["HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY"];
@@ -403,7 +472,12 @@ export function isKeylessPlaywrightMcpDuplicate(server: InstalledMcpServer): boo
   const packageToken = /^@playwright\/mcp(?:@[^\s]+)?$/i;
   const directPackage = args.some((arg) => packageToken.test(arg.trim()));
   const nodePackagePath = args.some((arg) => /(?:^|[\\/])@playwright[\\/]mcp(?:[\\/]|$)/i.test(arg));
-  return command === "npx" || command === "npx.cmd" ? directPackage : nodePackagePath;
+  if (!(command === "npx" || command === "npx.cmd" ? directPackage : nodePackagePath)) return false;
+  // Only an unconfigured duplicate can share the selected canonical browser.
+  // Profiles, endpoints, headers, config files and all other custom arguments
+  // retain their own server identity and launch behavior.
+  return args.every((arg) => arg === "-y" || arg === "--yes" || packageToken.test(arg)
+    || /(?:^|[\\/])@playwright[\\/]mcp[\\/](?:cli|index)\.js$/i.test(arg));
 }
 
 /**
@@ -421,31 +495,22 @@ function argsWithBrowserProfile(_key: string, args: string[], _opts?: McpConfigB
   return args;
 }
 
-/**
- * The official filesystem MCP receives its allowed roots as positional args.
- * The catalog default is the user's home directory, but a Work project may be
- * explicitly bound elsewhere (for example a temporary or external volume).
- * Narrow that one built-in server to the already-authorized per-run folder;
- * leave custom servers and runs without a folder unchanged.
- */
+/** Narrow default roots before sealing the exact per-run launch transport. */
 function argsWithToolGateWorkingFolder(
   server: InstalledMcpServer,
   args: string[],
   opts?: McpConfigBuildOptions,
 ): string[] {
-  if (server.catalogId !== "filesystem") return args;
-  const rawFolder = opts?.toolGate?.cwd?.trim();
-  if (!rawFolder) return args;
-  let folder: string;
-  try {
-    folder = path.resolve(rawFolder);
-    if (!fs.statSync(folder).isDirectory()) return args;
-  } catch {
-    return args;
-  }
-  // The trusted catalog places the allowed root in the final argument. Keep
-  // the package launcher flags intact and replace only that root.
-  return args.length > 0 ? [...args.slice(0, -1), folder] : [folder];
+  const rawFolder = opts?.workingFolder ?? opts?.toolGate?.cwd;
+  if (!rawFolder) return args.map(expandHome);
+  const folder = path.resolve(rawFolder);
+  if (!fs.statSync(folder).isDirectory()) throw new Error("mcp_workspace_not_directory");
+  // Preserve the local tool loop's established literal-tilde narrowing for
+  // custom servers too; do not reinterpret their other explicit arguments.
+  const scoped = args.map((arg) => arg === "~" ? folder : expandHome(arg));
+  if (server.catalogId !== "filesystem") return scoped;
+  // The trusted catalog places its allowed root in the final argument.
+  return scoped.length > 0 ? [...scoped.slice(0, -1), folder] : [folder];
 }
 
 /**
@@ -497,8 +562,8 @@ export async function buildMcpConfigFile(opts?: McpConfigBuildOptions): Promise<
       || scopedCatalogIds?.has("agentlas-browser")
       || scopedServerIds?.has(server.id),
     ));
-  const canonicalizeBrowser = automationBrowserRun
-    && (selectedCanonicalBrowser || selectedKeylessPlaywright);
+  const canonicalizeBrowser = (selectedCanonicalBrowser && !allEnabledServersSelected)
+    || (automationBrowserRun && (selectedCanonicalBrowser || selectedKeylessPlaywright));
   if (canonicalizeBrowser && scopedCatalogIds) scopedCatalogIds.add("agentlas-browser");
   const servers = installedServers.filter((s) => {
     if (!s.enabled) return false;
@@ -519,6 +584,7 @@ export async function buildMcpConfigFile(opts?: McpConfigBuildOptions): Promise<
   );
   const browserAliases = new Map<string, InstalledMcpServer>();
   const serializedServers = servers.filter((server) => {
+    if (!server.catalogId && requiredToolCatalogIds.has(server.id)) return true;
     if (!canonicalBrowserRun || !isKeylessPlaywrightMcpDuplicate(server)) return true;
     // Graph declarations have historically used either the installed row id
     // (custom servers) or the catalog id (official rows). Preserve both
@@ -530,6 +596,9 @@ export async function buildMcpConfigFile(opts?: McpConfigBuildOptions): Promise<
   if (serializedServers.length === 0) {
     // 구버전이 0644 JSON에 남긴 vault 평문을 선택 결과가 0개인 실행에서도 방치하지 않는다.
     fs.rmSync(configPath, { force: true });
+    if (requiredToolCatalogIds.has("workspace-preview")) {
+      throw new Error("workspace-preview-required-unavailable");
+    }
     return null;
   }
 
@@ -537,11 +606,50 @@ export async function buildMcpConfigFile(opts?: McpConfigBuildOptions): Promise<
   const allowedTools: string[] = [];
   const codexConfigArgs: string[] = [];
   const runtimeEnv: Record<string, string> = {};
+  let nativeBrowserBound = false;
+  const preparedRows: Parameters<typeof registerPreparedMcpConfig>[0]["servers"] = [];
   const includedServerIds: string[] = [];
   const includedServers: NonNullable<McpConfigResult["includedServers"]> = [];
+  let workspacePreviewCapabilityCleanup: (() => void) | undefined;
   let mcpChildWrapper: string | null = null;
+  // A native browser guest must use a launcher generated by this checkout.
+  // Keep the scope value-free and per config/run so it cannot collide with
+  // the shared production launcher or another live invocation.
+  const nativeBrowserLauncherScope = opts?.nativeBrowser
+    ? `native-browser-${opts.configKey ?? randomUUID()}`
+    : undefined;
+  const callerChatId = opts?.toolGate?.chatId;
+  const callerCwd = opts?.toolGate?.cwd;
+  let canonicalCallerCwd: string | null = null;
+  if (callerCwd) {
+    try { canonicalCallerCwd = fs.realpathSync(callerCwd); } catch { canonicalCallerCwd = null; }
+  }
+  const ownerGrant = opts?.workspacePreviewOwnerGrant;
+  const ownerGrantValid = Boolean(
+    ownerGrant
+    && ownerGrant.schemaVersion === "agentlas.workspace-preview-owner-grant.v1"
+    && ownerGrant.ownerExecutionPermission === "full"
+    && opts?.toolGate?.simulation !== true
+    && ownerGrant.grantId.trim()
+    && ownerGrant.chatId === callerChatId
+    && ownerGrant.canonicalCwd === canonicalCallerCwd
+    && path.isAbsolute(ownerGrant.canonicalCwd)
+    && ownerGrant.runId.trim(),
+  );
+  const workspacePreviewBinding = callerChatId && callerCwd && canonicalCallerCwd
+    ? {
+        taskScopeId: ownerGrantValid ? ownerGrant!.taskScopeId : callerChatId,
+        chatId: callerChatId,
+        runId: ownerGrantValid ? ownerGrant!.runId : null,
+        cwd: canonicalCallerCwd,
+        permission: opts.toolGate?.permission ?? "read",
+        ownerGrantId: ownerGrantValid ? ownerGrant!.grantId : null,
+        ownerExecutionPermission: ownerGrantValid ? ("full" as const) : null,
+      }
+    : null;
 
   for (const s of serializedServers) {
+    let preparedRuntimeRoot: string | null = null;
     if (s.catalogId === "agentlas-time" && !isCanonicalSystemTimeMcpServer(s)) {
       // Official built-ins never fall through to generic stdio/remote paths.
       continue;
@@ -549,6 +657,17 @@ export async function buildMcpConfigFile(opts?: McpConfigBuildOptions): Promise<
     if (s.catalogId === "cua-driver" && !isCanonicalComputerUseMcpServer(s)) {
       // The native input capability must never fall through to a mutable or
       // externally installed executable with the same catalog id.
+      continue;
+    }
+    if (s.catalogId === "workspace-preview" && (!workspacePreviewBinding || !ownerGrantValid)) {
+      // A preview capability is never global: Main must bind it to this run's
+      // task, authorized cwd, and explicit owner-full grant before the MCP child
+      // can see the tool. A worker's write permission alone cannot spawn a shell.
+      continue;
+    }
+    if (s.catalogId === "workspace-preview" && !isAuthenticWorkspacePreviewMcpLaunch(s.command, s.args ?? [])) {
+      // The Main control capability must never be handed to a mutable command
+      // merely because an installed row claims the catalog id.
       continue;
     }
     // Re-check every required value immediately before serialization. A key can
@@ -580,13 +699,25 @@ export async function buildMcpConfigFile(opts?: McpConfigBuildOptions): Promise<
 
     const key = mcpConfigKey(s);
     if (s.transport === "stdio" && s.command) {
+      const browserRuntime = (shouldApplyAgentlasBrowserCdpOverride(s) || (opts?.nativeBrowser && isCanonicalAgentlasBrowserLauncher(s)))
+        ? agentlasBrowserCdpRuntimeContract(nativeBrowserLauncherScope)
+        : null;
       let command = resolveStdioCommand(s);
-      let args = argsWithBrowserProfile(key, (s.args ?? []).map(expandHome), opts);
+      let args = argsWithBrowserProfile(key, s.args ?? [], opts);
       args = argsWithToolGateWorkingFolder(s, args, opts);
+      if (browserRuntime) {
+        // The host-selected path is part of the browser isolation contract.
+        // A QA process can use its own generated launcher without mutating the
+        // production launcher persisted under ~/.agentlas.
+        command = browserRuntime.command;
+        args = browserRuntime.args;
+      }
       let builtInEnv: Record<string, string> =
         s.catalogId === "agentlas-browser"
           ? {
               [BROWSER_APPROVAL_FILE_ENV]: browserApprovalInfoPath(),
+              ...(browserRuntime?.env ?? {}),
+              ...(browserRuntime && opts?.nativeBrowser ? { AGENTLAS_NATIVE_BROWSER_ENDPOINT: opts.nativeBrowser.endpoint } : {}),
               // Agent runs render their shared CDP page inside One's Browser
               // rail. Keep the automation host non-windowed; the explicit
               // Browser login action still uses browserOpenLogin's headful
@@ -597,11 +728,25 @@ export async function buildMcpConfigFile(opts?: McpConfigBuildOptions): Promise<
           : s.catalogId === "cua-driver"
             ? { [COMPUTER_USE_CONTROL_FILE_ENV]: computerUseControlInfoPath() }
             : {};
+      if (s.catalogId === "workspace-preview" && workspacePreviewBinding) {
+        try {
+          const capability = await createWorkspacePreviewCapability(workspacePreviewBinding, opts?.configKey ?? key);
+          const capabilityConfigKey = opts?.configKey ?? key;
+          workspacePreviewCapabilityCleanup = () => {
+            removeWorkspacePreviewCapabilityForConfig(capabilityConfigKey, capability.binding.capabilityId);
+          };
+          builtInEnv = { [WORKSPACE_PREVIEW_CONTROL_ENV]: capability.path };
+        } catch (error) {
+          console.warn("[workspace-preview] capability unavailable:", error);
+          continue;
+        }
+      }
       if (s.catalogId === HEPHAESTUS_NETWORK_CATALOG_ID) {
         const launch = await resolveHephaestusStdioLaunch("agentlas_cloud", ["mcp", "serve"]);
         if (!launch) continue;
         command = launch.command;
         args = launch.args;
+        preparedRuntimeRoot = launch.runtimeRoot;
         builtInEnv = Object.fromEntries(
           Object.entries(launch.env).filter((entry): entry is [string, string] => typeof entry[1] === "string"),
         );
@@ -615,10 +760,18 @@ export async function buildMcpConfigFile(opts?: McpConfigBuildOptions): Promise<
         secretAliases[envKey] = alias;
         runtimeEnv[alias] = value;
       }
+      if (browserRuntime && s.catalogId === "agentlas-browser" && opts?.nativeBrowser) {
+        const alias = mcpRuntimeSecretAlias(key, "AGENTLAS_NATIVE_BROWSER_TOKEN");
+        secretAliases.AGENTLAS_NATIVE_BROWSER_TOKEN = alias;
+        runtimeEnv[alias] = opts.nativeBrowser.token;
+        nativeBrowserBound = true;
+      }
       const aliases = Object.values(secretAliases);
       if (
         aliases.length === 0 &&
-        (isAuthenticSystemTimeMcpLaunch(command, args) || isAuthenticComputerUseMcpLaunch(command, args))
+        (isAuthenticSystemTimeMcpLaunch(command, args)
+          || isAuthenticComputerUseMcpLaunch(command, args)
+          || isAuthenticWorkspacePreviewMcpLaunch(command, args))
       ) {
         // The keyless built-in already has an exact, compressed in-memory
         // launch contract. Bypass the mutable per-run wrapper so no pathname is
@@ -781,9 +934,17 @@ export async function buildMcpConfigFile(opts?: McpConfigBuildOptions): Promise<
     } else {
       continue;
     }
+    preparedRows.push({ configKey: key, server: s, transport: mcpServers[key], runtimeRoot: preparedRuntimeRoot });
     includedServerIds.push(s.id);
     includedServers.push({ serverId: s.id, catalogId: s.catalogId, configKey: key });
     allowedTools.push(`mcp__${key}`, `mcp__${key}__*`);
+  }
+
+  if (requiredToolCatalogIds.has("workspace-preview")
+    && !includedServers.some((server) => server.catalogId === "workspace-preview")) {
+    workspacePreviewCapabilityCleanup?.();
+    fs.rmSync(configPath, { force: true });
+    throw new Error("workspace-preview-required-unavailable");
   }
 
   // A graph may have declared a legacy custom key or the official Playwright
@@ -799,8 +960,18 @@ export async function buildMcpConfigFile(opts?: McpConfigBuildOptions): Promise<
     }
   }
 
-  if (Object.keys(mcpServers).length === 0) return null;
+  if (Object.keys(mcpServers).length === 0) {
+    workspacePreviewCapabilityCleanup?.();
+    return null;
+  }
 
   writePrivateFile(configPath, JSON.stringify({ mcpServers }, null, 2));
-  return { configPath, allowedTools, codexConfigArgs, runtimeEnv, includedServerIds, includedServers };
+  const configurations = preparedRows.map(({ server }) => [server.id, mcpServerConfigurationDigest(server)] as const);
+  registerPreparedMcpConfig({ path: configPath, servers: preparedRows, runtimeEnv, isCurrent: () => {
+    const current = new Map(listInstalledServers().map((server) => [server.id, mcpServerConfigurationDigest(server)]));
+    return configurations.every(([id, digest]) => current.get(id) === digest);
+  } });
+  return { configPath, allowedTools, codexConfigArgs, runtimeEnv, includedServerIds, includedServers,
+    ...(workspacePreviewCapabilityCleanup ? { workspacePreviewCapabilityCleanup } : {}),
+    ...(nativeBrowserBound ? { nativeBrowserBound: true as const } : {}) };
 }

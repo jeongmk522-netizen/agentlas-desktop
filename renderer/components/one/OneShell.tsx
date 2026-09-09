@@ -1,4 +1,11 @@
 "use client";
+import { ComposerDecisionSlot } from "../ComposerDecisionPortal";
+import { mergeGoalResults, type GoalResultPresentation } from "../../../shared/goal-result";
+import { GoalResultReport } from "../GoalResultReport";
+import type { ChatHostNotice } from "../../../shared/types";
+import { normalizeChatHostNotice } from "../../../shared/chat-host-notice";
+import { HostContinuationNotice } from "../HostContinuationNotice";
+import { OneGoalControls } from "./OneGoalControls";
 
 import { useRouter, useSearchParams } from "next/navigation";
 import { failureMessage, isChatBusyFailure } from "@/lib/invocation-failure";
@@ -7,6 +14,7 @@ import {
   Fragment,
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -14,6 +22,7 @@ import {
   type KeyboardEvent as ReactKeyboardEvent,
 } from "react";
 import { flushSync } from "react-dom";
+import { bindAgentScreenScope } from "@/lib/agent-screen-scope";
 import { Markdown, StreamingMarkdown, type LinkedFileArtifact } from "@/components/Markdown";
 import { AskCard, type AskCardOption } from "@/components/AskCard";
 import { OneDocumentCard } from "@/components/one/OneDocumentCard";
@@ -157,7 +166,7 @@ import { OneMemoryCandidateCard } from "./OneMemoryCandidateCard";
 import { OneProfileSheet } from "./OneProfileSheet";
 import { OneSuggestionCard } from "./OneSuggestionCard";
 import { OneGrowthCard } from "./OneGrowthCard";
-import { OneActivityArtifactRail, taskBrowserUrl, type OneLiveAppPreview } from "./OneActivityTimeline";
+import { TaskSidePanel, taskBrowserUrl, type OneLiveAppPreview } from "../workspace/TaskSidePanel";
 import { OneOrgChart, type OneOrgSearchItem } from "./OneOrgChart";
 import { OneAgentPortrait } from "./OneAgentPortrait";
 import { llmLogoSrc } from "@/lib/llm-logo";
@@ -165,6 +174,8 @@ import { OneCreateAgentDialog, type OneCreateAgentSeed, type OneEditMemberTarget
 import { OneTaskforceDialog, OneTaskforceRail } from "./OneTaskforces";
 import { OneComputerHistory } from "./OneComputerHistory";
 import { OneSettingsRail, OneSettingsSheet, type OneSettingsKey } from "./OneSettings";
+import type { OneWorkerWorkGroup } from "@/lib/one-turn-work";
+import type { OneWorkerPanelSelection, OneWorkerPanelRun } from "@/lib/one-worker-panel";
 import { OneTurnWork, OneTurnWorkDividers } from "./OneTurnWork";
 import { OneTaskforceConversation } from "./OneTaskforceConversation";
 import { buildOneWorkPresentation } from "@/lib/one-turn-work";
@@ -507,6 +518,8 @@ function decisionRejectCopy(locale: "ko" | "en"): string {
 }
 
 type UiMessage = {
+  goalResult?: GoalResultPresentation;
+  hostNotice?: ChatHostNotice;
   id: string;
   /** Exact Main-issued transcript identity for a settled assistant row. */
   durableMessageId?: string;
@@ -550,10 +563,18 @@ type PendingTeamPrompt = {
 
 type OneTurnOverrides = {
   goalMode?: true;
+  /** Renderer intent fence; never passed to Main as authority. */
+  goalControlEpoch?: number;
   planMode?: true;
   sessionRouting?: true;
   fastMode?: true;
 };
+
+function currentOneGoalOverride(overrides: OneTurnOverrides, epoch: number): OneTurnOverrides {
+  if (overrides.goalControlEpoch === epoch) return overrides;
+  const { goalMode: _goal, goalControlEpoch: _epoch, ...remaining } = overrides;
+  return remaining;
+}
 
 type OneAttachmentDraft = {
   id: string;
@@ -698,10 +719,12 @@ function toUiMessages(history: ChatHistoryEntry[]): UiMessage[] {
     if (entry.role === "assistant") userTurnAwaitingAnswer = false;
     const parsedFiles = parseChatFileMessage(entry.text);
     visible.push({
+      hostNotice: normalizeChatHostNotice(entry.role, entry.hostNotice),
       id: entry.id,
       durableMessageId: entry.durableMessageId ?? entry.id,
+      ...(entry.goalResult ? { goalResult: entry.goalResult } : {}),
       role: entry.role === "assistant" ? "assistant" : entry.role,
-      text: parsedFiles.visibleText,
+      text: normalizeChatHostNotice(entry.role, entry.hostNotice) ? entry.text : parsedFiles.visibleText,
       images: entry.imageDataUrls?.length ? entry.imageDataUrls : undefined,
       chatFileGroupIds: parsedFiles.groupIds,
       createdAt: entry.createdAt,
@@ -842,6 +865,7 @@ function readableOneJson(text: string): string | null {
  * once closed, reuse the canonical parser so malformed JSON is still removed.
  */
 function visibleOneMessageText(message: UiMessage): string {
+  if (normalizeChatHostNotice(message.role, message.hostNotice)) return message.text;
   if (isResultContinuationMessage(message)) {
     return "";
   }
@@ -949,29 +973,6 @@ function briefingSourceName(raw: string, locale: "ko" | "en"): string {
     .trim();
   if (!cleaned) return locale === "ko" ? "현재 작업" : "Current work";
   return cleaned.length > 44 ? `${cleaned.slice(0, 43).trimEnd()}…` : cleaned;
-}
-
-/**
- * A deterministic detector may invite a review, but its raw diagnosis stays
- * Main-only until the read-only One run authors a customer-facing result.
- * This generic card makes the existing prepare/confirm/start path reachable
- * without leaking project paths, automation names, or receipt details.
- */
-function proactiveReviewInvitation(candidate: OneProactiveBriefing, locale: "ko" | "en"): DisplayBriefing {
-  return {
-    kind: "decision",
-    eyebrow: tFor(locale, "one.shell.briefing.review_safely"),
-    title: tFor(locale, "one.shell.briefing.confirm_title"),
-    body: tFor(locale, "one.shell.briefing.confirm_body"),
-    prepared: tFor(locale, "one.shell.briefing.packet_prepared"),
-    evidence: [],
-    primaryLabel: candidate.preparedAction.kind === "open_project"
-      ? tFor(locale, "one.shell.proactive.action.open_project")
-      : candidate.preparedAction.kind === "open_automation"
-        ? tFor(locale, "one.shell.proactive.action.open_automation")
-        : tFor(locale, "one.shell.proactive.action.open_task"),
-    proactive: candidate,
-  };
 }
 
 function safeBriefingSnapshot(value: OneBriefingSnapshot | null): OneBriefingSnapshot | null {
@@ -1346,6 +1347,7 @@ export function OneShell() {
   }
   const [turnAgentIds, setTurnAgentIds] = useState<string[]>([]);
   const [turnOverrides, setTurnOverrides] = useState<OneTurnOverrides>({});
+  const goalControlEpochRef = useRef(0);
   const [oneRuntime, setOneRuntime] = useState<RuntimeStatus | null>(null);
   const [oneRuntimePinned, setOneRuntimePinned] = useState(false);
   const [oneModelOptions, setOneModelOptions] = useState<OneComposerModelOption[]>([]);
@@ -1620,6 +1622,21 @@ export function OneShell() {
   const renderedActivityStartedAt = busy && !activeRunOwnsActivity
     ? activeRunStartedAtRef.current
     : runStartedAt;
+  const [workerSelection, setWorkerSelection] = useState<OneWorkerPanelSelection | null>(null);
+  const workerChatId = selected?.chatId ?? conversation?.id ?? null;
+  const inspectWorkerPanel = useCallback((runId: string, group: OneWorkerWorkGroup) => {
+    if (!workerChatId || !runId || !group.agentId) return;
+    setWorkerSelection({ chatId: workerChatId, runId, agentId: group.agentId, name: group.name });
+    setContextRailOpen(true);
+  }, [workerChatId, setContextRailOpen]);
+  const workerRun = useMemo<OneWorkerPanelRun | null>(() => {
+    if (!contextRailOpen || !workerSelection || !workerChatId || workerSelection.chatId !== workerChatId) return null;
+    if (activityChatIdRef.current === workerChatId && activityStateRunId === workerSelection.runId) return { chatId: workerChatId, runId: workerSelection.runId, state: activity };
+    const exact = threadRunsChatIdRef.current === workerChatId
+      ? threadRuns.find((run) => run.runId === workerSelection.runId) : undefined;
+    return exact ? { chatId: workerChatId, runId: exact.runId, state: exact.state } : null;
+  }, [activity, activityStateRunId, contextRailOpen, threadRuns, workerChatId, workerSelection]);
+  useEffect(() => { setWorkerSelection(null); }, [workerChatId]);
   const visibleMessages = messages;
   const liveResponseMounted = messages.some((message) => message.id === "one-live-response");
   const livePromptMounted = Boolean(activeRunPrompt && messages.some((message) => (
@@ -1632,7 +1649,9 @@ export function OneShell() {
     ? (
       <OneTurnWork
         key={`work:live:${activeActivityRunId ?? "pending"}`}
+        onInspectWorker={activeActivityRunId ? (group) => inspectWorkerPanel(activeActivityRunId, group) : undefined}
         state={renderedActivity}
+        artifactScope={(selected?.chatId ?? conversation?.id) && activeActivityRunId ? { chatId: (selected?.chatId ?? conversation?.id)!, runId: activeActivityRunId } : undefined}
         busy
         startedAt={renderedActivityStartedAt}
         locale={appLocale}
@@ -1697,6 +1716,10 @@ export function OneShell() {
   const runIdRef = useRef<string | null>(null);
   const runTaskIdRef = useRef<string | null>(null);
   const runChatIdRef = useRef<string | null>(null);
+  // Only the stop notice for this exact run may be cleared by terminal
+  // reconciliation; unrelated action notices must survive.
+  const cancelNoticeRunIdRef = useRef<string | null>(null);
+  const cancelNoticeTextRef = useRef<string | null>(null);
   /** One handoff has no separate cancel authority; interrupt uses the same
    * Main-owned invocation cancel path as the composer Stop action. */
   const cancelActiveRun = useCallback((reason: string) => {
@@ -1710,6 +1733,12 @@ export function OneShell() {
         : "The work could not be stopped because Desktop is unavailable. The run is still active.");
       return;
     }
+    const stopNotice = appLocale === "ko" ? "중단 요청을 전달했습니다. 종료 결과를 기다리는 중입니다…" : "Stop requested. Waiting for the terminal result…";
+    // Claim the notice before crossing IPC. Main may publish a terminal event
+    // synchronously while cancel() is still waiting for its acknowledgement.
+    cancelNoticeRunIdRef.current = runId;
+    cancelNoticeTextRef.current = stopNotice;
+    setActionNotice(stopNotice);
     void api.invoke.cancel(runId).then((receipt) => {
       if (
         receipt?.runId !== runId
@@ -1720,15 +1749,20 @@ export function OneShell() {
       // Main accepted the terminal action. The run remains visibly busy until
       // its terminal event arrives, but directions Main just discarded must
       // disappear from the local queue now.
+      if (runIdRef.current !== runId || cancelNoticeRunIdRef.current !== runId) return;
       pendingSteersRef.current = [];
       setQueuedSteers([]);
-      setActionNotice(appLocale === "ko" ? "중단 요청을 전달했습니다. 종료 결과를 기다리는 중입니다…" : "Stop requested. Waiting for the terminal result…");
     }).catch(() => {
       // Rejection means nothing was cancelled; preserve the active run and its
       // queued directions instead of leaving a false stopped/pending screen.
-      setActionNotice(appLocale === "ko"
+      if (cancelNoticeRunIdRef.current !== runId) return;
+      const notice = cancelNoticeTextRef.current;
+      cancelNoticeRunIdRef.current = null;
+      cancelNoticeTextRef.current = null;
+      const rejection = appLocale === "ko"
         ? "작업 중단 요청이 거절되었습니다. 실행과 대기 중 지시는 그대로입니다. 다시 시도해 주세요."
-        : "The stop request was rejected. The run and queued directions are unchanged; try again.");
+        : "The stop request was rejected. The run and queued directions are unchanged; try again.";
+      setActionNotice((current) => current === notice ? rejection : current);
     });
   }, [appLocale]);
   /*
@@ -2453,7 +2487,7 @@ export function OneShell() {
       setThreadRuns(projectThreadRuns(chatTimeline));
     }
     if (ledgerEvents.length === 0) return;
-    const restoredActivity = projectOneActivityFromLedger(ledgerEvents);
+    const restoredActivity = projectOneActivityFromLedger(ledgerEvents, latestReceipt);
     cacheOneActivity(chatId, restoredActivity);
     activityEventRunIdRef.current = latestReceipt.runId;
     setActivityStateRunId(latestReceipt.runId);
@@ -2471,8 +2505,16 @@ export function OneShell() {
     if (sourceRunId && sourceRunId !== runIdRef.current) return;
     const eventRunId = sourceRunId ?? runIdRef.current;
     if (!chatId || !eventRunId) return;
-    setActivityStateRunId(eventRunId);
+    // React may apply these updaters after navigation or the next run starts.
+    // Settlement clears runId synchronously; the activity owner retains this
+    // exact run until a new invocation or a conversation switch takes over.
+    const ownsQueuedUpdate = () => runChatIdRef.current === chatId
+      && shownThreadChatIdRef.current === chatId
+      && (runIdRef.current === eventRunId
+        || (!runIdRef.current && activityRunIdRef.current === eventRunId));
+    setActivityStateRunId((current) => ownsQueuedUpdate() ? eventRunId : current);
     setActivity((current) => {
+      if (!ownsQueuedUpdate()) return current;
       const base = activityEventRunIdRef.current === eventRunId ? current : initialOneActivityState();
       const next = reduceOneActivity(base, event);
       activityEventRunIdRef.current = eventRunId;
@@ -2515,7 +2557,10 @@ export function OneShell() {
       if (typeof event.delta === "string") streamTextRef.current += event.delta;
       else streamTextRef.current = event.text ?? streamTextRef.current;
       oneTranscriptRevisionRef.current += 1;
-      setMessages((current) => upsertLiveMessage(current, streamTextRef.current, true));
+      const partialText = streamTextRef.current;
+      setMessages((current) => ownsQueuedUpdate()
+        ? upsertLiveMessage(current, partialText, true).map((message) => message.id === "one-live-response" && event.goalResult ? { ...message, goalResult: event.goalResult } : message)
+        : current);
       /*
        * ★ 답이 흘러나오는 동안에도 화면이 따라 내려간다 (오너 지적 2026-08-24).
        *
@@ -2536,6 +2581,12 @@ export function OneShell() {
     }
     if (event.kind === "final") {
       const settledRunId = eventRunId;
+      if (cancelNoticeRunIdRef.current === settledRunId) {
+        const notice = cancelNoticeTextRef.current;
+        cancelNoticeRunIdRef.current = null;
+        cancelNoticeTextRef.current = null;
+        setActionNotice((current) => current === notice ? null : current);
+      }
       setKeyRequestSheet(null);
       const text = event.text ?? streamTextRef.current;
       // Commit the streamed answer under its own id. Leaving it as the shared
@@ -2543,11 +2594,11 @@ export function OneShell() {
       // (measured 2026-08-15: the previous answer vanished while a queued
       // instruction ran, until the history reload brought it back).
       oneTranscriptRevisionRef.current += 1;
-      setMessages((current) => upsertLiveMessage(current, text, false).map((message) => (
+      setMessages((current) => ownsQueuedUpdate() ? upsertLiveMessage(current, text, false).map((message) => (
         message.id === "one-live-response"
-          ? { ...message, id: `one-answer:${settledRunId ?? uid()}`, createdAt: message.createdAt ?? new Date().toISOString(), ...(event.durableMessageId ? { durableMessageId: event.durableMessageId } : {}) }
+          ? { ...message, ...(event.goalResult ? { goalResult: event.goalResult } : {}), id: `one-answer:${settledRunId ?? uid()}`, createdAt: message.createdAt ?? new Date().toISOString(), ...(event.durableMessageId ? { durableMessageId: event.durableMessageId } : {}) }
           : message
-      )));
+      )) : current);
       setBusy(false);
       setLiveRunPrompt((current) => current?.runId === settledRunId ? null : current);
       setDispatchRunPrompt((current) => current?.runId === settledRunId ? null : current);
@@ -2563,17 +2614,23 @@ export function OneShell() {
     }
     if (event.kind === "error") {
       const settledRunId = eventRunId;
+      if (cancelNoticeRunIdRef.current === settledRunId) {
+        const notice = cancelNoticeTextRef.current;
+        cancelNoticeRunIdRef.current = null;
+        cancelNoticeTextRef.current = null;
+        setActionNotice((current) => current === notice ? null : current);
+      }
       setKeyRequestSheet(null);
       // Failure evidence is persisted by Main and consumed by One's recovery
       // judgment. It never becomes transcript copy in the renderer.
       // Whatever streamed before the failure stays as this run's answer row
       // (Main persists the same partial); an empty live row is dropped so it
       // cannot be mistaken for "the place where it ended".
-      setMessages((current) => current.flatMap((message) => {
+      setMessages((current) => ownsQueuedUpdate() ? current.flatMap((message) => {
         if (message.id !== "one-live-response") return [message];
         if (!message.text.trim()) return [];
         return [{ ...message, id: `one-answer:${settledRunId ?? uid()}`, streaming: false, createdAt: message.createdAt ?? new Date().toISOString(), ...(event.durableMessageId ? { durableMessageId: event.durableMessageId } : {}) }];
-      }));
+      }) : current);
       setBusy(false);
       setLiveRunPrompt((current) => current?.runId === settledRunId ? null : current);
       setDispatchRunPrompt((current) => current?.runId === settledRunId ? null : current);
@@ -2668,6 +2725,13 @@ export function OneShell() {
     }
     unsubscribeRunRef.current?.();
     unsubscribeRunRef.current = null;
+    const detachedRunId = runIdRef.current;
+    if (detachedRunId && cancelNoticeRunIdRef.current === detachedRunId) {
+      const notice = cancelNoticeTextRef.current;
+      cancelNoticeRunIdRef.current = null;
+      cancelNoticeTextRef.current = null;
+      setActionNotice((current) => current === notice ? null : current);
+    }
     runIdRef.current = null;
     activityRunIdRef.current = null;
     activityEventRunIdRef.current = null;
@@ -2788,7 +2852,7 @@ export function OneShell() {
       const durableActivityStillOwnsScreen = !activityRunIdRef.current
         || activityRunIdRef.current === durableReceipt?.runId;
       if (!liveRunOwnsThread && !attachment && durableActivityStillOwnsScreen && ledgerEvents.length > 0) {
-        const restoredActivity = projectOneActivityFromLedger(ledgerEvents);
+        const restoredActivity = projectOneActivityFromLedger(ledgerEvents, durableReceipt);
         activityEventRunIdRef.current = durableReceipt?.runId ?? null;
         setActivityStateRunId(durableReceipt?.runId ?? null);
         setActivity(restoredActivity);
@@ -2868,6 +2932,12 @@ export function OneShell() {
   }, [projections, selectedTaskId]);
 
   const activeThreadChatId = selected?.chatId ?? conversation?.id ?? null;
+  // Route identity changes before the selected chat finishes loading. Keep a
+  // Goal-only render fence; the existing selection refs also own handoffs.
+  const goalControlViewKey = `${selectedTaskId ?? ""}:${selectedConversationId ?? ""}:${activeThreadChatId ?? ""}`;
+  const goalControlViewKeyRef = useRef(goalControlViewKey);
+  goalControlViewKeyRef.current = goalControlViewKey;
+  useLayoutEffect(() => bindAgentScreenScope(activeThreadChatId), [activeThreadChatId]);
   useEffect(() => {
     oneChatFileGroupsRef.current.clear();
   }, [activeThreadChatId]);
@@ -2900,6 +2970,25 @@ export function OneShell() {
   // a picker started in chat A can settle after navigation and paint A's path
   // into chat B.
   activeThreadChatIdRef.current = activeThreadChatId;
+  useEffect(() => {
+    const api = ipc();
+    if (!api || !activeThreadChatId) return;
+    let disposed = false;
+    return (() => {
+      const unsubscribe = ipcEvents()?.onStoreChanged?.((change) => {
+        if (change.entity !== "chat" || change.id !== activeThreadChatId) return;
+        void api.invoke.history(activeThreadChatId).then((history) => {
+          if (disposed || activeThreadChatIdRef.current !== activeThreadChatId) return;
+          const states = new Map(history.filter((entry) => entry.goalResult).map((entry) => [entry.durableMessageId ?? entry.id, entry.goalResult]));
+          setMessages((current) => current.map((message) => {
+            const result = states.get(message.durableMessageId ?? message.id);
+            return result ? { ...message, goalResult: mergeGoalResults(message.goalResult, result) } : message;
+          }));
+        }).catch(() => undefined);
+      });
+      return () => { disposed = true; unsubscribe?.(); };
+    })();
+  }, [activeThreadChatId]);
   useEffect(() => {
     onePaneCommitWaiterRef.current.observe(selectedConversationId, activeThreadChatId);
   }, [activeThreadChatId, selectedConversationId]);
@@ -3252,6 +3341,7 @@ export function OneShell() {
   }, [activeThreadChatId]);
 
   const openOneLinkedFile = useCallback((file: LinkedFileArtifact) => {
+    if (!activeThreadChatId) return;
     requestReadableContextRailWidth();
     const normalized = (file.path || file.paths?.[0] || file.href || file.name).replace(/\\/g, "/").toLowerCase();
     const matched = runtimeArtifacts.find((artifact) => {
@@ -3267,9 +3357,9 @@ export function OneShell() {
     // Keep an unbound link in the renderer. A future owner can adopt it into
     // the same Outputs rail; no OS-level open fallback is permitted.
     if (typeof window !== "undefined") {
-      window.dispatchEvent(new CustomEvent("agentlas:in-app-linked-file", { detail: file }));
+      window.dispatchEvent(new CustomEvent("agentlas:in-app-linked-file", { detail: { ...file, chatId: activeThreadChatId } }));
     }
-  }, [requestReadableContextRailWidth, runtimeArtifacts]);
+  }, [activeThreadChatId, requestReadableContextRailWidth, runtimeArtifacts]);
   const openOneChatFile = useCallback(async (file: ChatFileItem) => {
     setContextRailOpen(true);
     requestReadableContextRailWidth();
@@ -3462,6 +3552,12 @@ export function OneShell() {
           idleCheck = setTimeout(() => {
             idleCheck = null;
             if (runIdRef.current !== missedRunId || runChatIdRef.current !== chatId) return;
+            if (cancelNoticeRunIdRef.current === missedRunId) {
+              const notice = cancelNoticeTextRef.current;
+              cancelNoticeRunIdRef.current = null;
+              cancelNoticeTextRef.current = null;
+              setActionNotice((current) => current === notice ? null : current);
+            }
             runIdRef.current = null;
             setBusy(false);
             unsubscribeRunRef.current?.();
@@ -3549,6 +3645,12 @@ export function OneShell() {
         unsubscribeRunRef.current = null;
         setBusy(false);
         setKeyRequestSheet(null);
+        if (cancelNoticeRunIdRef.current === expectedRunId) {
+          const notice = cancelNoticeTextRef.current;
+          cancelNoticeRunIdRef.current = null;
+          cancelNoticeTextRef.current = null;
+          setActionNotice((current) => current === notice ? null : current);
+        }
         void settleRun(chatId, runTaskIdRef.current, expectedRunId);
       } catch {
         // This is a recovery safety net. Preserve the visible run and retry on
@@ -3896,7 +3998,7 @@ export function OneShell() {
         onePermissionMode: runPermissionMode,
         permissions: executionPermission,
         ...(effectiveRuntimeSelection ? { runtimeSelection: effectiveRuntimeSelection } : {}),
-        ...(options?.overrides?.goalMode ? { goalMode: true } : {}),
+        ...(options?.overrides && currentOneGoalOverride(options.overrides, goalControlEpochRef.current).goalMode ? { goalMode: true } : {}),
         ...(options?.overrides?.planMode ? { planMode: true } : {}),
         ...(options?.overrides?.sessionRouting ? { sessionRouting: true } : { sessionRouting: false }),
         ...(options?.overrides?.fastMode ? { fastMode: true } : {}),
@@ -3935,6 +4037,12 @@ export function OneShell() {
       }
       unsubscribeRunRef.current?.();
       unsubscribeRunRef.current = null;
+      if (cancelNoticeRunIdRef.current === runId) {
+        const notice = cancelNoticeTextRef.current;
+        cancelNoticeRunIdRef.current = null;
+        cancelNoticeTextRef.current = null;
+        setActionNotice((current) => current === notice ? null : current);
+      }
       runIdRef.current = null;
       setLiveRunPrompt((current) => current?.runId === runId ? null : current);
       setDispatchRunPrompt((current) => current?.runId === runId ? null : current);
@@ -4211,7 +4319,7 @@ export function OneShell() {
     // composer. Keeping a third scheduling sheet here duplicated that product
     // boundary and made the composer feel like a form.
     const recurrenceSnapshot: OneRecurrenceSelectionV1 | null = null;
-    const overrideSnapshot = { ...turnOverrides };
+    const overrideSnapshot = { ...turnOverrides, goalControlEpoch: goalControlEpochRef.current };
     const taskForceTargetSnapshot: OrchestrationTarget[] = turnAgentIds.map((agentId) => orchestrationTargetForAgentId(agentId));
     const explicitValue = text.trim();
     if (!explicitValue && attachmentSnapshot.length === 0) return;
@@ -4578,7 +4686,7 @@ export function OneShell() {
         if (current === value) return current;
         return `${value}\n${current}`;
       });
-      setTurnOverrides(overrideSnapshot);
+      setTurnOverrides(currentOneGoalOverride(overrideSnapshot, goalControlEpochRef.current));
       setTurnAgentIds(turnAgentIds);
       if (attachmentSnapshot.length > 0) {
         const restored = attachmentSnapshot.map((item) => ({ ...item, previewUrl: null }));
@@ -4723,7 +4831,7 @@ export function OneShell() {
           attachmentDraftsRef.current = restored;
           setAttachmentDrafts(restored);
         }
-        setTurnOverrides(overrideSnapshot);
+        setTurnOverrides(currentOneGoalOverride(overrideSnapshot, goalControlEpochRef.current));
         setTurnAgentIds(turnAgentIds);
       }
       /*
@@ -5141,6 +5249,13 @@ export function OneShell() {
     // thread's stop/busy affordance onto the empty home composer.
     unsubscribeRunRef.current?.();
     unsubscribeRunRef.current = null;
+    const leavingRunId = runIdRef.current;
+    if (leavingRunId && cancelNoticeRunIdRef.current === leavingRunId) {
+      const notice = cancelNoticeTextRef.current;
+      cancelNoticeRunIdRef.current = null;
+      cancelNoticeTextRef.current = null;
+      setActionNotice((current) => current === notice ? null : current);
+    }
     runIdRef.current = null;
     runChatIdRef.current = null;
     runTaskIdRef.current = null;
@@ -5581,22 +5696,14 @@ export function OneShell() {
     [confirmations],
   );
   const reactiveBriefing = useMemo(() => chooseOneBriefing(projections, actionableConfirmations, appLocale), [actionableConfirmations, appLocale, projections]);
-  // Deterministic observations remain private evidence. One may surface them
-  // only after its model has authored the customer-facing diagnosis and action.
-  // Active work already lives in its named teammate channel and organisation
-  // row. A generic floating "View progress" card duplicates that state and
-  // makes One look task/project based, so home only surfaces outcomes,
-  // failures, decisions, and authored proactive briefings.
-  const rawBriefing: DisplayBriefing = useMemo(() => {
-    const visibleReactive = reactiveBriefing.kind === "working"
+  // The empty composer does not recruit the user into a detector-generated
+  // review. Keep actual outcomes, failures, and pending runtime decisions;
+  // active work already has its own conversation and organisation row.
+  const rawBriefing: DisplayBriefing = useMemo(() => (
+    reactiveBriefing.kind === "working"
       ? chooseOneBriefing([], [], appLocale)
-      : reactiveBriefing;
-    // A live decision, failure, or completed outcome remains the foreground
-    // briefing. Only the otherwise-quiet home uses the private candidate to
-    // offer a generic, explicit, read-only review.
-    if (visibleReactive.kind !== "quiet" || !briefingSnapshot?.candidate) return visibleReactive;
-    return proactiveReviewInvitation(briefingSnapshot.candidate, appLocale);
-  }, [appLocale, briefingSnapshot?.candidate, reactiveBriefing]);
+      : reactiveBriefing
+  ), [appLocale, reactiveBriefing]);
   const rawBriefingSignature = useMemo(() => briefingSignature(rawBriefing), [rawBriefing]);
   useEffect(() => {
     const expiresAt = readBriefingDismissal(rawBriefingSignature);
@@ -5740,16 +5847,12 @@ export function OneShell() {
       resultTopRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
     });
   }, [presentRichOutputRail]);
-  /*
-   * 브라우저 작업이 관측됐다는 이유로 오른쪽 패널을 저 혼자 열던 자리
-   * (제거, 오너 지시 2026-08-24 "우측사이드바 디폴트로 접히고"). 감사 2026-08-25
-   * 에서 이 경로가 살아 있어 "브라우저 작업이 생기면 여전히 저 혼자 열고 그
-   * 상태가 저장돼 다음 대화까지 따라간다" 가 실측됐다. 브라우저 탭은 패널
-   * 안에서 만들어지므로, 사람이 패널을 열면 거기 있다.
-   */
+  // Browser execution must be visible in the current task. TaskSidePanel owns
+  // the scoped event and tab selection; the shell only reveals its container.
   const presentBrowserOutput = useCallback((url: string) => {
     void url;
-  }, []);
+    presentRichOutputRail();
+  }, [presentRichOutputRail]);
   /*
    * 산출물이나 터미널 기록이 하나라도 있으면 오른쪽 패널을 저 혼자 열던 자리
    * (제거, 오너 지시 2026-08-24 "우측사이드바 디폴트로 접히고"). 열림 상태가
@@ -6442,7 +6545,16 @@ export function OneShell() {
             profileName={oneDisplayName}
             pendingMemoryCount={oneMemory?.candidates.filter((candidate) => candidate.status === "pending").length ?? 0}
             onBack={() => setRailMode("organisation")}
-            onOpen={setSettingsSheet}
+            onOpen={(setting) => {
+              // Permission is a composer decision. Keep it anchored to the
+              // input so the control stays beside the action it governs.
+              if (setting === "permission") {
+                setSettingsSheet(null);
+                setComposerMenu("permission");
+                return;
+              }
+              setSettingsSheet(setting);
+            }}
             onOpenProfile={() => { setMemoryOpen(false); setProfileOpen(true); }}
             onOpenMemory={() => { setProfileOpen(false); setMemoryOpen(true); }}
             onToggleLocale={() => setPref(appLocale === "ko" ? "en" : "ko")}
@@ -6637,54 +6749,17 @@ export function OneShell() {
                 </header>
                 <div className={styles.homeConversation}>
                   <time className={styles.homeDate}>{new Date().toLocaleDateString(appLocale === "ko" ? "ko-KR" : "en-US", { month: "short", day: "numeric" })}</time>
+                  {/* A new conversation has no task owner. Prior-task decisions
+                      remain in their own threads and the existing notification UI. */}
                   <section className={styles.homeAssistantMessage} aria-labelledby="one-home-message-title">
-                      <span className={styles.homeMessageAuthor}>One</span>
-                      {briefing.kind === "quiet" && !briefing.proactive ? <>
-                        <strong id="one-home-message-title">{appLocale === "ko" ? "무엇을 맡길까요?" : "What should I take care of?"}</strong>
-                        <p>{appLocale === "ko" ? "상주 스태프와 필요한 전문가를 조율하고, 끝난 일과 확인이 필요한 것만 이 대화에 브리핑할게요." : "I’ll coordinate the standing staff and specialists, then brief you here on finished work and anything that needs your attention."}</p>
-                      </> : <>
-                        <small>{briefing.eyebrow}</small>
-                        <strong id="one-home-message-title">{pendingBriefingActionVisible ? briefing.prepared : briefing.title}</strong>
-                        {!pendingBriefingActionVisible && <p>{briefing.body}</p>}
-                        {!pendingBriefingActionVisible && <div className={styles.homeMessageActions}>
-                          {briefing.proactive
-                            ? briefing.proactive.preparedAction.kind === "open_task"
-                              ? <button type="button" className={styles.primaryButton} disabled={briefingActionBusy} onClick={() => void openProactiveTask(briefing.proactive!)}>{briefingActionBusy ? tFor(appLocale, "one.shell.common.checking") : briefing.primaryLabel}</button>
-                              : <>
-                                  <button type="button" className={styles.primaryButton} disabled={briefingActionBusy} onClick={() => void reviewPreparedFinding(briefing.proactive!)}>{briefingActionBusy ? tFor(appLocale, "one.shell.common.checking") : tFor(appLocale, "one.shell.briefing.review")}</button>
-                                  <button type="button" className={styles.ghostButton} onClick={() => openPreparedFinding(briefing.proactive!)}>{briefing.primaryLabel}</button>
-                                </>
-                            : briefing.taskId && <button type="button" className={styles.primaryButton} onClick={() => openTask(briefing.taskId!)}>{briefing.primaryLabel}</button>}
-                          {briefing.proactive
-                            ? <button type="button" className={styles.ghostButton} onClick={() => void applyProactiveFeedback(briefing.proactive!, "later")}>{tFor(appLocale, "one.shell.common.later")}</button>
-                            : <button type="button" className={styles.ghostButton} onClick={() => { const signature = briefingSignature(briefing); setDismissedBriefing({ signature, expiresAt: writeBriefingDismissal(signature) }); }}>{tFor(appLocale, "one.shell.common.later")}</button>}
-                        </div>}
-                      </>}
-                      {pendingBriefingActionVisible && (
-                        <div className={styles.briefingConfirm} role="group" aria-label={tFor(appLocale, "one.shell.briefing.confirm_title")}>
-                          <p className={styles.briefingConfirmTitle}>{tFor(appLocale, "one.shell.briefing.confirm_title")}</p>
-                          <p className={styles.briefingConfirmBody}>{tFor(appLocale, "one.shell.briefing.confirm_body")}</p>
-                          <div className={styles.homeMessageActions}>
-                            <button type="button" className={styles.primaryButton} disabled={briefingActionBusy} onClick={() => void confirmBriefingAction()}>{briefingActionBusy ? tFor(appLocale, "one.shell.common.checking") : tFor(appLocale, "one.shell.briefing.confirm_accept")}</button>
-                            <button type="button" className={styles.ghostButton} disabled={briefingActionBusy} onClick={() => setPendingBriefingAction(null)}>{tFor(appLocale, "one.shell.briefing.confirm_decline")}</button>
-                          </div>
-                        </div>
-                      )}
+                    <span className={styles.homeMessageAuthor}>One</span>
+                    <strong id="one-home-message-title">{appLocale === "ko" ? "무엇을 맡길까요?" : "What should I take care of?"}</strong>
                   </section>
                   {homeMemoryMapOpen && (
                     <section className={styles.homeMemoryMapPanel} aria-label={appLocale === "ko" ? "One 기억 지도" : "One memory map"}>
                       <OneMemoryMap snapshot={oneMemoryMap ?? EMPTY_ONE_MEMORY_MAP} locale={appLocale} />
                     </section>
                   )}
-                {/* 에이전트 성장 제안 — "배운 걸 반영할까요?" 홈 슬롯(고위험 1건). */}
-                <OneGrowthCard locale={appLocale} />
-                {showWeeklyReflection && oneWeeklyReflection && (
-                  <OneWeeklyReflectionCard
-                    snapshot={oneWeeklyReflection}
-                    locale={appLocale}
-                    onChange={setOneWeeklyReflection}
-                  />
-                )}
                 </div>
               </div>
             ) : (
@@ -6707,6 +6782,8 @@ export function OneShell() {
                           워커 도구 이벤트는 agentName이 붙어 오므로 행에 발화자가 보인다. */}
                       <OneTurnWork
                         state={block.state}
+                        artifactScope={activeThreadChatId ? { chatId: activeThreadChatId, runId: block.runId } : undefined}
+                        onInspectWorker={(group) => inspectWorkerPanel(block.runId, group)}
                         busy={false}
                         runStatus={block.status}
                         startedAt={Date.parse(block.startedAt)}
@@ -6752,7 +6829,9 @@ export function OneShell() {
                           {activeTaskforce && <OneTaskforceConversation state={renderedActivity} org={oneOrgState} locale={appLocale} />}
                           {liveWorkBlock}
                         </>}
-                        {(visibleText || hasAttachments) && (systemLabel
+                        {(visibleText || hasAttachments) && (normalizeChatHostNotice(message.role, message.hostNotice)
+                          ? <HostContinuationNotice text={message.text} locale={appLocale === "ko" ? "ko" : "en"} />
+                          : systemLabel
                           ? (
                             // A prompt One sent on the person's behalf ("One
                             // continued the remaining steps") is a quiet system
@@ -6818,6 +6897,7 @@ export function OneShell() {
                                 * 답이 자라는 중에는 평소대로 그린다: 표식만 있고 본문이
                                 * 아직 한 줄인 글을 문서 카드로 세우면 빈 액자가 된다.
                                 */}
+                              <GoalResultReport result={message.goalResult} locale={appLocale}>
                               {visibleText && (message.streaming
                                 ? <StreamingMarkdown text={visibleText} messageId={message.id} onOpenLinkedFile={openOneLinkedFile} />
                                 : (() => {
@@ -6826,6 +6906,7 @@ export function OneShell() {
                                     ? <OneDocumentCard doc={documentMark} locale={appLocale} messageId={message.id} />
                                     : <Markdown text={visibleText} messageId={message.id} onOpenLinkedFile={openOneLinkedFile} />;
                                 })())}
+                              </GoalResultReport>
                             </div>
                             )}
                             </div>
@@ -6848,6 +6929,8 @@ export function OneShell() {
                             {/* 단톡에도 1:1과 같은 도구 호출 로그 표면 (G-4). */}
                             <OneTurnWork
                               state={block.state}
+                        artifactScope={activeThreadChatId ? { chatId: activeThreadChatId, runId: block.runId } : undefined}
+                              onInspectWorker={(group) => inspectWorkerPanel(block.runId, group)}
                               busy={false}
                               startedAt={Date.parse(block.startedAt)}
                               locale={appLocale}
@@ -7174,7 +7257,24 @@ export function OneShell() {
                 onDismiss={() => setDismissedDecisionId(visibleSelectedConfirmation.sourceMessageId)}
               />
             )}
+            <ComposerDecisionSlot className={styles.composerDecisions} surface="one" />
             <ToolApprovalInline chatId={activeThreadChatId} compact chip composerWidth={ONE_COMPOSER_WIDTH_PX} composerInset={ONE_COMPOSER_INSET_PX} />
+            {activeThreadChatId && (selectedTaskId
+              ? selected?.taskId === selectedTaskId
+              : selectedConversationId === activeThreadChatId) && <OneGoalControls
+              key={`${selectedTaskId ?? selectedConversationId}:${activeThreadChatId}`}
+              chatId={activeThreadChatId}
+              locale={appLocale === "ko" ? "ko" : "en"}
+              isCurrent={() => !homeTransitionPendingRef.current
+                && goalControlViewKeyRef.current === goalControlViewKey
+                && activeThreadChatIdRef.current === activeThreadChatId
+                && selectedTaskIdRef.current === selectedTaskId
+                && selectedConversationIdRef.current === selectedConversationId}
+              onDeleted={() => {
+                goalControlEpochRef.current += 1;
+                setTurnOverrides((current) => currentOneGoalOverride(current, goalControlEpochRef.current));
+              }}
+            />}
             {armedOneMemoryUseOnce && (
               <div className={styles.oneMemoryUseOnceChip} role="status">
                 <span>{tFor(appLocale, "one.shell.composer.memory_once")}</span>
@@ -7843,11 +7943,15 @@ export function OneShell() {
             />
           </aside>
         )}
-        <OneActivityArtifactRail
+        <TaskSidePanel
           items={runtimeArtifacts}
+          onRequestOpen={presentRichOutputRail}
           activity={activity}
           locale={appLocale}
           visible={Boolean((selected || conversation) && contextRailOpen)}
+          workerSelection={workerSelection}
+          workerRun={workerRun}
+          onCloseWorker={() => setWorkerSelection(null)}
           onAdd={() => attachmentInputRef.current?.click()}
           onClose={() => setContextRailOpen(false)}
           width={contextRailWidth}
@@ -7906,6 +8010,7 @@ export function OneShell() {
               .then((draft) => setComposer(draft.prompt))
               .catch((cause) => requestOneOperationalRecovery("computer-history-draft", cause));
               }}
+          screenChatId={activeThreadChatId}
           browserScopeKey={activeThreadChatId ?? selected?.taskId ?? conversation?.id}
           browserHistoryUrl={durableThreadBrowserUrl}
           onBrowserObserved={presentBrowserOutput}

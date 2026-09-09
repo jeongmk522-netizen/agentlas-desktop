@@ -1,3 +1,5 @@
+import { importDedicatedBrowserCookies, syncConnectBrowserSession } from "./browser/native-session-cookie-import";
+import { getLongRunByGoalId } from "./store/long-runs";
 // IPC 핸들러 일괄 등록. main.ts 앱 ready 직후 호출.
 // 각 도메인 모듈(runtime, secrets, team, marketplace, projects, chats, automations, invoke)을 thin wrapping.
 import { app, BrowserWindow, dialog, ipcMain as electronIpcMain, shell } from "electron";
@@ -358,6 +360,7 @@ import {
 } from "./experience/cloud";
 import { getDreamingStatus, setDreamingEnabled } from "./memory/dreaming";
 import {
+  getWorkerReport,
   getInvocationRunReceipt,
   getLatestInvocationRunReceipt,
   hasInvocationRunReceipt,
@@ -419,7 +422,6 @@ import {
 } from "./store/chats";
 import { listChatFileSnapshot, persistChatFileSnapshot, readChatFileSnapshotForExternalOpen } from "./store/chat-message-attachments";
 import {
-  completeGoalLedgerGoal,
   deriveGoalAcceptanceCriteria,
   ensureGoalLedgerGoal,
   getGoalLedgerGoal,
@@ -663,6 +665,7 @@ import type { BrowserPermissionDecision } from "./browser/connect";
 import { importBrowserCredentials, scanBrowserCredentials } from "./browser/credential-import";
 import {
   browserCredentialConsentIsPending,
+  browserCredentialConsentRevision,
   getBrowserCredentialConsent,
   recordBrowserCredentialConsent,
   refreshBrowserCredentialsIfDue,
@@ -677,6 +680,7 @@ import {
   stopBrowserLiveSessionsForOwner,
 } from "./browser/live-view";
 import { captureComputerUsePreview } from "./computer-use/preview";
+import { captureTaskBrowserFrame } from "./browser/task-frame";
 import {
   archiveAppPackage,
   activateLocalCommerceStack,
@@ -701,6 +705,11 @@ import {
   stopAppFactoryLivePreview,
 } from "./app-factory/live-preview";
 import {
+  registerNativeBrowserTask,
+  listWorkBrowserTabs,
+  createWorkBrowserTab,
+  captureWorkLiveView,
+  dispatchWorkLiveViewInput,
   closeWorkLiveView,
   closeWorkLiveViewsForOwner,
   goBackWorkLiveView,
@@ -3667,10 +3676,12 @@ export function registerIpcHandlers(): void {
   ipcMain.handle("browser:importCredentials", async (_e, profileId: string, domains: string[]) => {
     const id = String(profileId || "");
     const list = Array.isArray(domains) ? domains.map(String) : [];
+    const consentRevision = browserCredentialConsentRevision();
     const result = await importBrowserCredentials(id, list);
+    let importedDomains: string[] = [];
     // 사용자가 실제로 가져온 그 선택이 곧 승인이다. 별도 동의 화면을 한 번 더 띄우지 않는다 —
     // 승인은 "묻는 순간"에 한 번(오너결정 2026-08-15), 그 뒤로는 이 집합만 자동 갱신한다.
-    if (result.ok && result.linkedSites.length > 0) {
+    if (result.ok && result.linkedSites.length > 0 && browserCredentialConsentRevision() === consentRevision) {
       // linkedSites 는 정규화된 사이트 문자열이고 스킴이 없을 수 있다("x.com"). new URL 에
       // 그대로 넣으면 던져서 승인 도메인이 통째로 빈 배열이 됐다 — 그러면 승인은 기록되는데
       // 자동 갱신은 영영 아무것도 하지 않는 반쪽 배선이 된다(실측으로 잡음).
@@ -3688,9 +3699,12 @@ export function registerIpcHandlers(): void {
           }
         })
         .filter(Boolean);
-      if (granted.length > 0) recordBrowserCredentialConsent(id, granted);
+      if (granted.length > 0) {
+        recordBrowserCredentialConsent(id, granted);
+        importedDomains = granted;
+      }
     }
-    return result;
+    return result.ok ? { ...result, nativeSession: await syncConnectBrowserSession({ domains: importedDomains, reason: "connect-import" }) } : result;
   });
   ipcMain.handle("browser:credentialConsent", () => ({
     consent: getBrowserCredentialConsent(),
@@ -3968,6 +3982,10 @@ export function registerIpcHandlers(): void {
     }
   });
   ipcMain.handle("browser:listLogs", (_e, limit?: number) => browserListLogs(limit));
+  ipcMain.handle("browser:captureTaskFrame", (event, chatId?: unknown) => {
+    assertTrustedSitePublishIpcSender(event);
+    return captureTaskBrowserFrame(chatId);
+  });
   ipcMain.handle("browser:captureLiveFrame", (event, preferredUrl?: string, viewport?: "desktop" | "phone") => {
     assertTrustedSitePublishIpcSender(event);
     return captureBrowserLiveFrame(
@@ -4219,7 +4237,7 @@ export function registerIpcHandlers(): void {
    * ③ continuousMode 자동 ON(완성까지 계속 도는 루프가 기본).
    * 끄기(칩 ×)는 단순 off가 아니라 **명시적 목표 종료**다: 원장 cancelled, 이
    * goal의 연속실행 자동화 정확히 한 행 비활성화, 바인딩 해제.
-   * 원장 호출은 fail-soft(런타임 없으면 조용히 생략)이며 UI 응답을 막지 않는다.
+   * 종료는 Main이 원장·계약·바인딩을 함께 닫고 실제 실행도 중단한다.
    */
   ipcMain.handle("chats:setGoalMode", (_e, id: string, enabled: boolean) => {
     const chat = getChat(id);
@@ -4228,27 +4246,30 @@ export function registerIpcHandlers(): void {
       const task = getCanonicalTaskForChat(id);
       // 프로젝트 대화의 목표는 프로젝트에 붙는다. 여기서 대화 단위로 파생해 두면
       // 실행 경로가 프로젝트 편성을 물려받으려 해도 이 값이 먼저 이겨서 무효가 된다.
-      const goalId = chat.goalId ?? resolveDesktopWorkforceGoalId({
+      const previousGoalId = chat.goalId ?? resolveDesktopWorkforceGoalId({
         projectId: chat.projectId,
         taskId: task?.id,
         chatId: id,
       });
+      const priorRun = getLongRunByGoalId(previousGoalId);
+      const goalId = !chat.goalId && priorRun
+        ? `goal:desktop:${randomUUID()}` : previousGoalId;
       setChatGoalBinding(id, goalId);
       setChatContinuousMode(id, true);
       // Binding is not definition. The next explicit Goal-mode request owns
       // the objective; a chat title is only navigation copy and must never
       // become (or later overwrite) the user's durable goal.
     } else if (chat.goalId) {
-      const continuation = findAutomationByGoalId(chat.goalId);
-      if (continuation?.enabled) toggleAutomation(continuation.id, false);
-      void completeGoalLedgerGoal({
-        goalId: chat.goalId,
-        status: "cancelled",
-        reason: "user-ended-goal-chip",
-        projectDir: getChatWorkingFolder(id),
-      });
-      setChatGoalBinding(id, null);
+      invocationService.deleteGoal(id, chat.goalId);
     }
+    return getChat(id);
+  });
+  ipcMain.handle("chats:pauseGoal", (_e, id: string, goalId: string) => {
+    invocationService.pauseGoal(id, goalId);
+    return getGoalLedgerGoal(goalId, getChatWorkingFolder(id));
+  });
+  ipcMain.handle("chats:deleteGoal", (_e, id: string, goalId: string) => {
+    invocationService.deleteGoal(id, goalId);
     return getChat(id);
   });
   ipcMain.handle("chats:getGoalContext", async (_e, id: string) => {
@@ -4261,6 +4282,7 @@ export function registerIpcHandlers(): void {
     if (!chat?.goalId) return null;
     const projectDir = getChatWorkingFolder(id);
     const existing = await getGoalLedgerGoal(chat.goalId, projectDir);
+    if (getChat(id)?.goalId !== chat.goalId) throw new Error("goal_control_binding_changed");
     // An active contract with criteria is immutable. Ordinary chat and
     // steering can never call this endpoint to silently replace it.
     if (existing?.status === "active" && existing.acceptanceCriteria.length > 0) return existing;
@@ -4294,19 +4316,25 @@ export function registerIpcHandlers(): void {
     }
     return context;
   });
-  ipcMain.handle("chats:resumeGoal", async (_e, id: string, expectedVersion: number) => {
+  ipcMain.handle("chats:resumeGoal", async (_e, id: string, expectedVersion: number, expectedGoalId: string) => {
     const chat = getChat(id);
-    if (!chat?.goalId) return null;
+    if (typeof expectedGoalId !== "string" || !expectedGoalId || chat?.goalId !== expectedGoalId) {
+      throw new Error("goal_control_binding_changed");
+    }
     if (!Number.isSafeInteger(expectedVersion) || expectedVersion <= 0) {
       throw new TypeError("A current long-run version is required to resume");
     }
     const context = await getGoalLedgerGoal(chat.goalId, getChatWorkingFolder(id));
+    if (getChat(id)?.goalId !== chat.goalId) throw new Error("goal_control_binding_changed");
     if (!context || context.version !== expectedVersion) {
       throw new Error("long_run_resume_version_conflict");
     }
+    if (invocationService.activeChatIds().includes(id)) throw new Error("auto_goal_resume_chat_busy");
+    const unsettled = getDb().prepare("SELECT COUNT(*) AS n FROM long_run_worker_attempts WHERE run_id = ? AND (state IN ('running','uncertain') OR side_effect_state = 'uncertain')")
+      .get(context.runId) as { n: number };
+    if (unsettled.n) throw new Error("auto_goal_resume_attempt_unsettled");
     const continuation = findAutomationByGoalId(chat.goalId);
     if (!continuation) {
-      if (invocationService.activeChatIds().includes(id)) throw new Error("auto_goal_resume_chat_busy");
       const { request, queued } = queueAutomaticGoalResume(id, expectedVersion);
       try {
         confirmDesktopLongRunResumeDispatched(queued.id);
@@ -4321,6 +4349,11 @@ export function registerIpcHandlers(): void {
     try {
       if (!continuation.enabled) toggleAutomation(continuation.id, true);
       const { enqueueAutomationRunNow } = await import("./automation-scheduler");
+      const current = getLongRunByGoalId(chat.goalId);
+      if (getChat(id)?.goalId !== chat.goalId || current?.id !== queued.id
+        || current.version !== queued.version || current.status !== "queued") {
+        throw new Error("goal_control_binding_changed");
+      }
       const accepted = enqueueAutomationRunNow(continuation.id);
       if (!accepted.accepted) throw new Error("long_run_resume_dispatch_rejected");
       confirmDesktopLongRunResumeDispatched(queued.id);
@@ -6034,16 +6067,42 @@ export function registerIpcHandlers(): void {
     return stopAppFactoryLivePreview(input?.appId);
   });
 
+  ipcMain.handle("workLiveView:importBrowserCookies", async (event) => {
+    assertTrustedSitePublishIpcSender(event);
+    return importDedicatedBrowserCookies({ authorization: "explicit-user-action" });
+  });
+  const bindNativeBrowserChat = (event: Electron.IpcMainInvokeEvent, taskScopeId: unknown) => {
+    const window = assertTrustedSitePublishIpcSender(event);
+    if (typeof taskScopeId !== "string" || !getChat(taskScopeId)) throw new Error("native-browser-chat-missing");
+    registerNativeBrowserTask({ ownerId: event.sender.id, window, taskScopeId,
+      send: (status) => { if (!event.sender.isDestroyed()) event.sender.send("workLiveView:status", status); } });
+    if (!workLiveCleanupOwners.has(event.sender.id)) {
+      workLiveCleanupOwners.add(event.sender.id);
+      event.sender.once("destroyed", () => { closeWorkLiveViewsForOwner(event.sender.id); workLiveCleanupOwners.delete(event.sender.id); });
+    }
+    return taskScopeId;
+  };
+  ipcMain.handle("workLiveView:listTabs", (event, input: { taskScopeId: string }) => {
+    const scope = bindNativeBrowserChat(event, input?.taskScopeId);
+    return { ok: true, tabs: listWorkBrowserTabs(event.sender.id, scope) };
+  });
+  ipcMain.handle("workLiveView:createTab", (event, input: { taskScopeId: string; url?: string }) => {
+    const scope = bindNativeBrowserChat(event, input?.taskScopeId);
+    return createWorkBrowserTab(event.sender.id, scope, input?.url);
+  });
+
   // Native Work live view. Every operation is bound to the requesting renderer;
   // a different window cannot resize, reload, or close its surface by guessing an id.
   ipcMain.handle("workLiveView:open", async (event, input: {
     viewId: string;
+    taskScopeId?: string;
     url: string;
     bounds: import("../shared/types").WorkLiveViewBounds;
     visible?: boolean;
     mode?: "app" | "browser";
   }) => {
     const win = assertTrustedSitePublishIpcSender(event);
+    if (input?.mode === "browser") bindNativeBrowserChat(event, input?.taskScopeId);
     const ownerId = event.sender.id;
     if (!workLiveCleanupOwners.has(ownerId)) {
       workLiveCleanupOwners.add(ownerId);
@@ -6053,9 +6112,10 @@ export function registerIpcHandlers(): void {
       });
     }
     return openWorkLiveView({
+      viewId: input?.viewId, url: input?.url, bounds: input?.bounds,
+      visible: input?.visible, mode: input?.mode, taskScopeId: input?.taskScopeId,
       ownerId,
       window: win,
-      ...input,
       send: (status) => {
         if (!event.sender.isDestroyed()) event.sender.send("workLiveView:status", status);
       },
@@ -6063,31 +6123,40 @@ export function registerIpcHandlers(): void {
   });
   ipcMain.handle("workLiveView:setBounds", (event, input: {
     viewId: string;
+    taskScopeId?: string;
     bounds: import("../shared/types").WorkLiveViewBounds;
     visible?: boolean;
   }) => {
     assertTrustedSitePublishIpcSender(event);
     return setWorkLiveViewBounds(event.sender.id, input);
   });
-  ipcMain.handle("workLiveView:reload", (event, viewId: string) => {
+  ipcMain.handle("workLiveView:reload", (event, viewId: string, taskScopeId?: string) => {
     assertTrustedSitePublishIpcSender(event);
-    return reloadWorkLiveView(event.sender.id, viewId);
+    return reloadWorkLiveView(event.sender.id, viewId, taskScopeId);
   });
-  ipcMain.handle("workLiveView:navigate", (event, input: { viewId: string; url: string }) => {
+  ipcMain.handle("workLiveView:navigate", (event, input: { viewId: string; url: string; taskScopeId?: string }) => {
     assertTrustedSitePublishIpcSender(event);
     return navigateWorkLiveView(event.sender.id, input);
   });
-  ipcMain.handle("workLiveView:goBack", (event, viewId: string) => {
+  ipcMain.handle("workLiveView:goBack", (event, viewId: string, taskScopeId?: string) => {
     assertTrustedSitePublishIpcSender(event);
-    return goBackWorkLiveView(event.sender.id, viewId);
+    return goBackWorkLiveView(event.sender.id, viewId, taskScopeId);
   });
-  ipcMain.handle("workLiveView:goForward", (event, viewId: string) => {
+  ipcMain.handle("workLiveView:goForward", (event, viewId: string, taskScopeId?: string) => {
     assertTrustedSitePublishIpcSender(event);
-    return goForwardWorkLiveView(event.sender.id, viewId);
+    return goForwardWorkLiveView(event.sender.id, viewId, taskScopeId);
   });
-  ipcMain.handle("workLiveView:close", (event, viewId: string) => {
+  ipcMain.handle("workLiveView:close", (event, viewId: string, taskScopeId?: string) => {
     assertTrustedSitePublishIpcSender(event);
-    return closeWorkLiveView(event.sender.id, viewId);
+    return closeWorkLiveView(event.sender.id, viewId, taskScopeId);
+  });
+  ipcMain.handle("workLiveView:capture", (event, viewId: string, taskScopeId?: string) => {
+    assertTrustedSitePublishIpcSender(event);
+    return captureWorkLiveView(event.sender.id, viewId, taskScopeId);
+  });
+  ipcMain.handle("workLiveView:dispatchInput", (event, input: { viewId: string; input: import("../shared/types").WorkLiveViewInput; taskScopeId?: string }) => {
+    assertTrustedSitePublishIpcSender(event);
+    return dispatchWorkLiveViewInput(event.sender.id, input);
   });
   ipcMain.handle("appFactory:openLaunchTarget", async (_e, input: AppFactoryRootRequest) => {
     const rootPath = isCloudAppRoot(input.rootPath) ? input.rootPath : path.resolve(input.rootPath);
@@ -6376,8 +6445,10 @@ export function registerIpcHandlers(): void {
       invocationService.unsteer(req.chatId, req.position, req.text),
   );
   ipcMain.handle("invoke:activeChats", () => invocationService.activeChatIds());
-  ipcMain.handle("invoke:attach", (_event, chatId: string) => invocationService.attach(chatId));
+  ipcMain.handle("invoke:attach", (_event, chatId: string, options?: { includeEvents?: boolean }) =>
+    invocationService.attach(chatId, { includeEvents: options?.includeEvents !== false }));
   ipcMain.handle("invoke:receipt", (_event, runId: string) => invocationService.receipt(runId));
+  ipcMain.handle("invoke:workerReport", (_event, scope) => getWorkerReport(scope));
   ipcMain.handle("invoke:latestReceipt", (_event, chatId: string) => invocationService.latestReceipt(chatId));
   ipcMain.handle("invoke:latestOneSurface", (_event, input: unknown) => {
     if (

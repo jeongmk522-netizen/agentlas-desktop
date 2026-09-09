@@ -590,6 +590,7 @@ const api: AgentlasIpc = {
     listLogs: (limit?: number) => ipcRenderer.invoke("browser:listLogs", limit),
     captureLiveFrame: (preferredUrl?: string, viewport?: "desktop" | "phone") =>
       ipcRenderer.invoke("browser:captureLiveFrame", preferredUrl, viewport),
+    captureTaskFrame: (chatId: string) => ipcRenderer.invoke("browser:captureTaskFrame", chatId),
     startLiveView: (preferredUrl: string, viewport?: "desktop" | "phone") =>
       ipcRenderer.invoke("browser:startLiveView", preferredUrl, viewport),
     stopLiveView: (sessionId: string) => ipcRenderer.invoke("browser:stopLiveView", sessionId),
@@ -656,8 +657,10 @@ const api: AgentlasIpc = {
     getGoalContext: (id: string) => ipcRenderer.invoke("chats:getGoalContext", id),
     defineGoal: (id: string, objective: string, locale?: "ko" | "en") =>
       ipcRenderer.invoke("chats:defineGoal", id, objective, locale),
-    resumeGoal: (id: string, expectedVersion: number) =>
-      ipcRenderer.invoke("chats:resumeGoal", id, expectedVersion),
+    pauseGoal: (id: string, goalId: string) => ipcRenderer.invoke("chats:pauseGoal", id, goalId),
+    deleteGoal: (id: string, goalId: string) => ipcRenderer.invoke("chats:deleteGoal", id, goalId),
+    resumeGoal: (id: string, expectedVersion: number, expectedGoalId: string) =>
+      ipcRenderer.invoke("chats:resumeGoal", id, expectedVersion, expectedGoalId),
     setSwarmMode: (id: string, enabled: boolean) =>
       ipcRenderer.invoke("chats:setSwarmMode", id, enabled),
     setRuntimeSelection: (id: string, selection: RuntimeSelection | null) =>
@@ -954,13 +957,18 @@ const api: AgentlasIpc = {
     listOperations: (appId) => ipcRenderer.invoke("appFactory:listOperations", appId),
   },
   workLiveView: {
+    importBrowserCookies: () => ipcRenderer.invoke("workLiveView:importBrowserCookies"),
+    listTabs: (input) => ipcRenderer.invoke("workLiveView:listTabs", input),
+    createTab: (input) => ipcRenderer.invoke("workLiveView:createTab", input),
     open: (input) => ipcRenderer.invoke("workLiveView:open", input),
     setBounds: (input) => ipcRenderer.invoke("workLiveView:setBounds", input),
-    reload: (viewId) => ipcRenderer.invoke("workLiveView:reload", viewId),
+    reload: (viewId, taskScopeId) => ipcRenderer.invoke("workLiveView:reload", viewId, taskScopeId),
     navigate: (input) => ipcRenderer.invoke("workLiveView:navigate", input),
-    goBack: (viewId) => ipcRenderer.invoke("workLiveView:goBack", viewId),
-    goForward: (viewId) => ipcRenderer.invoke("workLiveView:goForward", viewId),
-    close: (viewId) => ipcRenderer.invoke("workLiveView:close", viewId),
+    goBack: (viewId, taskScopeId) => ipcRenderer.invoke("workLiveView:goBack", viewId, taskScopeId),
+    goForward: (viewId, taskScopeId) => ipcRenderer.invoke("workLiveView:goForward", viewId, taskScopeId),
+    close: (viewId, taskScopeId) => ipcRenderer.invoke("workLiveView:close", viewId, taskScopeId),
+    capture: (viewId, taskScopeId) => ipcRenderer.invoke("workLiveView:capture", viewId, taskScopeId),
+    dispatchInput: (input) => ipcRenderer.invoke("workLiveView:dispatchInput", input),
     onStatus: (handler) => {
       const wrapped = (_event: Electron.IpcRendererEvent, status: Parameters<typeof handler>[0]) => handler(status);
       ipcRenderer.on("workLiveView:status", wrapped);
@@ -1015,8 +1023,9 @@ const api: AgentlasIpc = {
     clearHistory: (chatId: string) =>
       ipcRenderer.invoke("invoke:clearHistory", chatId),
     activeChats: () => ipcRenderer.invoke("invoke:activeChats"),
-    attach: (chatId: string) => ipcRenderer.invoke("invoke:attach", chatId),
+    attach: (chatId: string, options?: { includeEvents?: boolean }) => ipcRenderer.invoke("invoke:attach", chatId, options),
     receipt: (runId: string) => ipcRenderer.invoke("invoke:receipt", runId),
+    workerReport: (scope) => ipcRenderer.invoke("invoke:workerReport", scope),
     latestReceipt: (chatId: string) => ipcRenderer.invoke("invoke:latestReceipt", chatId),
     latestOneSurface: (input) => ipcRenderer.invoke("invoke:latestOneSurface", input),
   },

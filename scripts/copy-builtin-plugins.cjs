@@ -30,6 +30,7 @@ const RELEASE_TOP_LEVEL = Object.freeze({
   "agentlas-science-research-director": ["README.md", "agent", "contracts", "plugin.json", "skills"],
   "agentlas-science-statistics": ["README.md", "bin", "coverage-manifest.json", "figure-catalog.json", "matlab-parity-manifest.json", "plugin.json", "runtime", "skills"],
   "agentlas-time": ["plugin.json"],
+  "agentlas-workspace-preview": ["plugin.json"],
   design: ["README.md", "assets", "plugin.json", "references", "skills"],
   "flint-chart": ["plugin.json", "skills"],
   "plugin-make": ["README.md", "assets", "plugin.json", "skills"],
@@ -254,7 +255,9 @@ const publicPins = Object.fromEntries(RUNTIME_PINNED_PLUGINS.map((slug) => {
   if (!fs.existsSync(manifestPath)) throw new Error(`[copy-builtin-plugins] runtime-pinned public manifest missing: ${slug}`);
   return [slug, sha256(fs.readFileSync(manifestPath))];
 }));
-const pinsTarget = path.resolve(__dirname, "..", "dist", "electron", "science", "public-plugin-manifest-pins.json");
+// 사이언스가 자기 저장소로 나가면서, 이 핀 파일은 사이언스 옆이 아니라 앱 산출물에 둔다.
+// 사이언스는 호스트에게 위치를 물어본다 (electron/science-host.ts).
+const pinsTarget = path.resolve(__dirname, "..", "dist", "electron", "public-plugin-manifest-pins.json");
 fs.mkdirSync(path.dirname(pinsTarget), { recursive: true });
 fs.writeFileSync(pinsTarget, `${JSON.stringify({
   schemaVersion: "agentlas.science-public-plugin-manifest-pins/v1",

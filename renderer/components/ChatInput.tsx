@@ -7,6 +7,8 @@
 //
 // 모드 토글은 V0 UI만 (실제 동작은 V1): plan/goal/permission이 invocation payload로 전달.
 "use client";
+import { ComposerDecisionSlot } from "./ComposerDecisionPortal";
+import { OneVoiceInputHelp } from "./one/OneVoiceInputHelp";
 import { memo, useEffect, useMemo, useRef, useState } from "react";
 import type {
   ImageAttachment,
@@ -97,6 +99,7 @@ import {
   IconChevronDown,
   IconChevronRight,
   IconClose,
+  IconTrash,
   IconFileUp,
   IconFolder,
   IconKey,
@@ -314,6 +317,7 @@ function ChatInputComponent({
   goalPauseReason,
   goalBlockedReason,
   onResumeGoal,
+  onPauseGoal,
   onToggleContinuous,
   onToggleSwarm,
   queuedCount = 0,
@@ -368,6 +372,7 @@ function ChatInputComponent({
   goalPauseReason?: string | null;
   goalBlockedReason?: string | null;
   onResumeGoal?: () => void;
+  onPauseGoal?: () => void;
   /** 스웜(swarmMode) 현재 상태 + 토글. */
   swarmMode?: boolean;
   onToggleSwarm?: () => void;
@@ -1480,10 +1485,12 @@ function ChatInputComponent({
           pauseReason={goalPauseReason}
           blockedReason={goalBlockedReason}
           onResume={onResumeGoal}
+          onPause={onPauseGoal}
           onEndGoal={() => toggleGoalMode(false)}
         />
       )}
 
+      <ComposerDecisionSlot className="composer-decision-stack" surface="work" />
       <div
         className="chat-input-shell"
         data-has-progress={queuedCount > 0 || effectiveGoalMode ? "true" : "false"}
@@ -2023,6 +2030,7 @@ function ChatInputComponent({
                       />
                     </button>
                   )}
+                  <OneVoiceInputHelp locale={locale === "ko" ? "ko" : "en"} composerRef={textareaRef} disabled={disabled} surface="work" />
                   <button
                     type="button"
                     className="chat-input-send-button"
@@ -2071,6 +2079,7 @@ function ComposerGoalBar({
   pauseReason,
   blockedReason,
   onResume,
+  onPause,
   onEndGoal,
 }: {
   label?: string;
@@ -2080,6 +2089,7 @@ function ComposerGoalBar({
   /** 막힌 이유 — 저장소에는 있는데 화면까지 오지 않던 값이다. */
   blockedReason?: string | null;
   onResume?: () => void;
+  onPause?: () => void;
   onEndGoal: () => void;
 }) {
   const { locale } = useT();
@@ -2098,6 +2108,7 @@ function ComposerGoalBar({
    *   보여 준다(그래야 물어볼 수 있다). 이유 자체가 없으면 없다고 말한다.
    */
   const paused = runStatus === "paused";
+  const pausing = runStatus === "pausing";
   const blocked = runStatus === "blocked" || runStatus === "failed";
   const knownReason = (reason: string | null | undefined): string | null => {
     if (!reason) return null;
@@ -2112,6 +2123,23 @@ function ComposerGoalBar({
         ? "결과를 확인하지 못해 멈춤 — 완료로 볼 근거가 부족합니다"
         : "Stopped because the result could not be verified";
     }
+    if (reason === "verification_failed") {
+      return locale === "ko"
+        ? "성공 기준을 충족하지 못해 멈춤 — 검증 결과를 확인해 주세요"
+        : "Stopped because acceptance criteria were not met — review the verification result";
+    }
+    const verificationReasons: Record<string, [string, string]> = {
+      "verification_repair_stalled": ["수정 후에도 같은 기준을 통과하지 못해 멈춤", "Stopped after repeated repairs did not satisfy the same criteria"],
+      "verification_prerequisite:authentication_required": ["연결된 계정의 인증이 필요해 멈춤", "Stopped because account authentication is required"],
+      "verification_prerequisite:permission_required": ["추가 권한이 필요해 멈춤", "Stopped because additional permission is required"],
+      "verification_prerequisite:approval_required": ["도구 승인 경로 확인이 필요해 멈춤", "Stopped because the required tool approval path needs attention"],
+      "verification_prerequisite:entitlement_required": ["계정의 이용 권한이나 크레딧 확인이 필요해 멈춤", "Stopped because account access or credits need attention"],
+      "verification_prerequisite:environment_unavailable": ["필요한 실행 환경을 사용할 수 없어 멈춤", "Stopped because a required environment is unavailable"],
+      "verification_prerequisite:user_stopped": ["사용자 요청으로 멈춤", "Stopped at your request"],
+      "verification_prerequisite:uncertain_side_effect": ["이전 작업의 실행 결과를 확인해야 해 멈춤", "Stopped because an earlier action's outcome needs confirmation"],
+    };
+    const verificationReason = verificationReasons[reason];
+    if (verificationReason) return verificationReason[locale === "ko" ? 0 : 1];
     // 모르는 사유는 지어내지 않고 그대로 보여 준다.
     return locale === "ko" ? `멈춤 — 사유: ${reason}` : `Stopped — reason: ${reason}`;
   };
@@ -2121,8 +2149,10 @@ function ComposerGoalBar({
         ? "멈췄는데 이유가 기록되지 않았습니다. 같은 내용을 다시 보내면 이어서 진행합니다."
         : "It stopped and no reason was recorded. Send the same request again to continue.")
       : (locale === "ko" ? "일시정지됨" : "Paused"));
-  const title = (paused || blocked)
+  const title = pausing ? (locale === "ko" ? "실행을 멈추는 중 · 목표는 보존됩니다" : "Stopping execution · goal preserved") : (paused || blocked)
     ? stoppedCopy
+    : runStatus === "verifying"
+      ? (locale === "ko" ? "결과를 성공 기준과 대조하는 중" : "Checking the result against acceptance criteria")
     : label?.replace(/\s+/g, " ").trim() || (locale === "ko"
       ? "다음 요청으로 목표와 성공 기준을 확정합니다"
       : "Your next request will define the goal and its acceptance criteria");
@@ -2136,6 +2166,13 @@ function ComposerGoalBar({
         <span className="chat-composer-goal-criteria" title={criteriaTitle}>
           {locale === "ko" ? `성공 기준 ${criteria?.length}개` : `${criteria?.length} criteria`}
         </span>
+      )}
+      {onPause && runStatus && !["paused", "pausing", "blocked", "failed", "completed", "cancelled", "cancelling"].includes(runStatus) && (
+        <button type="button" onClick={onPause} data-chat-goal-pause="true"
+          aria-label={locale === "ko" ? "목표 일시정지" : "Pause goal"}
+          title={locale === "ko" ? "실행과 자동 이어가기를 멈추고 목표를 보존합니다" : "Stop execution and automatic continuation; keep the goal"}>
+          <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M4 3h3v10H4zM9 3h3v10H9z" /></svg>
+        </button>
       )}
       {paused && onResume && (
         <button
@@ -2151,10 +2188,10 @@ function ComposerGoalBar({
       <button
         type="button"
         onClick={onEndGoal}
-        aria-label={locale === "ko" ? "목표 종료" : "End goal"}
-        title={locale === "ko" ? "목표 종료" : "End goal"}
+        aria-label={locale === "ko" ? "목표 삭제" : "Delete goal"}
+        title={locale === "ko" ? "목표를 삭제합니다. 대화와 작업 파일은 유지됩니다" : "Delete the goal; keep the conversation and files"}
       >
-        <IconClose size={12} />
+        <IconTrash size={12} />
       </button>
     </div>
   );

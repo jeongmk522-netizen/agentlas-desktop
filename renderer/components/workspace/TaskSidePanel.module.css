@@ -1,0 +1,1359 @@
+.activity {
+  --activity-ink: var(--ink-soft);
+  --activity-muted: var(--muted-deep);
+  --activity-faint: var(--muted);
+  --activity-line: var(--paper-edge);
+  --activity-fill: var(--paper-2);
+  --activity-accent: var(--design-accent);
+  width: min(720px, 100%);
+  margin: 8px 0 26px;
+  border-top: 1px solid var(--activity-line);
+  border-bottom: 1px solid var(--activity-line);
+  color: var(--activity-ink);
+}
+
+.header {
+  width: 100%;
+  min-height: 44px;
+  display: grid;
+  grid-template-columns: 10px auto minmax(0, 1fr) auto 14px;
+  align-items: center;
+  gap: 8px;
+  padding: 0 2px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.header:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--activity-accent) 55%, transparent);
+  outline-offset: 3px;
+}
+
+.header strong {
+  font-size: 12px;
+  font-weight: 690;
+  letter-spacing: -0.01em;
+}
+
+.meta {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--activity-muted);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.count {
+  min-width: 17px;
+  color: var(--activity-faint);
+  font-size: 10px;
+  text-align: right;
+}
+
+.chevron {
+  color: var(--activity-faint);
+  transition: transform 140ms ease;
+}
+
+.header[aria-expanded="true"] .chevron { transform: rotate(180deg); }
+
+.activityEta {
+  display: flex;
+  min-height: 22px;
+  align-items: flex-start;
+  padding: 0 0 6px 18px;
+}
+
+.pulse {
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background: var(--muted);
+}
+
+.pulse[data-active="true"] {
+  background: var(--activity-accent);
+  box-shadow: 0 0 0 0 color-mix(in srgb, var(--activity-accent) 30%, transparent);
+  animation: activityPulse 1.5s ease-out infinite;
+}
+
+.rows {
+  display: grid;
+  max-height: min(42vh, 420px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 0 0 14px 18px;
+}
+
+/* "이전 N개 더 보기" — 잘라 버린 게 아니라 접어 둔 것임을 그 자리에서 말한다. */
+.moreRows {
+  width: 100%;
+  min-height: 32px;
+  padding: 6px 2px;
+  border: 0;
+  border-top: 1px solid color-mix(in srgb, var(--activity-line) 72%, transparent);
+  background: transparent;
+  color: var(--activity-faint);
+  font-size: 11px;
+  text-align: center;
+  cursor: pointer;
+}
+
+.moreRows:hover { color: var(--activity-ink, inherit); }
+
+.row,
+.rowDetails > summary {
+  min-width: 0;
+  min-height: 38px;
+  display: grid;
+  grid-template-columns: 20px minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 7px;
+  padding: 4px 2px;
+  border: 0;
+  border-top: 1px solid color-mix(in srgb, var(--activity-line) 72%, transparent);
+  background: transparent;
+  list-style: none;
+}
+
+.rowDetails > summary {
+  grid-template-columns: 20px minmax(0, 1fr) auto auto 12px;
+  cursor: pointer;
+}
+
+.rowDetails > summary::-webkit-details-marker { display: none; }
+.rowDetails[open] > summary > svg { transform: rotate(180deg); }
+
+.rowIcon {
+  width: 18px;
+  height: 18px;
+  display: grid;
+  place-items: center;
+  border-radius: 5px;
+  color: var(--activity-muted);
+}
+
+.rowIcon[data-status="completed"] { color: var(--activity-accent); }
+.rowIcon[data-status="failed"] { color: var(--danger); }
+.rowIcon[data-status="cancelled"] { color: var(--muted-deep); }
+.rowIcon[data-status="cancelling"] { color: var(--warn); }
+
+/*
+ * 글자 겹침의 자리 (오너 관측 2026-08-25 — "Agentlas One" 과 "실행함" 이 같은 자리에
+ * 포개져 "A실행함s" 처럼 보였다).
+ *
+ * strong 이 flex: 0 0 auto 라 절대 줄지 않는데 부모엔 overflow 가드가 없었다. 이름이
+ * 칸보다 길면 strong 이 컨테이너 밖으로 새어 나가 옆 그리드 칸(요약·시간)의 글자 위에
+ * 그대로 겹쳐 그려진다 — 잘리는 게 아니라 포개진다. 줄어들 수 있게 하고(0 1 auto),
+ * 못 줄면 말줄임으로 끝내고, 부모가 새는 것을 막는다.
+ */
+.rowCopy {
+  min-width: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+  overflow: hidden;
+}
+
+.rowCopy strong {
+  min-width: 0;
+  flex: 0 1 auto;
+  overflow: hidden;
+  color: var(--activity-ink);
+  font-size: 12px;
+  font-weight: 620;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rowCopy span {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--activity-muted);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.row small {
+  color: var(--activity-faint);
+  font-size: 10px;
+  white-space: nowrap;
+}
+
+.liveDot {
+  width: 5px;
+  height: 5px;
+  border-radius: 999px;
+  background: var(--activity-accent);
+  animation: activityBlink 1.1s ease-in-out infinite;
+}
+
+.rowDetails pre {
+  max-height: 190px;
+  margin: 8px 0 14px;
+  overflow: auto;
+  padding: 14px 18px;
+  border: 1px solid var(--paper-3);
+  border-radius: 11px;
+  background: var(--paper-2);
+  color: var(--muted-deep);
+  font: 10px/1.7 ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.artifactRail {
+  position: absolute;
+  z-index: 35;
+  top: 80px;
+  right: 20px;
+  bottom: 20px;
+  width: 324px;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--paper-3);
+  border-radius: 28px;
+  background: var(--paper);
+  box-shadow: 0 8px 24px rgba(24, 29, 32, .06);
+  overflow: hidden;
+}
+
+/* Left-edge grip: invisible until hover, wide enough to grab. */
+.artifactResizeHandle {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  /* Keep the complete hit target inside the rounded rail. The previous half-
+     outside handle was clipped by the rail's overflow and left only a few
+     unreliable pixels for the pointer. */
+  left: 0;
+  width: 12px;
+  padding: 0;
+  border: 0;
+  cursor: col-resize;
+  border-radius: 28px 0 0 28px;
+  background: transparent;
+  touch-action: none;
+  user-select: none;
+  -webkit-app-region: no-drag;
+  z-index: 60;
+}
+.artifactResizeHandle::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 3px;
+  width: 3px;
+  height: 44px;
+  transform: translateY(-50%);
+  border-radius: 999px;
+  background: var(--paper-edge-strong);
+  opacity: 0;
+  transition: opacity 120ms ease;
+}
+.artifactResizeHandle:hover::after,
+.artifactResizeHandle:focus-visible::after,
+.artifactRail[data-resizing="true"] .artifactResizeHandle::after { opacity: 1; }
+.artifactResizeHandle:focus-visible { outline: none; }
+.artifactResizeHandle:focus-visible::after { box-shadow: 0 0 0 3px rgba(96, 122, 54, 0.22); }
+.artifactRail[data-resizing="true"] { user-select: none; }
+.artifactRail[data-collapse-ready="true"] {
+  border-left-color: var(--ink-soft);
+  box-shadow: inset 3px 0 0 var(--ink-soft);
+}
+
+.artifactTabs {
+  min-height: 44px;
+  display: flex;
+  align-items: stretch;
+  gap: 8px;
+  padding: 8px 12px 0;
+  border-bottom: 1px solid var(--paper-3);
+}
+.artifactTabList {
+  min-width: 0;
+  flex: 1 1 auto;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  /* 좁아지면 탭 글자가 "결/과", "브라/우저" 로 쪼개져 읽을 수 없었다.
+     탭은 줄바꿈하지 않고, 모자라면 탭 줄이 가로로 밀린다. */
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.artifactTabList::-webkit-scrollbar { display: none; }
+
+.artifactTabList button {
+  white-space: nowrap;
+  flex: 0 0 auto;
+}
+.artifactHeaderActions {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: flex-start;
+  gap: 2px;
+}
+.artifactHeaderActions button {
+  width: 38px;
+  height: 38px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--muted-deep);
+  cursor: pointer;
+}
+.artifactHeaderActions button:hover,
+.artifactHeaderActions button:focus-visible { background: var(--paper-3); color: var(--ink-soft); outline: none; }
+
+/*
+ * 탭은 균등 분할이 아니라 제 글자 폭만큼만 차지한다. flex: 1 1 0 이던 동안
+ * 탭이 늘어날수록 서로를 눌러 "결/과", "브라/우저" 로 쪼개졌다(실측).
+ */
+.artifactTabs button[role="tab"] {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  height: 28px;
+  padding: 0 4px 0 8px;
+  border: 0;
+  background: transparent;
+  color: var(--muted-deep);
+  font: inherit;
+  font-size: 12.5px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.artifactTab[data-active="true"] button[role="tab"] { color: var(--ink); font-weight: 650; }
+.artifactTabs button:focus-visible { outline: 2px solid var(--ok-soft); outline-offset: -2px; }
+
+.artifactList {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: grid;
+  align-content: start;
+  gap: 0;
+  padding: 10px 20px 20px;
+  overflow-y: auto;
+}
+
+/*
+ * 결과 뷰는 한 덩어리가 칸을 꽉 채운다. 기본 그리드는 align-content:start + auto 행이라
+ * 내용이 제 높이로만 서고 남는 자리를 아무 행도 먹지 않는다.
+ */
+.artifactRail[data-rail-view="result"] .artifactList {
+  padding: 0;
+  grid-template-rows: minmax(0, 1fr);
+  align-content: stretch;
+}
+
+/*
+ * 라이브 화면(브라우저·앱)은 [미리보기 | 분할선 | 아래 섹션] 을 세로로 쌓고,
+ * 그 합이 항상 패널 높이와 같아야 한다.
+ *
+ * 실측 2026-08-25 (창 1446×871, 레일 548×871, 목록 547×824):
+ *   grid-template-rows: 447px 123px  → 행 합 570px
+ *   align-content: start             → 남는 254px 을 아무 행도 안 먹음
+ *   scrollHeight(824) == clientHeight(824)  → 넘치는 게 아니라 "남는" 것
+ *   빈 띠 한가운데 elementFromPoint == 컨테이너 자신 (자식 없는 순수 여백)
+ * 세로 flex 로 바꾸면 남는 높이가 반드시 어느 칸엔가 배정되므로 이 빈 띠가 생길 수 없다.
+ * (아래 여백은 라이브 화면에서만 빼고 접이식 섹션엔 되돌린다 — 글자가 벽에 붙던 것.)
+ */
+.artifactRail[data-rail-view="browser"] .artifactList,
+.artifactRail[data-rail-view="app"] .artifactList {
+  display: flex;
+  flex-direction: column;
+  padding: 0;
+  overflow: hidden;
+}
+
+/* 미리보기 칸: 기본은 남는 높이를 전부 먹고, 사용자가 분할선을 끌면 그 높이로 고정된다. */
+.livePane {
+  position: relative;
+  min-height: 0;
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.livePane > * { min-height: 0; flex: 1 1 auto; }
+
+/* 분할선 아래 칸: 기본은 제 높이, 미리보기가 고정되면 나머지를 먹고 스스로 스크롤한다. */
+.liveBelow {
+  min-height: 0;
+  flex: 0 0 auto;
+  max-height: 55%;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.artifactList[data-preview-fixed="true"] > .livePane {
+  flex: 0 0 auto;
+  height: var(--one-preview-height, 420px);
+}
+.artifactList[data-preview-fixed="true"] > .liveBelow {
+  flex: 1 1 auto;
+  max-height: none;
+}
+
+.artifactRail[data-rail-view="browser"] .liveBelow > .artifactSection,
+.artifactRail[data-rail-view="app"] .liveBelow > .artifactSection {
+  padding: 0 20px;
+}
+
+.artifactRail[data-rail-view="browser"] .liveBelow > .artifactSection:last-child,
+.artifactRail[data-rail-view="app"] .liveBelow > .artifactSection:last-child {
+  padding-bottom: 16px;
+}
+
+/*
+ * 미리보기 ↔ 아래 섹션 분할선 (오너 요구 2026-08-25).
+ * 어포던스·키보드·저장 계약은 기록 패널 높이 드래그(.artifactHistoryResizeHandle)와 동형.
+ */
+.previewSplitHandle {
+  position: relative;
+  flex: 0 0 11px;
+  cursor: row-resize;
+  border-top: 1px solid var(--paper-3);
+  border-bottom: 1px solid var(--paper-3);
+  background: var(--paper);
+  touch-action: none;
+}
+.previewSplitHandle::after {
+  position: absolute;
+  top: 4px;
+  left: 50%;
+  width: 42px;
+  height: 3px;
+  transform: translateX(-50%);
+  border-radius: 999px;
+  background: var(--paper-edge-strong);
+  opacity: .55;
+  content: "";
+}
+.previewSplitHandle:hover::after,
+.previewSplitHandle:focus-visible::after,
+.previewSplitHandle[data-resizing="true"]::after { opacity: 1; background: var(--muted-deep); }
+.previewSplitHandle:focus-visible { outline: 2px solid rgba(96, 122, 54, .35); outline-offset: -2px; }
+
+.appPreviewView {
+  min-width: 0;
+  min-height: 100%;
+  height: 100%;
+  overflow: auto;
+  background: var(--design-bg, var(--paper));
+}
+
+.appPreviewView > section {
+  margin: 0;
+  min-height: 100%;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+}
+
+.resultView {
+  min-width: 0;
+  min-height: 100%;
+  padding: 18px 22px 28px;
+  background: var(--paper);
+}
+
+.resultView > :first-child { margin-top: 0; }
+.artifactBackButton {
+  min-height: 32px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0 0 12px;
+  padding: 0 9px;
+  border: 1px solid var(--paper-edge);
+  border-radius: 8px;
+  background: var(--paper);
+  color: var(--muted-deep);
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+.artifactBackButton:hover, .artifactBackButton:focus-visible { border-color: var(--muted); color: var(--ink); outline: none; }
+
+.artifactContentStack {
+  min-height: 0;
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.artifactHistoryResizeHandle {
+  position: relative;
+  flex: 0 0 10px;
+  cursor: row-resize;
+  border-top: 1px solid var(--paper-3);
+  background: var(--paper);
+  touch-action: none;
+}
+.artifactHistoryResizeHandle::after {
+  position: absolute;
+  top: 3px;
+  left: 50%;
+  width: 42px;
+  height: 3px;
+  transform: translateX(-50%);
+  border-radius: 999px;
+  background: var(--paper-edge-strong);
+  opacity: .55;
+  content: "";
+}
+.artifactHistoryResizeHandle:hover::after,
+.artifactHistoryResizeHandle:focus-visible::after,
+.artifactHistoryResizeHandle[data-resizing="true"]::after { opacity: 1; }
+.artifactHistoryResizeHandle:focus-visible { outline: 2px solid rgba(96, 122, 54, .35); outline-offset: -2px; }
+.artifactHistoryPane { min-height: 0; flex: 0 0 auto; overflow: hidden; background: var(--paper); }
+
+.artifactEmpty {
+  min-height: 38px;
+  margin: 0;
+  display: flex;
+  align-items: center;
+  padding: 0 2px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+a.artifactRuntimeRow {
+  color: inherit;
+  text-decoration: none;
+}
+
+a.artifactRuntimeRow:hover,
+a.artifactRuntimeRow:focus-visible {
+  color: var(--ink);
+  text-decoration: underline;
+  outline: none;
+}
+
+.artifactSection {
+  display: grid;
+  border-bottom: 1px solid var(--paper-3);
+}
+
+.artifactSection:last-child { border-bottom: 0; }
+.artifactSectionToggle {
+  width: 100%;
+  min-height: 56px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto 16px;
+  align-items: center;
+  gap: 8px;
+  padding: 0 2px;
+  border: 0;
+  background: transparent;
+  color: var(--muted-deep);
+  font: inherit;
+  font-size: 15px;
+  text-align: left;
+  cursor: pointer;
+}
+.artifactSectionToggle:hover,
+.artifactSectionToggle:focus-visible { color: var(--ink); outline: none; }
+.artifactSectionToggle:focus-visible { box-shadow: inset 0 0 0 2px var(--paper-edge-strong); border-radius: 8px; }
+.artifactSectionToggle > strong { color: var(--muted-deep); font-size: 13px; font-weight: 540; }
+.artifactSectionChevron {
+  display: grid;
+  place-items: center;
+  color: var(--muted-deep);
+  transition: transform 140ms ease;
+}
+.artifactSectionToggle[aria-expanded="true"] .artifactSectionChevron { transform: rotate(180deg); }
+.artifactSectionBody { display: grid; gap: 8px; padding: 0 0 16px; }
+.artifactRuntimeRow {
+  min-height: 35px;
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 7px;
+  color: var(--ink-soft);
+  font-size: 15px;
+}
+.artifactRuntimeRow span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.artifactRuntimeRow small { color: var(--accent); font-size: 10px; }
+
+.artifactSubrail {
+  display: grid;
+  gap: 8px;
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid var(--paper-3);
+}
+.artifactSubrail > div { display: grid; gap: 2px; padding: 8px 2px; }
+.artifactSubrail strong { color: var(--ink-soft); font-size: 12px; }
+.artifactSubrail span { color: var(--muted-deep); font-size: 11px; }
+
+.artifactPreviewCard {
+  min-width: 0;
+  display: grid;
+  overflow: hidden;
+  border: 1px solid var(--paper-edge);
+  border-radius: 13px;
+  background: var(--paper);
+}
+
+.artifactVisual {
+  min-width: 0;
+  min-height: 118px;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  padding: 0;
+  border: 0;
+  border-bottom: 1px solid var(--paper-3);
+  background: var(--paper-2);
+}
+
+button.artifactVisual { cursor: pointer; }
+.artifactVisual img, .artifactVisual video { width: 100%; max-height: 230px; display: block; object-fit: contain; background: var(--paper-2); }
+.artifactAudio { min-height: 72px; padding: 0 12px; }
+.artifactAudio audio { width: 100%; }
+.artifactFileFallback { min-height: 58px; display: grid; place-items: center; border-bottom: 1px solid var(--paper-3); background: var(--paper-2); color: var(--muted-deep); }
+.artifactFileFallback[data-loading="true"] { color: var(--muted-deep); animation: artifactPreviewPulse 1.1s ease-in-out infinite; }
+.artifactPreviewCopy { min-width: 0; min-height: 56px; display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 10px; padding: 8px 10px 8px 12px; }
+.artifactPreviewCopy > span { min-width: 0; display: grid; gap: 3px; }
+.artifactPreviewCopy strong, .artifactPreviewCopy small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.artifactPreviewCopy strong { color: var(--ink); font-size: 11px; }
+.artifactPreviewCopy small { color: var(--muted-deep); font-size: 9px; }
+.artifactPreviewCopy button { min-height: 32px; padding: 0 10px; border: 1px solid var(--paper-edge-strong); border-radius: 8px; background: var(--paper); color: var(--ink-soft); font: inherit; font-size: 10px; font-weight: 650; cursor: pointer; }
+.artifactPreviewCopy button:hover, .artifactPreviewCopy button:focus-visible { border-color: var(--muted); background: var(--paper-3); outline: none; }
+
+/*
+ * 세로 flex 여야 툴바(탭·주소창·안내)가 제 높이를 갖고 화면 칸이 나머지를 전부 먹는다.
+ * grid(암시 auto 행)였을 때는 화면 칸이 제 콘텐츠 높이로만 서서 아래가 비었다.
+ */
+.browserLive {
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  margin: 0;
+  border: 0;
+  border-radius: 0;
+  background: var(--paper);
+  box-shadow: 0 1px 2px rgba(20, 24, 28, .025);
+}
+.browserLive > .browserTabBar,
+.browserLive > .browserNavigationBar,
+.browserLive > .browserActionNotice,
+.browserLive > .browserGoneNotice { flex: 0 0 auto; }
+
+.browserActionNotice {
+  padding: 7px 12px;
+  border-bottom: 1px solid var(--paper-3);
+  background: var(--paper-2);
+  color: var(--ok);
+  font-size: 10px;
+  line-height: 1.4;
+}
+.browserActionNotice[data-tone="error"] { background: var(--danger-soft); color: var(--danger); }
+
+/*
+ * "미리보기 임시 서버가 정리되었습니다" 안내.
+ * 이 클래스는 TSX 가 참조하는데 정의가 없었다 — CSS 모듈이라 className 이 undefined 로
+ * 나가 스타일이 통째로 0이었고, 제목·본문·버튼이 한 줄로 뭉쳐 렌더됐다(오너 관측 2026-08-25).
+ */
+.browserGoneNotice {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--paper-3);
+  background: var(--warn-soft);
+}
+.browserGoneNotice > span {
+  min-width: 0;
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.browserGoneNotice strong {
+  color: var(--warn);
+  font-size: 11.5px;
+  font-weight: 650;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+.browserGoneNotice small {
+  color: var(--muted-deep);
+  font-size: 10.5px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+.browserGoneNotice > button {
+  min-height: 28px;
+  flex: 0 0 auto;
+  max-width: 100%;
+  padding: 0 10px;
+  border: 1px solid var(--warn-soft);
+  border-radius: 8px;
+  background: var(--paper);
+  color: var(--warn);
+  font: inherit;
+  font-size: 10.5px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
+}
+.browserGoneNotice > button:hover,
+.browserGoneNotice > button:focus-visible { border-color: var(--warn-soft); background: var(--warn-soft); outline: none; }
+.browserTabBar {
+  min-width: 0;
+  min-height: 46px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px 5px;
+  border-bottom: 1px solid var(--paper-3);
+  background: var(--paper-2);
+}
+.browserContextLabel {
+  min-width: 90px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--muted-deep);
+  font-size: 10px;
+  white-space: nowrap;
+}
+.browserTabs {
+  min-width: 0;
+  flex: 1 1 auto;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.browserTabs::-webkit-scrollbar { display: none; }
+.browserTab {
+  min-width: 112px;
+  max-width: 210px;
+  min-height: 34px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 6px;
+  padding: 0 5px 0 0;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--muted-deep);
+}
+.browserTab[data-selected="true"] {
+  border-color: var(--paper-3);
+  background: var(--paper);
+  color: var(--ink);
+  box-shadow: 0 1px 2px rgba(22, 27, 31, .04);
+}
+.browserTabSelect {
+  min-width: 0;
+  min-height: 32px;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 6px;
+  padding: 0 5px 0 10px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 10px;
+  cursor: pointer;
+}
+.browserTabSelect > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.browserTabSelect:focus-visible { outline: none; }
+.browserTabClose {
+  width: 20px;
+  height: 20px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted-deep);
+  cursor: pointer;
+}
+.browserTabClose:hover, .browserTabClose:focus-visible { background: var(--paper-3); color: var(--ink-soft); outline: none; }
+.browserNewTab,
+.browserNavigationBar > button,
+.browserMenuAnchor > button {
+  width: 30px;
+  height: 30px;
+  flex: 0 0 30px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--muted-deep);
+  cursor: pointer;
+}
+.browserNewTab:hover,
+.browserNewTab:focus-visible,
+.browserNavigationBar > button:hover,
+.browserNavigationBar > button:focus-visible,
+.browserMenuAnchor > button:hover,
+.browserMenuAnchor > button:focus-visible { background: var(--paper-3); color: var(--ink); outline: none; }
+.browserNavigationBar > button:disabled { color: var(--white-soft); cursor: default; }
+.browserNavigationBar > button:disabled:hover { background: transparent; }
+.browserLiveBadge {
+  min-height: 21px;
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 4px;
+  padding: 0 7px;
+  border: 1px solid var(--ok-soft);
+  border-radius: 999px;
+  background: var(--paper-2);
+  color: var(--ok);
+  font-size: 8px;
+  font-weight: 760;
+  letter-spacing: .04em;
+}
+.browserLiveBadge i { width: 5px; height: 5px; border-radius: 50%; background: var(--ok); box-shadow: 0 0 0 3px rgba(43, 154, 91, .09); }
+.browserNavigationBar {
+  min-width: 0;
+  min-height: 44px;
+  /* 다섯 칸 고정 격자였다. 새 탭·LIVE 가 주소줄로 오면서 자식이 늘자
+     다음 줄로 감싸 줄 높이가 44 -> 78px 이 됐다. 개수에 안 매이게 한다. */
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  padding: 6px 9px;
+  border-bottom: 1px solid var(--paper-3);
+  background: var(--paper);
+}
+
+.browserNavigationBar > button,
+.browserNavigationBar > span,
+.browserNavigationBar > div {
+  flex: 0 0 auto;
+}
+
+.browserNavigationBar > .browserAddressForm {
+  flex: 1 1 auto;
+}
+.browserAddressForm {
+  min-width: 0;
+  min-height: 32px;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 7px;
+  padding: 0 10px;
+  border: 1px solid transparent;
+  border-radius: 9px;
+  background: var(--paper-2);
+  color: var(--muted-deep);
+}
+.browserAddressForm:focus-within { border-color: var(--paper-edge-strong); background: var(--paper); box-shadow: 0 0 0 2px rgba(50, 55, 59, .06); }
+.browserAddressForm input {
+  min-width: 0;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  font-size: 10px;
+  text-align: center;
+}
+.browserAddressForm input::placeholder { color: var(--muted-deep); }
+.browserMenuAnchor { position: relative; display: grid; place-items: center; }
+.browserMenuAnchor > button svg { transform: rotate(90deg); }
+.browserMenu {
+  position: absolute;
+  z-index: 8;
+  top: 35px;
+  right: 0;
+  width: 190px;
+  display: grid;
+  gap: 2px;
+  padding: 6px;
+  border: 1px solid var(--paper-edge);
+  border-radius: 12px;
+  background: var(--paper);
+  box-shadow: 0 12px 32px rgba(20, 25, 29, .14);
+}
+.browserMenu > span { height: 1px; margin: 3px 4px; background: var(--paper-3); }
+.browserMenu button {
+  min-height: 34px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  padding: 0 9px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--ink-soft);
+  font: inherit;
+  font-size: 10px;
+  text-align: left;
+  cursor: pointer;
+}
+.browserMenu button:hover, .browserMenu button:focus-visible, .browserMenu button[data-selected="true"] { background: var(--paper-3); outline: none; }
+.browserMenu button[data-selected="true"] { color: var(--ink); font-weight: 700; }
+.browserMenu button:disabled { color: var(--muted); cursor: default; }
+.browserMenu small { color: var(--muted-deep); font-size: 8px; font-weight: 500; }
+/*
+ * 화면 칸은 남는 높이를 전부 먹는다. 스트리밍 스크린샷은 naturalSize 1280×800 이라
+ * 폭이 정해지면 높이가 종횡비로만 결정된다(547 ÷ 1.6 = 342px 실측) — 예전처럼 칸이
+ * 콘텐츠 높이로 서면 그 아래가 통째로 빈 공간이 됐다. 칸을 채우고 화면을 가운데 두면
+ * 남는 자리는 브라우저 배경(회색)이 되고, 높이는 분할선으로 사용자가 정한다.
+ */
+.browserViewport { min-height: 0; flex: 1 1 auto; display: grid; place-items: center; overflow: auto; background: var(--paper-3); }
+.browserStreamInput { width: 100%; max-height: none; position: relative; overflow: hidden; cursor: default; touch-action: none; outline: none; user-select: none; }
+.browserStreamInput:focus-within { box-shadow: inset 0 0 0 2px rgba(42, 105, 75, .45); }
+.browserStreamInput img { width: 100%; max-height: none; display: block; object-fit: contain; pointer-events: none; }
+.browserInputCapture { position: absolute; width: 1px; height: 1px; left: 50%; bottom: 0; padding: 0; border: 0; opacity: 0; resize: none; pointer-events: none; }
+.browserViewport[data-mode="phone"] { padding: 14px; background: var(--paper-3); }
+.browserViewport[data-mode="phone"] .browserStreamInput { width: min(220px, 74%); max-height: none; border: 6px solid var(--black); border-radius: 24px; background: var(--paper); box-shadow: 0 6px 18px rgba(33, 38, 35, .16); }
+.browserViewport[data-mode="phone"] .browserStreamInput img { width: 100%; max-height: none; aspect-ratio: 390 / 844; object-fit: cover; object-position: top; }
+/*
+ * 정리된 서버 대신 디스크의 산출물을 여는 칸. 이 클래스도 정의가 없어서 iframe 이
+ * 기본 크기(300×150)로 서 있었다 — browserGoneNotice 와 같은 계열의 미정의 클래스.
+ */
+.browserFilePreview { min-height: 0; flex: 1 1 auto; display: grid; overflow: auto; background: var(--paper-3); }
+.browserFilePreview > iframe { width: 100%; height: 100%; min-height: 0; border: 0; background: var(--paper); }
+.browserFilePreview[data-mode="phone"] { place-items: center; padding: 14px; background: var(--paper-3); }
+.browserFilePreview[data-mode="phone"] > iframe { width: min(220px, 74%); height: min(100%, 476px); border: 6px solid var(--black); border-radius: 24px; }
+
+.browserEmpty { min-height: 0; flex: 1 1 auto; display: grid; place-items: center; align-content: center; gap: 8px; padding: 28px; color: var(--muted-deep); text-align: center; }
+.browserEmpty > button {
+  min-height: 30px;
+  margin-top: 2px;
+  padding: 0 12px;
+  border: 1px solid var(--paper-edge-strong);
+  border-radius: 8px;
+  background: var(--paper);
+  color: var(--ink-soft);
+  font: inherit;
+  font-size: 10.5px;
+  font-weight: 600;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.browserEmpty > button:hover, .browserEmpty > button:focus-visible { border-color: var(--muted); background: var(--paper-3); outline: none; }
+.browserEmpty strong { color: var(--ink-soft); font-size: 13px; }
+.browserEmpty small { max-width: 290px; color: var(--muted-deep); font-size: 10px; line-height: 1.55; }
+
+@keyframes artifactPreviewPulse { 0%, 100% { opacity: .45; } 50% { opacity: 1; } }
+
+.artifact {
+  min-width: 0;
+  min-height: 58px;
+  display: grid;
+  grid-template-columns: 44px minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+  padding: 7px 8px;
+  border: 0;
+  border-radius: 9px;
+  background: transparent;
+  color: var(--ink-soft);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.artifact:hover,
+.artifact:focus-visible { background: var(--paper-2); outline: 2px solid transparent; }
+
+.artifactPreview,
+.artifactFileIcon {
+  width: 44px;
+  height: 44px;
+  border-radius: 7px;
+  background: var(--paper-3);
+}
+
+.artifactPreview { object-fit: cover; }
+.artifactFileIcon { display: grid; place-items: center; color: var(--muted-deep); }
+.artifact > span:last-child { min-width: 0; display: grid; gap: 3px; }
+.artifact strong { overflow: hidden; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.artifact small { display: inline-flex; align-items: center; gap: 4px; color: var(--muted-deep); font-size: 9px; }
+
+@keyframes activityPulse {
+  70%, 100% { box-shadow: 0 0 0 7px transparent; }
+}
+
+@keyframes activityBlink {
+  0%, 100% { opacity: .35; }
+  50% { opacity: 1; }
+}
+
+@media (max-width: 700px) {
+  .header { grid-template-columns: 10px auto minmax(0, 1fr) 14px; }
+  .count { display: none; }
+  .rows { padding-left: 10px; }
+  .rowCopy { display: grid; gap: 1px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pulse[data-active="true"],
+  .liveDot { animation: none; }
+  .chevron { transition: none; }
+}
+.srOnly {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* ── 탭: 고정 목록이 아니라 열린 것만 (오너 지시 2026-08-24) ───────────── */
+.artifactTab {
+  flex: 0 0 auto;
+  white-space: nowrap;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 0 2px 0 0;
+  border-radius: 8px;
+}
+
+.artifactTab[data-active="true"] {
+  background: var(--paper-3);
+  box-shadow: inset 0 0 0 1px var(--paper-3);
+}
+
+.artifactTabClose {
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--muted-deep);
+  cursor: pointer;
+  opacity: 0;
+}
+
+.artifactTab:hover .artifactTabClose,
+.artifactTab[data-active="true"] .artifactTabClose { opacity: 1; }
+
+.artifactTabClose:hover { background: var(--paper-3); color: var(--ink); }
+
+.artifactAddWrap { position: relative; display: inline-flex; flex: 0 0 auto; }
+
+/* + 는 탭 바로 뒤에 붙는다 — 오른쪽 끝에 두면 어느 줄에 속하는지 모른다. */
+.artifactAddWrap > button {
+  width: 26px;
+  height: 26px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--muted-deep);
+  cursor: pointer;
+}
+
+.artifactAddWrap > button:hover { background: var(--paper-3); color: var(--ink); }
+
+.artifactAddMenu {
+  position: absolute;
+  z-index: 40;
+  top: calc(100% + 6px);
+  right: 0;
+  min-width: 156px;
+  display: grid;
+  gap: 1px;
+  padding: 6px;
+  border: 1px solid var(--paper-edge);
+  border-radius: 12px;
+  background: var(--paper);
+  box-shadow: 0 12px 30px rgba(24, 29, 32, .12);
+}
+
+.artifactAddMenu > button {
+  min-height: 32px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--ink);
+  font-size: 12.5px;
+  text-align: left;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.artifactAddMenu > button:hover:not(:disabled) { background: var(--paper-2); }
+.artifactAddMenu > button:disabled { color: var(--muted); cursor: default; }
+
+/* 아무 탭도 없을 때 — 빈 채로 두지 않고 무엇을 열 수 있는지 보여준다. */
+.artifactEmptyStage {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 24px 20px;
+  text-align: center;
+}
+
+.artifactEmptyTitle {
+  margin: 0;
+  font-size: 13.5px;
+  font-weight: 650;
+  color: var(--ink-soft);
+}
+
+.artifactEmptyNote {
+  margin: 0 0 6px;
+  max-width: 30ch;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--muted-deep);
+}
+
+.artifactEmptyList {
+  display: grid;
+  gap: 4px;
+  width: min(220px, 100%);
+}
+
+.artifactEmptyList > button {
+  min-height: 32px;
+  padding: 0 12px;
+  border: 1px solid var(--paper-edge);
+  border-radius: 9px;
+  background: var(--paper);
+  color: var(--ink-soft);
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.artifactEmptyList > button:hover { background: var(--paper-2); color: var(--ink); }
+
+/* ===========================================================================
+ * 모션 — 결과 패널 폭 / 미리보기 분할선 / 기록 높이 / 손잡이
+ *
+ * 토큰(--one-motion-*, --one-ease-*)의 정의는 OneShell.module.css 맨 끝
+ * "모션 시스템" 절 한 곳에 있다. 여기서는 쓰기만 한다.
+ *
+ * 드래그 중에는 html[data-one-resizing="true"] 가 그 토큰들을 0ms 로 눌러
+ * 폭·높이가 손가락을 그대로 따라온다. 표식을 지우는 순간부터 다시 흐르므로
+ * 놓을 때의 되돌림·키보드(←/→, ↑/↓, Home/End)·더블클릭 되돌리기·
+ * 프로그램적 변경(브라우저/앱 탭이 열리며 560px 로 넓어지는 자리)만 흐른다.
+ * =========================================================================== */
+
+/* 폭이 흐르면 안쪽 내용도 함께 다시 잡힌다 — 레퍼런스에서 패널이 좁아질 때
+   포트 목록이 새 폭으로 다시 배치되던 그 움직임(f16→f17). */
+.artifactRail {
+  transition:
+    width var(--one-motion-panel, 200ms) var(--one-ease-panel, ease),
+    box-shadow var(--one-motion-panel, 200ms) var(--one-ease-panel, ease),
+    border-radius var(--one-motion-panel, 200ms) var(--one-ease-panel, ease),
+    border-color var(--one-motion-fast, 120ms) linear;
+  animation: oneRailEnter var(--one-motion-panel, 200ms) var(--one-ease-panel, ease) both;
+}
+
+/* 끄는 동안에만 승격한다. 항상 걸어 두면 이 패널이 영구히 별도 레이어로 남아
+   비용만 내고 얻는 게 없다. */
+.artifactRail[data-resizing="true"] {
+  will-change: width;
+  transition: none;
+  animation: none;
+  --one-motion-panel: 0ms;
+}
+
+/* 손잡이는 다가가면 배어 나온다 — 항상 떠 있지 않다(레퍼런스 f14 엔 없고
+   f15/f16 에서 나타난다). 커지는 폭까지 같이 흐르게 해 딸깍거리지 않게. */
+.artifactResizeHandle::after {
+  transition:
+    opacity var(--one-motion-fast, 120ms) linear,
+    width var(--one-motion-fast, 120ms) var(--one-ease-panel, ease),
+    background var(--one-motion-fast, 120ms) linear;
+}
+
+.artifactResizeHandle:hover::after,
+.artifactResizeHandle:focus-visible::after,
+.artifactRail[data-resizing="true"] .artifactResizeHandle::after {
+  width: 4px;
+  background: var(--muted);
+}
+
+/* 가로 손잡이 둘(미리보기 분할선·기록 높이)은 전환이 아예 없어 딱 바뀌었다. */
+.previewSplitHandle::after,
+.artifactHistoryResizeHandle::after {
+  transition:
+    opacity var(--one-motion-fast, 120ms) linear,
+    background var(--one-motion-fast, 120ms) linear;
+}
+
+/* 높이는 인라인 값으로 들어온다(--one-preview-height / style.height).
+   드래그 중엔 위 스위치가 0ms 로 눌러 손가락을 따라가고, 더블클릭으로
+   되돌릴 때·키보드로 옮길 때만 흐른다. */
+.artifactList[data-preview-fixed="true"] > .livePane {
+  transition: height var(--one-motion-panel, 200ms) var(--one-ease-panel, ease);
+}
+
+.artifactHistoryPane {
+  transition: height var(--one-motion-panel, 200ms) var(--one-ease-panel, ease);
+}
+
+@keyframes oneRailEnter {
+  from { opacity: 0; transform: translateX(10px); }
+  to { opacity: 1; transform: none; }
+}
+
+/* The output rail is the surface itself. Results stay separated by whitespace
+   and light rules; nested cards no longer read as picture frames. */
+.artifactRail {
+  border: 0;
+  border-left: 1px solid var(--paper-3);
+  /* Keep native guest surfaces and tab buttons outside the resize hit target. */
+  padding-left: 12px;
+  box-sizing: border-box;
+  border-radius: 0;
+  box-shadow: none;
+}
+.artifactRail[data-collapse-ready="true"] { box-shadow: none; }
+.artifactResizeHandle { border-radius: 0; }
+.artifactPreviewCard {
+  overflow: visible;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+.artifactVisual {
+  min-height: 0;
+  overflow: visible;
+  border-bottom: 0;
+  background: transparent;
+}
+.artifactVisual > * { width: 100%; }
+.artifactVisual img,
+.artifactVisual video {
+  max-height: none;
+  background: transparent;
+}
+.artifactAudio { min-height: 0; padding: 0; }
+.artifactFileFallback {
+  border-bottom: 0;
+  background: transparent;
+}
+.artifactPreviewCopy {
+  padding-right: 0;
+  padding-left: 0;
+  border-top: 1px solid var(--paper-3);
+}
+
+/* Work mounts the canonical One output rail inside its own shell. Keep the
+   rail in the shell's layout on desktop so the transcript and composer shrink
+   with it; the default artifact rail position is an overlay for surfaces that
+   do not own a grid track. The 20px trailing gutter matches the desktop Work
+   window's existing output inset. */
+.taskCockpitShell[data-output-flow="true"] {
+  display: grid !important;
+  grid-template-columns: minmax(0, 1fr) calc(var(--task-cockpit-output-width, 392px) + 20px);
+}
+
+.taskCockpitShell[data-output-flow="true"] > :global(.task-cockpit-main) {
+  grid-column: 1;
+  min-width: 0;
+}
+
+.taskCockpitShell[data-output-flow="true"] > [data-one-runtime-artifacts="true"] {
+  position: relative !important;
+  inset: auto !important;
+  grid-column: 2;
+  width: var(--task-cockpit-output-width, 392px) !important;
+  height: 100%;
+  min-width: 0;
+  margin-right: 20px;
+  border-radius: 0;
+  border-top: 0;
+  border-right: 0;
+  border-bottom: 0;
+  box-shadow: none;
+}
+
+@media (max-width: 760px) {
+  .taskCockpitShell[data-output-flow="true"] {
+    display: flex !important;
+  }
+
+  .taskCockpitShell[data-output-flow="true"] > [data-one-runtime-artifacts="true"] {
+    position: absolute !important;
+    top: 80px !important;
+    right: 20px !important;
+    bottom: 20px !important;
+    inset-inline-start: auto !important;
+    width: min(var(--task-cockpit-output-width, 392px), calc(100% - 56px)) !important;
+    height: auto;
+    margin-right: 0;
+    border-left: 1px solid var(--paper-3);
+    box-shadow: -16px 0 36px rgba(24, 29, 32, .09);
+  }
+}
+.appPreviewView,
+.appPreviewView > section,
+.browserLive { border: 0; border-radius: 0; box-shadow: none; }
+
+/* Long report tables/code scroll inside their block, never widen the grid
+   track and clip every heading and paragraph at the panel boundary. */
+.artifactRail[data-rail-view="worker"] .artifactList {
+  grid-template-columns: minmax(0, 1fr);
+}
+.workerPanel { display: flex; flex-direction: column; min-height: 0; min-width: 0; max-width: 100%; width: 100%; }
+.workerPanelHeader { display: flex; align-items: center; gap: 10px; padding: 15px 18px; border-bottom: 1px solid var(--paper-edge); position: sticky; top: 0; background: var(--paper); z-index: 1; }
+.workerPanelHeader strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; font-weight: 600; }
+.workerPanelHeader button { display: inline-flex; align-items: center; justify-content: center; border: 0; background: transparent; color: var(--ink-soft); padding: 5px; border-radius: 6px; cursor: pointer; }
+.workerPanelHeader button:hover { background: var(--paper-2); }
+.workerPanelFeed { padding: 12px 18px 28px; min-width: 0; }
+.workerFeedItem { margin: 10px 0; min-width: 0; }
+.workerReport { min-width: 0; max-width: 100%; padding: 14px 0; font-size: 13px; line-height: 1.7; overflow-wrap: anywhere; }
+.workerReport small, .workerPanelEmpty { color: var(--muted-deep); font-size: 11px; }
+.workerReport > div { margin-top: 7px; }
+.workerOriginal { margin: 4px 0 10px 23px; font-size: 11px; color: var(--muted-deep); }
+.workerOriginal summary { cursor: pointer; padding: 4px 0; }
+.workerOriginal pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 320px; overflow: auto; padding: 10px; border-radius: 7px; background: var(--paper-2); color: var(--ink); font-size: 11px; line-height: 1.55; }
+
+/* Browser pages share the same header strip as files, tools and subagents. */
+.browserTabHost { display:contents; }
+.browserPane { display:flex; flex:1; min-height:0; flex-direction:column; }
+.browserPane[hidden] { display:none; }

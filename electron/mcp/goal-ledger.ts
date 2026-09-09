@@ -13,6 +13,7 @@ import {
   transitionLongRun,
   tryCompleteVerifiedLongRun,
 } from "../store/long-runs";
+import { goalScopeCriterion } from "../../shared/goal-scope";
 
 export interface GoalLedgerDecision {
   continue: boolean;
@@ -103,7 +104,7 @@ export async function getGoalLedgerGoal(
   }
 }
 
-export function deriveGoalAcceptanceCriteria(objective: string, locale: "ko" | "en"): string[] {
+export function deriveGoalAcceptanceCriteria(objective: string, locale: "ko" | "en", permission?: "read" | "write" | "full"): string[] {
   const normalized = objective.replace(/\s+/g, " ").trim().slice(0, 500);
   const requestedOutcome = locale === "ko"
     ? `요청 결과가 실제 대상 표면에서 확인 가능하게 완성되어야 합니다: ${normalized}`
@@ -118,19 +119,29 @@ export function deriveGoalAcceptanceCriteria(objective: string, locale: "ko" | "
   return locale === "ko"
     ? [
         requestedOutcome,
-        "선언된 작업 폴더 밖의 파일을 만들거나 고치지 않고, 부여된 권한 안에서만 실행해야 합니다."
-        + " 폴더와 권한은 실행 영수증에 있으며, 폴더 밖 쓰기 증거가 없으면 이 기준은 충족입니다.",
+        goalScopeCriterion({ permission, originalRequest: objective, locale: "ko" }),
         "변경한 경로의 관련 테스트·타입 검사·빌드가 통과하고 기존 핵심 흐름에 회귀가 없어야 합니다.",
-        "완료 주장은 소스가 아니라 실제 앱·런타임·산출물 중 해당되는 최종 표면에서 검증되어야 합니다.",
-        "각 성공 기준에는 재현 가능한 증거가 있어야 하며, 확인하지 못한 항목은 완료로 처리하지 않습니다.",
+        "사용자가 앱이나 상호작용 UI의 생성·변경·전달 또는 실제 화면 QA를 요청한 경우에만 실제 앱을 실행하고"
+        + " 브라우저·시뮬레이터·네이티브 런타임에서 핵심 사용자 흐름을 조작해야 합니다. 실행·화면·조작·결과의"
+        + " 도구 기록이나 캡처를 남깁니다. 소스·빌드·정적 분석·단위/위젯 테스트·모델의 보고만으로는 충족되지 않습니다."
+        + " 실패를 고치고 다시 검증합니다. 도구만 사용하는 런타임 관찰 요청에는 앱 실행·화면 QA를 요구하지 않으며,"
+        + " 요청한 작업은 호스트 도구 영수증으로 증명합니다. 다른 산출물은 전달할 실제 형식에서 확인합니다."
+        + " 환경이나 접근 권한이 없으면 미충족이며 기존 권한 안에서만 실행합니다.",
+        "각 성공 기준에는 재현 가능한 증거가 있어야 하며, 도구 위임 관찰 요청에는 성공한 호스트 도구 영수증과"
+        + " 위임을 요청한 경우 host-owned 실행 영수증이 필요합니다. 작업자·모델 보고만으로는 완료하지 않습니다.",
       ]
     : [
         requestedOutcome,
-        "No file outside the run's declared working folder was created or modified, and the run stayed within its granted"
-        + " permission. Both are in the run receipt; if the evidence shows no out-of-folder writes, this criterion is met.",
+        goalScopeCriterion({ permission, originalRequest: objective, locale: "en" }),
         "Relevant tests, type checks, and builds for changed paths must pass without regressing the core flow.",
-        "Completion must be verified on the applicable final app, runtime, or artifact surface rather than inferred from source alone.",
-        "Every acceptance criterion needs reproducible evidence; unverified items must not be reported as complete.",
+        "Only when the request asks to create, change, deliver, or perform actual screen QA of an app or interactive UI, launch the actual"
+        + " app and exercise core user flows in a browser, simulator, or native runtime. Preserve tool evidence or captures of launch,"
+        + " rendered screens, interactions, and outcomes. Source, build, static analysis, unit/widget tests, or a completion report alone"
+        + " do not pass. Fix failures and repeat. A tool-only runtime or observation request does not require app launch or screen QA; its"
+        + " requested operation must instead be proved by host receipts. For other outputs inspect the delivered format. Missing runtime/access"
+        + " remains unmet; use only existing permissions.",
+        "Every acceptance criterion needs reproducible evidence; for a delegated tool-only observation request, a successful host tool receipt"
+        + " and a host-owned delegation execution receipt when delegation was requested are required. Worker or model prose alone is not evidence.",
       ];
 }
 

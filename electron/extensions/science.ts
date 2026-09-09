@@ -5,6 +5,7 @@ import path from "node:path";
 import { createReadStream } from "node:fs";
 import { createGunzip } from "node:zlib";
 import { app, net } from "electron";
+import { userDataPath } from "../runtime-paths";
 import type {
   ProductExtensionInstallReceipt,
   ProductExtensionStatus,
@@ -23,8 +24,8 @@ import {
 import { ProductExtensionInstaller } from "./installer";
 import { downloadAndInstallSciencePackage, type SciencePackageArchiveSpec } from "./downloader";
 import { fetchScienceReleaseCatalog } from "./science-catalog";
-import { ScienceRendererRegistry } from "../science/renderer-registry";
-import type { ScienceRendererBinding, ScienceRendererExecutorBinding } from "../../shared/science-renderer-runtime";
+import { ScienceRendererRegistry } from "agentlas-science";
+import type { ScienceRendererBinding, ScienceRendererExecutorBinding } from "agentlas-science/dist/contracts/science-renderer-runtime";
 
 export const SCIENCE_EXTENSION_ID = "agentlas-science";
 
@@ -360,7 +361,14 @@ interface ScienceSuiteActivation {
 }
 
 function remoteCatalogInstallEnabled(): boolean {
-  return app.isPackaged || (!app.isPackaged && process.env.AGENTLAS_SCIENCE_REMOTE_INSTALL_QA === "1");
+  if (app.isPackaged) return true;
+  const override = process.env.AGENTLAS_SCIENCE_REMOTE_INSTALL_QA;
+  if (override === "1") return true;
+  if (override === "0") return false;
+  // A normal development launch installs the same signed catalog as Desktop.
+  // Explicit local packages and loopback fixtures keep their isolated QA path.
+  return !qaRemoteSourceEnabled()
+    && !SCIENCE_SUITE_SPECS.some((spec) => process.env[spec.sourceEnv]?.trim());
 }
 
 async function catalogSuite(): Promise<{
@@ -573,7 +581,7 @@ function installer(): ProductExtensionInstaller {
   if (cachedInstaller) return cachedInstaller;
   cachedInstaller = new ProductExtensionInstaller({
     rootDir: scienceExtensionRootDir(),
-    dataRootDir: path.join(app.getPath("userData"), "extensions"),
+    dataRootDir: userDataPath("extensions"),
     desktopVersion: app.getVersion(),
     trustedPublicKeys: trustedPublicKeys(),
   });

@@ -1,6 +1,12 @@
 import fs from "node:fs";
 import { createHash } from "node:crypto";
-import { resolveMcpNeeds, type McpNeedCandidate, type ResolvedMcpNeeds } from "./need-resolver";
+import {
+  resolveMcpNeeds,
+  type McpGoalNeedContext,
+  type McpNeedCandidate,
+  type McpRuntimeCapabilities,
+  type ResolvedMcpNeeds,
+} from "./need-resolver";
 import os from "node:os";
 import path from "node:path";
 import { supersededByLivePeer } from "../plugins/builtin";
@@ -21,6 +27,23 @@ import type {
   MarketplaceListing,
   McpToolCatalogEntry,
 } from "../../shared/types";
+
+/** Main-owned binding; never populated from renderer input or model text. */
+export interface ActiveGoalToolScope {
+  goalId: string;
+  revision: number;
+  permission: "read" | "write" | "full";
+  /** Host-read contract fields from the same active revision. */
+  objective?: string;
+  acceptanceCriteria?: readonly string[];
+}
+
+export interface GoalToolSelectionReceipt {
+  goalId: string;
+  revision: number;
+  scopeHash: string;
+  selectedIds: string[];
+}
 
 export interface AutoSelectedMcpTool {
   id: string;
@@ -50,6 +73,10 @@ export interface HubPluginCandidate {
 }
 
 export interface AutoSelectedMcpContext {
+  /** Main-only scope for a provided-credentials retry in this invocation. */
+  goalSelectionScope?: Omit<GoalToolSelectionReceipt, "selectedIds">;
+  /** Main-only dispatch guard; never serialized into a selection receipt. */
+  goalSelectionIsCurrent?: () => boolean;
   /** Main-computed host binding after exact product-name and judgment rules. */
   effectiveToolMode: AutomationToolMode;
   tools: AutoSelectedMcpTool[];
@@ -86,7 +113,7 @@ export interface AutoSelectMcpDependencies {
   listInstalledServers: () => InstalledMcpServer[];
   installFromCatalog: (catalogId: string) => InstalledMcpServer;
   readEnvVar: (key: string) => Promise<string | null>;
-  testServerConnection: (server: InstalledMcpServer) => Promise<{
+  testServerConnection: (server: InstalledMcpServer, signal?: AbortSignal) => Promise<{
     connected: boolean;
     missingEnv: string[];
   }>;
@@ -94,6 +121,8 @@ export interface AutoSelectMcpDependencies {
   resolveNeeds: (input: {
     task: string;
     candidates: McpNeedCandidate[];
+    goal?: McpGoalNeedContext;
+    runtimeCapabilities?: McpRuntimeCapabilities;
     signal?: AbortSignal;
     timeoutMs?: number;
   }) => Promise<ResolvedMcpNeeds>;
@@ -151,10 +180,12 @@ const DEFAULT_AUTO_SELECT_DEPS: AutoSelectMcpDependencies = {
   // The browser host may need to open Chrome and attach over CDP on its first
   // run. Three seconds was shorter than a warm local probe and made clean
   // installs look unavailable before the bundled host could answer tools/list.
-  testServerConnection: (server) => testServerConnection(server, {
-    timeoutMs: server.catalogId === "agentlas-browser" || server.catalogId === "playwright"
-      ? 20_000
-      : 3_000,
+  testServerConnection: (server, signal) => testServerConnection(server, {
+    signal,
+    // A missing uv runtime is provisioned inside this same cancellable deadline.
+    timeoutMs: server.command === "uvx" || server.command === "uv"
+      ? 45_000
+      : server.catalogId === "agentlas-browser" || server.catalogId === "playwright" ? 20_000 : 3_000,
   }),
   resolveNeeds: resolveMcpNeeds,
 };
@@ -281,6 +312,9 @@ const selectionMemo = new Map<string, SelectionMemoEntry>();
  */
 const STICKY_SELECTION_TTL_MS = 30 * 60_000;
 const stickySelectionMemo = new Map<string, SelectionMemoEntry>();
+// Process-local selection hints, not grants or a durable checkpoint. A Goal retains
+// only exact IDs; current configuration, secrets and connection are checked each turn.
+const goalSelectionMemo = new Map<string, { scopeKey: string; selectedIds: string[] }>();
 /** key = `${structuralKey}\u0000${serverId}` → 마지막 접속 성공 시각 */
 const probeMemo = new Map<string, number>();
 
@@ -356,12 +390,21 @@ export async function autoSelectMcpTools(input: {
   systemPrompt: string;
   agentName: string;
   workingFolder?: string | null;
+  /** Capabilities proven by Main for this exact invocation. Missing means unknown. */
+  runtimeCapabilities?: McpRuntimeCapabilities;
   toolMode?: AutomationToolMode;
   hubMode?: AutomationHubMode;
   /** Abort the optional tool-need judgment when the parent invocation stops. */
   signal?: AbortSignal;
   /** 같은 채팅의 후속 턴을 알아보기 위한 대화 식별자. 없으면 재사용하지 않는다. */
   conversationId?: string | null;
+  /** Main re-reads the active durable binding before reusing a selection. */
+  resolveActiveGoalScope?: () => ActiveGoalToolScope | null;
+  /** Host ledger adapters return only exact IDs, never cached connection states. */
+  readGoalSelection?: (scope: Omit<GoalToolSelectionReceipt, "selectedIds">) => string[];
+  writeGoalSelection?: (receipt: GoalToolSelectionReceipt) => void;
+  /** Supplied only by the host credential gate after its typed provided outcome. */
+  credentialRetry?: GoalToolSelectionReceipt;
   /** 자격 증명 입력 직후의 재선택 — 메모를 무시하고 처음부터 다시 고른다. */
   bypassSelectionMemo?: boolean;
   /** One Team per-member tool policy. Omitted means the normal automatic mode. */
@@ -402,19 +445,53 @@ export async function autoSelectMcpTools(input: {
       installedServers: initialInstalledServers,
     });
   }
-  const installedFingerprint = shortHash(
-    initialInstalledServers
-      .map((server) => `${server.id}|${server.catalogId ?? ""}|${server.enabled ? 1 : 0}`)
-      .sort()
-      .join("\n"),
-  );
+  const activeGoalScope = input.resolveActiveGoalScope?.() ?? null;
+  const runtimeCapabilities: McpRuntimeCapabilities = {
+    nativeBrowser: input.runtimeCapabilities?.nativeBrowser ?? "unknown",
+    nativeWebSearch: input.runtimeCapabilities?.nativeWebSearch ?? "unknown",
+  };
+  const registryFingerprint = (servers: InstalledMcpServer[]): string => createHash("sha256").update(servers
+    .map((server) => JSON.stringify([server.id, server.catalogId, server.enabled, server.configurationValid !== false,
+      server.transport, server.command, server.args, server.url, server.envKeys, server.installedAt]))
+    .sort().join("\n")).digest("hex");
+  const installedFingerprint = registryFingerprint(initialInstalledServers);
+  let expectedInstalledFingerprint = installedFingerprint;
   if (input.bypassSelectionMemo) invalidateMcpSelectionMemo();
   const conversationId = typeof input.conversationId === "string" ? input.conversationId.trim() : "";
-  const structuralKey = conversationId
-    ? [conversationId, input.toolMode ?? "auto", input.hubMode ?? "auto", installedFingerprint].join("\u0000")
+  const structuralKeyFor = (fingerprint: string): string => conversationId
+    ? [conversationId, input.toolMode ?? "auto", input.hubMode ?? "auto", runtimeCapabilities.nativeBrowser,
+      fingerprint, [...(input.requiredToolCatalogIds ?? [])].sort().join(",")].join("\u0000")
     : "";
+  const structuralKey = structuralKeyFor(installedFingerprint);
+  const goalScopeKeyFor = (fingerprint: string): string => activeGoalScope && structuralKey
+    ? JSON.stringify([structuralKeyFor(fingerprint), activeGoalScope, input.workingFolder ?? ""])
+    : "";
+  const goalScopeKey = goalScopeKeyFor(installedFingerprint);
+  const previousGoalSelection = conversationId ? goalSelectionMemo.get(conversationId) : undefined;
+  if (previousGoalSelection?.scopeKey !== goalScopeKey && conversationId) goalSelectionMemo.delete(conversationId);
+  const receiptScope = activeGoalScope && goalScopeKey ? {
+    goalId: activeGoalScope.goalId,
+    revision: activeGoalScope.revision,
+    scopeHash: createHash("sha256").update(goalScopeKey).digest("hex"),
+  } : null;
+  let priorSelectedIds: string[] = previousGoalSelection?.scopeKey === goalScopeKey
+    ? previousGoalSelection.selectedIds : [];
+  if (receiptScope && input.readGoalSelection) {
+    // A ledger read failure cannot fall back to older in-memory authority.
+    try { priorSelectedIds = input.readGoalSelection(receiptScope); } catch { priorSelectedIds = []; }
+  }
+  const retainedIds = new Set(priorSelectedIds);
+  const retry = input.credentialRetry;
+  if (input.bypassSelectionMemo && receiptScope && retry?.goalId === receiptScope.goalId
+    && retry.revision === receiptScope.revision && retry.scopeHash === receiptScope.scopeHash) {
+    for (const id of retry.selectedIds) retainedIds.add(id);
+  }
+  const goalBindingStillCurrent = (): boolean => Boolean(activeGoalScope && !input.signal?.aborted
+    && JSON.stringify(input.resolveActiveGoalScope?.() ?? null) === JSON.stringify(activeGoalScope));
+  const goalScopeStillCurrent = (): boolean => goalBindingStillCurrent()
+    && registryFingerprint(deps.listInstalledServers()) === expectedInstalledFingerprint;
   const memoKey = structuralKey ? `${structuralKey}\u0000${shortHash(taskText)}` : "";
-  if (memoKey) {
+  if (memoKey && !activeGoalScope) {
     const hit = selectionMemo.get(memoKey);
     if (hit && Date.now() - hit.at < SELECTION_MEMO_TTL_MS) return cloneContext(hit.context);
     if (hit) selectionMemo.delete(memoKey);
@@ -503,6 +580,9 @@ export async function autoSelectMcpTools(input: {
   // need a credential, so this can never produce a key prompt on its own.
   for (const server of initialInstalledServers) {
     if (!server.catalogId || !server.enabled) continue;
+    if (server.catalogId === "brave-search"
+      && runtimeCapabilities.nativeWebSearch === "available"
+      && !(input.requiredToolCatalogIds ?? []).includes("brave-search")) continue;
     // `local-only` is an execution boundary, not merely a catalog filter. The
     // Network resolver starts the federated Workforce runtime and was being
     // re-attached as an installed convenience pin even after Hub routing had
@@ -525,6 +605,13 @@ export async function autoSelectMcpTools(input: {
   const localCandidates: McpNeedCandidate[] = MCP_TOOL_CATALOG.filter((entry) => {
     if (pinnedReasons.has(entry.id) || blockedByHostBinding(entry.id)) return false;
     if (entry.id === "lazyweb") return false;
+    // Codex/Claude/Antigravity already expose a native web-search tool. Keep
+    // Brave available only when the user explicitly pins that exact MCP; an
+    // optional catalog judge must never turn an ordinary research prompt into
+    // a blocking API-key sheet when the active runtime can search itself.
+    if (entry.id === "brave-search"
+      && runtimeCapabilities.nativeWebSearch === "available"
+      && !(input.requiredToolCatalogIds ?? []).includes("brave-search")) return false;
     if (entry.id === "hephaestus-network") return hubAllowed;
     return true;
   }).map((entry) => ({
@@ -543,10 +630,24 @@ export async function autoSelectMcpTools(input: {
     origin: "hub" as const,
   }));
 
+  // Offer one optional Browser surface. A vanilla custom Playwright launcher
+  // otherwise wins the same need judgment and opens a second, unlinked page.
+  // Exact assignments and configured servers retain their original identity.
+  const requiredServerIds = new Set(input.requiredToolCatalogIds ?? []);
+  const canonicalBrowserOffered = localCandidates.some((candidate) => candidate.id === "agentlas-browser")
+    || pinnedReasons.has("agentlas-browser");
+  const canonicalBrowserAvailable = canonicalBrowserOffered && initialInstalledServers.some((server) =>
+    server.catalogId === "agentlas-browser" && server.enabled && server.configurationValid !== false,
+  );
+  const optionalBrowserDuplicates = new Set(initialInstalledServers
+    .filter((server) => canonicalBrowserAvailable && !server.catalogId && !requiredServerIds.has(server.id)
+      && isKeylessPlaywrightMcpDuplicate(server))
+    .map((server) => server.id));
+
   // User-registered custom servers are inventory too, so an unconfigured one can be named by
   // the judge instead of prompting for its key on every unrelated run.
   const customCandidates: McpNeedCandidate[] = initialInstalledServers
-    .filter((server) => !server.catalogId)
+    .filter((server) => !server.catalogId && !optionalBrowserDuplicates.has(server.id))
     .map((server) => ({
       id: server.id,
       name: server.nameEn || server.name,
@@ -561,10 +662,20 @@ export async function autoSelectMcpTools(input: {
   const needs = await deps.resolveNeeds({
     task: taskText,
     candidates: needsCandidates,
+    ...(activeGoalScope?.objective && activeGoalScope.acceptanceCriteria ? { goal: {
+      objective: activeGoalScope.objective,
+      acceptanceCriteria: activeGoalScope.acceptanceCriteria,
+    } } : {}),
+    runtimeCapabilities,
     signal: input.signal,
     timeoutMs: 15_000,
   });
   const neededIds = new Set(needs.needed);
+  // Reuse only exact prior choices in the same still-active host scope. Inserting
+  // IDs before normal resolution prevents carrying stale ready/credential states.
+  if (goalScopeStillCurrent()) {
+    for (const id of retainedIds) neededIds.add(id);
+  } else retainedIds.clear();
   if (automaticHostDecision) {
     const choseBrowser = neededIds.has("agentlas-browser");
     const choseComputerUse = neededIds.has("cua-driver");
@@ -586,7 +697,7 @@ export async function autoSelectMcpTools(input: {
   const needsNote = [
     needs.decided
       ? ""
-      : "No connected model was available to decide which optional tools this task needs, so only explicitly configured tools were attached.",
+      : "The optional-tool judgment did not return a selection. Only configured tools and revalidated selections from this active Goal are available.",
     cappedHub > 0 ? `${cappedHub} further Hub plugins were not offered to the selector this run.` : "",
     // 조용히 줄이지 않는다 — 왜 Hub 후보가 없는지 영수증에 남긴다.
     projectScoped && hubAllowed
@@ -642,7 +753,9 @@ export async function autoSelectMcpTools(input: {
       name: entry.nameEn || entry.name,
       reason:
         pinnedReasons.get(entry.id) ??
-        `resident judgment: ${needs.reason || "the task needs this capability"}`,
+        (retainedIds.has(entry.id) && !needs.needed.includes(entry.id)
+          ? "previous selection in this active Goal, revalidated for this run"
+          : `resident judgment: ${needs.reason || "the task needs this capability"}`),
       required,
     };
     const missingEnv = await missingRequiredEnv(entry, deps.readEnvVar);
@@ -650,26 +763,44 @@ export async function autoSelectMcpTools(input: {
 
     let server = deps.listInstalledServers().find((candidate) =>
       candidate.catalogId === entry.id || candidate.id === entry.id);
+    if (!server && retainedIds.has(entry.id) && !needs.needed.includes(entry.id)) {
+      return { ...base, installed: false, missingEnv: [], state: "server-unavailable" };
+    }
     if (!server) {
       try {
         server = deps.installFromCatalog(entry.id);
         installed.add(entry.id);
+        if (activeGoalScope && server) {
+          // This selector may install its fresh choice. Accept only that exact
+          // added row: changes/removals elsewhere still invalidate the binding.
+          const afterInstall = deps.listInstalledServers();
+          const added = afterInstall.filter((candidate) => candidate.id === server!.id);
+          if (added.length === 1 && registryFingerprint(added) === registryFingerprint([server])
+            && registryFingerprint(afterInstall.filter((candidate) => candidate.id !== server!.id)) === expectedInstalledFingerprint) {
+            expectedInstalledFingerprint = registryFingerprint(afterInstall);
+          }
+        }
       } catch {
         return { ...base, installed: false, missingEnv: [], state: "install-failed" };
       }
     }
     if (!server) return { ...base, installed: false, missingEnv: [], state: "server-unavailable" };
-    if (!server.enabled) return { ...base, installed: false, missingEnv: [], state: "disabled" };
+    if (!server.enabled || server.configurationValid === false) return { ...base, installed: false, missingEnv: [], state: "disabled" };
+    if (activeGoalScope) {
+      const missingConfiguredEnv: string[] = [];
+      for (const key of server.envKeys) if (!await deps.readEnvVar(key)) missingConfiguredEnv.push(key);
+      if (missingConfiguredEnv.length) return { ...base, installed: false, missingEnv: missingConfiguredEnv, state: "missing-key" };
+    }
     // 이 대화에서 방금 붙었던 서버는 다시 띄우지 않는다. **성공만** 기억한다.
     const probeKey = structuralKey ? `${structuralKey}\u0000${server.id}` : "";
-    if (probeKey) {
+    if (probeKey && !activeGoalScope) {
       const lastOk = probeMemo.get(probeKey);
       if (lastOk !== undefined && Date.now() - lastOk < SELECTION_MEMO_TTL_MS) {
         return { ...base, installed: true, missingEnv: [], state: "ready" };
       }
     }
     try {
-      const status = await deps.testServerConnection(server);
+      const status = await deps.testServerConnection(server, input.signal);
       if (status.missingEnv.length > 0) {
         return { ...base, installed: false, missingEnv: [...new Set(status.missingEnv)].sort(), state: "missing-key" };
       }
@@ -728,7 +859,9 @@ export async function autoSelectMcpTools(input: {
     || input.requiredToolCatalogIds?.includes("agentlas-browser") === true;
   for (const server of latestInstalledServers) {
     if (server.catalogId) continue;
-    if (canonicalBrowserSelected && isKeylessPlaywrightMcpDuplicate(server)) continue;
+    if (!requiredServerIds.has(server.id)
+      && (canonicalBrowserSelected || optionalBrowserDuplicates.has(server.id))
+      && isKeylessPlaywrightMcpDuplicate(server)) continue;
     if (result.some((tool) => tool.id === server.id)) continue;
     const missingEnv: string[] = [];
     for (const key of server.envKeys) {
@@ -736,10 +869,10 @@ export async function autoSelectMcpTools(input: {
       if (!value) missingEnv.push(key);
     }
     let state: AutoSelectedMcpTool["state"] = missingEnv.length > 0 ? "missing-key" : "ready";
-    if (state === "ready" && !server.enabled) state = "disabled";
+    if (state === "ready" && (!server.enabled || server.configurationValid === false)) state = "disabled";
     if (state === "ready") {
       try {
-        const status = await deps.testServerConnection(server);
+        const status = await deps.testServerConnection(server, input.signal);
         if (status.missingEnv.length > 0) {
           missingEnv.push(...status.missingEnv.filter((key) => !missingEnv.includes(key)));
           state = "missing-key";
@@ -791,7 +924,24 @@ export async function autoSelectMcpTools(input: {
     pendingApprovalTools = [];
   }
 
+  // Connection probes await external work. Close the binding/configuration race
+  // again before any retained-only capability reaches the runtime config.
+  if (retainedIds.size && !goalScopeStillCurrent()) {
+    for (let index = result.length - 1; index >= 0; index -= 1) {
+      if (retainedIds.has(result[index].id) && !needs.needed.includes(result[index].id)) result.splice(index, 1);
+    }
+  }
+  const finalReceiptScope = receiptScope && goalScopeStillCurrent() ? { ...receiptScope,
+    scopeHash: createHash("sha256").update(goalScopeKeyFor(expectedInstalledFingerprint)).digest("hex"),
+  } : null;
+  const dispatchIds = new Set(result.filter((tool) => tool.state === "ready").map((tool) => tool.id));
+  const dispatchFingerprint = (): string => registryFingerprint(deps.listInstalledServers()
+    .filter((server) => dispatchIds.has(server.id) || (server.catalogId && dispatchIds.has(server.catalogId))));
+  const selectedServerFingerprint = dispatchFingerprint();
   const context: AutoSelectedMcpContext = {
+    ...(finalReceiptScope ? { goalSelectionScope: finalReceiptScope } : {}),
+    ...(activeGoalScope ? { goalSelectionIsCurrent: () => Boolean(finalReceiptScope)
+      && goalBindingStillCurrent() && dispatchFingerprint() === selectedServerFingerprint } : {}),
     effectiveToolMode,
     tools: result,
     localInventory,
@@ -805,7 +955,17 @@ export async function autoSelectMcpTools(input: {
     ...(hubInventory.hubPluginError ? { hubPluginError: hubInventory.hubPluginError } : {}),
   };
   // ── sticky 합집합 병합 — 같은 대화의 도구셋은 넓어지기만 한다(캐시 보존) ──
-  if (structuralKey && needs.decided) {
+  if (goalScopeKey && conversationId && goalScopeStillCurrent()) {
+    const selectedIds = context.tools.filter((tool) => neededIds.has(tool.id) && tool.state === "ready").map((tool) => tool.id);
+    const finalGoalScopeKey = goalScopeKeyFor(expectedInstalledFingerprint);
+    memoSet(goalSelectionMemo, conversationId, { scopeKey: finalGoalScopeKey, selectedIds });
+    if (receiptScope && input.writeGoalSelection) {
+      // Persistence is a selection hint, not a prerequisite for this tool run.
+      try { input.writeGoalSelection({ ...receiptScope,
+        scopeHash: createHash("sha256").update(finalGoalScopeKey).digest("hex"), selectedIds }); } catch { /* No durable hint was saved. */ }
+    }
+  }
+  if (!activeGoalScope && structuralKey && needs.decided) {
     const sticky = stickySelectionMemo.get(structuralKey);
     if (sticky && Date.now() - sticky.at <= STICKY_SELECTION_TTL_MS) {
       const freshIds = new Set(context.tools.map((tool) => tool.id));
@@ -817,7 +977,7 @@ export async function autoSelectMcpTools(input: {
     memoSet(stickySelectionMemo, structuralKey, { context: cloneContext(context), at: Date.now() });
   }
   // 모델이 못 닿아 아무것도 못 정한 실행은 기억하지 않는다 — 그 침묵을 다음 턴까지 굳히면 안 된다.
-  if (memoKey && needs.decided) memoSet(selectionMemo, memoKey, { context: cloneContext(context), at: Date.now() });
+  if (!activeGoalScope && memoKey && needs.decided) memoSet(selectionMemo, memoKey, { context: cloneContext(context), at: Date.now() });
   return context;
 }
 

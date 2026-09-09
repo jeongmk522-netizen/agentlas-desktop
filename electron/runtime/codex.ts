@@ -24,6 +24,8 @@ import {
 import { tStatus } from "./status-i18n";
 import { agentRunCwd, detachedSpawnOpts, firstExistingCli, killCliTree, probeCliVersion, spawnCli, trackRunChild, writeStdin } from "./exec";
 import { stageCliImageAttachments } from "./image-attachments";
+import { inferInlineImageMime, parseMcpResult } from "../../shared/mcp-result-rendering";
+import { saveBrowserCaptureArtifact } from "../media/capture-artifacts";
 import {
   defaultCodexModelEffort,
   readCodexModelInventory,
@@ -222,12 +224,47 @@ const CODEX_WORKSPACE_WRITE_CONFIG_ARGS = [
  * 설치된 CLI 로 이 벡터가 아직 통하는지 재는 프로브가 사본이 아니라 이 함수를 부른다
  * (사본은 러너가 바뀌어도 안 바뀌어서, 프로브만 초록인 상태를 만든다).
  */
-export function codexPermissionArgs(permission?: RunnerRequest["permission"]): string[] {
-  return permissionArgs(permission);
+export function codexPermissionArgs(
+  permission?: RunnerRequest["permission"],
+  reviewer?: RunnerRequest["approvalsReviewer"],
+): string[] {
+  return permissionArgs(permission, reviewer);
 }
 
-function permissionArgs(permission?: RunnerRequest["permission"]): string[] {
+/** Resume uses config overrides because `codex exec resume` has no sandbox flag. */
+export function codexResumePermissionArgs(
+  permission?: RunnerRequest["permission"],
+  reviewer?: RunnerRequest["approvalsReviewer"],
+): string[] {
+  return resumePermissionArgs(permission, reviewer);
+}
+
+/**
+ * The non-interactive CLI has a distinct automatic-review switch. An internal
+ * worker may use it only with Main's explicit auto_review reviewer; ordinary
+ * user-reviewed turns must continue to stop at the existing approval surface.
+ * This is separate from the workspace sandbox: a writable worker still keeps
+ * its exact project root and network policy while Codex can approve its
+ * read-only browser navigation request.
+ */
+export function codexApprovalArgs(
+  reviewer?: RunnerRequest["approvalsReviewer"],
+  permission?: RunnerRequest["permission"],
+): string[] {
+  return reviewer === "auto_review" && permission === "write" ? ["--approve-for-me"] : [];
+}
+
+function permissionArgs(
+  permission?: RunnerRequest["permission"],
+  reviewer?: RunnerRequest["approvalsReviewer"],
+): string[] {
   if (permission === "full") {
+    if (reviewer === "auto_review") {
+      // `--approve-for-me` is the CLI's workspace-write-only auto-review
+      // switch. Full access must keep its sandbox while routing approvals to
+      // the same reviewer through the validated config keys.
+      return ["--sandbox", "danger-full-access", "-c", `approval_policy="on-request"`];
+    }
     return ["--dangerously-bypass-approvals-and-sandbox"];
   }
   if (permission === "write") {
@@ -240,14 +277,28 @@ function permissionArgs(permission?: RunnerRequest["permission"]): string[] {
     // their own machine — a network-blind agent is a dead automation, not safety.
     return ["--sandbox", "workspace-write", ...CODEX_WORKSPACE_WRITE_CONFIG_ARGS];
   }
-  // `codex exec`는 비대화형이라 approval loop가 없다 — 승인 플래그를 받지 않는다.
-  // (`--ask-for-approval`은 대화형 `codex` 전용. exec에 넘기면 0.133+에서
-  //  `unexpected argument` 로 exit 2.) read 권한은 도구를 안 쓰는 대화 모드라 read-only.
-  return ["--sandbox", "read-only"];
+  const args = ["--sandbox", "read-only"];
+  if (reviewer === "auto_review") {
+    // `--approve-for-me` is workspace-write-only. Read-only workers still
+    // need Codex's on-request policy so MCP calls can reach the configured
+    // automatic reviewer without changing the filesystem ceiling.
+    args.push("-c", `approval_policy="on-request"`);
+  }
+  return args;
 }
 
-function resumePermissionArgs(permission?: RunnerRequest["permission"]): string[] {
+function resumePermissionArgs(
+  permission?: RunnerRequest["permission"],
+  reviewer?: RunnerRequest["approvalsReviewer"],
+): string[] {
   if (permission === "full") {
+    if (reviewer === "auto_review") {
+      // `exec resume` accepts the same config key but no `--sandbox` option.
+      return [
+        "-c", `sandbox_mode="danger-full-access"`,
+        "-c", `approval_policy="on-request"`,
+      ];
+    }
     return ["--dangerously-bypass-approvals-and-sandbox"];
   }
   // `codex exec resume` has no `--sandbox` flag, but accepts the same validated
@@ -256,7 +307,9 @@ function resumePermissionArgs(permission?: RunnerRequest["permission"]): string[
   if (permission === "write") {
     return ["-c", `sandbox_mode="workspace-write"`, ...CODEX_WORKSPACE_WRITE_CONFIG_ARGS];
   }
-  return ["-c", `sandbox_mode="read-only"`];
+  const args = ["-c", `sandbox_mode="read-only"`];
+  if (reviewer === "auto_review") args.push("-c", `approval_policy="on-request"`);
+  return args;
 }
 
 /**
@@ -512,6 +565,7 @@ function runCodexProcess(
     // so the started and completed notifications update one Activity row.
     const responseTools = new Map<string, { name: string; args?: string }>();
     const settledResponseToolIds = new Set<string>();
+    const itemCapturePaths = new Map<string, string[]>();
     // reasoning 구간/라이브 토큰 추정 상태 — 상태줄 실시간 표시용.
     // 단일 open/close 플래그다(깊이 카운터가 아니다): 이 구간은 진짜 `reasoning`
     // 아이템으로도 열리고, reasoning 아이템을 전혀 내보내지 않는 codex 빌드에서는
@@ -630,7 +684,16 @@ function runCodexProcess(
       }
       if (ev.type === "response_item" && payload?.type === "custom_tool_call_output") {
         const id = nonEmptyText(payload.call_id) ?? nonEmptyText(payload.id);
-        if (id) settleResponseTool(id, outputText(payload.output), payload.status === "failed");
+        if (id) {
+          // Avoid writing a second durable capture if the host replays an
+          // already-settled response item.
+          if (settledResponseToolIds.has(id)) return;
+          const pending = responseTools.get(id);
+          const artifactPaths = payload.status === "failed" || !pending
+            ? []
+            : codexInlineCapturePaths(pending.name, payload.output);
+          settleResponseTool(id, outputText(payload.output), payload.status === "failed", artifactPaths);
+        }
         return;
       }
       if (ev.type === "event_msg" && payload?.type === "patch_apply_end") {
@@ -736,7 +799,19 @@ function runCodexProcess(
         const isError =
           item.error != null ||
           item.status === "failed" ||
+          (item.type === "mcp_tool_call" && codexMcpResultFailed(item.result)) ||
           (typeof item.exit_code === "number" && item.exit_code !== 0);
+        // exec emits native MCP results through item.completed as well as
+        // response_item. Persist images before the UI preview is truncated in
+        // either transport; a replay must reuse the original capture receipt.
+        let artifactPaths: string[] | undefined;
+        if (ev.type === "item.completed" && item.type === "mcp_tool_call" && !isError) {
+          artifactPaths = item.id ? itemCapturePaths.get(item.id) : undefined;
+          if (!artifactPaths) {
+            artifactPaths = codexInlineCapturePaths(name, resultPayload);
+            if (item.id) itemCapturePaths.set(item.id, artifactPaths);
+          }
+        }
         // 도구 이벤트 전에 본문을 플러시 — 렌더러 인터리브 앵커가 최신 좌표를 본다.
         if (text) {
           events.onPartial(text);
@@ -748,6 +823,7 @@ function runCodexProcess(
           resultText,
           item.id,
           isError,
+          artifactPaths,
         );
       } else if (ev.type === "turn.completed") {
         closeThinking();
@@ -873,19 +949,25 @@ function runCodexProcess(
  *
  * ★approvalPolicy: read/write 는 `on-request` 다 — 이것이 이번 작업의 요지다. codex 는
  * 지금까지 헤드리스라 실행 **전에** 물어볼 수 없었고(post-denial 만 가능), 이제 서버가
- * 우리에게 물어본다. full 은 예전 `--dangerously-bypass-approvals-and-sandbox` 와 같게
- * `never` 다 — 사용자가 이미 경계를 내려놓은 모드다.
+ * 우리에게 물어본다. full 은 기본적으로 예전 `--dangerously-bypass-approvals-and-sandbox` 와
+ * 같게 `never` 다. 단, Main이 명시한 `auto_review` reviewer는 MCP 승인 prompt를 Codex의
+ * 내부 위험 검토 경로로 보내야 하므로 `on-request`를 사용한다.
  */
 export function codexThreadPolicy(
   permission: RunnerRequest["permission"],
   cwd = agentRunCwd(),
+  approvalsReviewer: RunnerRequest["approvalsReviewer"] = "user",
 ): {
   sandbox: string;
   approvalPolicy: string;
   sandboxPolicy: Record<string, unknown>;
 } {
   if (permission === "full") {
-    return { sandbox: "danger-full-access", approvalPolicy: "never", sandboxPolicy: { type: "dangerFullAccess" } };
+    return {
+      sandbox: "danger-full-access",
+      approvalPolicy: approvalsReviewer === "auto_review" ? "on-request" : "never",
+      sandboxPolicy: { type: "dangerFullAccess" },
+    };
   }
   if (permission === "write") {
     const writableRoot = path.resolve(cwd);
@@ -909,6 +991,13 @@ export function codexThreadPolicy(
 }
 
 /** 아이템 하나 → 도구 이벤트. 아는 종류만 옮긴다(모르는 것을 도구라고 부르지 않는다). */
+/** MCP transport completion can still carry an explicit tool-level failure. */
+function codexMcpResultFailed(result: unknown): boolean {
+  if (!result || typeof result !== "object" || Array.isArray(result)) return false;
+  const value = result as { isError?: unknown; is_error?: unknown };
+  return value.isError === true || value.is_error === true;
+}
+
 export function codexToolEventFromItem(item: any, completed: boolean): {
   name: string;
   args?: string;
@@ -999,7 +1088,7 @@ export function codexToolEventFromItem(item: any, completed: boolean): {
         name: item.server ? `${item.server}.${item.tool}` : String(item.tool ?? "mcp"),
         args: asText(item.arguments),
         result: completed ? (asText(item.error) ?? asText(item.result) ?? String(item.status ?? "completed")) : undefined,
-        isError: completed && (item.status === "failed" || item.error != null),
+        isError: completed && (item.status === "failed" || item.error != null || codexMcpResultFailed(item.result)),
       };
     case "dynamicToolCall":
       {
@@ -1063,10 +1152,10 @@ async function runCodexResidentTurn(input: {
   const isolateRuntimeSessionOwner = req.runtimeSessionOwnerId != null;
   const cwd = req.cwd ?? agentRunCwd();
   const env = req.env ?? process.env;
-  const policy = codexThreadPolicy(req.permission, cwd);
+  const approvalsReviewer = req.approvalsReviewer ?? "user";
+  const policy = codexThreadPolicy(req.permission, cwd, approvalsReviewer);
   const requestedConfigDigest = inspectCodexWorkforceGrant(req, mcpArgs);
   let workforceObservation: CodexWorkforceObservation | null = null;
-  const approvalsReviewer = req.approvalsReviewer ?? "user";
   const imageDiagnosis = req.untrustedNoTools || req.restrictedReadBoundary || req.judgmentOnly
     ? null
     : await multimodalImageSlotDiagnosis();
@@ -1124,6 +1213,10 @@ async function runCodexResidentTurn(input: {
   const messages = new Map<string, string>();
   const startedTools = new Set<string>();
   const dynamicToolArtifactPaths = new Map<string, string[]>();
+  // Resident app-server MCP completions can be replayed by the session
+  // transport. Keep the capture receipt keyed by the provider item id so the
+  // same inline image is saved and bound at most once per turn.
+  const mcpToolArtifactPaths = new Map<string, string[]>();
   let thinkingOpen = false;
   let thinkingStartedAt = 0;
   let estChars = 0;
@@ -1260,9 +1353,16 @@ async function runCodexResidentTurn(input: {
           closeThinking();
           if (bodyText()) emitPartial(true);
           const itemId = String(item.id ?? "");
-          const artifactPaths = item?.type === "dynamicToolCall"
+          let artifactPaths = item?.type === "dynamicToolCall"
             ? dynamicToolArtifactPaths.get(itemId)
             : tool.artifactPaths;
+          if (item?.type === "mcpToolCall" && !tool.isError) {
+            artifactPaths = mcpToolArtifactPaths.get(itemId);
+            if (!artifactPaths) {
+              artifactPaths = codexInlineCapturePaths(tool.name, item.result);
+              mcpToolArtifactPaths.set(itemId, artifactPaths);
+            }
+          }
           events.onTool?.(
             tool.name,
             tool.args,
@@ -1509,10 +1609,10 @@ async function runCodexResidentTurn(input: {
             {
               threadId: threadToResume,
               ...commonThreadParams,
-              // A caller-owned runtimeSessionId is an explicit resume request;
-              // retain its model override. Stored same-fingerprint continuity
-              // can inherit the thread model, but still verifies the response.
-              ...(req.runtimeSessionId && req.model ? { model: req.model } : {}),
+              // Every explicit model selection must survive stored-thread
+              // recovery too, including a new pool entry after a model switch.
+              // The acknowledgement below still verifies the effective model.
+              ...(req.model ? { model: req.model } : {}),
             },
             { timeoutMs: 120_000, signal: req.signal },
           );
@@ -1763,7 +1863,11 @@ export const runCodex: Runner = async (
   // release-verified switch that removes the collaboration surface, borrowed
   // packages, Agent Apps, and Workforce turns must stop before CLI discovery or
   // process spawn rather than minting a false no-authority receipt.
-  if (req.untrustedNoTools) {
+  // Resident judgment calls are Main-authored, tool-free classification turns.
+  // They do not receive MCP/config grants or a workspace and must be allowed to
+  // use the connected Codex model even though ordinary untrusted Agent App /
+  // Workforce turns remain blocked by the collaboration surface.
+  if (req.untrustedNoTools && !req.judgmentOnly) {
     // 표식을 단다 — 이 거절은 시간이 지나도 풀리지 않는다. codex 만 설치한 사용자는
     // 판정이 필요한 자동화를 하나도 끝낼 수 없으므로, 화면이 "다시 눌러 보세요" 대신
     // "판정할 수 있는 런타임을 하나 연결하세요"라고 말할 수 있어야 한다.
@@ -1806,30 +1910,21 @@ export const runCodex: Runner = async (
     events.onStatus(tStatus(runReq.locale, "callingBackend", { backend: runReq.backendLabel }));
   }
 
-  const permArgs = permissionArgs(runReq.permission);
+  const approvalArgs = codexApprovalArgs(runReq.approvalsReviewer, runReq.permission);
+  // --approve-for-me already selects workspace-write and conflicts with --sandbox.
+  // Keep its network configuration while avoiding the mutually exclusive flag.
+  const permArgs = approvalArgs.length > 0
+    ? [...CODEX_WORKSPACE_WRITE_CONFIG_ARGS]
+    : permissionArgs(runReq.permission, runReq.approvalsReviewer);
   const mcpArgs =
     runReq.mcpCodexConfigArgs && runReq.mcpCodexConfigArgs.length > 0
       ? runReq.mcpCodexConfigArgs
       : [];
-  // Exact Agentlas Browser turns must not inherit provider-global MCP/plugin
-  // configuration (for example a user-level Playwright server that opens its
-  // own Chrome profile). Codex supports this on the one-shot exec surface; its
-  // app-server has no equivalent flag, so isolated turns intentionally bypass
-  // residency and use the exact Main-authored `-c mcp_servers.*` overrides.
-  const isolatedConfigArgs = runReq.isolatedMcpConfig ? ["--ignore-user-config"] : [];
-  // Browser-only turns must not expose Codex's shell/code/native browser tools.
-  // The exact Main-authored MCP overrides below remain available, so the model
-  // can operate the shared Agentlas session without a permission prompt or a
-  // second Playwright/Chrome process.
-  const browserOnlyConfigArgs = runReq.browserOnly
-    ? [
-        "-c", "features.shell_tool=false",
-        "-c", "features.code_mode=false",
-        "-c", "features.browser_use=false",
-        "-c", "features.computer_use=false",
-        "-c", "features.in_app_browser=false",
-      ]
-    : [];
+  // Preserve Codex's own settings, plugins, and native tools while adding the
+  // Agentlas MCP bridge. The CLI/runtime owns its native tool policy; browser
+  // mode is an additional capability, not a reason to turn those tools off.
+  const isolatedConfigArgs: string[] = [];
+  const browserOnlyConfigArgs: string[] = [];
   // 모델/effort를 CLI에 명시 전달 — 예전엔 세션 지문에만 쓰고 인자로는 안 넘겨서, 앱이
   // 뭘 선택했든 기기의 ~/.codex/config.toml(또는 codex 업데이트가 바꾼 내장 기본값)이
   // 이겼다(2026-07-08: 다른 기기에서 지정한 적 없는 Spark 모델로 조용히 실행된 사고).
@@ -1958,9 +2053,10 @@ export const runCodex: Runner = async (
   // RESUME: 새 user 턴만 stdin으로 — 시스템 프롬프트/히스토리는 세션이 이미 갖고 있다.
   // Resume reasserts the same permission boundary as the first turn.
   if (canResume) {
-    const resumePerm = resumePermissionArgs(runReq.permission);
+    const resumePerm = resumePermissionArgs(runReq.permission, runReq.approvalsReviewer);
     const args = [
       "exec",
+      ...approvalArgs,
       "resume",
       ...isolatedConfigArgs,
       ...browserOnlyConfigArgs,
@@ -2035,6 +2131,7 @@ export const runCodex: Runner = async (
   // CREATE: 시스템 프롬프트 + 히스토리 + user를 stdin으로 보내 새 세션을 시드한다.
   const createArgs = [
     "exec",
+    ...approvalArgs,
     ...isolatedConfigArgs,
     ...browserOnlyConfigArgs,
     "--json",
@@ -2085,3 +2182,33 @@ export const runCodex: Runner = async (
     `codex CLI exit ${created.code}${created.stderr ? `\n${created.stderr.slice(0, 500)}` : ""}`,
   );
 };
+
+/**
+ * Preserve inline screenshots from Codex custom-tool results before the UI
+ * preview is truncated. The shared parser validates the MCP envelope and
+ * base64 bounds; this path validates the decoded image signature before using
+ * the existing PNG/JPEG artifact store. Tool prose and paths are never
+ * inspected for this purpose.
+ */
+function codexInlineCapturePaths(toolName: string, output: unknown): string[] {
+  let raw: string;
+  if (typeof output === "string") raw = output;
+  else {
+    try { raw = JSON.stringify(output ?? ""); } catch { return []; }
+  }
+  const images = parseMcpResult(raw, toolName).blocks.filter((block) =>
+    block.kind === "image" && block.source === "inline" && (block.mimeType === "image/png" || block.mimeType === "image/jpeg"),
+  );
+  const paths: string[] = [];
+  for (const image of images.slice(0, 4)) {
+    if (image.kind !== "image") continue;
+    const mimeType = image.mimeType === "image/png" || image.mimeType === "image/jpeg" ? image.mimeType : null;
+    if (!mimeType) continue;
+    const comma = image.src.indexOf(",");
+    const encoded = comma >= 0 ? image.src.slice(comma + 1) : "";
+    if (inferInlineImageMime(encoded) !== mimeType) continue;
+    const filePath = saveBrowserCaptureArtifact(mimeType, encoded);
+    if (filePath) paths.push(filePath);
+  }
+  return paths;
+}

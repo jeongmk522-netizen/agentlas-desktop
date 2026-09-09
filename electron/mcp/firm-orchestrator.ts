@@ -1,3 +1,4 @@
+import { workerCapabilityRunner, WorkerCapabilityError, type PrepareWorkerCapabilities, type WorkerCapabilityInput } from "./worker-capabilities";
 // 멀티 에이전트 firm 오케스트레이터 — 3-tier (CEO → 본부 → 전문가).
 //   PLAN: 리더가 <<Delegate>>로 필요한 하위만 선택 → DELEGATE: 하위 병렬 실행 → SYNTHESIZE.
 //   본부(division)는 지속 세션(숨김 sub-chat, 히스토리·메모리 유지), 전문가는 1회성 worker.
@@ -18,6 +19,7 @@ import type {
   RuntimeStatus,
 } from "../../shared/types";
 import { memoryOwnerAgentId } from "../../shared/memory-ownership";
+import { compileLongRunCheckpoint, type LongRunTaskCheckpoint } from "../../shared/long-run-checkpoint";
 import { runnerFailureFromError, type Runner, type RunnerFailure, type RunnerRequest, type RunnerResult } from "../runtime/runner";
 import type { RuntimeLocale } from "../runtime/status-i18n";
 import {
@@ -139,12 +141,17 @@ function cleanAgentAppControlBlocks(text: string): string {
 const NODE_TIMEOUT_MS = 30 * 60 * 1000;
 
 export interface FirmRunParams {
+  prepareWorkerCapabilities?: PrepareWorkerCapabilities;
+  workerCapabilityTask?: WorkerCapabilityInput["task"];
+  workerCapabilityCeiling?: WorkerCapabilityInput["ceiling"];
   req: McpInvocationRequest;
-  chat: { id: string; projectId: string | null; firmId: string | null };
+  chat: { id: string; projectId: string | null; firmId: string | null; goalId?: string | null };
   org: ResolvedOrg;
   ceoAgent: InstalledAgent;
   /** Conversation turns captured before the current user request was stored. */
   priorHistory?: ChatHistoryEntry[];
+  /** Main-owned durable state, never accepted from the renderer request. */
+  goalCheckpoint?: LongRunTaskCheckpoint;
   active: RuntimeStatus;
   runtimes: RuntimeStatus[];
   picked: { runner: Runner; label: string };
@@ -154,6 +161,10 @@ export interface FirmRunParams {
   mcpConfigPath?: string;
   mcpAllowedTools?: string[];
   mcpCodexConfigArgs?: string[];
+  /** Main-owned MCP inventory isolation; does not remove permitted builtin tools. */
+  isolatedMcpConfig?: true;
+  /** Explicit Main-owned browser-only execution restriction for delegates. */
+  browserOnly?: true;
   /** Main-minted opaque MCP aliases for a one-run Agent App grant. */
   agentAppMcpRuntimeEnv?: NodeJS.ProcessEnv;
   /** Marks the main-owned one-run grant unavailable after a runtime MCP fatal. */
@@ -796,6 +807,25 @@ interface NodeTurn {
   onPartialCheckpoint?: (text: string) => void;
 }
 
+/** Keep the local history available to approval/handoff decisions while the
+ * model continues a durable Goal from host state instead of replaying it.
+ * userPrompt reaches both fresh and resumed native sessions. */
+export function firmRunnerConversation(
+  p: Pick<FirmRunParams, "req" | "chat" | "goalCheckpoint">,
+  turn: Pick<NodeTurn, "history" | "userPrompt">,
+  runtime: Pick<RuntimeStatus, "kind">,
+): Pick<RunnerRequest, "history" | "userPrompt"> {
+  const checkpoint = p.req.agentAppMode ? undefined : p.goalCheckpoint;
+  if (checkpoint && checkpoint.goalId !== p.chat.goalId) {
+    throw new Error("firm_goal_checkpoint_mismatch");
+  }
+  return {
+    history: p.req.agentAppMode || p.chat.goalId ? [] : turn.history,
+    userPrompt: [turn.userPrompt, checkpoint ? compileLongRunCheckpoint(checkpoint, runtime.kind) : ""]
+      .filter(Boolean).join("\n\n"),
+  };
+}
+
 /** 노드 1턴 실행 — 프롬프트 조립(노드 프롬프트 + per-agent 메모리 + 위임/메모리 프로토콜),
  *  러너 실행(속성 태깅 스트림), delegation 파싱 + 메모리 큐레이션. */
 async function runNodeTurn(p: FirmRunParams, turn: NodeTurn): Promise<{
@@ -892,11 +922,13 @@ async function runNodeTurn(p: FirmRunParams, turn: NodeTurn): Promise<{
     systemPrompt += `\n\n## Firm role context\n${node.prompt.trim()}`;
   }
   if (!p.req.agentAppMode && !turn.runtimeToolsDisabled && !controlPlaneTurn) {
+    const memorySignal = turn.signal ?? p.signal;
     try {
-      const mem = buildMemoryContext(memoryReadPath, memoryOwnerId, {
+      const mem = await buildMemoryContext(memoryReadPath, memoryOwnerId, {
         materializeCodeMap: Boolean(activePath),
         taskPrompt: turn.userPrompt,
         projectId: p.chat.projectId ?? null,
+        signal: memorySignal,
       });
       if (mem) systemPrompt += `\n\n${mem}`;
       if (memoryReadPath) {
@@ -908,6 +940,7 @@ async function runNodeTurn(p: FirmRunParams, turn: NodeTurn): Promise<{
     } catch {
       // ignore memory failures
     }
+    if (memorySignal?.aborted) throw new Error("Firm turn cancelled");
   }
   const runtimeChoice = p.req.agentAppMode || oneControllerPreferred
     ? null
@@ -1039,11 +1072,20 @@ async function runNodeTurn(p: FirmRunParams, turn: NodeTurn): Promise<{
     runtimePicked: { runner: Runner; label: string },
   ): Promise<RunnerResult> => {
     try {
-      return await runtimePicked.runner(
+      const capabilityAttemptId = `firm-worker:${node.id}:${randomUUID()}`;
+      const workerRunner = turn.runtimeToolsDisabled || controlPlaneTurn ? runtimePicked.runner
+        : workerCapabilityRunner(p.prepareWorkerCapabilities, {
+          workerId: node.id, attemptId: capabilityAttemptId, agentId: node.agentId ?? undefined, agentName: node.name,
+          task: { ...p.workerCapabilityTask, brief: turn.userPrompt, doneWhen: p.workerCapabilityTask?.doneWhen ?? [] },
+          runtime, ceiling: p.req.agentAppMode ? "agent-app" : p.workerCapabilityCeiling ?? "host",
+        }, runtimePicked.runner, (code) => {
+          tryRecordRunEvent({ runId: p.req.runId ?? p.chat.id, chatId: p.chat.id, agentId: node.id,
+            kind: "worker_capability_preparation", payload: { code, attemptId: capabilityAttemptId } });
+        });
+      return await workerRunner(
         {
           systemPrompt,
-          history: p.req.agentAppMode ? [] : turn.history,
-          userPrompt: turn.userPrompt,
+          ...firmRunnerConversation(p, turn, runtime),
           images: p.req.agentAppMode ? undefined : turn.withImages ? p.req.images : undefined,
           backendLabel: runtimePicked.label,
           model: runtime.model ?? undefined,
@@ -1077,6 +1119,8 @@ async function runNodeTurn(p: FirmRunParams, turn: NodeTurn): Promise<{
           // 값이 바뀌면 세션이 갈리므로 실제로 돈 신원을 그대로 넘긴다.
           agentId: nodeRuntimeId,
           orchestrationAgentId: node.id,
+          isolatedMcpConfig: p.isolatedMcpConfig,
+          browserOnly: turn.runtimeToolsDisabled || controlPlaneTurn ? undefined : p.browserOnly,
           mcpConfigPath: turn.runtimeToolsDisabled || controlPlaneTurn
             ? undefined
             : p.req.agentAppMode
@@ -1133,7 +1177,7 @@ async function runNodeTurn(p: FirmRunParams, turn: NodeTurn): Promise<{
         },
       );
     } catch (error) {
-      if ((turn.signal ?? p.signal)?.aborted) throw error;
+      if (error instanceof WorkerCapabilityError || (turn.signal ?? p.signal)?.aborted) throw error;
       return { text: "", failure: runnerFailureFromError(error, runtime.kind) };
     }
   };
@@ -1265,7 +1309,10 @@ async function runNodeTurn(p: FirmRunParams, turn: NodeTurn): Promise<{
   // per-node 완료 신호 — 이 노드의 한 턴이 끝났다. UI(오케스트레이션 트리)가 이 노드만 ▶→✓ 로 정리한다.
   // 단, plan 턴은 곧 delegate/synthesize가 이어지므로 완료로 보지 않는다 — orchestrator/본부 행이
   // 위임 단계 내내 ▶(실행)으로 유지되어 "끝난 듯 보였다 되돌아오는" 플리커를 막는다.
-  if (phase !== "plan") emit({ kind: "tool-use", done: true });
+  if (phase !== "plan") emit({ kind: "tool-use", done: true,
+    ...(typeof result.observedModel === "string" && /^[A-Za-z0-9][A-Za-z0-9._:/@+-]{0,127}$/.test(result.observedModel)
+      ? { observedModel: result.observedModel } : {}),
+  });
   return { text: display, delegations, synthesisAllocation, evidence: executionEvidence.finalize() };
 }
 

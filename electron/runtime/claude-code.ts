@@ -1,3 +1,4 @@
+import { recordClaudeCapabilityRequest, recordClaudeCapabilityInit } from "./capability-receipt";
 // Claude Code CLI — 감지 + 실호출.
 // 사용자의 Claude Pro/Max 구독으로 돌아간다 (PRD §3.1 6-A).
 //
@@ -171,6 +172,16 @@ export const READ_ONLY_DENIED_TOOLS = ["Write", "Edit", "MultiEdit", "NotebookEd
 //   그리고 이건 벤더 CLI 플래그라 이름도 그 벤더의 것이어야 한다.
 /** write 모드에서 acceptEdits 가 여전히 묻는 내장 도구 — 헤드리스는 답할 수 없으니 미리 허용. */
 export const WRITE_MODE_PRE_ALLOWED_TOOLS = ["Bash", "BashOutput", "KillShell", "WebFetch", "WebSearch"];
+/** Read permits public web retrieval; headless CLI cannot answer its own permission prompt. */
+export function claudeBuiltinPreAllowedTools(
+  permission: RunnerRequest["permission"],
+  opts: { browserOnly?: boolean; untrustedNoTools?: boolean } = {},
+): string[] {
+  if (opts.browserOnly || opts.untrustedNoTools) return [];
+  if (permission === "read") return ["WebFetch", "WebSearch"];
+  return permission === "write" ? [...WRITE_MODE_PRE_ALLOWED_TOOLS] : [];
+}
+
 
 /**
  * 권한 칩 → claude 권한 플래그. **순수 함수다.**
@@ -849,13 +860,12 @@ const runClaudeTurn = async (
   const mcpArgs = agentAppMcpConfigArg && (!runReq.untrustedNoTools || hasExactUntrustedMcpGrant)
     ? ["--mcp-config", agentAppMcpConfigArg]
     : [];
-  // Exact Agentlas Browser intent is an authority binding, not a preference.
-  // Claude's user-level plugins can otherwise reintroduce generic Playwright
-  // beside Main's approval-gated CDP host and silently execute browser_evaluate
-  // without the native sheet. Isolate this turn to the exact Main config.
-  const isolatedMcpArgs = runReq.isolatedMcpConfig || req.permission === "write"
-    ? ["--setting-sources", "", "--strict-mcp-config"]
-    : [];
+  // Keep the user's Claude Code tools and plugins available when Agentlas is
+  // wrapping the CLI. The native runtime owns its own tool policy; Agentlas
+  // must only add its MCP bridge and approval broker. `isolatedMcpConfig` is
+  // retained as metadata for audit/replay, but must not silently erase the
+  // runtime's settings or plugins.
+  const isolatedMcpArgs: string[] = [];
   /*
    * 헤드리스에서 권한 프롬프트로 막히지 않도록 승인된 MCP 툴을 미리 허용한다.
    * ★읽기 실행 포함 — 오너 결정 2026-08-18. 읽기의 경계는 위 READ_ONLY_DENIED_TOOLS
@@ -877,12 +887,15 @@ const runClaudeTurn = async (
    * "파일 편집은 되는데 npm test 만 조용히 안 되는" 실행이 나왔고, 그 뒤에 "다음부터
    * 허용?" 카드가 떴다. 사용자가 write 를 골랐다는 것은 프로젝트 안에서 일하라는 뜻이지
    * 셸을 막으라는 뜻이 아니다. 거부를 사후에 알리는 대신 거부가 생길 이유를 없앤다.
-   * read 는 그대로 도구 자체를 제거하고(위 READ_ONLY_DENIED_TOOLS), 정책 거절은 도구
+   * read 는 파일 변경·셸만 제거하고 웹 조회는 미리 허용한다. 정책 거절은 도구
    * 브로커 PreToolUse 훅이 계속 맡는다 — 허용 깃발은 켜기만 하고 거절은 훅만 한다.
    */
-  const builtinPreAllowed =
-    !runReq.browserOnly && !runReq.untrustedNoTools && req.permission === "write" ? WRITE_MODE_PRE_ALLOWED_TOOLS : [];
+  const builtinPreAllowed = claudeBuiltinPreAllowedTools(req.permission, {
+    browserOnly: runReq.browserOnly, untrustedNoTools: runReq.untrustedNoTools,
+  });
   const preAllowedTools = [...builtinPreAllowed, ...mcpPreAllowed];
+  recordClaudeCapabilityRequest({ permission: req.permission, browserOnly: Boolean(runReq.browserOnly),
+    untrustedNoTools: Boolean(runReq.untrustedNoTools), allowedBuiltins: builtinPreAllowed });
   const allowedToolArgs = preAllowedTools.length > 0 ? ["--allowedTools", preAllowedTools.join(",")] : [];
   // ★C38 — 도구 호출 직전 관문. 실측(2026-08-04, claude 2.1.220): PreToolUse deny가
   // `--permission-mode bypassPermissions`를 이기고 Bash 호출을 실제로 막았다. 허용 깃발
@@ -904,16 +917,10 @@ const runClaudeTurn = async (
         "",
       ]
     : [];
-  const browserOnlyArgs = runReq.browserOnly
-    ? [
-        "--setting-sources", "",
-        "--disable-slash-commands",
-        "--no-chrome",
-        "--no-session-persistence",
-        "--strict-mcp-config",
-        "--tools", "",
-      ]
-    : [];
+  // Browser turns still expose Agentlas' approval-gated MCP bridge, while
+  // Claude Code's own browser, shell, slash commands, and plugins remain
+  // usable. Only the explicit untrustedNoTools path below disables tools.
+  const browserOnlyArgs: string[] = [];
 
   // 시스템 프롬프트(Agentlas 헤더+스킬+프로토콜만 ~24KB)는 argv가 아니라 파일로 전달한다.
   // Windows에서 claude는 `.cmd` 심 → cmd.exe로 실행되고 커맨드라인은 ~8191자 한계라,
@@ -1423,6 +1430,7 @@ const runClaudeTurn = async (
       }
       if (agentAppMcpInitFailed) return;
       const isAgentAppMcpInit = ev.type === "system" && ev.subtype === "init";
+      if (isAgentAppMcpInit) recordClaudeCapabilityInit(ev.tools);
       if (
         hasExactUntrustedMcpGrant &&
         !runReq.agentAppMcpFallbackAttempted &&

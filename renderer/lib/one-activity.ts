@@ -1,4 +1,4 @@
-import type { AgentMessageDirection, McpInvocationEvent, RunEventUi } from "@shared/types";
+import type { AgentMessageDirection, InvocationRunReceipt, McpInvocationEvent, RunEventUi } from "@shared/types";
 import type { OneArtifactBindingRequestV1 } from "@shared/one-artifacts";
 import { classifyToolFailure, isToolFailureCode, type ToolFailureCode } from "@shared/tool-failure";
 
@@ -13,6 +13,7 @@ export type OneHandoffStatus = "running" | "completed" | "failed" | "cancelled";
  * `agentMessage` envelope; it is not a second chat or a free-form transcript.
  */
 export interface OneActivityHandoffMessage {
+  reportAvailable?: boolean;
   id: string;
   direction: AgentMessageDirection;
   fromAgentId: string;
@@ -40,6 +41,9 @@ export interface OneActivityHandoff {
   updatedAt: string;
   delegateObserved: boolean;
   messages: OneActivityHandoffMessage[];
+  /** A worker terminal signal is distinct from an individual tool failure. */
+  workerAgentId?: string;
+  workerTerminalStatus?: "completed" | "failed";
 }
 
 export interface OneActivityTool {
@@ -56,11 +60,19 @@ export interface OneActivityItem {
   kind: OneActivityKind;
   status: OneActivityStatus;
   observedAt: string;
+  /** Latest typed event updating this row, independent of its original start. */
+  updatedAt?: string;
   completedAt?: string;
   durationMs?: number;
   agentName?: string;
   role?: string;
   phase?: "plan" | "delegate" | "synthesize";
+  /** Orchestration node identity; several workers may share one accounting agent. */
+  agentId?: string;
+  model?: string;
+  observedModel?: string;
+  /** True only for an explicit worker terminal envelope, never whole-turn closure. */
+  agentTerminalObserved?: boolean;
   message?: string;
   failureCode?: ToolFailureCode;
   detail?: string;
@@ -115,7 +127,7 @@ export interface OneActivityState {
   cwd?: string;
   /**
    * Model/runtime label the orchestrator run actually executed with, from the
-   * runtime's own `final` event (ledger: mcp_final payload.model). Display =
+   * runtime's own `final` event (ledger: mcp_final payload.observedModel). Display =
    * execution (contract 7-C-8 / C-D-1) — never the settings' current default.
    */
   model?: string;
@@ -257,12 +269,35 @@ function mergeHandoffs(
     if (id && id !== sourceId) targets.add(id);
   }
   const message = event.agentMessage;
+  const messageId = message?.messageId.trim();
+  if (messageId) {
+    const existingMessage = current
+      .flatMap((handoff) => handoff.messages)
+      .find((candidate) => candidate.id === messageId);
+    if (existingMessage && (
+      existingMessage.fromAgentId !== message?.fromAgentId.trim()
+      || existingMessage.toAgentId !== message?.toAgentId.trim()
+    )) {
+      // Message IDs are protocol identities. A replay that reuses one for a
+      // different edge is contradictory evidence; keep the first typed owner
+      // instead of duplicating it or guessing equivalence from message text.
+      return current;
+    }
+  }
   // `agentId` is the orchestration node used by delegateTo; runtimeAgentId is
   // the installed memory/accounting owner. Topology must prefer the former.
   const observedAgentId = nonEmptyAgentId(event.agentId) ?? nonEmptyAgentId(event.runtimeAgentId);
   const observedAgentName = event.agentName?.trim() || undefined;
   const messageTarget = nonEmptyAgentId(message?.toAgentId);
   if (messageTarget && messageTarget !== sourceId) targets.add(messageTarget);
+  if (targets.size === 0 && observedAgentId
+    && (event.done || event.agentLifecycle?.state === "failed" || event.nodeState === "failed")) {
+    for (const edge of current) {
+      if (edge.workerAgentId === observedAgentId) {
+        targets.add(edge.fromAgentId === sourceId ? edge.toAgentId : edge.fromAgentId);
+      }
+    }
+  }
   if (targets.size === 0) {
     if (!observedAgentId || !observedAgentName) return current;
     return current.map((candidate) => ({
@@ -297,24 +332,45 @@ function mergeHandoffs(
             ...(message.usedTools && message.usedTools.length > 0
               ? { usedTools: message.usedTools }
               : {}),
+            reportAvailable: message.reportAvailable === true,
             text: message.text.trim(),
             observedAt,
           } satisfies OneActivityHandoffMessage
         : undefined;
     const messages = existing?.messages ? [...existing.messages] : [];
-    if (matchingMessage && !messages.some((candidate) => candidate.id === matchingMessage.id)) {
-      messages.push(matchingMessage);
+    if (matchingMessage) {
+      const messageIndex = messages.findIndex((candidate) => candidate.id === matchingMessage.id);
+      if (messageIndex >= 0) {
+        // A lifecycle event and the room-delivery event may carry the same
+        // protocol message at different times. Merge typed enrichment such as
+        // replyTo/usedTools while retaining one visible message identity.
+        messages[messageIndex] = { ...messages[messageIndex], ...matchingMessage };
+      } else {
+        messages.push(matchingMessage);
+      }
     }
     const hasDeliveredWorkerMessage = messages.some((candidate) => candidate.direction === "worker-to-orchestrator");
-    const nextStatus: OneHandoffStatus = hasDeliveredWorkerMessage || existing?.status === "completed"
-      ? "completed"
-      : event.tool?.isError
-        ? "failed"
-        : isDelegate
-          ? "running"
-          : event.done === true
-            ? "completed"
-            : existing?.status ?? "running";
+    const workerAgentId = matchingMessage?.direction === "worker-to-orchestrator" ? sourceId
+      : matchingMessage?.direction === "orchestrator-to-worker" ? targetId
+        : existing?.workerAgentId ?? (isDelegate ? targetId : undefined);
+    const workerEvent = workerAgentId === (observedAgentId ?? sourceId);
+    const newWorkerReply = matchingMessage?.direction === "worker-to-orchestrator"
+      && !existing?.messages.some((candidate) => candidate.id === matchingMessage.id);
+    const workerTerminalStatus = workerEvent && (event.agentLifecycle?.state === "failed" || event.nodeState === "failed")
+      ? "failed" as const
+      : workerEvent && (newWorkerReply || event.done && !event.tool?.isError)
+        ? "completed" as const
+        : existing?.workerTerminalStatus;
+    const nextStatus: OneHandoffStatus = workerTerminalStatus
+      ?? (hasDeliveredWorkerMessage || existing?.status === "completed"
+          ? "completed"
+          : event.tool?.isError
+            ? "failed"
+            : isDelegate
+              ? "running"
+              : event.done === true
+                ? "completed"
+                : existing?.status ?? "running");
     const nextHandoff: OneActivityHandoff = {
       id,
       fromAgentId: existing?.fromAgentId ?? sourceId,
@@ -330,6 +386,8 @@ function mergeHandoffs(
       updatedAt: observedAt,
       delegateObserved: Boolean(existing?.delegateObserved || isDelegate),
       messages,
+      ...(workerAgentId ? { workerAgentId } : {}),
+      ...(workerTerminalStatus ? { workerTerminalStatus } : {}),
     };
     next = existing
       ? next.map((candidate) => candidate.id === id ? nextHandoff : candidate)
@@ -418,6 +476,22 @@ export function reduceOneActivity(
   let model = state.model;
   let handoffs = state.handoffs;
   let terminalStatus: OneActivityState["terminalStatus"] = undefined;
+
+  // A node finishing is independent of the envelope kind. Worker completion
+  // often arrives on a tool-use with no tool, before the overall run ends.
+  const topologyAgentId = event.agentId || event.runtimeAgentId;
+  if (event.done && topologyAgentId) {
+    items = items.map((item) => item.kind === "agent" && item.agentId === topologyAgentId
+      && (!event.phase || item.phase === event.phase) ? {
+        ...item,
+        status: event.tool?.isError || event.agentLifecycle?.state === "failed" || event.nodeState === "failed" ? "failed" : "completed",
+        completedAt: observedAt,
+        agentTerminalObserved: true,
+        updatedAt: observedAt,
+        ...(event.observedModel?.trim() ? { observedModel: event.observedModel.trim() } : {}),
+        ...(event.model || event.runtimeSelection?.model ? { model: event.model || event.runtimeSelection?.model } : {}),
+      } : item);
+  }
 
   // Delegation and worker-message envelopes are orthogonal to the event kind
   // (`firm-orchestrator` emits them on tool-use), so project them before the
@@ -523,13 +597,20 @@ export function reduceOneActivity(
       (event.agentId || event.runtimeAgentId || event.agentName)
       && (event.phase !== undefined || (event.tier ?? 1) > 1)
     ) {
-      const agentId = event.runtimeAgentId || event.agentId || event.agentName || `agent-${sequence}`;
-      const id = `agent:${agentId}:${event.phase || "work"}`;
+      const agentId = event.agentId || event.runtimeAgentId;
+      const id = agentId ? `agent:${agentId}:${event.phase || "work"}` : `agent:unattributed:${sequence}`;
+      const existing = items.find((item) => item.id === id);
       items = upsertItem(items, {
         id,
         kind: "agent",
-        status: event.done ? "completed" : "running",
-        observedAt,
+        status: event.nodeState === "failed" || event.agentLifecycle?.state === "failed" ? "failed" : event.done ? "completed" : "running",
+        observedAt: existing?.observedAt || observedAt,
+        ...(agentId ? { agentId } : {}),
+        updatedAt: observedAt,
+        agentTerminalObserved: Boolean(event.done || event.nodeState === "failed" || event.agentLifecycle?.state === "failed"),
+        ...(event.model || event.runtimeSelection?.model ? { model: event.model || event.runtimeSelection?.model } : {}),
+        ...(event.observedModel?.trim() ? { observedModel: event.observedModel.trim() }
+          : existing?.observedModel ? { observedModel: existing.observedModel } : {}),
         ...(event.done ? { completedAt: observedAt } : {}),
         ...(event.agentName?.trim() ? { agentName: event.agentName.trim() } : {}),
         ...(event.role?.trim() ? { role: event.role.trim() } : {}),
@@ -553,14 +634,20 @@ export function reduceOneActivity(
   ) {
     items = closeRunning(items, observedAt, "completed", true);
     activeReasoningId = undefined;
+    const toolActor = event.agentId || event.runtimeAgentId;
+    const matchingIds = event.tool.id ? items.filter((item) => item.kind === "tool"
+      && item.tool?.id === event.tool?.id && (!toolActor || item.agentId === toolActor)) : [];
     const existing = event.tool.id
-      ? items.find((item) => item.id === `tool:${event.tool?.id}`)
+      ? matchingIds.length === 1 ? matchingIds[0] : undefined
       : [...items].reverse().find((item) => (
           item.kind === "tool"
           && item.status === "running"
+          && item.agentId === toolActor
           && item.tool?.name === event.tool?.name
         ));
-    const id = existing?.id || `tool:${event.tool.id || sequence}`;
+    const id = existing?.id || (toolActor
+      ? `tool:${JSON.stringify([toolActor, event.tool.id || sequence])}`
+      : `tool:${event.tool.id || sequence}`);
     const status: OneActivityStatus = event.tool.isError
       ? "failed"
       : event.tool.result !== undefined
@@ -578,8 +665,11 @@ export function reduceOneActivity(
       kind: "tool",
       status,
       observedAt: existing?.observedAt || observedAt,
+      updatedAt: observedAt,
       ...(status !== "running" ? { completedAt: observedAt } : {}),
-      ...(event.agentName?.trim() ? { agentName: event.agentName.trim() } : {}),
+      ...(event.agentId || event.runtimeAgentId ? { agentId: event.agentId || event.runtimeAgentId } : existing?.agentId ? { agentId: existing.agentId } : {}),
+      ...(event.model || event.runtimeSelection?.model ? { model: event.model || event.runtimeSelection?.model } : existing?.model ? { model: existing.model } : {}),
+      ...(event.agentName?.trim() ? { agentName: event.agentName.trim() } : existing?.agentName ? { agentName: existing.agentName } : {}),
       ...(event.role?.trim() ? { role: event.role.trim() } : {}),
       // A completion event often repeats the tool without its arguments. A
       // spread copies `args: undefined` over the start event's real args and
@@ -592,7 +682,8 @@ export function reduceOneActivity(
       } as OneActivityTool,
     });
   } else if (event.kind === "tool-use" && event.activity) {
-    const id = `notice:${event.activity.code}`;
+    const activityActor = event.agentId || event.runtimeAgentId;
+    const id = activityActor ? `notice:${JSON.stringify([activityActor, event.activity.code])}` : `notice:${event.activity.code}`;
     const existing = items.find((item) => item.id === id);
     items = upsertItem(items, {
       id,
@@ -600,6 +691,9 @@ export function reduceOneActivity(
       status: "info",
       observedAt: existing?.observedAt || observedAt,
       activityCode: event.activity.code,
+      updatedAt: observedAt,
+      ...(event.agentId || event.runtimeAgentId ? { agentId: event.agentId || event.runtimeAgentId } : {}),
+      ...(event.agentName?.trim() ? { agentName: event.agentName.trim() } : {}),
       noticeLevel: "info",
     });
   } else if (event.kind === "notice" && event.notice?.message) {
@@ -609,8 +703,14 @@ export function reduceOneActivity(
       status: event.notice.level === "error" ? "failed" : "info",
       observedAt,
       message: event.notice.message,
+      // A runtime accounting identity alone is not a worker node.
+      ...(event.agentId || (event.agentName?.trim() && event.runtimeAgentId)
+        ? { agentId: event.agentId || event.runtimeAgentId } : {}),
       detail: event.notice.details,
       noticeLevel: event.notice.level,
+      ...(event.role?.trim() ? { role: event.role.trim() } : {}),
+      ...(event.phase ? { phase: event.phase } : {}),
+      ...(event.model || event.runtimeSelection?.model ? { model: event.model || event.runtimeSelection?.model } : {}),
       ...(event.notice.display ? { noticeDisplay: event.notice.display } : {}),
       ...(event.notice.i18n?.ko?.trim() && event.notice.i18n?.en?.trim()
         ? { noticeI18n: { ko: event.notice.i18n.ko.trim(), en: event.notice.i18n.en.trim() } }
@@ -686,7 +786,7 @@ export function reduceOneActivity(
     // The orchestrator's own final event names what actually ran this turn.
     // Worker events never reach this branch (they end as tool-use rows), so
     // this is the run-level execution model, not a delegate's (C-D-1).
-    if (typeof event.model === "string" && event.model.trim()) model = event.model.trim();
+    if (typeof event.observedModel === "string" && event.observedModel.trim()) model = event.observedModel.trim();
     terminalStatus = "completed";
   } else if (event.kind === "error") {
     // A run the person stopped ends through the same error channel as a
@@ -761,6 +861,26 @@ function ledgerBoolean(payload: Record<string, unknown>, key: string): boolean |
   return typeof value === "boolean" ? value : undefined;
 }
 
+/** Restore only the existing typed state contract, never status/error prose. */
+function ledgerAgentState(payload: Record<string, unknown>): Pick<McpInvocationEvent, "agentLifecycle" | "nodeState"> {
+  const state = payload.agentProcessState;
+  const reason = payload.agentProcessReason;
+  const nodeState = payload.nodeState;
+  const lifecycle: McpInvocationEvent["agentLifecycle"] = payload.agentProcessSource === "cli-process"
+    && (state === "running" || state === "idle" || state === "closed" || state === "failed")
+    && (reason === "spawned" || reason === "turn-started" || reason === "turn-complete"
+      || reason === "transport-closed" || reason === "process-exit" || reason === "reaped"
+      || reason === "shutdown" || reason === "evicted" || reason === "error")
+    ? { source: "cli-process" as const, state, reason,
+        ...(ledgerString(payload, "agentProcessRuntime") ? { runtime: ledgerString(payload, "agentProcessRuntime") } : {}) }
+    : undefined;
+  return {
+    ...(lifecycle ? { agentLifecycle: lifecycle } : {}),
+    ...(nodeState === "pending" || nodeState === "running" || nodeState === "done" || nodeState === "failed" || nodeState === "skipped"
+      ? { nodeState } : {}),
+  };
+}
+
 function ledgerStringArray(payload: Record<string, unknown>, key: string): string[] | undefined {
   const value = payload[key];
   if (!Array.isArray(value)) return undefined;
@@ -782,6 +902,7 @@ function ledgerAgentMessage(payload: Record<string, unknown>): NonNullable<McpIn
   if (direction !== "orchestrator-to-worker" && direction !== "worker-to-orchestrator") return undefined;
   return {
     messageId, direction, fromAgentId, toAgentId,
+    reportAvailable: payload.agentMessageReportAvailable === true,
     ...(replyToMessageId ? { replyToMessageId } : {}),
     ...(usedTools.length > 0 ? { usedTools } : {}),
     text,
@@ -869,7 +990,7 @@ function ledgerNoticeI18n(payload: Record<string, unknown>): { ko: string; en: s
 }
 
 /** Rebuild the latest Activity from Main's redacted append-only run ledger. */
-export function projectOneActivityFromLedger(events: RunEventUi[]): OneActivityState {
+export function projectOneActivityFromLedger(events: RunEventUi[], receipt?: InvocationRunReceipt | null): OneActivityState {
   let state = initialOneActivityState();
   let projectedSequence = 0;
   const observedToolIds = new Set<string>();
@@ -883,6 +1004,21 @@ export function projectOneActivityFromLedger(events: RunEventUi[]): OneActivityS
   const cancelledRun = events.some((row) => row.kind === "invoke_cancelled" || row.kind === "invoke_interrupted");
   for (const row of events) {
     const payload = row.payload ?? {};
+    if (row.kind.startsWith("task_force_model_call_") && row.nodeId) {
+      const callPhase = ledgerString(payload, "phase");
+      const phase = callPhase === "planner" ? "plan" : callPhase === "worker" ? "delegate" : undefined;
+      // A model return is not a validated handoff or a completed worker.
+      // Call-start can add the requested model; only an explicit node done closes it.
+      if (phase && row.kind === "task_force_model_call_completed" && ledgerString(payload, "observedModel")) {
+        apply({ kind: "thinking", agentId: row.nodeId, phase, observedModel: ledgerString(payload, "observedModel") }, row.ts);
+      }
+      if (phase && row.kind === "task_force_model_call_started") {
+        apply({ kind: "thinking", agentId: row.nodeId, phase,
+          ...(ledgerString(payload, "runtimeModel") ? { model: ledgerString(payload, "runtimeModel") } : {}),
+        }, row.ts);
+      }
+      continue;
+    }
     if (row.kind === "invoke_started") {
       const permission = ledgerPermission(payload.permissions);
       const selectedPermissionMode = ledgerPermissionMode(payload.onePermissionMode);
@@ -910,6 +1046,7 @@ export function projectOneActivityFromLedger(events: RunEventUi[]): OneActivityS
       continue;
     }
     if (row.kind === "mcp_tool-use") {
+      const agentState = ledgerAgentState(payload);
       const toolName = ledgerString(payload, "toolName");
       const toolId = ledgerString(payload, "toolId");
       const delegateTo = ledgerStringArray(payload, "delegateTo");
@@ -917,6 +1054,10 @@ export function projectOneActivityFromLedger(events: RunEventUi[]): OneActivityS
       const toolIsError = ledgerBoolean(payload, "toolIsError") === true;
       const toolSourceUrls = ledgerHttpsUrls(payload, "toolSourceUrls");
       const oneArtifacts = ledgerOneArtifacts(payload);
+      const topologyAgentId = ledgerString(payload, "agentNodeId") || row.nodeId || row.agentId;
+      const done = ledgerBoolean(payload, "done");
+      const rawPhase = ledgerString(payload, "phase");
+      const phase = rawPhase === "plan" || rawPhase === "delegate" || rawPhase === "synthesize" ? rawPhase : undefined;
       if (toolName) {
         // A ledger row that carries a result preview is a completion even when
         // the tool id was never observed (single-event runners like agy DONE).
@@ -936,6 +1077,8 @@ export function projectOneActivityFromLedger(events: RunEventUi[]): OneActivityS
         const role = ledgerString(payload, "role");
         apply({
           kind: "tool-use",
+          ...agentState,
+          ...(ledgerString(payload, "observedModel") ? { observedModel: ledgerString(payload, "observedModel") } : {}),
           tool: {
             name: toolName,
             ...(toolId ? { id: toolId } : {}),
@@ -945,7 +1088,9 @@ export function projectOneActivityFromLedger(events: RunEventUi[]): OneActivityS
             ...(toolFailureCode ? { failureCode: toolFailureCode } : {}),
             ...(toolSourceUrls ? { sourceUrls: toolSourceUrls } : {}),
           },
-          ...(row.agentId ? { agentId: row.agentId } : {}),
+          ...(topologyAgentId ? { agentId: topologyAgentId } : {}),
+          ...(phase ? { phase } : {}),
+          ...(done ? { done: true } : {}),
           ...(agentName ? { agentName } : {}),
           ...(role ? { role } : {}),
           ...(oneArtifacts ? { oneArtifacts } : {}),
@@ -954,7 +1099,7 @@ export function projectOneActivityFromLedger(events: RunEventUi[]): OneActivityS
         }, row.ts);
         continue;
       }
-      if (delegateTo || agentMessage) {
+      if (delegateTo || agentMessage || done || agentState.agentLifecycle || agentState.nodeState) {
         const agentName = ledgerString(payload, "agentName");
         const role = ledgerString(payload, "role");
         const topologyAgentId = ledgerString(payload, "agentNodeId") || row.agentId;
@@ -964,6 +1109,8 @@ export function projectOneActivityFromLedger(events: RunEventUi[]): OneActivityS
           : undefined;
         apply({
           kind: "tool-use",
+          ...agentState,
+          ...(ledgerString(payload, "observedModel") ? { observedModel: ledgerString(payload, "observedModel") } : {}),
           ...(topologyAgentId ? { agentId: topologyAgentId } : {}),
           ...(ledgerString(payload, "runtimeAgentId")
             ? { runtimeAgentId: ledgerString(payload, "runtimeAgentId") }
@@ -971,6 +1118,7 @@ export function projectOneActivityFromLedger(events: RunEventUi[]): OneActivityS
           ...(agentName ? { agentName } : {}),
           ...(role ? { role } : {}),
           ...(phase ? { phase } : {}),
+          ...(done ? { done: true } : {}),
           ...(delegateTo ? { delegateTo } : {}),
           ...(agentMessage ? { agentMessage } : {}),
         }, row.ts);
@@ -1010,7 +1158,12 @@ export function projectOneActivityFromLedger(events: RunEventUi[]): OneActivityS
         : undefined;
       apply({
         kind: "thinking",
-        ...(row.agentId ? { agentId: row.agentId } : {}),
+        ...ledgerAgentState(payload),
+        ...(ledgerString(payload, "agentNodeId") || row.nodeId || row.agentId
+          ? { agentId: ledgerString(payload, "agentNodeId") || row.nodeId || row.agentId! } : {}),
+        ...(ledgerString(payload, "runtimeModel") || ledgerString(payload, "model")
+          ? { model: ledgerString(payload, "runtimeModel") || ledgerString(payload, "model") } : {}),
+        ...(ledgerBoolean(payload, "done") ? { done: true } : {}),
         ...(agentName ? { agentName } : {}),
         ...(role ? { role } : {}),
         ...(phase ? { phase } : {}),
@@ -1019,6 +1172,10 @@ export function projectOneActivityFromLedger(events: RunEventUi[]): OneActivityS
       continue;
     }
     if (row.kind === "mcp_notice") {
+      // Host capture bindings also arrive as notices. Preserve them during
+      // durable catchup even when the notification has no display text.
+      const oneArtifacts = ledgerOneArtifacts(payload)?.filter((artifact) =>
+        artifact.runId === row.runId && artifact.chatId === row.chatId);
       const noticeI18n = ledgerNoticeI18n(payload);
       const message = ledgerString(payload, "noticeMessage") || noticeI18n?.en || noticeI18n?.ko;
       const rawLevel = ledgerString(payload, "noticeLevel");
@@ -1026,18 +1183,29 @@ export function projectOneActivityFromLedger(events: RunEventUi[]): OneActivityS
         ? rawLevel
         : "info";
       const display = ledgerString(payload, "noticeDisplay");
-      if (message) {
+      // agent_id may be the enclosing runtime's accounting identity. Only
+      // an explicit topology node or a named legacy actor groups this notice.
+      const noticeAgentId = ledgerString(payload, "agentNodeId") || row.nodeId
+        || (ledgerString(payload, "agentName") ? row.agentId : undefined);
+      if (message || oneArtifacts?.length) {
         apply({
           kind: "notice",
+          ...(oneArtifacts?.length ? { oneArtifacts } : {}),
           notice: {
             level,
-            message,
+            message: message ?? "",
             ...(ledgerString(payload, "noticeCode") ? { code: ledgerString(payload, "noticeCode") } : {}),
             ...(noticeI18n ? { i18n: noticeI18n } : {}),
             ...(ledgerString(payload, "noticeDetails") ? { details: ledgerString(payload, "noticeDetails") } : {}),
             ...(display === "row" || display === "divider" ? { display } : {}),
           },
-          ...(row.agentId ? { agentId: row.agentId } : {}),
+          ...(noticeAgentId ? { agentId: noticeAgentId } : {}),
+          ...(ledgerString(payload, "agentName") ? { agentName: ledgerString(payload, "agentName") } : {}),
+          ...(ledgerString(payload, "role") ? { role: ledgerString(payload, "role") } : {}),
+          ...(["plan", "delegate", "synthesize"].includes(ledgerString(payload, "phase") ?? "")
+            ? { phase: ledgerString(payload, "phase") as "plan" | "delegate" | "synthesize" } : {}),
+          ...(ledgerString(payload, "runtimeModel") || ledgerString(payload, "model")
+            ? { model: ledgerString(payload, "runtimeModel") || ledgerString(payload, "model") } : {}),
         }, row.ts);
       }
       continue;
@@ -1048,16 +1216,19 @@ export function projectOneActivityFromLedger(events: RunEventUi[]): OneActivityS
       continue;
     }
     if (row.kind === "mcp_final" || row.kind === "invoke_completed") {
+      // Main may persist settlement immediately before the richer final event.
+      // Do not freeze replay before its actual model receipt is consumed.
+      if (row.kind === "invoke_completed" && events.some((event) => event.kind === "mcp_final" && event.runId === row.runId)) continue;
       const tokenValue = Number(payload.tokens);
       const textLenValue = Number(payload.textLen);
-      const executedModel = ledgerString(payload, "model");
+      const executedModel = ledgerString(payload, "observedModel");
       apply({
         kind: "final",
         ...(Number.isFinite(tokenValue) ? { tokens: tokenValue } : {}),
         ...(Number.isFinite(textLenValue) && textLenValue > 0 ? { textLen: textLenValue } : {}),
-        // 실행 기록의 모델 표기(C-D-1): 원장에 남은 final의 model이 유일한
+        // 실행 기록의 모델 표기(C-D-1): 원장에 남은 final의 observedModel이 유일한
         // "실제 실행" 근거다 — 재방문/재기동 후에도 표시=실행이 유지된다.
-        ...(executedModel ? { model: executedModel } : {}),
+        ...(executedModel ? { observedModel: executedModel } : {}),
       }, row.ts);
       continue;
     }
@@ -1070,6 +1241,26 @@ export function projectOneActivityFromLedger(events: RunEventUi[]): OneActivityS
           message: ledgerString(payload, "errorMessage") || (cancelled ? "Run cancelled" : "Run stopped"),
         },
       }, row.ts);
+    }
+  }
+  // The bounded event page can omit the terminal row. Main's exact-run
+  // receipt supplies lifecycle facts without expanding the page or inventing
+  // outcomes for individual tools/workers whose completion rows are absent.
+  if (receipt?.runId && events.every((row) => row.runId === receipt.runId
+    && (!row.chatId || row.chatId === receipt.chatId))) {
+    const startedMs = Date.parse(receipt.startedAt);
+    const finishedMs = receipt.finishedAt ? Date.parse(receipt.finishedAt) : NaN;
+    const status: OneActivityStatus = receipt.status === "interrupted" ? "cancelled" : receipt.status;
+    if (Number.isFinite(startedMs)) {
+      const settled = status === "completed" || status === "failed" || status === "cancelled";
+      const measured = settled && Number.isFinite(finishedMs) && finishedMs >= startedMs;
+      const previous = state.items.find((item) => item.kind === "run");
+      const { durationMs: _duration, completedAt: _completed, ...detail } = previous ?? {};
+      const lifecycle: OneActivityItem = {
+        ...detail, id: "run:lifecycle", kind: "run", status, observedAt: receipt.startedAt,
+        ...(measured ? { completedAt: receipt.finishedAt, durationMs: finishedMs - startedMs } : {}),
+      };
+      state = { ...state, items: [...state.items.filter((item) => item.kind !== "run"), lifecycle] };
     }
   }
   return state;

@@ -1,5 +1,7 @@
 "use client";
 
+import { ComposerDecisionPortal } from "./ComposerDecisionPortal";
+
 // 에이전트의 **동기 질문** 시트 — 도구가 답을 기다리는 질문이다.
 //
 // 기존 ChatQuestionSheet 는 `<<agentlas-ask>>` 펜스를 그린다: 답이 다음 채팅 메시지로
@@ -7,7 +9,7 @@
 // 결과를 받아 다음 단계로 가야 한다. 이 시트가 답을 돌려주면 그 자리에서 실행이 이어진다.
 //
 // 형태는 BrowserActionApprovalSheet 와 같은 규칙(큐 + 만료 + 창 없으면 애초에 안 옴).
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type CSSProperties } from "react";
 import { usePathname } from "next/navigation";
 import { useT } from "@/lib/i18n";
 import { AskCard } from "@/components/AskCard";
@@ -84,9 +86,8 @@ export function AskUserSheet() {
     };
   }, [req]);
 
-  if (!req) return null;
-
   const answer = async (value: string | null) => {
+    if (!req) return;
     const requestId = req.requestId;
     if (!liveRequestsRef.current.has(requestId) || attemptsRef.current.has(requestId)) return;
     const attempt = Symbol(requestId);
@@ -119,15 +120,22 @@ export function AskUserSheet() {
   };
 
   const dismiss = () => {
-
-    // Closing stays available even while an acknowledgement is in flight.
-    // Never send a competing decline for an already-submitted answer.
-    if (!attemptsRef.current.has(req.requestId)) void answer(null);
-    liveRequestsRef.current.delete(req.requestId);
-    attemptsRef.current.delete(req.requestId);
-    clearAskUserDraft(req);
-    setDraftValue("");
-    setQueue((current) => current.filter((item) => item.requestId !== req.requestId));
+    if (!req) return;
+    const requestId = req.requestId;
+    // A close is a real null answer, not a renderer-only dismissal. Keep the
+    // request mounted until Main acknowledges it so a bridge failure cannot
+    // silently leave the runtime waiting with no visible way to retry.
+    if (attemptsRef.current.has(requestId)) return;
+    // Main explicitly reported that this request ended elsewhere. It is safe
+    // to clear this stale card locally; no answer is still waiting for it.
+    if (submission?.requestId === requestId && submission.error === "ended") {
+      liveRequestsRef.current.delete(requestId);
+      clearAskUserDraft(req);
+      setDraftValue("");
+      setQueue((current) => current.filter((item) => item.requestId !== requestId));
+      return;
+    }
+    void answer(null);
   };
 
   /*
@@ -136,6 +144,7 @@ export function AskUserSheet() {
    *   모달은 어디서나 같은 방법으로 닫혀야 한다.
    */
   useEffect(() => {
+    if (!req) return;
     const onKey = (event: KeyboardEvent) => {
       if (event.key !== "Escape" || event.metaKey || event.ctrlKey || event.altKey) return;
       event.stopPropagation();
@@ -143,7 +152,8 @@ export function AskUserSheet() {
     };
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
-  }, [dismiss]);
+  }, [dismiss, req]);
+  if (!req) return null;
   const currentSubmission = submission?.requestId === req.requestId ? submission : null;
   const updateDraft = (value: string) => {
     setDraftValue(value);
@@ -157,7 +167,15 @@ export function AskUserSheet() {
    * 규격은 docs/DESIGN-ASK-CARD.md.
    */
   return (
-    <div className={`aus ${oneRoute ? "aus-one" : ""}`} role="dialog" aria-modal="false" aria-label={ko ? "확인이 필요합니다" : "Your input is needed"}>
+    <ComposerDecisionPortal enabled>
+    <div
+      data-composer-decision-card="true"
+      className={`aus ${oneRoute ? "aus-one" : ""}`}
+      role="dialog"
+      aria-modal="false"
+      aria-label={ko ? "확인이 필요합니다" : "Your input is needed"}
+      style={oneRoute ? ({ "--agentlas-composer-width": "720px" } as CSSProperties) : undefined}
+    >
       <div className="aus-card">
         <AskCard
           key={req.requestId}
@@ -170,20 +188,25 @@ export function AskUserSheet() {
             active: currentSubmission ? currentSubmission.value === option.label : index === 0,
             disabled: currentSubmission?.pending,
           }))}
+          otherOption={req.allowFreeText ? {
+            title: ko ? "기타" : "Other",
+            note: ko ? "직접 답변을 입력합니다." : "Type your own answer.",
+          } : undefined}
           freeText={draftValue}
           onFreeTextChange={updateDraft}
           onChoose={(id) => { void answer(id); }}
           onClose={dismiss}
-          footer={req.allowFreeText
-            ? {
-              placeholder: ko ? "직접 답하기" : "Answer in your own words",
-              skipLabel: ko ? `답하지 않음 · ${secondsLeft}초` : `Skip · ${secondsLeft}s`,
-              submitLabel: ko ? `이 답 보내기 · ${secondsLeft}초` : `Send answer · ${secondsLeft}s`,
-              onSkip: (text) => { void answer(text ? text : null); },
-            }
-            : undefined}
+          footer={{
+            placeholder: ko ? "직접 답하기" : "Answer in your own words",
+            skipLabel: req.allowFreeText ? (ko ? `답하지 않음 · ${secondsLeft}초` : `Skip · ${secondsLeft}s`) : (ko ? "건너뛰기" : "Skip"),
+            submitLabel: req.allowFreeText ? (ko ? `이 답 보내기 · ${secondsLeft}초` : `Send answer · ${secondsLeft}s`) : (ko ? "건너뛰기" : "Skip"),
+            hideInput: !req.allowFreeText,
+            onSkip: (text) => { void answer(text ? text : null); },
+          }}
         >
-          {currentSubmission?.pending && <p role="status">{ko ? "답변 전달 중…" : "Sending answer…"}</p>}
+          {currentSubmission?.pending && <p role="status">{currentSubmission.value === null
+            ? (ko ? "질문을 닫는 중…" : "Closing the question…")
+            : (ko ? "답변 전달 중…" : "Sending answer…")}</p>}
           {currentSubmission?.error && <p role="alert">
             {currentSubmission.error === "ended"
               ? (ko ? "이 질문은 이미 종료되었거나 다른 곳에서 답변되었습니다. 입력은 남겨 두었습니다. 닫고 현재 질문을 확인해 주세요."
@@ -197,28 +220,24 @@ export function AskUserSheet() {
         .aus {
           position: fixed;
           left: 50%;
-          bottom: 22px;
+          bottom: 96px;
           z-index: 95;
           transform: translateX(-50%);
-          width: var(--popup-3-width);
+          width: min(var(--agentlas-composer-width, 740px), calc(100% - var(--agentlas-composer-inset, 0px)));
+          max-width: calc(100% - 32px);
         }
         .aus-card {
           padding: 14px 16px;
           border-radius: 14px;
-          background: var(--rd-bg);
-          color: var(--rd-ink);
-          border: 1px solid var(--rd-hair, rgba(255, 255, 255, 0.12));
-          box-shadow: 0 16px 44px rgba(0, 0, 0, 0.34);
+          background: var(--paper);
+          color: var(--ink);
+          border: 1px solid var(--paper-edge);
+          box-shadow: 0 7px 20px rgba(25, 31, 36, .12);
           display: flex;
           flex-direction: column;
           gap: 10px;
         }
-        .aus-one .aus-card {
-          background: var(--one-toast-bg);
-          color: var(--one-toast-ink);
-          border-color: rgba(40, 48, 39, 0.12);
-          box-shadow: 0 16px 44px rgba(28, 35, 27, 0.18);
-        }
+        .aus-one .aus-card { background: var(--paper); color: var(--ink); }
         .aus-top {
           display: flex;
           align-items: center;
@@ -319,5 +338,6 @@ export function AskUserSheet() {
         }
       `}</style>
     </div>
+    </ComposerDecisionPortal>
   );
 }

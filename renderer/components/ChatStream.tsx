@@ -1,6 +1,11 @@
+"use client";
+import type { GoalResultPresentation } from "../../shared/goal-result";
+import { GoalResultReport } from "./GoalResultReport";
+import type { ChatHostNotice } from "../../shared/types";
+import { normalizeChatHostNotice } from "../../shared/chat-host-notice";
+import { HostContinuationNotice } from "./HostContinuationNotice";
 // 메시지 스트림 렌더 — agent 메시지는 Markdown으로, 사용자 메시지는 plain.
 // 작업 중 메시지는 Codex/Claude 데스크톱처럼 step log + 경과 시간을 실시간으로 보여준다.
-"use client";
 import { Fragment, createContext, memo, useCallback, useContext, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import type { HubAgentBookmark, InstalledAgent, InstalledFirm, InstalledMcpServer, Project } from "@/lib/types";
 import { hubBookmarksWithoutLocalDuplicates } from "@/lib/hub-bookmark-events";
@@ -26,6 +31,7 @@ import { LiveOutputViewer } from "./LiveOutputViewer";
 import { ChatFileCards } from "./ChatFileExperience";
 import type { ChatFileItem } from "@/lib/chat-files";
 import { OneTurnWork } from "./one/OneTurnWork";
+import type { OneWorkerWorkGroup } from "@/lib/one-turn-work";
 import type { OneActivityItem, OneActivityState } from "@/lib/one-activity";
 
 /**
@@ -204,6 +210,8 @@ export interface StreamActivityRun {
 }
 
 export interface StreamMessage {
+  goalResult?: GoalResultPresentation;
+  hostNotice?: ChatHostNotice;
   id: string;
   role: "user" | "agent" | "system";
   text: string;
@@ -305,6 +313,8 @@ export function ChatStream({
   onOpenWorkflow,
   onAnswerQuestion,
   onOpenMultimodalSetup,
+  onInspectWorker,
+  artifactChatId,
   mediaBasePaths = [],
   workspaceRoot,
   focusMessageId,
@@ -325,6 +335,8 @@ export function ChatStream({
   onAnswerQuestion?: (messageId: string, questionId: string, answers: string[]) => void;
   /** 멀티모달 설정 화면으로 이동 — 엔진 미연결 CTA 버튼 클릭 시 */
   onOpenMultimodalSetup?: () => void;
+  onInspectWorker?: (runId: string, group: OneWorkerWorkGroup) => void;
+  artifactChatId?: string;
   /** 다른 메시지가 실행 중이면 오래된 질문 카드도 전송하지 않는다. */
   interactionBusy?: boolean;
   stopRequested?: boolean;
@@ -508,6 +520,8 @@ export function ChatStream({
               onOpenWorkflow={onOpenWorkflow}
               onAnswerQuestion={onAnswerQuestion}
               onOpenMultimodalSetup={onOpenMultimodalSetup}
+              onInspectWorker={onInspectWorker}
+              artifactChatId={artifactChatId}
               mediaBasePaths={mediaBasePaths}
             />
           </div>
@@ -867,6 +881,8 @@ const Bubble = memo(function Bubble({
   onOpenWorkflow,
   onAnswerQuestion,
   onOpenMultimodalSetup,
+  onInspectWorker,
+  artifactChatId,
   mediaBasePaths,
 }: {
   message: StreamMessage;
@@ -879,6 +895,8 @@ const Bubble = memo(function Bubble({
   onOpenWorkflow?: () => void;
   onAnswerQuestion?: (messageId: string, questionId: string, answers: string[]) => void;
   onOpenMultimodalSetup?: () => void;
+  onInspectWorker?: (runId: string, group: OneWorkerWorkGroup) => void;
+  artifactChatId?: string;
   mediaBasePaths: string[];
 }) {
   const { locale } = useT();
@@ -888,27 +906,21 @@ const Bubble = memo(function Bubble({
   // hook-order crash exactly at that transition.
   const workspaceRootForRun = useContext(WorkspaceRootContext);
   const workActivity = useMemo(() => workActivityStateFromMessage(message), [message]);
-  /*
-   * Which engine ran is host status, not conversation content.
-   *
-   * Every notice already becomes a row inside the work block, which collapses when the turn ends.
-   * Rendering the same rows again as standalone cards meant "This run is connected to ..." stayed
-   * pinned under the answer forever, once per turn, pushing the thing the person actually asked for
-   * up and out of the way. Warnings and errors still get a card, because those are things to act on.
-   */
-  const persistentNotices = useMemo(
-    () => (message.notices ?? []).filter((notice) => {
-      if (notice.level === "error" || notice.level === "warning") return true;
-      return notice.code !== "runtime-selected" && notice.code !== "runtime-fallback";
-    }),
-    [message.notices],
-  );
   const workActivities = useMemo(
     () => message.activityRuns?.length
       ? message.activityRuns.map((run) => ({ runId: run.runId, state: run.state }))
       : [{ runId: message.runId ?? message.id, state: workActivity }],
     [message.activityRuns, message.id, message.runId, workActivity],
   );
+  // Activity notices belong under the work heading. Keep a separate plain
+  // row only for an actionable sign-in, a context boundary, or a notice that
+  // is absent from the canonical activity projection.
+  const persistentNotices = (message.notices ?? []).filter((notice) =>
+    notice.code === "runtime-signed-out" || notice.display === "divider"
+    || (!message.busy && (notice.level === "warning" || notice.level === "error"))
+    || !workActivities.some(({ state }) => state.items.some((item) =>
+      item.kind === "notice" && item.message === notice.message
+      && (item.detail ?? "") === (notice.details ?? ""))));
   if (message.role === "user") {
     // 질문 시트 배치 답장(스캐폴드 "질문:/선택:/답변:")은 어시스턴트 턴의 인용 카드가
     // 이미 질문+답을 보여준다 — 영상처럼 원문 버블은 숨긴다(첨부 이미지가 있으면 유지).
@@ -962,6 +974,9 @@ const Bubble = memo(function Bubble({
     );
   }
   if (message.role === "system") {
+    if (normalizeChatHostNotice(message.role, message.hostNotice)) {
+      return <HostContinuationNotice text={message.text} locale={locale === "ko" ? "ko" : "en"} />;
+    }
     if (isInternalSystemNote(message.text)) return null;
     const isError = message.text.trim().startsWith("⚠️");
     return (
@@ -1026,12 +1041,23 @@ const Bubble = memo(function Bubble({
           <OneTurnWork
             key={`work:${runId}`}
             state={state}
+            artifactScope={artifactChatId ? { chatId: artifactChatId, runId } : undefined}
             busy={Boolean(message.busy && index === workActivities.length - 1)}
             startedAt={message.startedAt ?? null}
             locale={locale === "ko" ? "ko" : "en"}
             workspacePath={workspaceRootForRun ?? null}
+            onInspectWorker={onInspectWorker && (message.activityRuns?.some((run) => run.runId === runId) || message.runId === runId)
+              ? (group) => onInspectWorker(runId, group) : undefined}
           />
         ))}
+        {persistentNotices.length > 0 && (
+          <div className="agentlas-chat-notices">
+            {persistentNotices.map((notice) => (
+              <ChatNoticeRow key={notice.id} notice={notice} />
+            ))}
+          </div>
+        )}
+        <GoalResultReport result={message.goalResult} locale={locale}>
         {showWorkActivity && displayText && message.busy && (
           <LiveOutputPanel
             text={displayText}
@@ -1073,6 +1099,7 @@ const Bubble = memo(function Bubble({
             mediaBasePaths={mediaBasePaths}
           />
         )}
+        </GoalResultReport>
         {message.imageDataUrls && message.imageDataUrls.length > 0 && (
           <div
             data-testid="chat-generated-images"
@@ -1105,13 +1132,6 @@ const Bubble = memo(function Bubble({
                   onAnswer={(answers) => onAnswerQuestion?.(message.id, q.id, answers)}
                 />
               ))}
-          </div>
-        )}
-        {persistentNotices.length > 0 && (
-          <div className="agentlas-chat-notices">
-            {persistentNotices.map((notice) => (
-              <ChatNoticeRow key={notice.id} notice={notice} />
-            ))}
           </div>
         )}
         {message.needsMultimodalSetup && !message.busy && (

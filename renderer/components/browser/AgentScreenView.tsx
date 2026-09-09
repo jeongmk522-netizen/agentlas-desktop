@@ -1,16 +1,6 @@
 "use client";
 
-/**
- * 에이전트가 보고 있는 화면 — 한 벌의 구현.
- *
- * 예전에는 이 화면이 Work 의 떠 있는 카드(FloatingComputerUsePanel)에만 있었다. One 은
- * 같은 것을 결과 레일 **안에** 그리는데 Work 는 레일이 열리지도 않아, 브라우저 도구가 돌면
- * 화면이 창 한가운데 떠 있는 카드로만 나왔다(2026-09-03 실측: 레일 없음, 카드 430×311 at 772,473).
- * 사용자는 띄워 달라고만 했는데 매번 떠다닌다고 보고했다.
- *
- * 그래서 캡처 루프와 캔버스를 여기로 꺼냈다. 레일과 떠 있는 카드가 **같은 코드**를 쓴다 —
- * 두 벌로 갈리면 한쪽만 고쳐지는 자리가 다시 생긴다.
- */
+/** Shared screen capture for the task side panel. Hidden panels do not capture. */
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ipc } from "@/lib/ipc";
@@ -36,10 +26,14 @@ export interface AgentScreenState {
  * 화면 캡처 루프. `enabled` 가 false 면 한 장도 잡지 않는다 — 캡처는 렌더러 타이머 중
  * 가장 비싸서, 보이지 않는 자리에서 돌면 그대로 낭비다.
  */
-export function useAgentScreen(mode: AgentScreenMode, enabled: boolean, ko: boolean): AgentScreenState {
+export function useAgentScreen(mode: AgentScreenMode, enabled: boolean, ko: boolean, chatId: string | null = null): AgentScreenState {
   const api = ipc();
-  const [browserFrame, setBrowserFrame] = useState<BrowserLiveFrame | null>(null);
-  const [computerFrame, setComputerFrame] = useState<ComputerUsePreview | null>(null);
+  const [scopedBrowserFrame, setScopedBrowserFrame] = useState<{ chatId: string; frame: BrowserLiveFrame } | null>(null);
+  const browserFrame = scopedBrowserFrame?.chatId === chatId ? scopedBrowserFrame.frame : null;
+  const currentChatId = useRef(chatId);
+  currentChatId.current = chatId;
+  const [scopedComputerFrame, setScopedComputerFrame] = useState<{ chatId: string | null; frame: ComputerUsePreview } | null>(null);
+  const computerFrame = scopedComputerFrame?.chatId === chatId ? scopedComputerFrame.frame : null;
   const [sourceId, setSourceId] = useState<string | undefined>();
   const [focusBusy, setFocusBusy] = useState(false);
   const [focusNotice, setFocusNotice] = useState<string | null>(null);
@@ -50,23 +44,20 @@ export function useAgentScreen(mode: AgentScreenMode, enabled: boolean, ko: bool
     busy.current = true;
     try {
       if (mode === "browser") {
-        const next = await api.browser.captureLiveFrame();
-        // 순간적인 CDP 딸꾹질(바쁜 소켓, 이동 중, 느린 스크린샷)에 화면을 비우지 않는다.
-        // 매 실패마다 "대기 중"으로 깜빡이면 멀쩡한 프레임 사이가 갈라진다.
-        // 화면이 안 변했으면(같은 dataUrl) 이전 참조를 유지한다 — 멀티 MB 문자열 교체와
-        // 이미지 재디코드를 틱마다 반복하지 않는다.
-        setBrowserFrame((prev) => {
-          if (!next.dataUrl && prev?.dataUrl) return prev;
-          if (prev && prev.dataUrl === next.dataUrl && prev.title === next.title && prev.url === next.url) return prev;
-          return next;
+        if (!chatId) return;
+        const next = await api.browser.captureTaskFrame(chatId);
+        // Navigation A→B can finish A's capture after B has mounted. Never
+        // display that frame or retain an old image as a live connection.
+        if (currentChatId.current !== chatId) return;
+        setScopedBrowserFrame((prev) => {
+          if (prev?.chatId === chatId && prev.frame.dataUrl === next.dataUrl
+            && prev.frame.title === next.title && prev.frame.url === next.url && prev.frame.error === next.error) return prev;
+          return { chatId, frame: next };
         });
       } else {
         const next = await api.computerUse.capturePreview(sourceId);
-        setComputerFrame((prev) => {
-          if (!next.dataUrl && prev?.dataUrl) return prev;
-          if (prev && prev.dataUrl === next.dataUrl) return prev;
-          return next;
-        });
+        if (currentChatId.current !== chatId) return;
+        setScopedComputerFrame({ chatId, frame: next });
         if (!sourceId && next.selectedSourceId) setSourceId(next.selectedSourceId);
       }
     } catch {
@@ -74,7 +65,7 @@ export function useAgentScreen(mode: AgentScreenMode, enabled: boolean, ko: bool
     } finally {
       busy.current = false;
     }
-  }, [api, mode, sourceId]);
+  }, [api, mode, sourceId, chatId]);
 
   useEffect(() => {
     if (!enabled) return;
@@ -95,7 +86,7 @@ export function useAgentScreen(mode: AgentScreenMode, enabled: boolean, ko: bool
     setFocusNotice(null);
     try {
       const receipt = mode === "browser"
-        ? await api.browser.focusLiveTarget(browserFrame?.targetId ?? undefined)
+        ? browserFrame?.targetId ? await api.browser.focusLiveTarget(browserFrame.targetId) : { ok: false }
         : await api.computerUse.revealPreview();
       setFocusNotice(receipt.ok
         ? mode === "browser"
@@ -148,10 +139,14 @@ export function AgentScreenCanvas({ screen, ko }: { screen: AgentScreenState; ko
       ) : (
         <div className="cua-empty">
           <span className="cua-empty-screen" aria-hidden="true" />
-          <strong>{ko ? "화면 연결 대기 중" : "Waiting for screen"}</strong>
+          <strong>{screen.browserFrame?.error === "browser-session-unlinked"
+            ? ko ? "브라우저 화면이 연결되지 않았습니다" : "Browser session is not linked"
+            : ko ? "화면 연결 대기 중" : "Waiting for screen"}</strong>
           <span>
             {mode === "browser"
-              ? ko ? "브라우저 도구가 시작되면 자동으로 표시됩니다." : "It appears automatically when a browser tool starts."
+              ? screen.browserFrame?.error === "browser-session-unlinked"
+                ? ko ? "이 작업의 브라우저 도구는 실행됐지만 화면 세션 연결이 없습니다. 저장된 스크린샷은 실시간 화면이 아닙니다." : "This task's browser tool ran, but its screen session is not linked. Saved screenshots are not a live view."
+                : ko ? "이 작업에서 Agentlas Browser로 연 페이지를 표시합니다." : "Shows the page opened by this task in Agentlas Browser."
               : ko ? "Agentlas의 화면 기록 권한을 확인해 주세요." : "Check Agentlas Screen Recording permission."}
           </span>
         </div>

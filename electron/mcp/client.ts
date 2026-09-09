@@ -1,3 +1,7 @@
+import { createNativeCapturePublisher } from "../browser/native-capture-artifacts";
+import { createNativeBrowserRelayGrant, type NativeBrowserRelayGrant } from "../browser/native-cdp-relay";
+import { OwnerCloudShelfIncompleteError } from "../marketplace/mcp-source";
+import type { ChatHostNotice } from "../../shared/types";
 // 활성 백엔드 → 실제 러너로 라우팅하는 invocation runner.
 // PRD §3.1 6단계 BYOC: 사용자 머신에서 사용자의 구독/키로 직접 호출.
 // chatId 기반 — chat에서 agent + project 컨텍스트 lookup.
@@ -5,7 +9,7 @@ import fs from "node:fs";
 import { passFailureVerdict } from "../long-run/pass-failure-verdict";
 import { isCallOnlyHubAgent } from "../../shared/call-only-agent";
 import path from "node:path";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { detectRuntimes } from "../runtime/detect";
 import { ONE_AGENT_ID } from "../runtime/agent-residency";
 // Stormbreaker Loop — 목표 분해/연속 실행/검증 가능한 오류 repair를 감독(비차단·실패-무해).
@@ -65,16 +69,24 @@ import {
   setChatWorkingFolder,
 } from "../store/chats";
 import { getProject, listProjects } from "../store/projects";
+import { getChatGoalContract, getChatGoalRevision } from "../store/chat-goals";
+import { getLongRunByGoalId } from "../store/long-runs";
 import { getDb } from "../store/db";
 import { listRentAllowedSlugs } from "../store/project-agent-rent";
 import { activeLeasedSlugs } from "../cloud-agents/leases";
 import { findCanonicalTaskForChat } from "../store/tasks";
 import { touchRuntimeSession } from "../store/runtime-sessions";
+import { latestTaskCheckpoint } from "../long-run/checkpoint";
+import { compileLongRunCheckpoint } from "../../shared/long-run-checkpoint";
 import { getInterviewMode } from "../store/interview-mode";
 import { isUserFacingProjectAgent } from "../../shared/project-agent-pool";
 import { oneConfirmedRosterTargetsAreExact } from "../../shared/one-team-preflight";
 import { projectRosterSpecs } from "../../shared/project-roster-specs";
-import { classifyTurnEscalation, describeTurnEscalation } from "../../shared/turn-escalation";
+import { getCargoSource } from "../marketplace";
+import { getSessionCookieHeader, webBaseUrl } from "../auth";
+import { ExperienceCloudHttpClient } from "../experience/cloud";
+import { prepareProjectCloudRoster, ProjectCloudRosterError } from "./project-cloud-roster";
+import { classifyTurnEscalation, decideProjectRosterTaskForce, describeTurnEscalation } from "../../shared/turn-escalation";
 import { stripPermissionEscalationMarker } from "../../shared/permission-escalation";
 import { getFirm, listFirms } from "../store/firms";
 import { recordBorrowedAgentCareer } from "../agents/borrowed-profiles";
@@ -149,20 +161,29 @@ import { buildOneSurfaceFromMarkdown, chooseOneSurfaceForDisplay, resolveOneMark
 import { bindOneRuntimeToolArtifacts } from "../one/artifact-preview";
 import { classifyToolFailure, toolFailureCopy } from "../../shared/tool-failure";
 import { createAutomation, findAutomationByGoalId, listAutomations, toggleAutomation, updateAutomation, updateAutomationGraph } from "../store/automations";
-import { previousTurnObservation, projectContextKey, recordContextSourceMarker, tryRecordRunEvent } from "../store/run-events";
+import { previousTurnObservation, projectContextKey, recordContextSourceMarker, recordRunEvent, tryRecordRunEvent } from "../store/run-events";
 import { validSiteAgentAppMcpGrantTools } from "../site/agent-app-tool-policy";
 import {
   resolveSiteAgentAppInlineMcpConfigForDispatch,
 } from "../site/agent-app-mcp-config-policy";
 import { listInstalledServers as listInstalledMcpServers } from "../mcp-tools/registry";
 import { getAgentApp } from "../store/agent-apps";
-import { autoSelectMcpTools, buildMcpAutoSelectionPrompt } from "../mcp-tools/auto-select";
+import { autoSelectMcpTools, buildMcpAutoSelectionPrompt, type GoalToolSelectionReceipt } from "../mcp-tools/auto-select";
 import { runMcpKeyElicitationGate } from "./run-key-elicitation";
+import { getEnvConfigurationRevision } from "../secrets/vault";
 import { bridgeHubPluginCandidates } from "../mcp-tools/hub-plugin-bridge";
 import { noteRuntimeFailure, noteRuntimeSucceeded, runtimeCooldown, clearRuntimeCooldown } from "../runtime/runtime-cooldown";
 import { recordResolvedAlias } from "../runtime/model-discovery-store";
 import { setResolvedCliModelAlias } from "../../shared/models";
-import { buildMcpConfigFile } from "../mcp-tools/mcp-config";
+import { buildMcpConfigFile, isKeylessPlaywrightMcpDuplicate } from "../mcp-tools/mcp-config";
+import { AGENTLAS_WORKSPACE_PREVIEW_CATALOG_ID } from "../workspace-preview/mcp-server";
+import type { WorkspacePreviewOwnerGrant } from "../workspace-preview/channel";
+import { MCP_TOOL_CATALOG } from "../mcp-tools/catalog";
+import { resolveMcpNeeds } from "../mcp-tools/need-resolver";
+import { mcpServerConfigurationDigest, preparedMcpBindings } from "../mcp-tools/prepared-transport";
+import { createWorkerCapabilityPreparer, WorkerCapabilityMaterializationError } from "./worker-capability-preparer";
+import { WorkerCapabilityError, type PrepareWorkerCapabilities } from "./worker-capabilities";
+import { browserCdpHostFailureDiagnostic } from "../mcp-tools/browser-cdp-launcher";
 import {
   refreshBrowserCredentialsIfDue,
   type BrowserCredentialRefreshReport,
@@ -223,6 +244,7 @@ import {
 } from "../workflow/tool-broker-runtime";
 import type { ToolBrokerLevel } from "../../shared/graph-tool-broker";
 import { runtimeKindCanUseMcp } from "../../shared/runtime-mcp";
+import { RUNTIME_NATIVE_CAPABILITIES } from "../runtime/native-capabilities";
 import type {
   Chat,
   AppFactoryAppRecord,
@@ -582,6 +604,9 @@ function invocationFailure(
 ): { code: string; message: string } {
   if (req.agentAppMode) return untrustedRuntimeFailurePayload();
   const raw = error instanceof Error ? error.message : String(error);
+  if (error && typeof error === "object" && "code" in error && error.code === "mcp-goal-tool-scope-changed") {
+    return { code: error.code, message: raw };
+  }
   const toolFailureCode = classifyToolFailure({ result: raw });
   if (toolFailureCode !== "tool_failed") {
     const locale = pickLocale(req);
@@ -659,7 +684,7 @@ export function inferWorkingFolderFromPrompt(
 ): string | null {
   if (opts?.authored === "machine") return null;
   const explicit = prompt.match(
-    /(?:(?:project|working|workspace|target|output)?\s*(?:folder|directory|dir)|(?:작업|프로젝트|워크스페이스|대상|출력)\s*(?:루트|폴더|디렉터리|경로))\s*(?:only|전용|만)?[^/]*(\/(?:Volumes|Users|tmp|private\/tmp)\/[^\s`"'<>]+)/i,
+    /(?:(?:project|working|workspace|target|output)?\s*(?:folder|directory|dir)|(?:작업|프로젝트|워크스페이스|대상|출력)\s*(?:루트|폴더|디렉터리|경로))\s*(?:only|전용|만)?[^/]*(\/[^\s`"'<>]+)/i,
   );
   const candidate = cleanPathCandidate(explicit?.[1]);
   if (!candidate) return null;
@@ -1513,6 +1538,12 @@ function deterministicOneCompletionCopy(
  * 2) 사용자 메시지를 chat_messages에 영구화
  * 3) 활성 런타임 선택 → 러너에 위임
  */
+export interface DurableUserMessageHookBlock {
+  blockInvocation: true;
+  code: "automatic-goal-intake-unavailable" | "automatic-goal-resume-state-changed";
+  message: string;
+}
+
 export async function runMcpInvocation(
   req: McpInvocationRequest,
   sink: EventSink,
@@ -1520,9 +1551,16 @@ export async function runMcpInvocation(
   workspaceBinding?: InvocationWorkspaceBinding,
   executionContext?: InvocationExecutionContext,
   /** Main-only hook after this invocation's user message is durably stored. */
-  onDurableUserMessage?: (messageId: string) => Promise<void>,
+  onDurableUserMessage?: (messageId: string) => Promise<void | DurableUserMessageHookBlock>,
+  /** Main-only display purpose; no renderer request field can set this. */
+  hostNoticePurpose?: ChatHostNotice["purpose"],
+  /** Main-owned invocation surface, independent of the coordinator's inventory visibility. */
+  browserPresentation: "foreground" | "background" = "background",
 ): Promise<McpInvocationResult> {
   assertInvocationWorkspaceSourceContext(workspaceBinding, executionContext?.source);
+  let nativeBrowserGrant: NativeBrowserRelayGrant | undefined;
+  let workspacePreviewCapabilityCleanup: (() => void) | undefined;
+  try {
   // A scheduled invocation is the worker leg of the automation, even though
   // it shares this implementation with an interactive orchestrator turn.
   // Keep usage and replay attribution aligned with the runtime that actually
@@ -1738,7 +1776,8 @@ export async function runMcpInvocation(
   const persistUserMessage = () => {
     if (req.agentAppMode || userMessagePersisted) return;
     if (promptIsSystemAuthored) {
-      appendChatMessage(chat.id, "system", req.userPrompt);
+      appendChatMessage(chat.id, "system", req.userPrompt, hostNoticePurpose && req.runId
+        ? { hostNotice: { purpose: hostNoticePurpose, runId: req.runId } } : undefined);
     } else {
       /*
        * ★붙인 사진은 그 사람의 턴의 일부다 — 텍스트만 저장하면 대화를 다시 열었을 때
@@ -1758,7 +1797,14 @@ export async function runMcpInvocation(
   persistUserMessage();
   if (persistedUserMessageId && onDurableUserMessage && !signal?.aborted) {
     try {
-      await onDurableUserMessage(persistedUserMessageId);
+      const hookResult = await onDurableUserMessage(persistedUserMessageId);
+      if (hookResult?.blockInvocation) {
+        // The user row is already durable. Publish through the ordinary error
+        // sink so InvocationService records invoke_failed and releases busy
+        // state, while returning before any runtime or tool can start.
+        sink({ kind: "error", error: { code: hookResult.code, message: hookResult.message } });
+        return earlyResult();
+      }
       chat.goalId = getChatGoalId(chat.id);
     } catch {
       tryRecordRunEvent({ runId: req.runId!, chatId: chat.id, kind: "durable_user_message_hook_failed", payload: { messageId: persistedUserMessageId } });
@@ -2230,6 +2276,27 @@ ${effectiveUserPrompt}`;
   // Even a global chat executes in a concrete local folder. Persist it in the
   // run receipt so generated files do not become undiscoverable after reload.
   resolvedResultFolder = workingFolder ?? agentRunCwd();
+  // The owner-full fact is minted once by Main and passed separately to worker
+  // config materialization. Worker permission remains write; it is never
+  // upgraded merely because the parent can run a preview.
+  const workspacePreviewOwnerGrant: WorkspacePreviewOwnerGrant | undefined = (() => {
+    if (!workingFolder || normalizedPermission !== "full" || req.agentAppMode || req.simulation === true) return undefined;
+    let canonicalCwd: string;
+    try { canonicalCwd = fs.realpathSync(workingFolder); } catch { return undefined; }
+    // A long run keeps one preview across worker/turn handoffs, while a deleted
+    // goal must not leave its process addressable by a later goal in the same
+    // chat. Fall back to the chat only for ordinary non-goal turns.
+    const taskScopeId = getChatGoalId(chat.id) ?? chat.id;
+    return {
+      schemaVersion: "agentlas.workspace-preview-owner-grant.v1",
+      grantId: randomUUID(),
+      taskScopeId,
+      chatId: chat.id,
+      runId: req.runId!,
+      canonicalCwd,
+      ownerExecutionPermission: "full",
+    };
+  })();
 
   if (explicitNetworkGoal) {
     try {
@@ -2474,11 +2541,11 @@ ${effectiveUserPrompt}`;
       level: "info",
       code: "runtime-selected",
       message: locale === "ko"
-        ? `이번 실행은 ${runtimeLabel}로 연결되었습니다.`
+        ? `이번 실행은 ${runtimeLabel}을(를) 사용하도록 선택했습니다. 실제 호출 결과를 확인 중입니다.`
         : `This run is connected to ${runtimeLabel}.`,
       i18n: {
-        ko: `이번 실행은 ${runtimeLabel}로 연결되었습니다.`,
-        en: `This run is connected to ${runtimeLabel}.`,
+        ko: `이번 실행은 ${runtimeLabel}을(를) 사용하도록 선택했습니다. 실제 호출 결과를 확인 중입니다.`,
+        en: `This run selected ${runtimeLabel}; the actual invocation result is still being verified.`,
       },
       details: JSON.stringify(confirmedRuntime),
     },
@@ -2487,7 +2554,7 @@ ${effectiveUserPrompt}`;
   const oneControllerFallbackEligible = req.oneMode === true && runtimeResolution.pinHonored;
   const emitControllerRuntimeFallback = (
     fallback: RuntimeStatus,
-    failure: Pick<RunnerFailure, "kind" | "runtime" | "retryAfterHint"> | null,
+    failure: Pick<RunnerFailure, "kind" | "runtime" | "source" | "providerCode" | "exitCode" | "retryAfterHint"> | null,
   ): void => {
     if (!oneControllerFallbackEligible) return;
     const nextSelection: RuntimeSelection = {
@@ -2549,6 +2616,9 @@ ${effectiveUserPrompt}`;
           to: nextSelection,
           reason: failure?.kind ?? "unavailable-before-run",
           runtime: failure?.runtime ?? null,
+          failureSource: failure?.source ?? null,
+          providerCode: failure?.providerCode ?? null,
+          exitCode: failure?.exitCode ?? null,
           retryAfterHint: failure?.retryAfterHint ?? null,
           // 저장된 선택은 건드리지 않는다 — 폴백은 이번 실행에만 적용된다.
           savedSelectionChanged: false,
@@ -2622,10 +2692,23 @@ ${effectiveUserPrompt}`;
   // Claude Code/Codex 러너에는 요청/에이전트 문맥으로 필요한 MCP 플러그인을 자동 선택한 뒤
   // 런타임별 설정으로 직렬화해 넘긴다. env가 필요한 플러그인은 vault 값이 있을 때만 자동 설치한다.
   let mcpConfigPath: string | undefined;
+  let mcpGoalSelectionIsCurrent: (() => boolean) | undefined;
+  let mcpGoalSelectionInvalidated = false;
+  const assertMcpGoalSelectionCurrent = (): void => {
+    if (mcpGoalSelectionIsCurrent && !mcpGoalSelectionIsCurrent()) mcpGoalSelectionInvalidated = true;
+    if (mcpGoalSelectionInvalidated) {
+      throw Object.assign(new Error("mcp_goal_tool_scope_changed"), { code: "mcp-goal-tool-scope-changed" });
+    }
+  };
   let mcpAllowedTools: string[] | undefined;
   let mcpCodexConfigArgs: string[] | undefined;
   let mcpRuntimeEnv: Record<string, string> | undefined;
   let isolatedMcpConfig = false;
+  let prepareWorkerCapabilities: PrepareWorkerCapabilities | undefined;
+  // Selecting an authenticated browser adds a capability; it does not revoke
+  // the file/shell grant needed by mixed implementation and visual QA work.
+  // Only the explicit host-normalized tool mode restricts execution to browser.
+  const browserOnly = req.toolMode === "browser";
   // 커넥터 C38 — 이번 호출에 걸린 도구 중개 관문. 걸지 못했으면 계속 null이고,
   // 그 사실이 그대로 실행 기록으로 나간다(못 막은 것을 막았다고 적지 않는다).
   let toolBroker: MaterializedToolBroker | null = null;
@@ -2754,6 +2837,14 @@ ${effectiveUserPrompt}`;
       const autoSelectInput = {
         userPrompt: effectiveUserPrompt,
         systemPrompt: buildEffectiveAgentSystemPrompt(agent.id, agent.systemPrompt),
+        // A CLI's name or inherited MCP configuration does not prove a native
+        // browser is available to this invocation or visible in Desktop.
+        runtimeCapabilities: {
+          nativeBrowser: "unknown" as const,
+          nativeWebSearch: RUNTIME_NATIVE_CAPABILITIES[active.kind]?.includes("web.search")
+            ? "available" as const
+            : "unknown" as const,
+        },
         agentName: agent.nameEn || agent.name,
         workingFolder,
         toolMode: req.toolMode,
@@ -2763,10 +2854,46 @@ ${effectiveUserPrompt}`;
           ? { requiredToolCatalogIds: req.requiredToolCatalogIds }
           : {}),
         // 같은 채팅의 후속 턴이면 지난 선택과 접속 확인을 재사용한다(auto-select 메모).
-        conversationId: req.chatId,
+        conversationId: chat.id,
+        resolveActiveGoalScope: () => {
+          if (req.agentAppMode || signal?.aborted) return null;
+          const goalId = getChatGoalId(chat.id);
+          if (!goalId || goalId !== chat.goalId) return null;
+          const contract = getChatGoalContract(goalId);
+          const revision = getChatGoalRevision(goalId);
+          const run = getLongRunByGoalId(goalId);
+          if (contract?.status !== "active" || revision?.chatId !== chat.id
+            || !run || !["queued", "running", "waiting_worker", "waiting_tool", "verifying"].includes(run.status)) return null;
+          // Permission is this invocation's host-normalized grant. A later
+          // invocation with a narrower grant receives a different scope hash.
+          return {
+            goalId, revision: revision.revision, permission: normalizedPermission,
+            objective: contract.objective,
+            acceptanceCriteria: contract.acceptanceCriteria,
+          };
+        },
+        readGoalSelection: (scope: Omit<GoalToolSelectionReceipt, "selectedIds">): string[] => {
+          // Only the latest Main receipt in this chat can supply a hint. Searching
+          // older matching scopes would resurrect a revoked permission/configuration.
+          const row = getDb().prepare(
+            "SELECT payload_json FROM run_events WHERE chat_id = ? AND kind = 'mcp_goal_tool_selection' ORDER BY rowid DESC LIMIT 1",
+          ).get(chat.id) as { payload_json: string } | undefined;
+          if (!row) return [];
+          const receipt = JSON.parse(row.payload_json) as Partial<GoalToolSelectionReceipt>;
+          return receipt.goalId === scope.goalId && receipt.revision === scope.revision && receipt.scopeHash === scope.scopeHash
+            && Array.isArray(receipt.selectedIds) && receipt.selectedIds.length <= 100
+            && receipt.selectedIds.every((id) => typeof id === "string" && id.length > 0 && id.length <= 200)
+            ? receipt.selectedIds : [];
+        },
+        writeGoalSelection: (receipt: GoalToolSelectionReceipt): void => {
+          recordRunEvent({ runId: req.runId!, chatId: chat.id, kind: "mcp_goal_tool_selection", payload: { ...receipt } });
+        },
         ...(oneMemberToolPolicy ? oneMemberToolPolicy : {}),
       };
       let selectedContext = await autoSelectMcpTools(autoSelectInput);
+      const keyConfigurationRevision = getEnvConfigurationRevision();
+      const keyUserMessageId = persistedUserMessageId
+        ?? [...priorHistory].reverse().find((message) => message.role === "user")?.id;
       // ── 실행 전 API 키 요청 게이트 (대화형 렌더러 런 전용) ──────────────
       // matched 도구가 missing-key면 렌더러 시트(mcp-key-request 이벤트)로 키를
       // 요청하고 제한 시간만큼만 기다린다. 값은 렌더러가 기존 env:set으로 vault에
@@ -2779,38 +2906,45 @@ ${effectiveUserPrompt}`;
         // 화면이 없으므로 제외 — 모바일 런이 120초 헛대기하는 일이 없어야 한다.
         interactive: !executionContext && !req.agentAppMode && !workspaceBinding,
         context: selectedContext,
+        ...(selectedContext.goalSelectionScope && keyUserMessageId ? { goalScope: {
+          ...selectedContext.goalSelectionScope,
+          userMessageId: keyUserMessageId,
+          configurationRevision: keyConfigurationRevision,
+          automaticContinuation: promptIsSystemAuthored,
+          isCurrent: () => getEnvConfigurationRevision() === keyConfigurationRevision
+            && selectedContext.goalSelectionIsCurrent?.() === true,
+        } } : {}),
         sink,
         signal,
         // 키가 저장된 뒤의 재선택은 세상이 바뀐 시점이다 — 메모를 버리고 처음부터 다시 고른다.
-        reselect: () => autoSelectMcpTools({ ...autoSelectInput, bypassSelectionMemo: true }),
+        reselect: () => autoSelectMcpTools({
+          ...autoSelectInput,
+          bypassSelectionMemo: true,
+          ...(selectedContext.goalSelectionScope ? { credentialRetry: {
+            ...selectedContext.goalSelectionScope,
+            // This callback runs only after the current gate's typed provided
+            // outcome. Recheck these exact requested IDs, never a stale ready row.
+            selectedIds: selectedContext.tools.filter((tool) => tool.state === "missing-key" && tool.missingEnv.length > 0)
+              .map((tool) => tool.id),
+          } } : {}),
+        }),
       });
       selectedContext = keyGate.context;
-      /*
-       * Only say this when it actually cost something.
-       *
-       * "Nothing was decided" and "there was nothing to decide" arrived here as the same boolean, so
-       * a plain request with zero optional tools in play raised the same alarming card as a browser
-       * task whose judge was dead — on every single message, permanently, for anyone whose only
-       * connected runtime cannot prove tool-free isolation. A warning that is always on is a warning
-       * nobody reads, and this one told the person to re-send a request that had nothing wrong with
-       * it.
-       *
-       * The notice now requires a real loss (candidates existed and none could be judged) and names
-       * the cause, because the next action differs: a runtime that refuses judgment outright is not
-       * fixed by waiting or retrying — it is fixed by connecting one that can.
-       */
+      mcpGoalSelectionIsCurrent = selectedContext.goalSelectionIsCurrent;
+      assertMcpGoalSelectionCurrent();
+      // A selection failure does not establish that a provider is disconnected
+      // or authorize suggesting a runtime outside the user's configured pool.
       const needsOutcome = selectedContext.needsOutcome;
       const undecidedCostSomething = !selectedContext.needsDecided && (needsOutcome?.candidateCount ?? 0) > 0;
       if (undecidedCostSomething) {
-        const cause = needsOutcome?.reason ?? "no connected model answered";
         sink({
           kind: "notice",
           notice: {
-            level: "warning",
+            level: "info",
             code: "mcp-selection-undecided",
             message: locale === "ko"
-              ? `이번 실행에서는 어떤 선택형 도구가 필요한지 정해 줄 모델이 대답하지 않아, 미리 지정된 도구만 붙여 진행했습니다(사유: ${cause}). 브라우저나 컴퓨터 제어가 필요한 일이었다면 결과를 완료로 보지 마시고, 격리 실행이 가능한 런타임(예: Claude Code)을 하나 연결한 뒤 다시 보내 주세요.`
-              : `No model answered which optional tools this task needs, so the run continued with only the explicitly configured ones (cause: ${cause}). If this task needed browser or computer control, do not treat the result as complete: connect a runtime that can run isolated judgment (Claude Code, for example) and send it again.`,
+              ? "연결된 도구로 작업을 계속합니다. 추가 도구 확인은 이번에 완료되지 않았습니다."
+              : "Continuing with the configured tools. The check for additional tools did not finish this time.",
           },
         });
       }
@@ -2919,7 +3053,21 @@ ${effectiveUserPrompt}`;
           console.warn("[mcp] hub plugin bridge failed:", bridgeError);
         }
       }
+      // Hub/credential setup may await user or network work. Re-check the
+      // selected server bindings before materializing their runtime config.
+      assertMcpGoalSelectionCurrent();
+      // Interactive One/Work browser tools and the shared sidebar use the same
+      // Main-registered chat guest. Unattended and Agent App browser profiles
+      // keep their existing independent lifecycle.
+      if (req.chatId && !executionContext && !req.agentAppMode &&
+        (installedTools.some((tool) => tool.id === "agentlas-browser") || req.requiredToolCatalogIds?.includes("agentlas-browser"))) {
+        nativeBrowserGrant = await createNativeBrowserRelayGrant({ chatId: req.chatId, runId: req.runId!,
+          presentation: browserPresentation, onScreenshot: (capture) => publishNativeCapture(capture),
+          permission: normalizedPermission, signal: signal ?? new AbortController().signal });
+      }
       const cfg = await buildMcpConfigFile({
+        ...(nativeBrowserGrant ? { nativeBrowser: nativeBrowserGrant, configKey: `native-browser-${req.runId}` } : {}),
+        ...(workspacePreviewOwnerGrant ? { workspacePreviewOwnerGrant } : {}),
         ...(req.mcpBrowserProfileKey ? { browserProfileKey: req.mcpBrowserProfileKey } : {}),
         // 그래프가 선으로 이어 선언한 도구는 자동 선택 결과와 **함께** 켠다.
         // 선언은 사용자가 화면에 그려 넣은 것이라, 선택기가 안 골랐다고 빠지면
@@ -2928,6 +3076,9 @@ ${effectiveUserPrompt}`;
           ...installedTools.map((tool) => tool.id),
           ...hubBridgedServerIds,
           ...(req.requiredToolCatalogIds ?? []),
+          ...(workspacePreviewOwnerGrant
+            ? [AGENTLAS_WORKSPACE_PREVIEW_CATALOG_ID]
+            : []),
         ])],
         ...(req.requiredToolCatalogIds?.length
           ? { requiredToolCatalogIds: req.requiredToolCatalogIds }
@@ -2949,20 +3100,128 @@ ${effectiveUserPrompt}`;
           ...(req.simulation === true ? { simulation: true as const } : {}),
           ...(workingFolder ? { cwd: workingFolder } : {}),
           ...(req.chatId ? { chatId: req.chatId } : {}),
+          ...(workspacePreviewOwnerGrant ? { chatId: workspacePreviewOwnerGrant.chatId } : {}),
           ...(executionContext ? { unattended: true } : {}),
         },
       });
+      assertMcpGoalSelectionCurrent();
+      if (nativeBrowserGrant && !cfg?.nativeBrowserBound) {
+        throw new Error("native-browser-config-unbound");
+      }
       if (cfg) {
         mcpConfigPath = cfg.configPath;
+        workspacePreviewCapabilityCleanup = cfg.workspacePreviewCapabilityCleanup;
         mcpAllowedTools = cfg.allowedTools;
         mcpCodexConfigArgs = cfg.codexConfigArgs;
         mcpRuntimeEnv = cfg.runtimeEnv;
+        if (nativeBrowserGrant && !cfg.nativeBrowserBound) { nativeBrowserGrant.release(); nativeBrowserGrant = undefined; }
         // 관문이 좁힐 이름은 config key에서 나온다(`mcp__<key>__*`). 커널은 catalog id로
         // 선언하므로, 두 이름을 다 아는 유일한 지점이 여기다 — 아래 관문 생성이 이걸 쓴다.
         mcpIncludedServers = cfg.includedServers ?? [];
       }
+      const workerGoalScope = autoSelectInput.resolveActiveGoalScope();
+      if (workerGoalScope && !executionContext && !req.agentAppMode) {
+        const baselineIds = [...new Set(mcpIncludedServers.map((row) => row.catalogId ?? row.serverId))];
+        prepareWorkerCapabilities = createWorkerCapabilityPreparer({
+          scope: workerGoalScope, cwd: workingFolder ?? undefined, baselineIds,
+          readScope: autoSelectInput.resolveActiveGoalScope,
+          assertParentCurrent: () => {
+            assertMcpGoalSelectionCurrent();
+            if (workspaceBinding) revalidateInvocationWorkspaceBinding(workspaceBinding);
+          },
+          inventory: () => {
+            const servers = listInstalledMcpServers().filter((server) => server.enabled && server.configurationValid !== false);
+            const canonicalBrowser = servers.some((server) => server.catalogId === "agentlas-browser");
+            const eligible = servers.filter((server) => (server.catalogId !== AGENTLAS_WORKSPACE_PREVIEW_CATALOG_ID || Boolean(workspacePreviewOwnerGrant))
+              && (!browserOnly || baselineIds.includes(server.catalogId ?? server.id))
+              && (!canonicalBrowser || server.catalogId || baselineIds.includes(server.id) || !isKeylessPlaywrightMcpDuplicate(server)));
+            return {
+              fingerprint: createHash("sha256").update(JSON.stringify(eligible.map((server) =>
+                [server.id, mcpServerConfigurationDigest(server)]).sort())).digest("hex"),
+              candidates: [...new Map(eligible.map((server) => {
+                const entry = MCP_TOOL_CATALOG.find((candidate) => candidate.id === server.catalogId);
+                const id = server.catalogId ?? server.id;
+                return [id, { id, name: server.nameEn || server.name,
+                  description: entry?.descriptionEn || entry?.description || "Owner-installed custom MCP server",
+                  origin: "local" as const, needsCredential: server.envKeys.length > 0 }] as const;
+              })).values()],
+            };
+          },
+          select: (input) => resolveMcpNeeds({ ...input, runtimeCapabilities: {
+            nativeBrowser: nativeBrowserGrant && mcpConfigPath ? "available" : "unknown",
+            nativeWebSearch: RUNTIME_NATIVE_CAPABILITIES[active.kind]?.includes("web.search")
+              ? "available" : "unknown",
+          } }),
+          receipt: (payload) => recordRunEvent({ runId: req.runId!, chatId: chat.id,
+            kind: "mcp_worker_capability_selection", payload }),
+          materialize: async (input, ids, generation) => {
+            let grant: NativeBrowserRelayGrant | undefined;
+            let childConfig: Awaited<ReturnType<typeof buildMcpConfigFile>>;
+            let childPreviewCapabilityCleanup: (() => void) | undefined;
+            let released = false;
+            const release = () => {
+              if (released) return;
+              released = true;
+              grant?.release();
+              childPreviewCapabilityCleanup?.();
+              if (childConfig) fs.rmSync(childConfig.configPath, { force: true });
+            };
+            try {
+              if (ids.includes("agentlas-browser")) {
+                grant = await createNativeBrowserRelayGrant({ chatId: chat.id, runId: req.runId!,
+                  permission: input.permission!, signal: input.signal ?? signal ?? new AbortController().signal,
+                  presentation: browserPresentation, onScreenshot: (capture) => publishNativeCapture(capture) });
+              }
+              childConfig = await buildMcpConfigFile({ configKey: `worker-${generation}-${randomUUID()}`,
+                skipDefaultSeed: true, catalogIds: ids, ...(grant ? { nativeBrowser: grant } : {}),
+                ...(workspacePreviewOwnerGrant ? { workspacePreviewOwnerGrant } : {}),
+                toolGate: { runtime: input.runtime.kind, sessionKey: `${input.runtime.kind}:${chat.id}`,
+                  permission: input.permission!, ...(input.cwd ? { cwd: input.cwd } : {}), chatId: chat.id,
+                  ...(req.simulation === true ? { simulation: true as const } : {}) } });
+              childPreviewCapabilityCleanup = childConfig?.workspacePreviewCapabilityCleanup;
+              const boundIds = new Set(childConfig?.includedServers?.flatMap((row) => [row.serverId, row.catalogId].filter(Boolean)));
+              if (!childConfig || ids.some((id) => !boundIds.has(id)) || (grant && !childConfig.nativeBrowserBound)) {
+                const unavailableIds = ids.filter((id) => !boundIds.has(id)
+                  || (id === "agentlas-browser" && grant && !childConfig?.nativeBrowserBound));
+                recordRunEvent({ runId: req.runId!, chatId: chat.id, kind: "mcp_worker_capability_selection",
+                  payload: { schemaVersion: 1, workerId: input.workerId, attemptId: input.attemptId,
+                    status: "materialization-unavailable", reasonCode: "worker-capability-credential-or-server-unavailable",
+                    unavailableCatalogIds: unavailableIds.filter((id) => MCP_TOOL_CATALOG.some((entry) => entry.id === id)),
+                    unavailableCount: unavailableIds.length, evidenceType: "capability-binding-only" } });
+                throw new WorkerCapabilityMaterializationError(unavailableIds);
+              }
+              const preparedConfig = childConfig;
+              return { runner: { mcpConfigPath: preparedConfig.configPath, mcpAllowedTools: preparedConfig.allowedTools,
+                mcpCodexConfigArgs: preparedConfig.codexConfigArgs, isolatedMcpConfig: true as const,
+                ...(browserOnly ? { browserOnly: true as const } : {}),
+                env: { ...orchestrationRunnerEnv, ...preparedConfig.runtimeEnv,
+                  ...(grant ? { AGENTLAS_NATIVE_BROWSER_SCOPE: "task" } : {}) } },
+                assertCurrent: () => {
+                  if (released) throw new WorkerCapabilityError("worker-capability-lease-released");
+                  preparedMcpBindings(preparedConfig.configPath);
+                }, release };
+            } catch (error) { release(); throw error; }
+          },
+        });
+      }
     } catch (err) {
-      console.error("[mcp] buildMcpConfigFile failed:", err);
+      // Every runtime must receive this invocation's approved transport. In
+      // particular AGY otherwise falls through to a prior chat's global proxy
+      // when config creation fails. A Full Access grant is not transferable to
+      // that old proxy. Preserve the failure before any runner dispatch.
+      if (signal?.aborted) return earlyResult();
+      const diagnostic = browserCdpHostFailureDiagnostic(err);
+      const scopeChanged = err && typeof err === "object" && "code" in err
+        && err.code === "mcp-goal-tool-scope-changed";
+      const code = scopeChanged ? "mcp-goal-tool-scope-changed" : "mcp-runtime-config-unavailable";
+      console.error("[mcp]", { code, diagnostic });
+      sink({ kind: "error", error: {
+        code,
+        message: locale === "ko"
+          ? `이번 실행의 도구 연결을 준비하지 못했습니다. 도구 연결을 확인한 뒤 다시 시도해 주세요. (${diagnostic.code})`
+          : `Could not prepare this run's tool connections. Check the tool connection and retry. (${diagnostic.code})`,
+      } });
+      return earlyResult();
     }
   }
 
@@ -2972,7 +3231,7 @@ ${effectiveUserPrompt}`;
   // project/turn authority remains in Main and is revalidated by ScienceStore.
   if (executionContext?.source === "science") {
     if (!executionContext.science) throw new Error("science-execution-context-missing");
-    const { materializeScienceMcpGrant } = await import("../science/tool-control-server");
+    const { materializeScienceMcpGrant } = await import("agentlas-science");
     // Science turns use the Main-owned catalog as their single tool boundary.
     // Keeping the auto-selected standalone domain servers in the same config
     // creates duplicate tools (for example PBDB's low-level occurrence call
@@ -3035,10 +3294,15 @@ ${effectiveUserPrompt}`;
     : runnerEnv.env;
   throwIfInvocationAborted(signal, locale);
   if (mcpRuntimeEnv && !req.agentAppMode) Object.assign(runnerEnv.env, mcpRuntimeEnv);
+  if (nativeBrowserGrant && mcpConfigPath) {
+    runnerEnv.env.AGENTLAS_NATIVE_BROWSER_SCOPE = "task";
+    orchestrationRunnerEnv.AGENTLAS_NATIVE_BROWSER_SCOPE = "task";
+  }
   // Runtime detection/routing can take time. Check the capability again at the
   // last shared point before any direct, group, firm, swarm, or borrowed runner
   // can start. A deleted/replaced directory cannot inherit the earlier check.
   if (workspaceBinding) revalidateInvocationWorkspaceBinding(workspaceBinding);
+  assertMcpGoalSelectionCurrent();
   let coreStormbreakerHarnessPromise: ReturnType<typeof stormbreakerHarness> | null = null;
   const loadCoreStormbreakerHarness = () => {
     coreStormbreakerHarnessPromise ??= stormbreakerHarness({
@@ -3052,6 +3316,12 @@ ${effectiveUserPrompt}`;
   // asking a conversational turn must not manufacture one. The chat id is the
   // durable fallback goal key until an authoritative promotion occurs.
   const canonicalTask = findCanonicalTaskForChat(chat.id);
+  let nativeCaptureBound = false;
+  const publishNativeCapture = createNativeCapturePublisher({
+    task: canonicalTask, chatId: chat.id, runId: req.runId ?? "", signal,
+    emit: (event) => { sink(event); nativeCaptureBound = true; },
+  });
+
   const imageGenerationRequired = !req.agentAppMode
     && !req.oneMode
     && chat.kind !== "division"
@@ -3061,7 +3331,6 @@ ${effectiveUserPrompt}`;
    * 결과만 요구한다(위 판정기 주석의 실측 참고).
    */
   const screenCaptureRequired = !req.agentAppMode
-    && !req.oneMode
     && chat.kind !== "division"
     && !naturalLanguageRequiresImageGeneration(req.userPrompt)
     && naturalLanguageRequiresScreenCapture(req.userPrompt);
@@ -3073,7 +3342,9 @@ ${effectiveUserPrompt}`;
     paths: readonly string[],
   ): NonNullable<McpInvocationEvent["oneArtifacts"]> => {
     const runId = req.runId;
-    if (req.oneMode !== true || !canonicalTask || !runId || !toolId || paths.length === 0) return [];
+    // Work and One use the same canonical Task output rail. Admission depends
+    // on that exact Task/run binding, not on which product opened the chat.
+    if (req.agentAppMode || !canonicalTask || !runId || !toolId || paths.length === 0) return [];
     return bindOneRuntimeToolArtifacts({
       taskId: canonicalTask.id,
       taskVersion: canonicalTask.version,
@@ -3095,12 +3366,22 @@ ${effectiveUserPrompt}`;
   };
   const runBoundTaskForceInvocation = (
     params: Parameters<typeof runBorrowedTaskForceInvocation>[0],
-  ) => runBorrowedTaskForceInvocation({
-    ...params,
-    ...(isolatedMcpConfig ? { isolatedMcpConfig: true as const } : {}),
-    onControllerRuntimeFallback: params.onControllerRuntimeFallback ?? emitControllerRuntimeFallback,
-    bindOneRuntimeToolArtifacts: bindInvocationOneArtifacts,
-  });
+  ) => {
+    // Main preparation can await roster/lease work after the common guard.
+    // Check the prepared scope at this first team dispatch, not each worker.
+    assertMcpGoalSelectionCurrent();
+    return runBorrowedTaskForceInvocation({
+      ...params,
+      // Every early team route crosses this Main-owned boundary. A verifier
+      // retry must reach the planner/workers before the general runner helper.
+      goalCheckpoint: params.chat.goalId ? latestTaskCheckpoint(params.chat.goalId) ?? undefined : undefined,
+      ...(browserOnly ? { browserOnly: true as const } : {}),
+      ...(isolatedMcpConfig ? { isolatedMcpConfig: true as const } : {}),
+      onControllerRuntimeFallback: params.onControllerRuntimeFallback ?? emitControllerRuntimeFallback,
+      bindOneRuntimeToolArtifacts: bindInvocationOneArtifacts,
+      prepareWorkerCapabilities,
+    });
+  };
   const workforceProjectDir = workingFolder ?? process.cwd();
   // 프로젝트가 있으면 편성은 프로젝트에 붙는다 — 새 대화를 열어도 팀을 물려받는다.
   const durableWorkforceGoalId = resolveDesktopWorkforceGoalId({
@@ -3137,6 +3418,7 @@ ${effectiveUserPrompt}`;
           reasonCode: "lease-refresh-or-plan-unavailable",
         };
       } else {
+        assertMcpGoalSelectionCurrent();
         const decisionResult = await picked.runner(
           {
             systemPrompt: [
@@ -3372,6 +3654,7 @@ ${effectiveUserPrompt}`;
         }),
         leader: async (turn) => {
           throwIfInvocationAborted(signal, locale);
+          assertMcpGoalSelectionCurrent();
           const result = await pickedForWorkforceLeader.runner(
             {
               systemPrompt: turn.systemPrompt,
@@ -3628,49 +3911,85 @@ ${effectiveUserPrompt}`;
    * 곧바로 네트워크로 갔다.
    *
    * 사용자가 이번 턴에 직접 대상을 지목했으면(@ 지목·명시 borrow) 그 지시가 위다.
-   * 난이도가 solo면 팀을 만들지 않는다 — 한 줄 질문에 편성을 붙이는 것이 이 시스템의
-   * 반대 방향 결함이다. */
+   * 평범한 solo 턴에는 팀을 만들지 않는다 — 한 줄 질문에 편성을 붙이는 것이 이 시스템의
+   * 반대 방향 결함이다. 다만 사용자 메시지가 저장된 뒤 실제 Goal로 승인된 턴은 첫 턴에도
+   * 실행 계약이 생겼으므로, 프로젝트 도구를 편성한다. Cloud 행은 소유 선반의
+   * 저장된 exact release를 Core에서 준비한 뒤에만 실행 스펙이 된다. */
+  const rosterSpecs = projectRosterSpecs(
+    projectRosterForTurn.filter((member) => member.source !== "cloud"),
+    {
+      agentById: (id) => {
+        const installed = getAgentById(id);
+        return installed
+          ? {
+              id: installed.id,
+              slug: installed.slug,
+              name: installed.name,
+              userFacing: isUserFacingProjectAgent(installed),
+            }
+          : null;
+      },
+      firmById: (id) => {
+        const firm = getFirm(id);
+        return firm ? { id: firm.id, slug: firm.slug, name: firm.name } : null;
+      },
+    },
+    locale,
+  ) as BorrowedAgentSpec[];
+  const rosterTaskForceDecision = decideProjectRosterTaskForce({
+    turnEscalation,
+    // The durable-message hook above admits automatic Goals and refreshes this
+    // field before routing. Automatic Goal does not rewrite req.goalMode.
+    activeGoal: Boolean(chat.goalId),
+    runnableRosterCount: rosterSpecs.length + projectRosterForTurn.filter((member) => member.source === "cloud").length,
+  });
   const rosterFirstEligible =
     !oneTeamExecutionPolicy &&
     !req.agentAppMode &&
     !restrictedReadBoundary &&
     chat.kind !== "division" &&
-    turnEscalation.level !== "solo" &&
+    rosterTaskForceDecision.run &&
     borrowedAgentSlugs.length === 0 &&
     !userNamedTargetsThisTurn &&
     projectRosterForTurn.length > 0;
   if (rosterFirstEligible) {
-    const rosterSpecs = projectRosterSpecs(
-      projectRosterForTurn,
-      {
-        agentById: (id) => {
-          const installed = getAgentById(id);
-          return installed
-            ? {
-                id: installed.id,
-                slug: installed.slug,
-                name: installed.name,
-                userFacing: isUserFacingProjectAgent(installed),
-              }
-            : null;
-        },
-        firmById: (id) => {
-          const firm = getFirm(id);
-          return firm ? { id: firm.id, slug: firm.slug, name: firm.name } : null;
-        },
-      },
-      locale,
-    ) as BorrowedAgentSpec[];
-    if (rosterSpecs.length > 0) {
+    if (rosterSpecs.length > 0 || projectRosterForTurn.some((member) => member.source === "cloud")) {
       try {
         persistUserMessage();
+        const canonicalCloudClient = () => {
+          const cookie = getSessionCookieHeader();
+          if (!cookie) throw new ProjectCloudRosterError("source_unauthorized", "cloud");
+          return new ExperienceCloudHttpClient({ baseUrl: webBaseUrl(), cookieHeader: cookie });
+        };
+        rosterSpecs.push(...await prepareProjectCloudRoster(projectRosterForTurn, {
+          listOwnerCloud: async () => {
+            const source = getCargoSource();
+            if (!source) throw new ProjectCloudRosterError("owner_cloud_unavailable", "cloud");
+            // Use the authenticated source, never the UI's stale/fallback cache.
+            return (await source.listMyCloudPackages(undefined, { signal, requireComplete: true })).rows;
+          },
+          listDefinitions: () => canonicalCloudClient().listAgentDefinitionIdentities(),
+          resolveBase: (input) => canonicalCloudClient().resolveBase(input),
+          prepare: async (target) => {
+            const res = await hepCall(`cloud/${target.entityKind}/${target.slug}`, [
+              "Prepare this exact project-designated Cloud release for local execution.",
+            ], { project: workingFolder ?? ".", version: target.packageHash, signal });
+            const [spec] = requireBorrowedAgentSpecs([target.slug], res.json ?? null, {
+              locale,
+              transportOk: res.ok,
+              transportError: res.error || (res.exitCode == null ? "cloud_call_failed" : `cloud_exit_${res.exitCode}`),
+            });
+            if (!spec) throw new BorrowedAgentUnavailableError([target.slug], ["missing_directive"], locale);
+            return spec;
+          },
+        }));
         // 영수증 — 무엇으로 이 등급이 나왔고 누구를 썼는지 남긴다. 이 줄이 없으면
         // "리스트가 안 쓰였다"가 다시 조용해진다.
         sink({
           kind: "tool-use",
           status: locale === "ko"
-            ? `프로젝트 지정 ${rosterSpecs.length}명으로 편성합니다 (난이도 ${describeTurnEscalation(turnEscalation)}).`
-            : `Staffing with ${rosterSpecs.length} project-designated member(s) (escalation ${describeTurnEscalation(turnEscalation)}).`,
+            ? `프로젝트 지정 ${rosterSpecs.length}명으로 편성합니다 (경로 ${rosterTaskForceDecision.reasonCode}; 난이도 ${describeTurnEscalation(turnEscalation)}).`
+            : `Staffing with ${rosterSpecs.length} project-designated member(s) (route ${rosterTaskForceDecision.reasonCode}; escalation ${describeTurnEscalation(turnEscalation)}).`,
         });
         await runBoundTaskForceInvocation({
           req: { ...req, userPrompt: effectiveUserPrompt, borrowAgents: undefined, taskForceTargets: undefined },
@@ -3705,14 +4024,14 @@ ${effectiveUserPrompt}`;
         });
         return earlyResult();
       } catch (err) {
+        if (signal?.aborted) return earlyResult();
         // 리스트로 실패했다고 조용히 네트워크로 넘어가지 않는다 — 사용자가 지정한
         // 팀이 실패했다는 사실 자체가 결과다.
         sink({
           kind: "error",
-          error: {
-            code: "project-roster-task-force-failed",
-            message: err instanceof Error ? err.message : String(err),
-          },
+          error: err instanceof ProjectCloudRosterError || err instanceof OwnerCloudShelfIncompleteError
+            ? { code: err.code, message: err.message }
+            : invocationFailure(req, "project-roster-task-force-failed", err),
         });
         return earlyResult();
       }
@@ -3763,8 +4082,7 @@ ${effectiveUserPrompt}`;
         signal,
       });
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      sink({ kind: "error", error: { code: "borrowed-team-failed", message: msg } });
+      sink({ kind: "error", error: invocationFailure(req, "borrowed-team-failed", err) });
     }
     return earlyResult();
   }
@@ -3799,8 +4117,7 @@ ${effectiveUserPrompt}`;
         signal,
       });
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      sink({ kind: "error", error: { code: "borrowed-task-force-failed", message: msg } });
+      sink({ kind: "error", error: invocationFailure(req, "borrowed-task-force-failed", err) });
     }
     return earlyResult();
   }
@@ -3829,6 +4146,7 @@ ${effectiveUserPrompt}`;
             : "Stormbreaker · starting Goal/UltraCode parallel decomposition with automatic runtime allocation.",
         });
       }
+      assertMcpGoalSelectionCurrent();
       await runSwarmInvocation({
         // Persist the exact user command above, but give workers the actual
         // goal rather than a route slug that could be mistaken for work.
@@ -3860,8 +4178,7 @@ ${effectiveUserPrompt}`;
         stormbreakerHarness: coreHarness,
       });
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      sink({ kind: "error", error: { code: "swarm-failed", message: msg } });
+      sink({ kind: "error", error: invocationFailure(req, "swarm-failed", err) });
     }
     return earlyResult();
   }
@@ -3878,9 +4195,11 @@ ${effectiveUserPrompt}`;
           const firmUserPrompt = explicitBorrowUserPreamble
             ? `${explicitBorrowUserPreamble}\n\nRequest:\n${effectiveUserPrompt}`
             : effectiveUserPrompt;
+          assertMcpGoalSelectionCurrent();
           await runFirmInvocation({
             req: { ...req, userPrompt: firmUserPrompt },
-            chat: { id: chat.id, projectId: invocationProjectId, firmId: chat.firmId },
+            chat: { id: chat.id, projectId: invocationProjectId, firmId: chat.firmId, goalId: chat.goalId },
+            goalCheckpoint: chat.goalId ? latestTaskCheckpoint(chat.goalId) ?? undefined : undefined,
             org,
             ceoAgent: agent,
             priorHistory,
@@ -3893,7 +4212,10 @@ ${effectiveUserPrompt}`;
             mcpConfigPath,
             mcpAllowedTools,
             mcpCodexConfigArgs,
+            ...(isolatedMcpConfig ? { isolatedMcpConfig: true as const } : {}),
+            ...(browserOnly ? { browserOnly: true as const } : {}),
             agentAppMcpRuntimeEnv: mcpRuntimeEnv,
+            prepareWorkerCapabilities,
             onAgentAppMcpRuntimeUnavailable: markAgentAppMcpRuntimeUnavailable,
             onControllerRuntimeFallback: emitControllerRuntimeFallback,
             runtimePinHonored: runtimeResolution.pinHonored,
@@ -4128,7 +4450,7 @@ ${effectiveUserPrompt}`;
     try {
       // `agent` may have changed through auto-routing above. Scope memory to the
       // actual executing agent so another agent's agent_repo never leaks in.
-      const memoryContext = buildMemoryContext(memoryReadPath, agent.id, {
+      const memoryContext = await buildMemoryContext(memoryReadPath, agent.id, {
         materializeCodeMap: Boolean(activePath && canWrite),
         taskPrompt: effectiveUserPrompt,
         projectId: invocationProjectId,
@@ -4136,6 +4458,7 @@ ${effectiveUserPrompt}`;
         // code_map / sitemap / memory) actually entered this turn's prompt.
         runId: req.runId ?? null,
         chatId: chat.id,
+        signal,
       });
       if (memoryContext) turnContextParts.push(memoryContext);
       // hep 발화 표면 — 프로젝트 작업 폴더에 대기 중 성장 제안 요약 파일을 쓰고(호스트가
@@ -4166,6 +4489,7 @@ ${effectiveUserPrompt}`;
     } catch (err) {
       console.error("[architecture] buildMemoryContext failed:", err);
     }
+    throwIfInvocationAborted(signal, locale);
   }
   let remoteOperationalSnapshot: Awaited<ReturnType<typeof resolveDesktopOperationalRuntimeSession>> = null;
   if (!req.agentAppMode) {
@@ -4388,7 +4712,8 @@ ${effectiveUserPrompt}`;
             await ensureGoalLedgerGoal({
               goalId: activeGoalId,
               objective,
-              acceptanceCriteria: deriveGoalAcceptanceCriteria(objective, locale),
+              acceptanceCriteria: deriveGoalAcceptanceCriteria(objective, locale,
+                req.permissions === "read" || req.permissions === "write" || req.permissions === "full" ? req.permissions : undefined),
               projectDir: workforceProjectDir,
             });
             activeGoal = await getGoalLedgerGoal(activeGoalId, workforceProjectDir);
@@ -4406,13 +4731,15 @@ ${effectiveUserPrompt}`;
     // 새 세션/resume에 맞게 배치한다. 그 외 stateless 러너는 기존처럼 시스템 프롬프트에 합친다.
     const turnContext = turnContextParts.filter((part) => part && part.trim()).join("\n\n");
     const sessionCapableRuntime =
-      active.kind === "claude-code" || active.kind === "codex" || active.kind === "kimi";
+      active.kind === "claude-code" || active.kind === "codex" || active.kind === "kimi" || active.kind === "antigravity";
     const runnerReq = {
       systemPrompt: sessionCapableRuntime || !turnContext
         ? systemPrompt
         : `${systemPrompt}\n\n${turnContext}`,
       ...(sessionCapableRuntime && turnContext ? { turnContext } : {}),
-      history,
+      // Long-run state comes from the versioned goal and checkpoint. Replaying
+      // the whole chat into a fresh native session is neither recovery nor state.
+      history: activeGoalId ? [] : history,
       userPrompt: runtimeUserPrompt,
       images: req.images,
       backendLabel: picked.label,
@@ -4424,7 +4751,7 @@ ${effectiveUserPrompt}`;
       signal,
       permission: req.permissions,
       ...(req.simulation === true ? { simulation: true as const } : {}),
-      ...(isolatedMcpConfig ? { browserOnly: true as const } : {}),
+      ...(browserOnly ? { browserOnly: true as const } : {}),
       ...(restrictedReadBoundary ? { restrictedReadBoundary: true as const } : {}),
       ...(isUnattendedExecution(executionContext) ? { unattended: true as const } : {}),
       ...(usesMobileDurableDecision(executionContext) ? { noSynchronousAsk: true as const } : {}),
@@ -4509,13 +4836,15 @@ ${effectiveUserPrompt}`;
       runtimePicked: { runner: Runner; label: string },
       userPrompt = runtimeUserPrompt,
     ) => {
-      const sessionCapable = runtime.kind === "claude-code" || runtime.kind === "codex" || runtime.kind === "kimi";
+      const sessionCapable = runtime.kind === "claude-code" || runtime.kind === "codex" || runtime.kind === "kimi" || runtime.kind === "antigravity";
+      const checkpoint = activeGoalId ? latestTaskCheckpoint(activeGoalId) : null;
+      const runtimeTurnContext = [turnContext, checkpoint ? compileLongRunCheckpoint(checkpoint, runtime.kind) : ""].filter(Boolean).join("\n\n");
       return {
         ...runnerReq,
-        systemPrompt: sessionCapable || !turnContext
+        systemPrompt: sessionCapable || !runtimeTurnContext
           ? systemPrompt
-          : systemPrompt + "\n\n" + turnContext,
-        ...(sessionCapable && turnContext ? { turnContext } : { turnContext: undefined }),
+          : systemPrompt + "\n\n" + runtimeTurnContext,
+        ...(sessionCapable && runtimeTurnContext ? { turnContext: runtimeTurnContext } : { turnContext: undefined }),
         userPrompt,
         backendLabel: runtimePicked.label,
         model: runtime.model ?? undefined,
@@ -4756,6 +5085,7 @@ ${effectiveUserPrompt}`;
       && !isUnattendedExecution(executionContext)
       && !automationRuntimePinned
       && !scienceRuntimePinned;
+    let directRuntimeDispatched = false;
     const invokeCurrentRuntime = async (request: RunnerRequest): Promise<Awaited<ReturnType<Runner>>> => {
       const currentPicked = picked;
       if (!currentPicked) throw new Error("no-runner");
@@ -4865,11 +5195,15 @@ ${effectiveUserPrompt}`;
           selectedRuntimeKey,
           runtimeAttemptReceipt(selectedRuntime, attemptCount),
         );
+        // Only Main's first direct dispatch is admitted here. This is not a
+        // new policy for revoking an already-running provider or recovery pass.
+        if (!directRuntimeDispatched) assertMcpGoalSelectionCurrent();
         const attemptEvents = createAttemptRunnerEvents();
         let result: Awaited<ReturnType<Runner>>;
         try {
           const selected = picked;
           if (!selected) throw new Error("no-runner");
+          directRuntimeDispatched = true;
           result = await selected.runner(requestForRuntime, attemptEvents.events);
         } catch (error) {
           if (!directRuntimeFallbackAllowed || signal?.aborted) throw error;
@@ -4928,6 +5262,11 @@ ${effectiveUserPrompt}`;
               from: { kind: active.kind, backend: active.backend, model: active.model ?? null },
               to: { kind: fallback.kind, backend: fallback.backend, model: fallback.model ?? null },
               reason: failed.kind,
+              runtime: failed.runtime,
+              failureSource: failed.source,
+              providerCode: failed.providerCode ?? null,
+              exitCode: failed.exitCode ?? null,
+              retryAfterHint: failed.retryAfterHint ?? null,
             }),
           });
         }
@@ -6031,7 +6370,7 @@ ${effectiveUserPrompt}`;
       throw new Error("image_tool_unavailable: the generated image was not durably bound");
     }
     // 찍어 달라고 한 실행이 이미지 하나 없이 끝나면, 답이 무슨 말을 했든 사실이 아니다.
-    if (screenCaptureRequired && finalWorkImages.length === 0 && !signal?.aborted) {
+    if (screenCaptureRequired && !nativeCaptureBound && finalWorkImages.length === 0 && !signal?.aborted) {
       throw new Error("screen_capture_unavailable: the requested screen capture was never produced");
     }
     const finalImageOptions = finalWorkImages.length > 0 ? { images: finalWorkImages } : undefined;
@@ -6162,6 +6501,7 @@ ${effectiveUserPrompt}`;
         : {}),
       tokens: finalObservedTokens || undefined,
       model: active.model ?? active.kind,
+      observedModel: result.observedModel,
       modelRole: invocationModelRole,
       ...(durableAssistantEntry?.imageDataUrls?.length
         ? { imageDataUrls: durableAssistantEntry.imageDataUrls }
@@ -6215,5 +6555,9 @@ ${effectiveUserPrompt}`;
     }
     sink({ kind: "error", error: invocationFailure(req, "runner-failed", err) });
     return earlyResult();
+  }
+  } finally {
+    nativeBrowserGrant?.release();
+    workspacePreviewCapabilityCleanup?.();
   }
 }

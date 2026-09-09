@@ -4,9 +4,13 @@ import { getLongRunByGoalId, getLongRunGoalRevisionBinding } from "../store/long
 import { getDb } from "../store/db";
 import { tryRecordRunEvent } from "../store/run-events";
 import { admitJudgedAutomaticGoal } from "../long-run/auto-goal-controller";
-import { resolveAutomaticGoalIntent } from "../long-run/judged-auto-goal-intent";
-import type { GoalSourceMessage } from "../../shared/auto-goal";
+import {
+  resolveAutomaticGoalIntent,
+  type AutomaticGoalIntentResolution,
+} from "../long-run/judged-auto-goal-intent";
+import type { GoalIntakeDecision, GoalSourceMessage } from "../../shared/auto-goal";
 import type { LongRunRecord } from "../store/long-runs";
+import { goalScopeCriterion } from "../../shared/goal-scope";
 
 /** Bounded default, not a promise to finish inside it. Unfinished goals retain their criteria and
  * pause with their remaining budget intact. Money metering is unavailable here: null explicitly
@@ -34,6 +38,23 @@ import type { LongRunRecord } from "../store/long-runs";
 export const AUTOMATIC_GOAL_CYCLE_LIMIT: number | null = null;
 export const AUTOMATIC_GOAL_TIME_LIMIT_MS: number | null = null;
 
+export type AutomaticGoalPreparation =
+  | { kind: "admitted"; run: LongRunRecord }
+  | { kind: "bypass"; decision: GoalIntakeDecision }
+  | {
+      kind: "unavailable";
+      reason: string;
+      retryable: true;
+      failureKind?: AutomaticGoalIntentResolution["failureKind"];
+      attempts?: AutomaticGoalIntentResolution["attempts"];
+    };
+
+function safeIntakeFailureReason(error: unknown): string {
+  return error instanceof Error && /^(?:auto_goal|goal|long_run)_[a-z_]+$/.test(error.message)
+    ? error.message
+    : "classification_or_admission_failed";
+}
+
 export async function prepareInvocationAutomaticGoal(input: {
   runId: string;
   chatId: string;
@@ -41,24 +62,59 @@ export async function prepareInvocationAutomaticGoal(input: {
   userPrompt: string;
   permission: string;
   signal: AbortSignal;
-  resolveIntent?: typeof resolveAutomaticGoalIntent;
-}): Promise<LongRunRecord | null> {
+  resolveIntent?: (
+    source: GoalSourceMessage,
+    options: Parameters<typeof resolveAutomaticGoalIntent>[1],
+  ) => Promise<GoalIntakeDecision | AutomaticGoalIntentResolution>;
+}): Promise<AutomaticGoalPreparation> {
   try {
-    if (input.signal.aborted) return null;
+    if (input.signal.aborted) {
+      return { kind: "bypass", decision: {
+        messageId: input.sourceMessageId, intent: "unknown", commitment: "uncertain",
+      } };
+    }
     const row = getDb().prepare("SELECT chat_id, role, text FROM chat_messages WHERE id = ?")
       .get(input.sourceMessageId) as { chat_id: string; role: string; text: string } | undefined;
     if (!row || row.role !== "user" || row.chat_id !== input.chatId || row.text !== input.userPrompt) {
       throw new Error("auto_goal_source_mismatch");
     }
     const source: GoalSourceMessage = { chatId: input.chatId, messageId: input.sourceMessageId, role: "user", text: row.text };
-    const decision = await (input.resolveIntent ?? resolveAutomaticGoalIntent)(source, { signal: input.signal, timeoutMs: 4_000 });
-    if (input.signal.aborted) return null;
+    const decision = await (input.resolveIntent ?? resolveAutomaticGoalIntent)(source, {
+      signal: input.signal,
+      // Local classification can exceed a short network-style deadline. Keep a
+      // finite bound while allowing the configured local runtime to answer.
+      timeoutMs: 30_000,
+    });
+    if (input.signal.aborted) return { kind: "bypass", decision };
+    if ("classification" in decision && decision.classification === "unavailable") {
+      const unavailable: Extract<AutomaticGoalPreparation, { kind: "unavailable" }> = {
+        kind: "unavailable",
+        reason: "auto_goal_classification_unavailable",
+        retryable: true,
+        ...(decision.failureKind ? { failureKind: decision.failureKind } : {}),
+        ...(decision.attempts ? { attempts: decision.attempts } : {}),
+      };
+      tryRecordRunEvent({
+        runId: input.runId,
+        chatId: input.chatId,
+        kind: "automatic_goal_intake_unavailable",
+        payload: {
+          sourceMessageId: input.sourceMessageId,
+          reason: unavailable.reason,
+          retryable: true,
+          ...(unavailable.failureKind ? { failureKind: unavailable.failureKind } : {}),
+          ...(unavailable.attempts ? { attempts: unavailable.attempts } : {}),
+        },
+      });
+      return unavailable;
+    }
     tryRecordRunEvent({ runId: input.runId, chatId: input.chatId, kind: "automatic_goal_intake", payload: {
       sourceMessageId: source.messageId, intent: decision.intent, commitment: decision.commitment,
-      classified: decision.intent !== "unknown",
+      classified: true,
+      ...("attempts" in decision && decision.attempts ? { attempts: decision.attempts } : {}),
     } });
-    if (decision.intent !== "execute" || decision.commitment !== "now") return null;
-    return admitJudgedAutomaticGoal({
+    if (decision.intent !== "execute" || decision.commitment !== "now") return { kind: "bypass", decision };
+    const run = admitJudgedAutomaticGoal({
       goalId: `goal:auto-message:${source.messageId}`, chatId: source.chatId, sourceMessageId: source.messageId, decision,
       /*
        * A criterion the verifier cannot check is a criterion that fails forever.
@@ -82,10 +138,20 @@ export async function prepareInvocationAutomaticGoal(input: {
       acceptanceCriteria: [
         { id: "requested-outcome", text: "Every deliverable the user asked for is complete and present in the workspace. "
           + `The request was: ${JSON.stringify(source.text.replace(/\s+/g, " ").trim().slice(0, 1_200))}` },
-        { id: "scope", text: "No file outside the run's declared working folder was created or modified, and the run stayed "
-          + `within its granted permission (${input.permission}). Both the folder and the permission are in the run receipt; `
-          + "if the evidence shows no out-of-folder writes, this criterion is met." },
-        { id: "evidence", text: "Completion is supported by current evidence on the requested output surface; unverified work remains open." },
+        { id: "scope", text: goalScopeCriterion({
+          permission: input.permission === "read" || input.permission === "write" || input.permission === "full" ? input.permission : undefined,
+          originalRequest: source.text,
+          locale: "en",
+        }) },
+        { id: "evidence", text: "Completion is supported by current host-owned evidence on the requested output surface; unverified work remains open. "
+          + "For a delegated tool-only runtime or observation request, include a successful host tool receipt and a host-owned delegation "
+          + "execution receipt when delegation was requested; worker or model prose alone is not evidence." },
+        { id: "delivery-validation", text: "Only when the request asks to create, change, deliver, or perform actual screen QA of an app or interactive UI, "
+          + "launch the actual app and exercise core user flows in a browser, simulator, or native runtime. Preserve tool evidence or captures "
+          + "of launch, rendered screens, interactions, and outcomes. Source, build, static analysis, unit/widget tests, or a completion report "
+          + "alone do not pass. Fix failures and repeat. A tool-only runtime or observation request does not require app launch or screen QA; "
+          + "its requested operation must instead be proved by the host receipts above. For other outputs inspect the delivered format. "
+          + "Missing runtime/access remains unmet; use only existing permissions." },
       ],
       authorityRefs: [`invocation:${input.runId}:permission:${input.permission}`],
       budget: { maxCycles: AUTOMATIC_GOAL_CYCLE_LIMIT, maxCostUsd: null, maxWorkers: 2,
@@ -93,12 +159,16 @@ export async function prepareInvocationAutomaticGoal(input: {
           ? null
           : new Date(Date.now() + AUTOMATIC_GOAL_TIME_LIMIT_MS).toISOString() },
     });
+    if (!run) throw new Error("auto_goal_admission_rejected");
+    return { kind: "admitted", run };
   } catch (error) {
+    const reason = safeIntakeFailureReason(error);
     tryRecordRunEvent({ runId: input.runId, chatId: input.chatId, kind: "automatic_goal_intake_unavailable", payload: {
       sourceMessageId: input.sourceMessageId,
-      reason: error instanceof Error && /^auto_goal_[a-z_]+$/.test(error.message) ? error.message : "classification_or_admission_failed",
+      reason,
+      retryable: true,
     } });
-    return null;
+    return { kind: "unavailable", reason, retryable: true };
   }
 }
 
@@ -114,7 +184,7 @@ export function automaticGoalResumeRequest(chatId: string, expectedVersion: numb
   if (run.version !== expectedVersion) throw new Error("long_run_resume_version_conflict");
   if (!["paused", "blocked"].includes(run.status)) throw new Error("auto_goal_resume_not_stopped");
   if (getLongRunGoalRevisionBinding(run.id)?.revision !== revision.revision) throw new Error("auto_goal_resume_revision_pending");
-  const pending = getDb().prepare("SELECT COUNT(*) AS n FROM long_run_worker_attempts WHERE run_id = ? AND state IN ('running','uncertain')").get(run.id) as { n: number };
+  const pending = getDb().prepare("SELECT COUNT(*) AS n FROM long_run_worker_attempts WHERE run_id = ? AND (state IN ('running','uncertain') OR side_effect_state = 'uncertain')").get(run.id) as { n: number };
   if (pending.n) throw new Error("auto_goal_resume_attempt_unsettled");
   /*
    * An absent limit is no limit, not a spent one.
